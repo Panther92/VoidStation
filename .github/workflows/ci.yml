@@ -1,0 +1,69 @@
+name: VoidStation CI
+
+on:
+  push:
+    branches: [ "**" ]
+  pull_request:
+    branches: [ "**" ]
+
+jobs:
+  validate-and-build:
+    name: Lint, Test & Build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Shell syntax check (bash -n)
+        run: |
+          echo "Checking shell scripts syntax..."
+          bash -n build.sh
+          bash -n install-head.sh
+          bash -n update-head.sh
+          bash -n launcher/voidstation-pkg
+          bash -n launcher/home.sh
+          bash -n launcher/vsctl
+          bash -n launcher/xstart
+          if [ -f iso/postsetup.sh ]; then bash -n iso/postsetup.sh; fi
+          echo "All shell scripts passed syntax checks."
+
+      - name: Python compile check
+        run: |
+          echo "Compiling Python source files..."
+          python3 -m py_compile launcher/launcher.py
+          python3 -m py_compile launcher/voidstation-shell.py
+          python3 -m py_compile tools/screenshots.py
+          echo "All Python files passed syntax compilation."
+
+      - name: Validate i18n key and placeholder parity
+        run: |
+          python3 - launcher/web/i18n/de.json launcher/web/i18n/en.json <<'PYEOF'
+          import json, re, sys
+          de, en = (json.load(open(p, encoding="utf-8")) for p in sys.argv[1:3])
+          ph = lambda s: sorted(re.findall(r"\{(\w+)\}", s)) if isinstance(s, str) else []
+          missing = [k for k in de if k != "labels" and k not in en]
+          wrong = [k for k in de if k in en and ph(de[k]) != ph(en[k])]
+          for k in missing: print(f"  fehlt in en.json: {k}", file=sys.stderr)
+          for k in wrong:   print(f"  andere Platzhalter in en.json: {k}", file=sys.stderr)
+          if missing or wrong:
+              sys.exit("i18n: en.json ist unvollstaendig – jeder neue Text gehoert in de.json UND en.json")
+          print("i18n validation OK: 100% parity between de.json and en.json.")
+          PYEOF
+
+      - name: Build distribution packages
+        run: |
+          bash build.sh
+          ls -la dist/
+          test -s dist/install.sh
+          test -s dist/update.sh
+          test -s dist/version.json
+          test -s dist/version.txt
+          test -s dist/build-iso.sh
+          test -s dist/voidstation-install.sh
+          echo "Build successful: all release artifacts generated."

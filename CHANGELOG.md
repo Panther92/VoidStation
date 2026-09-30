@@ -4,6 +4,13 @@ Neueste Version oben. Die erste Überschrift bestimmt die Versionsnummer, die Ge
 Format: `## <Version> – <JJJJ-MM-TT>`, darunter Stichpunkte.
 Jede Version steht auch in `CHANGELOG.en.md` (englisch) – sonst bricht `build.sh` ab.
 
+## 0.8.0 – 2026-09-30
+- Virtuelle Bildschirmtastatur (OSD): Vollständige Eingabe über Gamepad und Fernbedienung für Texteingaben (WLAN-Passwort, Sendersuche) mit Steuerkreuz-Navigation
+- Elektronische Programmzeitschrift (EPG): Anzeige der aktuellen Sendung mit Live-Fortschrittsbalken und nächster Sendung im TV-Bereich (XMLTV & JSON)
+- Bluetooth-Manager: Kopfhörer und kabellose Controller direkt in den Einstellungen koppeln, verbinden und verwalten
+- ROM- & Spiele-Browser: Kacheln für Emulatoren öffnen eine Spieleliste aus der Samba-Freigabe (share/ROMs/<system>) mit Direktstart
+- Sicherheits- & Stabilitäts-Härtung: Sichere WLAN-Passworteingabe ohne Prozesslisten-Sichtbarkeit, dynamische Benutzererkennung statt festem "paul", striktes Fehlerhandling im Update-Skript
+
 ## 0.7.8 – 2026-09-29
 - Installer: Benutzer- und Root-Passwort werden jetzt wirklich gesetzt – bisher blieben beide Konten ohne Passwort, sudo und su schlugen fehl; der Installer prüft das jetzt und bricht sonst ab
 - Installiertes System: keine Begrüßung des Live-Sticks („root:voidlinux …“) mehr auf der Textkonsole

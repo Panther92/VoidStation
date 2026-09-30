@@ -495,7 +495,7 @@ def _ini_set(path, section, values):
     """Schluessel in einer einfachen INI-Datei setzen, Rest unveraendert lassen."""
     path.parent.mkdir(parents=True, exist_ok=True)
     try:
-        lines = path.read_text().splitlines()
+        lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
         lines = []
     if f"[{section}]" not in lines:
@@ -505,7 +505,7 @@ def _ini_set(path, section, values):
     idx = lines.index(f"[{section}]") + 1
     for k, v in values.items():
         lines.insert(idx, f"{k}={v}")
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def apply_appearance(s):
@@ -518,21 +518,21 @@ def apply_appearance(s):
     size = int(s.get("cursor_size") or DEFAULTS["cursor_size"])
     xres = home / ".Xresources"
     try:
-        lines = [l for l in xres.read_text().splitlines() if not l.startswith(("Xft.dpi", "Xcursor."))]
+        lines = [l for l in xres.read_text(encoding="utf-8").splitlines() if not l.startswith(("Xft.dpi", "Xcursor."))]
     except OSError:
         lines = []
     lines += [f"Xft.dpi: {dpi}", f"Xcursor.theme: {theme}", f"Xcursor.size: {size}"]
-    xres.write_text("\n".join(lines) + "\n")
+    xres.write_text("\n".join(lines) + "\n", encoding="utf-8")
     run(["xrdb", "-merge", str(xres)])
     for gtk in ("gtk-3.0", "gtk-4.0"):
         _ini_set(home / ".config" / gtk / "settings.ini", "Settings",
                  {"gtk-cursor-theme-name": theme, "gtk-cursor-theme-size": str(size)})
     idx = home / ".icons" / "default" / "index.theme"
     idx.parent.mkdir(parents=True, exist_ok=True)
-    idx.write_text(f"[Icon Theme]\nInherits={theme}\n")
+    idx.write_text(f"[Icon Theme]\nInherits={theme}\n", encoding="utf-8")
     (BASE / "env.sh").write_text(
         f"export XCURSOR_THEME={theme}\nexport XCURSOR_SIZE={size}\n"
-        "export QT_STYLE_OVERRIDE=Adwaita-Dark\nexport GTK_THEME=Adwaita:dark\n")
+        "export QT_STYLE_OVERRIDE=Adwaita-Dark\nexport GTK_THEME=Adwaita:dark\n", encoding="utf-8")
     os.environ.update({"XCURSOR_THEME": theme, "XCURSOR_SIZE": str(size),
                        "QT_STYLE_OVERRIDE": "Adwaita-Dark", "GTK_THEME": "Adwaita:dark"})
     run(["xsetroot", "-cursor_name", "left_ptr"])
@@ -702,15 +702,24 @@ def wifi_scan():
 
 
 def wifi_connect(ssid, password):
-    args = ["sudo", "-n", "nmcli", "device", "wifi", "connect", ssid]
+    args = ["sudo", "-n", "nmcli"]
+    input_data = None
     if password:
-        args += ["password", password]
+        args += ["--ask", "device", "wifi", "connect", ssid]
+        input_data = f"{password}\n"
+    else:
+        args += ["device", "wifi", "connect", ssid]
     try:
-        r = subprocess.run(args, capture_output=True, text=True, timeout=45)
+        r = subprocess.run(args, input=input_data, capture_output=True, text=True, timeout=45)
     except subprocess.TimeoutExpired:
         raise RuntimeError("Zeitueberschreitung beim Verbinden")
     if r.returncode != 0:
-        raise RuntimeError((r.stderr or r.stdout).strip() or "Verbindung fehlgeschlagen")
+        # Fallback falls eine aeltere nmcli-Version stdin verweigert
+        if password:
+            r = subprocess.run(["sudo", "-n", "nmcli", "device", "wifi", "connect", ssid, "password", password],
+                               capture_output=True, text=True, timeout=45)
+        if r.returncode != 0:
+            raise RuntimeError((r.stderr or r.stdout).strip() or "Verbindung fehlgeschlagen")
 
 
 def share_info():
@@ -769,10 +778,10 @@ class IPTV:
     def _load(self):
         try:
             day = 86400
-            ch = json.loads(fetch(IPTV_API + "channels.json", CACHE / "channels.json", day).read_text())
-            st = json.loads(fetch(IPTV_API + "streams.json", CACHE / "streams.json", day).read_text())
+            ch = json.loads(fetch(IPTV_API + "channels.json", CACHE / "channels.json", day).read_text(encoding="utf-8"))
+            st = json.loads(fetch(IPTV_API + "streams.json", CACHE / "streams.json", day).read_text(encoding="utf-8"))
             try:
-                lg = json.loads(fetch(IPTV_API + "logos.json", CACHE / "logos.json", 7 * day).read_text())
+                lg = json.loads(fetch(IPTV_API + "logos.json", CACHE / "logos.json", 7 * day).read_text(encoding="utf-8"))
             except Exception:  # noqa: BLE001
                 lg = []
             chans = {c["id"]: c for c in ch if not c.get("is_nsfw") and not c.get("closed")}
@@ -814,7 +823,11 @@ class IPTV:
 
     @staticmethod
     def public(e):
-        return {k: e[k] for k in ("key", "name", "country", "cats", "quality", "logo")}
+        pub = {k: e[k] for k in ("key", "name", "country", "cats", "quality", "logo")}
+        prog = EPG.get_program(e.get("name"), e.get("name"))
+        if prog:
+            pub["epg"] = prog
+        return pub
 
     def search(self, q, country, cat, limit=80):
         self.ensure()
@@ -1001,13 +1014,13 @@ PROTON_STATE = PROTON_DIR / ".voidstation.json"      # welche Versionen VoidStat
 
 def proton_state():
     try:
-        return [e for e in json.loads(PROTON_STATE.read_text()) if e.get("tag") and e.get("dir")]
+        return [e for e in json.loads(PROTON_STATE.read_text(encoding="utf-8")) if e.get("tag") and e.get("dir")]
     except (OSError, ValueError, AttributeError):
         return []
 
 
 def proton_state_save(entries):
-    PROTON_STATE.write_text(json.dumps(entries))
+    PROTON_STATE.write_text(json.dumps(entries), encoding="utf-8")
 
 
 def proton_installed():
@@ -1146,11 +1159,11 @@ class Jobs:
         if s["type"] == "web":
             prof = BASE / "profiles" / a["id"]
             prof.mkdir(parents=True, exist_ok=True)
-            js = (BASE / "firefox" / "user-common.js").read_text()
+            js = (BASE / "firefox" / "user-common.js").read_text(encoding="utf-8")
             if s.get("ua"):
                 js += f'user_pref("general.useragent.override", {json.dumps(s["ua"])});\n'
             js += 'user_pref("media.ffmpeg.vaapi.enabled", true);\n'
-            (prof / "user.js").write_text(js)
+            (prof / "user.js").write_text(js, encoding="utf-8")
             self._log(f"Profil angelegt: {prof}")
             return True
         return False
@@ -1329,14 +1342,14 @@ _VCACHE = {"t": 0.0, "remote": None, "error": None, "key": None}
 
 def vs_channel():
     try:
-        ch = CHANNELFILE.read_text().split()[0]
+        ch = CHANNELFILE.read_text(encoding="utf-8").split()[0]
     except (OSError, IndexError):
         ch = "stable"
     return ch if ch in CHANNELS else "stable"
 
 
 def vs_update_base():
-    tmpl = URLFILE.read_text().split()[0].rstrip("/")
+    tmpl = URLFILE.read_text(encoding="utf-8").split()[0].rstrip("/")
     return tmpl.replace("{channel}", vs_channel())
 
 
@@ -1349,7 +1362,7 @@ def vs_version():
     except (OSError, ValueError):
         pass
     try:
-        b = (BASE / "VERSION").read_text().strip()
+        b = (BASE / "VERSION").read_text(encoding="utf-8").strip()
         return {"version": None, "build": b or None}
     except OSError:
         return {"version": None, "build": None}
@@ -1737,6 +1750,270 @@ KEYMAPS = {"de": ["de"], "us": ["us"], "gb": ["gb"]}
 
 
 # ---------------------------------------------------------------------------
+#  EPG: Elektronischer Programmführer für TV-Sender
+# ---------------------------------------------------------------------------
+class EPGManager:
+    """Verwaltet Programmvorschau (EPG) für TV-Sender."""
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.cache_file = CACHE / "epg.json"
+        self.data = {}
+        self._load()
+
+    def _load(self):
+        try:
+            # 1. JSON-Cache
+            for p in (self.cache_file, BASE / "epg.json"):
+                if p.exists():
+                    self.data = json.loads(p.read_text(encoding="utf-8"))
+                    return
+            # 2. XMLTV-Format (epg.xml)
+            import xml.etree.ElementTree as ET
+            from datetime import datetime, timezone
+            for p in (CACHE / "epg.xml", BASE / "epg.xml"):
+                if p.exists():
+                    root = ET.fromstring(p.read_text(encoding="utf-8"))
+                    data = {}
+                    for prog in root.findall("programme"):
+                        ch = prog.get("channel", "").strip()
+                        s_str = prog.get("start", "").split()[0]
+                        e_str = prog.get("stop", "").split()[0]
+                        t_el = prog.find("title")
+                        d_el = prog.find("desc")
+                        title = t_el.text if t_el is not None and t_el.text else ""
+                        desc = d_el.text if d_el is not None and d_el.text else ""
+                        try:
+                            s_ts = datetime.strptime(s_str[:14], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc).timestamp()
+                            e_ts = datetime.strptime(e_str[:14], "%Y%m%d%H%M%S").replace(tzinfo=timezone.utc).timestamp()
+                        except (ValueError, IndexError):
+                            continue
+                        data.setdefault(ch, []).append({"start": s_ts, "end": e_ts, "title": title, "desc": desc})
+                    self.data = data
+                    return
+        except Exception:
+            self.data = {}
+
+    def get_program(self, channel_id, channel_name=""):
+        with self.lock:
+            prog = self.data.get(channel_id) or self.data.get(channel_name)
+        now_ts = time.time()
+        if prog and isinstance(prog, list):
+            current, next_p = None, None
+            for p in prog:
+                start = p.get("start", 0)
+                end = p.get("end", 0)
+                if start <= now_ts < end:
+                    dur = max(1, end - start)
+                    progress = min(100, max(0, int((now_ts - start) / dur * 100)))
+                    current = {
+                        "title": p.get("title", ""),
+                        "desc": p.get("desc", ""),
+                        "start": time.strftime("%H:%M", time.localtime(start)),
+                        "end": time.strftime("%H:%M", time.localtime(end)),
+                        "progress": progress
+                    }
+                elif now_ts < start and not next_p:
+                    next_p = {
+                        "title": p.get("title", ""),
+                        "start": time.strftime("%H:%M", time.localtime(start)),
+                        "end": time.strftime("%H:%M", time.localtime(end))
+                    }
+            if current:
+                return {"current": current, "next": next_p}
+        return None
+
+
+EPG = EPGManager()
+
+
+# ---------------------------------------------------------------------------
+#  Bluetooth: Audio-Kopfhörer und Wireless Gamepads
+# ---------------------------------------------------------------------------
+class BluetoothManager:
+    """Steuert Bluetooth-Geräte via bluetoothctl."""
+    def __init__(self):
+        self.lock = threading.Lock()
+        self._scanning = False
+
+    def is_available(self):
+        return shutil_which("bluetoothctl") is not None
+
+    def is_service_active(self):
+        return Path("/var/service/bluetoothd").is_dir() or Path("/var/service/bluetoothd").is_symlink()
+
+    def status(self):
+        if not self.is_available():
+            return {"available": False, "service": False, "powered": False, "devices": []}
+        service = self.is_service_active()
+        powered = False
+        r = run(["bluetoothctl", "show"])
+        if r and r.returncode == 0:
+            for line in r.stdout.splitlines():
+                if "Powered: yes" in line:
+                    powered = True
+                    break
+        devices = self.list_devices()
+        return {
+            "available": True,
+            "service": service,
+            "powered": powered,
+            "scanning": self._scanning,
+            "devices": devices,
+        }
+
+    def list_devices(self):
+        devs = {}
+        r = run(["bluetoothctl", "paired-devices"])
+        if r and r.returncode == 0:
+            for line in r.stdout.splitlines():
+                parts = line.strip().split(None, 2)
+                if len(parts) >= 3 and parts[0] == "Device":
+                    mac = parts[1]
+                    name = parts[2]
+                    devs[mac] = {"mac": mac, "name": name, "paired": True, "connected": False, "icon": "bluetooth"}
+        r = run(["bluetoothctl", "devices"])
+        if r and r.returncode == 0:
+            for line in r.stdout.splitlines():
+                parts = line.strip().split(None, 2)
+                if len(parts) >= 3 and parts[0] == "Device":
+                    mac = parts[1]
+                    name = parts[2]
+                    if mac not in devs:
+                        devs[mac] = {"mac": mac, "name": name, "paired": False, "connected": False, "icon": "bluetooth"}
+
+        for mac, d in list(devs.items())[:25]:
+            info = run(["bluetoothctl", "info", mac])
+            if info and info.returncode == 0:
+                for line in info.stdout.splitlines():
+                    line = line.strip()
+                    if line.startswith("Connected: yes"):
+                        d["connected"] = True
+                    elif line.startswith("Icon:"):
+                        icon_type = line.split(":", 1)[1].strip()
+                        if any(w in icon_type for w in ("audio", "headset", "headphone")):
+                            d["icon"] = "audio"
+                        elif any(w in icon_type for w in ("gamepad", "joystick", "input-gaming")):
+                            d["icon"] = "gamepad"
+        return sorted(devs.values(), key=lambda x: (-x["connected"], -x["paired"], x["name"].lower()))
+
+    def start_scan(self):
+        with self.lock:
+            if self._scanning:
+                return
+            self._scanning = True
+
+        def _do_scan():
+            try:
+                run(["bluetoothctl", "--timeout", "10", "scan", "on"])
+            finally:
+                with self.lock:
+                    self._scanning = False
+
+        threading.Thread(target=_do_scan, daemon=True).start()
+
+    def pair(self, mac):
+        run(["bluetoothctl", "pair", mac], timeout=20)
+        run(["bluetoothctl", "trust", mac], timeout=10)
+        r = run(["bluetoothctl", "connect", mac], timeout=20)
+        return bool(r and r.returncode == 0)
+
+    def connect(self, mac):
+        r = run(["bluetoothctl", "connect", mac], timeout=20)
+        return bool(r and r.returncode == 0)
+
+    def disconnect(self, mac):
+        r = run(["bluetoothctl", "disconnect", mac], timeout=15)
+        return bool(r and r.returncode == 0)
+
+    def remove(self, mac):
+        r = run(["bluetoothctl", "remove", mac], timeout=15)
+        return bool(r and r.returncode == 0)
+
+    def power(self, on):
+        r = run(["bluetoothctl", "power", "on" if on else "off"], timeout=10)
+        return bool(r and r.returncode == 0)
+
+
+BLUETOOTH = BluetoothManager()
+
+
+# ---------------------------------------------------------------------------
+#  ROMs: Spiele-Browser für Emulatoren aus der Samba-Freigabe
+# ---------------------------------------------------------------------------
+class ROMManager:
+    """Verwaltet Spiele (ROMs) aus der Samba-Freigabe ~/share/ROMs/<system>."""
+    EXTENSIONS = {
+        "gba": [".gba", ".zip", ".7z"],
+        "snes": [".sfc", ".smc", ".zip", ".7z"],
+        "nes": [".nes", ".zip", ".7z"],
+        "psx": [".iso", ".cue", ".bin", ".chd", ".pbp"],
+        "psp": [".iso", ".cso", ".pbp"],
+        "nds": [".nds", ".zip"],
+        "gamecube": [".iso", ".rvz", ".gcm"],
+        "dreamcast": [".cdi", ".gdi", ".chd"],
+        "n64": [".z64", ".n64", ".v64"],
+        "c64": [".d64", ".t64", ".prg", ".crt"],
+        "atari2600": [".a26", ".bin"],
+        "scummvm": [".scummvm"],
+        "dos": [".conf", ".exe", ".bat"],
+    }
+    EMULATOR_CMD = {
+        "gba": ["mgba-qt", "-f"],
+        "snes": ["snes9x", "-fullscreen"],
+        "nes": ["fceux"],
+        "psx": ["duckstation-qt", "-fullscreen"],
+        "psp": ["PPSSPPSDL"],
+        "nds": ["desmume"],
+        "gamecube": ["dolphin-emu", "-b"],
+    }
+
+    def __init__(self):
+        self.rom_dir = Path.home() / "share" / "ROMs"
+
+    def list_roms(self, system):
+        sys_dir = self.rom_dir / system
+        if not sys_dir.is_dir():
+            return []
+        valid_exts = set(self.EXTENSIONS.get(system, [".zip"]))
+        roms = []
+        try:
+            for item in sorted(sys_dir.iterdir()):
+                if item.is_file() and item.suffix.lower() in valid_exts:
+                    name = item.stem
+                    clean_name = re.sub(r"\s*[\(\[][^()\[\]]*[\)\]]", "", name).strip() or name
+                    size_mb = round(item.stat().st_size / (1024 * 1024), 1)
+                    roms.append({
+                        "id": hashlib.sha1(str(item).encode()).hexdigest()[:10],
+                        "name": clean_name,
+                        "filename": item.name,
+                        "path": str(item),
+                        "system": system,
+                        "size": f"{size_mb} MB" if size_mb >= 1 else f"{round(item.stat().st_size / 1024)} KB"
+                    })
+        except OSError as e:
+            log(f"ROMs fuer {system} nicht lesbar:", e)
+        return roms
+
+    def launch(self, system, file_path):
+        target = Path(file_path)
+        if not target.is_file():
+            raise ValueError("Spieldatei nicht gefunden")
+        tile = find_tile(system)
+        cmd = None
+        if tile and tile.get("cmd"):
+            base_cmd = tile["cmd"] if isinstance(tile["cmd"], list) else shlex.split(tile["cmd"])
+            cmd = base_cmd + [str(target)]
+        elif system in self.EMULATOR_CMD:
+            cmd = self.EMULATOR_CMD[system] + [str(target)]
+        else:
+            raise ValueError(f"Kein Emulator fuer {system} konfiguriert")
+        return APPS.start(f"rom_{system}", cmd)
+
+
+ROMS = ROMManager()
+
+
+# ---------------------------------------------------------------------------
 #  HTTP
 # ---------------------------------------------------------------------------
 class Handler(BaseHTTPRequestHandler):
@@ -1836,6 +2113,25 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, wifi_scan())
             except RuntimeError as e:
                 return self._json(502, {"error": str(e)})
+        if path == "/api/tv/epg":
+            qs = urllib.parse.parse_qs(url.query)
+            ch_id = qs.get("channel_id", [""])[0] or qs.get("channel", [""])[0]
+            ch_name = qs.get("name", [""])[0] or ch_id
+            return self._json(200, EPG.get_program(ch_id, ch_name) or {})
+        if path == "/api/bluetooth/status":
+            return self._json(200, BLUETOOTH.status())
+        if path == "/api/roms":
+            qs = urllib.parse.parse_qs(url.query)
+            system = qs.get("system", [""])[0]
+            if not system:
+                summary = {}
+                for s in ROMS.EXTENSIONS:
+                    r = ROMS.list_roms(s)
+                    if r:
+                        summary[s] = len(r)
+                return self._json(200, {"systems": summary})
+            roms = ROMS.list_roms(system)
+            return self._json(200, {"system": system, "count": len(roms), "roms": roms})
         if path == "/tiles.json":
             try:
                 c = json.loads(CONFIG.read_text(encoding="utf-8"))
@@ -2022,6 +2318,43 @@ class Handler(BaseHTTPRequestHandler):
                 except RuntimeError as e:
                     return self._json(502, {"error": str(e)})
                 return self._json(200, settings_payload())
+            if parts == ["api", "bluetooth", "scan"]:
+                BLUETOOTH.start_scan()
+                return self._json(200, BLUETOOTH.status())
+            if parts == ["api", "bluetooth", "pair"]:
+                mac = str(self._body().get("mac", ""))
+                ok = BLUETOOTH.pair(mac)
+                return self._json(200, {"ok": ok, "status": BLUETOOTH.status()})
+            if parts == ["api", "bluetooth", "connect"]:
+                mac = str(self._body().get("mac", ""))
+                ok = BLUETOOTH.connect(mac)
+                return self._json(200, {"ok": ok, "status": BLUETOOTH.status()})
+            if parts == ["api", "bluetooth", "disconnect"]:
+                mac = str(self._body().get("mac", ""))
+                ok = BLUETOOTH.disconnect(mac)
+                return self._json(200, {"ok": ok, "status": BLUETOOTH.status()})
+            if parts == ["api", "bluetooth", "remove"]:
+                mac = str(self._body().get("mac", ""))
+                ok = BLUETOOTH.remove(mac)
+                return self._json(200, {"ok": ok, "status": BLUETOOTH.status()})
+            if parts == ["api", "bluetooth", "power"]:
+                on = bool(self._body().get("on"))
+                ok = BLUETOOTH.power(on)
+                return self._json(200, {"ok": ok, "status": BLUETOOTH.status()})
+            if parts == ["api", "bluetooth", "service"]:
+                on = bool(self._body().get("on"))
+                subprocess.run(["sudo", "-n", PKG_HELPER, "bluetooth", "on" if on else "off"],
+                               capture_output=True, text=True, timeout=30)
+                return self._json(200, BLUETOOTH.status())
+            if parts == ["api", "roms", "launch"]:
+                b = self._body()
+                sys_id = str(b.get("system", ""))
+                file_path = str(b.get("path", ""))
+                try:
+                    res = ROMS.launch(sys_id, file_path)
+                    return self._json(200, {"result": res, "running": APPS.running()})
+                except (ValueError, RuntimeError) as e:
+                    return self._json(400, {"error": str(e)})
             if parts[:2] == ["api", "volume"] and len(parts) == 3:
                 return self._json(200, volume_set(parts[2]) or {})
             if parts[:2] == ["api", "power"] and len(parts) == 3 and parts[2] in POWER:

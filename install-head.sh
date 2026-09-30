@@ -12,7 +12,11 @@
 # =====================================================================
 set -euo pipefail
 
-VSUSER="${VSUSER:-${SUDO_USER:-paul}}"
+VSUSER="${VSUSER:-${SUDO_USER:-}}"
+if [ -z "$VSUSER" ] && [ "$(id -u)" -eq 0 ]; then
+  VSUSER="$(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $1 != "nobody" {print $1; exit}')"
+fi
+[ -n "$VSUSER" ] || { echo "Benutzer konnte nicht ermittelt werden. Bitte mit VSUSER=<name> starten." >&2; exit 1; }
 HOMEDIR="$(getent passwd "$VSUSER" | cut -d: -f6)"
 TV="$HOMEDIR/.local/share/voidstation"
 # Dienste-Ordner: im laufenden System /var/service, bei Installation vom Stick (chroot) der Standard-Runlevel
@@ -54,7 +58,7 @@ done
 PKGS="xinit xauth xset xrandr setxkbmap $GPU_PKGS \
   openbox dbus elogind xrdb pulseaudio-utils curl python3 python3-evdev wmctrl unclutter-xfixes \
   firefox vlc mpv samba flatpak adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 pcmanfm gvfs xterm \
-  pipewire wireplumber alsa-utils \
+  pipewire wireplumber alsa-utils bluez \
   noto-fonts-ttf noto-fonts-emoji noto-fonts-cjk dejavu-fonts-ttf \
   NetworkManager chrony htop nano fastfetch mousepad"
 MISSING=""

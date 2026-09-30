@@ -6,9 +6,13 @@
 #       Freigabe-Ordner (Samba), dunkles Theme, grosser Mauszeiger
 #  Optional: Freigabe-Passwort vorgeben mit  sudo SMBPASS='geheim' bash update.sh
 # =====================================================================
-set -uo pipefail
+set -euo pipefail
 
-VSUSER="${VSUSER:-${SUDO_USER:-paul}}"
+VSUSER="${VSUSER:-${SUDO_USER:-}}"
+if [ -z "$VSUSER" ] && [ "$(id -u)" -eq 0 ]; then
+  VSUSER="$(getent passwd | awk -F: '$3 >= 1000 && $3 < 60000 && $1 != "nobody" {print $1; exit}')"
+fi
+[ -n "$VSUSER" ] || { echo "Benutzer konnte nicht ermittelt werden. Bitte mit VSUSER=<name> starten." >&2; exit 1; }
 HOMEDIR="$(getent passwd "$VSUSER" | cut -d: -f6)"
 TV="$HOMEDIR/.local/share/voidstation"
 SHARE="$HOMEDIR/share"
@@ -26,7 +30,7 @@ if [ -d "$OLD" ] && [ ! -L "$OLD" ]; then
     warn "$TV existiert schon – Umzug uebersprungen, bitte von Hand pruefen."
   else
     mv "$OLD" "$TV"
-    ln -s voidstation "$OLD"      # alte absolute Pfade (Firefox-Profile, eigene Kacheln) laufen weiter
+    ln -s voidstation "$OLD" || true      # alte absolute Pfade (Firefox-Profile, eigene Kacheln) laufen weiter
     sed -i 's|/\.local/share/tvstart/|/.local/share/voidstation/|g' "$TV/tiles.json" 2>/dev/null || true
     rm -f "$TV/tvstart-shell.py" "$TV/tvstart-pkg" "$TV/tvctl"
     echo "Datenordner umgezogen: $TV  (alter Pfad bleibt als Verweis)"
@@ -36,10 +40,10 @@ if [ -d "$OLD" ] && [ ! -L "$OLD" ]; then
   rm -rf /usr/local/share/tvstart
   for f in /etc/kernel.d/post-install/40-tvstart-esp /etc/kernel.d/post-remove/40-tvstart-esp \
            /etc/kernel.d/post-install/60-tvstart-bootorder; do
-    [ -f "$f" ] && mv "$f" "${f/tvstart/voidstation}" && echo "Kernel-Hook umbenannt: ${f/tvstart/voidstation}"
+    if [ -f "$f" ]; then mv "$f" "${f/tvstart/voidstation}" && echo "Kernel-Hook umbenannt: ${f/tvstart/voidstation}"; fi
   done
-  [ -f "$HOMEDIR/.bash_profile" ] && sed -i 's/tvstart-runtime/voidstation-runtime/g; s/# TVSTART:/# VOIDSTATION:/' "$HOMEDIR/.bash_profile"
-  [ -f /etc/samba/smb.conf.vor-tvstart ] && mv /etc/samba/smb.conf.vor-tvstart /etc/samba/smb.conf.vor-voidstation
+  [ -f "$HOMEDIR/.bash_profile" ] && sed -i 's/tvstart-runtime/voidstation-runtime/g; s/# TVSTART:/# VOIDSTATION:/' "$HOMEDIR/.bash_profile" || true
+  [ -f /etc/samba/smb.conf.vor-tvstart ] && mv /etc/samba/smb.conf.vor-tvstart /etc/samba/smb.conf.vor-voidstation || true
 fi
 
 [ -d "$TV" ] || { echo "Keine VoidStation-Installation unter $TV gefunden."; exit 1; }
@@ -52,7 +56,7 @@ done
 say "1/8  Pakete"
 MISSING=""
 for p in curl elogind xrdb pulseaudio-utils mpv samba flatpak adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 \
-         htop nano fastfetch mousepad; do
+         bluez htop nano fastfetch mousepad; do
   xbps-query "$p" >/dev/null 2>&1 || MISSING="$MISSING $p"
 done
 if [ -n "$MISSING" ]; then xbps-install -Sy $MISSING || warn "Paketinstallation fehlgeschlagen"; else echo "alles da"; fi
@@ -119,7 +123,7 @@ for t in [t for g in c["groups"] for t in g["tiles"]]:
         t["cmd"] = ["pcmanfm", "~/share"]
 json.dump(c, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PYEOF
-xbps-query vba-m >/dev/null 2>&1 && xbps-remove -Ry vba-m >/dev/null 2>&1 && echo "defektes vba-m entfernt"
+if xbps-query vba-m >/dev/null 2>&1; then xbps-remove -Ry vba-m >/dev/null 2>&1 && echo "defektes vba-m entfernt" || true; fi
 
 say "3/8  AppCenter-Helfer (installiert nur freigegebene Pakete)"
 install -o root -g root -m 755 "$TV/voidstation-pkg" /usr/local/sbin/voidstation-pkg

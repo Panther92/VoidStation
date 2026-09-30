@@ -252,6 +252,51 @@
   .spin { width: calc(14px * var(--f)); height: calc(14px * var(--f)); border: 2px solid var(--text-faint); border-top-color: var(--text); border-radius: 50%; animation: spin 1s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
 
+  /* EPG (Fernsehen) */
+  .epg-info { display: flex; flex-direction: column; gap: calc(3px * var(--f)); }
+  .epg-line { display: flex; align-items: center; gap: calc(10px * var(--f)); font-size: calc(14px * var(--f)); }
+  .epg-line strong { color: var(--text-primary); font-weight: 500; }
+  .epg-line span { color: var(--text-dim); }
+  .epg-time { color: var(--text-faint); font-size: calc(12px * var(--f)); margin-left: auto; }
+  .epg-bar { width: calc(80px * var(--f)); height: calc(4px * var(--f)); background: var(--divider); border-radius: 2px; overflow: hidden; display: inline-block; vertical-align: middle; }
+  .epg-fill { display: block; height: 100%; background: var(--status-ok-text); }
+  .epg-next { font-size: calc(12.5px * var(--f)); color: var(--text-dim); }
+
+  /* Bluetooth */
+  .btlist { display: flex; flex-direction: column; gap: calc(6px * var(--f)); margin-top: calc(8px * var(--f)); }
+
+  /* ROMs Browser */
+  .romgrid { display: grid; grid-template-rows: repeat(var(--srows, 3), var(--u)); grid-auto-columns: calc(var(--u) * 1.5); grid-auto-flow: column dense; gap: var(--gap); }
+  .romcard {
+    position: relative; overflow: hidden; cursor: pointer;
+    background: var(--surface-card); color: var(--text); border: 2px solid transparent;
+    transition: transform .18s var(--ease), box-shadow .18s, border-color .18s;
+    padding: calc(14px * var(--f)); display: flex; flex-direction: column; justify-content: flex-end; outline: none;
+    opacity: 0; animation: tileIn .5s var(--ease) forwards;
+  }
+  .romcard::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(160deg, rgba(255,255,255,.07), transparent 45%, rgba(0,0,0,.18)); }
+  .romcard.focus {
+    box-shadow: 0 0 0 calc(3px * var(--f)) var(--bg-main), 0 0 0 calc(6px * var(--f)) var(--focus);
+    transform: scale(1.03); z-index: 2; border-color: var(--focus);
+  }
+  .romcard .romicon { position: absolute; left: 50%; top: 40%; transform: translate(-50%, -50%); opacity: 0.22; width: 44%; height: 44%; }
+  .romcard .romicon svg { width: 100%; height: 100%; }
+  .romcard .romname { font-size: calc(16px * var(--f)); font-weight: 500; z-index: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .romcard .romsub { font-size: calc(12px * var(--f)); color: var(--text-dim); z-index: 1; margin-top: calc(2px * var(--f)); }
+
+  /* Globales OSD-Keyboard */
+  #osk.dialog { z-index: 45; }
+  .osk-band { display: flex; flex-direction: column; gap: calc(14px * var(--f)); max-width: 90vw; margin: 0 auto; width: 100%; }
+  .osk-top { display: flex; align-items: center; justify-content: space-between; gap: calc(16px * var(--f)); }
+  .osk-inpbox { flex: 1; display: flex; align-items: center; background: var(--surface-card); border: 2px solid var(--border-subtle); padding: calc(8px * var(--f)) calc(16px * var(--f)); gap: calc(10px * var(--f)); }
+  .osk-inpbox.focused { border-color: var(--focus); }
+  .osk-label { font-size: calc(13px * var(--f)); color: var(--text-dim); }
+  .osk-val { flex: 1; font-size: calc(22px * var(--f)); color: var(--text-primary); min-height: 1.2em; border: none; background: transparent; outline: none; }
+  .osk-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: calc(5px * var(--f)); max-width: calc(750px * var(--f)); width: 100%; margin: 0 auto; }
+  .osk-grid .key { height: calc(44px * var(--f)); border-radius: 2px; }
+  .osk-bottom { display: flex; gap: calc(10px * var(--f)); justify-content: center; max-width: calc(750px * var(--f)); width: 100%; margin: 0 auto; }
+  .osk-bottom .btn { flex: 1; min-width: 0; text-align: center; }
+
   /* ---------- Dialog ---------- */
   .dialog { position: fixed; inset: 0; z-index: 30; display: none; align-items: center; background: var(--surface-overlay); }
   .dialog.open { display: flex; }
@@ -468,6 +513,15 @@
   <div class="stage"><div class="track" id="tTrack"></div></div>
 </section>
 
+<!-- ROMs & Spiele -->
+<section class="layer" id="roms">
+  <header><div class="htitle"><button class="round romnav" data-act="back" aria-label="Zurück" data-i18n-aria="common.back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button><h1 id="romTitle" data-i18n="roms.title">Spiele</h1></div><div class="nowline" id="romNow"></div></header>
+  <div class="bar">
+    <button class="pill romnav" id="romStartEmu" data-act="startemu"><span data-i18n="roms.startEmu">Emulator ohne Spiel starten</span></button>
+  </div>
+  <div class="stage"><div class="track" id="romTrack"></div></div>
+</section>
+
 <!-- AppCenter -->
 <section class="layer" id="apps">
   <header><div class="htitle"><button class="round anav" data-act="back" aria-label="Zurück" data-i18n-aria="common.back"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 5l-7 7 7 7"/></svg></button><h1 data-i18n="apps.title">AppCenter</h1></div><div class="nowline" id="aNow"></div></header>
@@ -492,6 +546,27 @@
 
 <div class="hint" id="hint"></div>
 <div class="splash" id="splash"><div class="inner"><div id="splashIcon"></div><div class="name" id="splashName"></div><div class="ring"></div><div class="shint" id="splashHint"></div></div><div class="skey" id="splashKey" data-i18n-html="splash.key"><b>Esc / B</b> im Hintergrund weiter starten</div></div>
+
+<!-- OSD Virtual Keyboard -->
+<div class="dialog osk-dialog" id="osk" role="dialog" aria-modal="true">
+  <div class="band osk-band">
+    <div class="osk-top">
+      <div class="osk-inpbox">
+        <span class="osk-label" id="oskLabel"></span>
+        <input class="osk-val" id="oskVal" type="text" readonly>
+      </div>
+      <button class="round osknav" id="oskClose" data-act="oskclose" aria-label="Schließen" data-i18n-aria="common.cancel"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg></button>
+    </div>
+    <div class="osk-grid" id="oskGrid"></div>
+    <div class="osk-bottom">
+      <button class="btn osknav" id="oskSpace" data-act="oskspace" data-i18n="osk.space">Leerzeichen</button>
+      <button class="btn osknav" id="oskBack" data-act="oskback" data-i18n="osk.backspace">Löschen</button>
+      <button class="btn osknav" id="oskShift" data-act="oskshift" data-i18n="osk.shift">Shift</button>
+      <button class="btn osknav" id="oskSym" data-act="osksym" data-i18n="osk.symbols">?123</button>
+      <button class="btn osknav" id="oskSubmit" data-act="osksubmit" data-i18n="osk.enter">Fertig</button>
+    </div>
+  </div>
+</div>
 
 <div class="dialog" id="dialog" role="dialog" aria-modal="true">
   <div class="band">
@@ -522,7 +597,9 @@ const ICONS = {
   store:    '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"><rect x="7" y="7" width="14" height="14" rx="2"/><rect x="27" y="7" width="14" height="14" rx="2"/><rect x="7" y="27" width="14" height="14" rx="2"/><path d="M34 27v14M27 34h14"/></svg>',
   image:    '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"><rect x="6" y="9" width="36" height="30" rx="3"/><circle cx="17" cy="19" r="3.5"/><path d="M6 33l11-9 8 7 6-5 11 8"/></svg>',
   chart:    '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"><path d="M6 40h36M10 34l8-10 7 6 12-15"/></svg>',
-  gear:     '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"><circle cx="24" cy="24" r="6"/><path d="M24 5l3 5 6-2 1 6 6 1-2 6 5 3-5 3 2 6-6 1-1 6-6-2-3 5-3-5-6 2-1-6-6-1 2-6-5-3 5-3-2-6 6-1 1-6 6 2z"/></svg>'
+  gear:     '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"><circle cx="24" cy="24" r="6"/><path d="M24 5l3 5 6-2 1 6 6 1-2 6 5 3-5 3 2 6-6 1-1 6-6-2-3 5-3-5-6 2-1-6-6-1 2-6-5-3 5-3-2-6 6-1 1-6 6 2z"/></svg>',
+  bluetooth:'<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M14 14l20 20-10 10V4l10 10L14 34"/></svg>',
+  keyboard: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="40" height="28" rx="4"/><path d="M10 17h2M16 17h2M22 17h2M28 17h2M34 17h2M10 24h2M16 24h2M22 24h2M28 24h2M34 24h2M14 31h20"/></svg>'
 };
 
 const DEMO = {"title":"Start","user":"Paul","radio_suggestions":["MDR Sachsen-Anhalt","Deutschlandfunk","radioeins"],"groups":[
@@ -647,12 +724,15 @@ function fitGrids() {
   fitGrid($('#aTrack'), '.agrid', 3);
   fitGrid($('#tTrack'), '.sgrid', 3);
   fitGrid($('#rTrack'), '.sgrid', 3);
+  fitGrid($('#romTrack'), '.romgrid', 3);
 }
 
 /* ============================================================ Ebenen */
 function layer() {
+  if ($('#osk').classList.contains('open')) return 'osk';
   if ($('#adlg').classList.contains('open')) return 'adlg';
   if ($('#dialog').classList.contains('open')) return 'dialog';
+  if ($('#roms').classList.contains('open')) return 'roms';
   if ($('#tv').classList.contains('open')) return 'tv';
   if ($('#apps').classList.contains('open')) return 'apps';
   if ($('#radio').classList.contains('open')) return 'radio';
@@ -660,7 +740,7 @@ function layer() {
   if ($('#inst').classList.contains('open')) return 'inst';                 // Installer liegt unter den anderen Ebenen
   return 'home';
 }
-const SCOPE = { home: '.nav', radio: '.rnav', settings: '.snav', dialog: '.dnav', tv: '.tnav', apps: '.anav', adlg: '.adnav', inst: '.inav' };
+const SCOPE = { home: '.nav', radio: '.rnav', settings: '.snav', dialog: '.dnav', tv: '.tnav', apps: '.anav', adlg: '.adnav', inst: '.inav', roms: '.romnav', osk: '.osknav' };
 function navItems() { return $$(SCOPE[layer()]).filter(e => !e.disabled && e.offsetParent !== null); }
 function updateHint() {
   const h = {
@@ -669,6 +749,8 @@ function updateHint() {
     settings: [T('hint.select'), T('hint.back')],
     tv:       [T('hint.tvOn'), T('hint.fav'), T('hint.homeShort'), T('hint.back')],
     apps:     [T('hint.appInstall'), T('hint.back')],
+    roms:     [T('hint.romLaunch'), T('hint.back')],
+    osk:      [T('hint.select'), T('osk.space'), T('osk.backspace'), T('common.cancel')],
     adlg:     [...($('#adText').classList.contains('fits') ? [] : [T('hint.scrollText')]), T('hint.cancel')],
     dialog:   [T('hint.cancel')],
     inst:     instHints()
@@ -762,7 +844,7 @@ function setFocus(el, instant) {
   updScroll();
 }
 /* ---- Blaettern: Pfeile oben rechts, Gruppenspruenge mit LT/RT bzw. Bild auf/ab */
-const TRACKS = { home: '#track', radio: '#rTrack', tv: '#tTrack', apps: '#aTrack', settings: '#sTrack', inst: '#iTrack' };
+const TRACKS = { home: '#track', radio: '#rTrack', tv: '#tTrack', apps: '#aTrack', settings: '#sTrack', inst: '#iTrack', roms: '#romTrack' };
 function curTrack() { const sel = TRACKS[layer()]; return sel ? $(sel) : null; }
 let lastScrollable = null;
 function updScroll() {
@@ -853,7 +935,15 @@ function activate(el = focusEl) {
   if (act === 'volup') return volume('up');
   if (act === 'voldown') return volume('down');
   if (act === 'mute') return volume('mute');
-  if (el.tagName === 'INPUT') return el.focus();
+  if (act === 'oskclose') return closeOsk();
+  if (act === 'oskspace') return oskAddChar(' ');
+  if (act === 'oskback') return oskBackspace();
+  if (act === 'oskshift') return oskToggleShift();
+  if (act === 'osksym') return oskToggleSym();
+  if (act === 'osksubmit') return oskSubmit();
+  if (el._oskChar) return oskAddChar(el._oskChar);
+  if (act === 'startemu') return launchEmuStandalone();
+  if (el.tagName === 'INPUT' && el.id !== 'oskVal') return openOsk(el);
   if (el.dataset.query) { $('#rSearch').value = el.dataset.query; return search(el.dataset.query); }
   if (el._station) return radioPlay(el._station);
   if (el._set) return el._set();
@@ -862,6 +952,8 @@ function activate(el = focusEl) {
   if (el._tile?.type === 'tv') return openLayer('tv');
   if (el._tile?.type === 'apps') return openLayer('apps');
   if (el._tile?.type === 'install') return openInstaller();
+  if (el._tile?.type === 'roms' || (el._tile && isEmulator(el._tile.id))) return openRoms(el._tile);
+  if (el._rom) return launchRom(el._rom);
   if (act === 'tvstop') return tvStop();
   if (act === 'checkupd') return jobStart('check');
   if (act === 'doupd') return confirmUpdate();
@@ -874,8 +966,10 @@ function activate(el = focusEl) {
 function back() {
   if (splashTile) return splashToBackground();
   const l = layer();
-  if (l === 'adlg') closeAdlg();
+  if (l === 'osk') closeOsk();
+  else if (l === 'adlg') closeAdlg();
   else if (l === 'dialog') closeDialog();
+  else if (l === 'roms') closeLayer();
   else if (l === 'tv' && tvQuery) { tvQuery = ''; $('#tSearch').value = ''; tvSearch(); }
   else if (l === 'radio' && results) { results = null; $('#rSearch').value = ''; renderStations(); }
   else if (l === 'settings' && wifiPick) { wifiPick = null; renderSettings(); }
@@ -884,6 +978,7 @@ function back() {
 }
 function secondary() {
   const l = layer();
+  if (l === 'osk') return oskBackspace();
   if (l === 'home' && focusEl?._tile) {
     const t = focusEl._tile;
     if (running.includes(t.id)) closeApp(t);
@@ -989,8 +1084,9 @@ function openLayer(id) {
   if (id === 'settings') loadSettings();
   if (id === 'tv') { tvOpen(); refreshVolume(); }
   if (id === 'apps') loadApps();
+  if (id === 'roms') renderRoms();
   const keep = lastFocus[id] && document.contains(lastFocus[id]) && lastFocus[id].offsetParent !== null ? lastFocus[id] : null;
-  const first = { radio: $('#rTrack .station.playing') || $('#rTrack .rnav'), settings: $('#sTrack .snav'), tv: $('#tTrack .chan'), apps: $('#aTrack .appcard') }[id];
+  const first = { radio: $('#rTrack .station.playing') || $('#rTrack .rnav'), settings: $('#sTrack .snav'), tv: $('#tTrack .chan'), apps: $('#aTrack .appcard'), roms: $('#romTrack .romcard') || $('#romStartEmu') }[id];
   setFocus(keep || first || $(`#${id} ${SCOPE[id]}`), true);
   updateHint();
 }
@@ -1100,8 +1196,12 @@ const DEMO_SETT = { scale: 1.75, scales: [1, 1.25, 1.5, 1.75, 2, 2.25], theme: '
   audio: { ok: true, outputs: [{ card: 'c', profile: 'output:hdmi-stereo', label: 'Digital Stereo (HDMI)', active: true }, { card: 'c', profile: 'output:analog-stereo', label: 'Analog Stereo', active: false }] },
   volume: { level: 45, muted: false }, net: { hostname: 'void', addresses: [{ iface: 'enp1s0', ip: '192.168.178.49' }] } };
 
+let btState = null, btScanning = false;
 async function loadSettings() {
-  try { sett = offline ? DEMO_SETT : await getJSON('/api/settings'); } catch { toast(T('settings.loadFailed'), true); return; }
+  try {
+    sett = offline ? DEMO_SETT : await getJSON('/api/settings');
+    try { btState = offline ? { available: true, service: true, powered: true, devices: [{ mac: '11:22:33:44:55:66', name: 'Xbox Wireless Controller', paired: true, connected: true }] } : await getJSON('/api/bluetooth/status'); } catch { btState = { available: false }; }
+  } catch { toast(T('settings.loadFailed'), true); return; }
   renderSettings();
   refreshVs(false);
 }
@@ -1219,6 +1319,46 @@ function renderSettings() {
       ? `${esc(T('settings.shareHow'))}<br><b>\\\\${esc(sett.net.hostname)}\\share</b>` + (ip ? `<br>${esc(T('settings.shareOr'))} <b>\\\\${esc(ip)}\\share</b>` : '') + `<br>${T('settings.shareLogin', { user: `<b>${esc(sett.share.user || '')}</b>` })}`
       : esc(T('settings.shareOff'));
     fc.appendChild(fi);
+  }
+
+  // Bluetooth
+  const bc = col(tr, T('bt.title'));
+  if (!btState || !btState.available) {
+    const bi = document.createElement('div'); bi.className = 'info';
+    bi.textContent = T('bt.unsupported');
+    bc.appendChild(bi);
+  } else if (!btState.service) {
+    const bi = document.createElement('div'); bi.className = 'info';
+    bi.textContent = T('bt.serviceOff');
+    bc.appendChild(bi);
+    const rb = row(bc);
+    const srv = pill(esc(T('bt.startService')), btStartService); srv.dataset.key = 'btsrv'; rb.appendChild(srv);
+  } else {
+    const rbt = row(bc);
+    const pwr = pill(esc(T(btState.powered ? 'bt.powerOff' : 'bt.powerOn')), btTogglePower, btState.powered); pwr.dataset.key = 'btpwr'; rbt.appendChild(pwr);
+    if (btState.powered) {
+      const scn = pill(esc(btScanning ? T('bt.scanning') : T('bt.scan')), btScan); scn.dataset.key = 'btscan'; rbt.appendChild(scn);
+      const devs = btState.devices || [];
+      if (devs.length) {
+        const rd = row(bc, T('bt.available'));
+        rd.classList.add('btlist');
+        for (const d of devs.slice(0, 10)) {
+          const isConn = !!d.connected, isPaired = !!d.paired;
+          const statusTxt = isConn ? ` · ${T('bt.connected')}` : isPaired ? ` · ${T('bt.paired')}` : '';
+          const b = pill(`${esc(d.name || d.mac)}<span class="sig">${statusTxt}</span>`, () => {
+            if (isConn) btDisconnect(d.mac);
+            else if (isPaired) btConnect(d.mac);
+            else btPair(d.mac);
+          }, isConn);
+          b.dataset.key = 'bt' + d.mac.replace(/[^A-Za-z0-9]/g, '');
+          rd.appendChild(b);
+        }
+      } else {
+        const bi = document.createElement('div'); bi.className = 'info';
+        bi.textContent = btScanning ? T('bt.scanning') : T('bt.noDevices');
+        bc.appendChild(bi);
+      }
+    }
   }
 
   // System
@@ -1449,13 +1589,44 @@ async function tvFav(ch) {
   try { tvFavs = await api(isFav ? '/api/tv/unfav' : '/api/tv/fav', { key: ch.key }); toast(isFav ? T('common.favRemoved') : T('common.favAdded')); renderTv(); }
   catch { toast(T('common.saveFailed'), true); }
 }
+let tvEpg = null, tvEpgTimer = null;
+async function refreshTvEpg() {
+  if (!tvNow || offline) { tvEpg = null; renderTvNowHeader(); return; }
+  try {
+    tvEpg = await getJSON('/api/tv/epg?channel_id=' + encodeURIComponent(tvNow.name || tvNow.key));
+  } catch { tvEpg = null; }
+  renderTvNowHeader();
+}
+function renderTvNowHeader() {
+  if (!tvNow) {
+    $('#tNow').innerHTML = `<strong>${esc(tvStatus?.count ? T('tv.count', { n: num(tvStatus.count) }) : T('tv.title'))}</strong><span>${esc(T('tv.free'))}</span>`;
+    return;
+  }
+  let extra = `<span>${esc(T('tv.running'))}</span>`;
+  if (tvEpg && tvEpg.current) {
+    const cur = tvEpg.current;
+    const prog = cur.progress ? `<span class="epg-bar"><b class="epg-fill" style="width:${Math.min(100, Math.max(0, cur.progress))}%"></b></span>` : '';
+    const next = tvEpg.next ? `<span class="epg-next">${esc(T('tv.epgNext', { title: tvEpg.next.title }))}</span>` : '';
+    extra = `<div class="epg-info"><div class="epg-line"><strong>${esc(cur.title)}</strong> ${prog} <span class="epg-time">${esc(cur.start || '')}${cur.stop ? '–' + esc(cur.stop) : ''}</span></div>${next}</div>`;
+  }
+  $('#tNow').innerHTML = `<strong>${esc(tvNow.name)}</strong>${extra}`;
+}
 function setTvNow(now) {
   const prev = tvNow?.key;
   tvNow = now || null;
   const tile = $('#track .tile.tvtile');
   if (tile) { tile.classList.toggle('playing', !!tvNow); tile.querySelector('.st').textContent = tvNow ? tvNow.name : ''; tile.querySelector('.ti').textContent = tvNow ? (tvNow.country ? regionName(tvNow.country) : T('common.live')) : ''; }
-  $('#tNow').innerHTML = tvNow ? `<strong>${esc(tvNow.name)}</strong><span>${esc(T('tv.running'))}</span>` : `<strong>${esc(tvStatus?.count ? T('tv.count', { n: num(tvStatus.count) }) : T('tv.title'))}</strong><span>${esc(T('tv.free'))}</span>`;
-  if (prev !== tvNow?.key) $$('#tTrack .chan').forEach(e => e.classList.toggle('playing', !!tvNow && e._chan.key === tvNow.key));
+  renderTvNowHeader();
+  if (prev !== tvNow?.key) {
+    $$('#tTrack .chan').forEach(e => e.classList.toggle('playing', !!tvNow && e._chan.key === tvNow.key));
+    clearInterval(tvEpgTimer);
+    if (tvNow) {
+      refreshTvEpg();
+      tvEpgTimer = setInterval(refreshTvEpg, 30000);
+    } else {
+      tvEpg = null;
+    }
+  }
   if ($('#tStop')) $('#tStop').disabled = !tvNow;
 }
 
@@ -2302,13 +2473,238 @@ const DEMO_PROBE = { uefi: true, secureboot: false, arch: 'x86_64', ram: 3.7 * G
               { path: '/dev/nvme0n1p2', start: 534528, sectors: 777000000, size: 397824000000, fstype: 'zfs_member', role: 'os', os: 'FreeBSD', locked: true }],
       free: [{ start: 777534528, sectors: 199000000, bytes: 101888000000 }], options: { whole: true, free: [{ start: 777534528, sectors: 199000000, bytes: 101888000000 }] } }] };
 
+/* ============================================================ Bluetooth-Steuerung */
+async function btTogglePower() {
+  try {
+    const res = await api('/api/bluetooth/power', { powered: !btState?.powered });
+    btState.powered = res.powered;
+    renderSettings();
+  } catch { toast(T('common.saveFailed'), true); }
+}
+async function btStartService() {
+  try {
+    await api('/api/bluetooth/service', { action: 'start' });
+    toast(T('common.saved'));
+    btState = await getJSON('/api/bluetooth/status');
+    renderSettings();
+  } catch { toast(T('common.saveFailed'), true); }
+}
+async function btScan() {
+  if (btScanning) return;
+  btScanning = true;
+  renderSettings();
+  try {
+    const res = await api('/api/bluetooth/scan', { timeout: 8 });
+    btState.devices = res.devices || [];
+  } catch {}
+  btScanning = false;
+  try { btState = await getJSON('/api/bluetooth/status'); } catch {}
+  renderSettings();
+}
+async function btConnect(mac) {
+  toast(T('bt.connect') + ' …');
+  try {
+    const res = await api('/api/bluetooth/connect', { mac });
+    if (res.connected) toast(T('bt.connected'));
+    btState = await getJSON('/api/bluetooth/status');
+    renderSettings();
+  } catch { toast(T('common.saveFailed'), true); }
+}
+async function btDisconnect(mac) {
+  try {
+    await api('/api/bluetooth/disconnect', { mac });
+    btState = await getJSON('/api/bluetooth/status');
+    renderSettings();
+  } catch { toast(T('common.saveFailed'), true); }
+}
+async function btPair(mac) {
+  toast(T('bt.pair') + ' …');
+  try {
+    await api('/api/bluetooth/pair', { mac });
+    btState = await getJSON('/api/bluetooth/status');
+    renderSettings();
+  } catch { toast(T('common.saveFailed'), true); }
+}
+
+/* ============================================================ ROMs & Spiele */
+const EMU_SYSTEMS = ['gba', 'snes', 'snes9x', 'nes', 'nestopia', 'psx', 'duckstation', 'psp', 'ppsspp', 'nds', 'melonds', 'dreamcast', 'flycast', 'gamecube', 'dolphin', 'c64', 'vice', 'atari2600', 'stella'];
+function isEmulator(id) { return EMU_SYSTEMS.includes(id); }
+let curRomTile = null;
+async function openRoms(tile) {
+  curRomTile = tile;
+  openLayer('roms');
+}
+async function renderRoms() {
+  if (!curRomTile) return;
+  const tr = $('#romTrack');
+  tr.innerHTML = ''; tr.dataset.x = 0; tr.style.transform = 'none';
+  const sysName = L(curRomTile.label) || curRomTile.id;
+  $('#romTitle').textContent = T('roms.title', { system: sysName });
+  let data = null;
+  try {
+    data = offline ? { system: curRomTile.id, count: 0, roms: [] } : await getJSON('/api/roms?system=' + encodeURIComponent(curRomTile.id));
+  } catch {
+    data = { system: curRomTile.id, count: 0, roms: [] };
+  }
+  const host = sett?.net?.hostname || 'voidstation';
+  const roms = Array.isArray(data) ? data : (data.roms || []);
+  $('#romNow').innerHTML = `<strong>${esc(sysName)}</strong><span>${esc(T('roms.count', { count: roms.length }))}</span>`;
+  if (roms.length) {
+    const g = document.createElement('div');
+    g.className = 'romgrid';
+    roms.forEach((r, i) => {
+      const card = document.createElement('div');
+      card.className = 'romcard romnav';
+      card.style.animationDelay = (i * 25) + 'ms';
+      card._rom = r;
+      card.innerHTML = `<div class="romicon">${ICONS[curRomTile.icon] || ICONS.gamepad}</div>` +
+        `<div class="romname">${esc(r.title || r.name)}</div>` +
+        `<div class="romsub">${esc(gb(r.size || 0))}</div>`;
+      g.appendChild(card);
+    });
+    section(tr, T('roms.count', { count: roms.length }), g);
+  } else {
+    const wrap = document.createElement('div');
+    const empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = T('roms.noGames');
+    const info = document.createElement('div');
+    info.className = 'info';
+    info.style.marginTop = '12px';
+    info.textContent = T('roms.hint', { host, system: curRomTile.id });
+    wrap.append(empty, info);
+    section(tr, sysName, wrap);
+  }
+  fitGrid(tr, '.romgrid', 3);
+  const first = $('#romTrack .romcard') || $('#romStartEmu');
+  if (first) setFocus(first, true);
+}
+async function launchRom(rom) {
+  if (!curRomTile || !rom) return;
+  toast(T('common.starting', null, 'Starte …') + ' ' + (rom.title || rom.name));
+  try {
+    await api('/api/roms/launch', { system: curRomTile.id, file: rom.filename });
+  } catch {
+    toast(T('home.launchFailed', { name: rom.title || rom.name }), true);
+  }
+}
+async function launchEmuStandalone() {
+  if (!curRomTile) return;
+  closeLayer();
+  launch(curRomTile, $('#track .tile[data-id="' + CSS.escape(curRomTile.id) + '"]') || document.body);
+}
+
+/* ============================================================ Globales OSD-Keyboard */
+let oskTarget = null, oskShift = false, oskSym = false;
+function openOsk(targetInput) {
+  oskTarget = targetInput;
+  const osk = $('#osk');
+  if (!osk) return;
+  oskShift = false;
+  oskSym = false;
+  $('#oskLabel').textContent = targetInput.placeholder || targetInput.getAttribute('aria-label') || '';
+  $('#oskVal').value = targetInput.value || '';
+  renderOskKeys();
+  osk.classList.add('open');
+  requestAnimationFrame(() => osk.classList.add('shown'));
+  const firstKey = $('#oskGrid .key') || $('#oskSubmit');
+  setFocus(firstKey, true);
+  updateHint();
+}
+function closeOsk() {
+  const osk = $('#osk');
+  if (!osk || !osk.classList.contains('open')) return;
+  osk.classList.remove('shown');
+  setTimeout(() => {
+    osk.classList.remove('open');
+    if (oskTarget && document.contains(oskTarget) && oskTarget.offsetParent !== null) {
+      setFocus(oskTarget, true);
+    } else {
+      const l = layer();
+      setFocus(lastFocus[l] || $(`#${l} ${SCOPE[l]}`), true);
+    }
+    updateHint();
+  }, 150);
+}
+function oskAddChar(c) {
+  const inp = $('#oskVal');
+  inp.value += c;
+  if (oskTarget) {
+    oskTarget.value = inp.value;
+    oskTarget.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  if (oskShift) { oskShift = false; renderOskKeys(); }
+}
+function oskBackspace() {
+  const inp = $('#oskVal');
+  inp.value = inp.value.slice(0, -1);
+  if (oskTarget) {
+    oskTarget.value = inp.value;
+    oskTarget.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+}
+function oskToggleShift() {
+  oskShift = !oskShift;
+  renderOskKeys();
+}
+function oskToggleSym() {
+  oskSym = !oskSym;
+  renderOskKeys();
+}
+function oskSubmit() {
+  if (oskTarget) {
+    oskTarget.value = $('#oskVal').value;
+    oskTarget.dispatchEvent(new Event('input', { bubbles: true }));
+    oskTarget.dispatchEvent(new Event('change', { bubbles: true }));
+    if (oskTarget.id === 'rSearch') search(oskTarget.value);
+    else if (oskTarget.id === 'tSearch') { tvQuery = oskTarget.value.trim(); tvSearch(); }
+    else if (oskTarget.id === 'wifiPw' && wifiPick) wifiConnect(wifiPick.ssid, oskTarget.value);
+  }
+  closeOsk();
+}
+function renderOskKeys() {
+  const grid = $('#oskGrid');
+  if (!grid) return;
+  const keep = focusEl?.dataset?.key;
+  grid.innerHTML = '';
+  const mapKey = LANG === 'en' ? 'us' : 'de';
+  const rows = oskSym ? OSK.sym : (OSK[mapKey] || OSK.de);
+  rows.forEach((r, ri) => {
+    [...r].forEach((c, ci) => {
+      const ch = oskShift ? c.toUpperCase() : c;
+      const b = document.createElement('button');
+      b.className = 'key osknav';
+      b.textContent = ch;
+      b._oskChar = ch;
+      b.dataset.key = `ok-${ri}-${ci}`;
+      grid.appendChild(b);
+    });
+  });
+  $('#oskShift').textContent = oskShift ? '⇧ SHIFT' : '⇧ Shift';
+  $('#oskShift').classList.toggle('on', oskShift);
+  $('#oskSym').textContent = oskSym ? T('osk.letters') : T('osk.symbols');
+  const again = keep && $(`#oskGrid [data-key="${CSS.escape(keep)}"]`);
+  if (again) setFocus(again, true);
+}
+
 /* ============================================================ Eingabe: Tastatur */
 const KEYMAP = { ArrowLeft: 'left', ArrowRight: 'right', ArrowUp: 'up', ArrowDown: 'down' };
 addEventListener('keydown', e => {
   if ((e.key === 'Enter' || e.key === ' ') && !e.repeat) held.key = true;
   if (e.repeat && focusEl?._hold) return e.preventDefault();
+  if (layer() === 'osk') {
+    if (e.key === 'Escape') { e.preventDefault(); closeOsk(); return; }
+    if (e.key === 'Enter') { e.preventDefault(); oskSubmit(); return; }
+    if (e.key === 'Backspace') { e.preventDefault(); oskBackspace(); return; }
+    if (KEYMAP[e.key]) { e.preventDefault(); move(KEYMAP[e.key]); return; }
+    if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+      e.preventDefault();
+      oskAddChar(e.key);
+      return;
+    }
+  }
   if (layer() === 'inst' && instKey(e)) return;
-  const inp = document.activeElement?.tagName === 'INPUT' ? document.activeElement : null;
+  const inp = document.activeElement?.tagName === 'INPUT' && document.activeElement.id !== 'oskVal' ? document.activeElement : null;
   if (inp) {
     if (e.key === 'Enter') { e.preventDefault(); if (inp.id === 'rSearch') search(inp.value); else if (inp.id === 'tSearch') { tvQuery = inp.value.trim(); tvSearch(); } else if (inp.id === 'wifiPw') wifiConnect(wifiPick.ssid, inp.value); }
     else if (e.key === 'Escape') { e.preventDefault(); inp.blur(); }
@@ -2376,8 +2772,16 @@ function padLoop(ts) {
   }
 }
 function fire(k) {
-  const inInput = document.activeElement?.tagName === 'INPUT';
+  const inInput = document.activeElement?.tagName === 'INPUT' && document.activeElement.id !== 'oskVal';
   if (inInput && k !== 'b') return;
+  if (layer() === 'osk') {
+    if (k === 'x') return oskBackspace();
+    if (k === 'y') return oskAddChar(' ');
+    if (k === 'b') return closeOsk();
+    if (k === 'start') return oskSubmit();
+    if (k === 'a') return activate();
+    return move(k);
+  }
   const osk = layer() === 'inst' && ['account', 'host'].includes(I?.step);
   if (osk && (k === 'lb' || k === 'rb')) return oskNextField(k === 'lb' ? -1 : 1);
   if (k === 'start' && layer() === 'inst' && ['device', 'manual'].includes(I?.step)) return $('#iTrack [data-key="next"]')?._set();
