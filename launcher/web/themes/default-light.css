@@ -46,25 +46,37 @@
   color: #15181c;
 }
 
-/* Kacheln haben dunkle/gesättigte Akzentfarben; Schrift, Icons und Uhr darauf müssen weiß/kontrastreich sein */
-:root[data-theme="default-light"] .tile {
+/* Startseiten-Kacheln haben dunkle/gesättigte Akzentfarben: Schrift, Icons und Uhr weiß */
+:root[data-theme="default-light"] #track .tile {
   color: #ffffff;
 }
-:root[data-theme="default-light"] .tile .sub {
+
+:root[data-theme="default-light"] #track .tile .sub {
   color: rgba(255, 255, 255, 0.85);
 }
-:root[data-theme="default-light"] .tile .icon {
-  color: #ffffff;
-}
-:root[data-theme="default-light"] .tile.clock {
-  color: #ffffff;
-}
-:root[data-theme="default-light"] .tile.clock .big {
-  color: #ffffff;
-}
-:root[data-theme="default-light"] .tile.clock .date {
+
+:root[data-theme="default-light"] #track .tile.clock .date,
+:root[data-theme="default-light"] #track .tile.radio .now .ti {
   color: rgba(255, 255, 255, 0.8);
 }
-:root[data-theme="default-light"] .tile .run {
+
+:root[data-theme="default-light"] #track .tile .run {
   background: rgba(255, 255, 255, 0.9);
+}
+
+/* Sender-, Radio- und App-Karten sind hell: dunkle Schrift – außer der gerade laufende Sender (dunkler Akzent) */
+:root[data-theme="default-light"] .station,
+:root[data-theme="default-light"] .appcard {
+  color: var(--text-primary);
+}
+
+:root[data-theme="default-light"] .station .star,
+:root[data-theme="default-light"] .chan .q {
+  color: var(--text-dim);
+}
+
+:root[data-theme="default-light"] .station.playing,
+:root[data-theme="default-light"] .station.playing .star,
+:root[data-theme="default-light"] .chan.playing .q {
+  color: #ffffff;
 }
