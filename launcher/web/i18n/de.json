@@ -517,6 +517,7 @@
   "hint.instHold": "<b>A halten</b> installieren",
   "hint.instOpen": "<b>Enter / A</b> öffnen",
   "hint.instVol": "<b>LB / RB</b> leiser / lauter",
+  "hint.instReboot": "<b>Enter / A</b> neu starten",
   "pad.connected": "Controller verbunden: {name}",
   "osk.space": "Leerzeichen",
   "osk.backspace": "Löschen",

@@ -250,6 +250,7 @@
   .jobband .jt { font-size: calc(17px * var(--f)); margin-bottom: 6px; display: flex; gap: 12px; align-items: center; }
   .jobband pre { margin: 0; font: calc(12.5px * var(--f))/1.35 "DejaVu Sans Mono", monospace; color: var(--text-dim); white-space: pre-wrap; max-height: calc(110px * var(--f)); overflow: hidden; }
   .spin { width: calc(14px * var(--f)); height: calc(14px * var(--f)); border: 2px solid var(--text-faint); border-top-color: var(--text); border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   /* Globales OSD-Keyboard */
   #osk.dialog { z-index: 45; }
   .osk-band { display: flex; flex-direction: column; gap: calc(14px * var(--f)); max-width: 90vw; margin: 0 auto; width: 100%; }
@@ -258,7 +259,7 @@
   .osk-inpbox.focused { border-color: var(--focus); }
   .osk-label { font-size: calc(13px * var(--f)); color: var(--text-dim); }
   .osk-val { flex: 1; font-size: calc(22px * var(--f)); color: var(--text-primary); min-height: 1.2em; border: none; background: transparent; outline: none; }
-  .osk-grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: calc(5px * var(--f)); max-width: calc(750px * var(--f)); width: 100%; margin: 0 auto; }
+  .osk-grid { display: grid; grid-template-columns: repeat(11, 1fr); gap: calc(5px * var(--f)); max-width: calc(750px * var(--f)); width: 100%; margin: 0 auto; }
   .osk-grid .key { height: calc(44px * var(--f)); border-radius: 2px; }
   .osk-bottom { display: flex; gap: calc(10px * var(--f)); justify-content: center; max-width: calc(750px * var(--f)); width: 100%; margin: 0 auto; }
   .osk-bottom .btn { flex: 1; min-width: 0; text-align: center; }
@@ -2345,13 +2346,14 @@ const DEMO_PROBE = { uefi: true, secureboot: false, arch: 'x86_64', ram: 3.7 * G
               { path: '/dev/nvme0n1p2', start: 534528, sectors: 777000000, size: 397824000000, fstype: 'zfs_member', role: 'os', os: 'FreeBSD', locked: true }],
       free: [{ start: 777534528, sectors: 199000000, bytes: 101888000000 }], options: { whole: true, free: [{ start: 777534528, sectors: 199000000, bytes: 101888000000 }] } }] };
 
-let oskTarget = null, oskShift = false, oskSym = false;
+let oskTarget = null, oskShift = false, oskSym = false, oskNav = false;
 function openOsk(targetInput) {
   oskTarget = targetInput;
   const osk = $('#osk');
   if (!osk) return;
   oskShift = false;
   oskSym = false;
+  oskNav = false;
   $('#oskLabel').textContent = targetInput.placeholder || targetInput.getAttribute('aria-label') || '';
   $('#oskVal').value = targetInput.value || '';
   renderOskKeys();
@@ -2364,6 +2366,7 @@ function openOsk(targetInput) {
 function closeOsk() {
   const osk = $('#osk');
   if (!osk || !osk.classList.contains('open')) return;
+  oskNav = false;
   osk.classList.remove('shown');
   setTimeout(() => {
     osk.classList.remove('open');
@@ -2444,11 +2447,17 @@ addEventListener('keydown', e => {
   if (e.repeat && focusEl?._hold) return e.preventDefault();
   if (layer() === 'osk') {
     if (e.key === 'Escape') { e.preventDefault(); closeOsk(); return; }
-    if (e.key === 'Enter') { e.preventDefault(); oskSubmit(); return; }
-    if (e.key === 'Backspace') { e.preventDefault(); oskBackspace(); return; }
-    if (KEYMAP[e.key]) { e.preventDefault(); move(KEYMAP[e.key]); return; }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (oskNav && focusEl) activate(focusEl);
+      else oskSubmit();
+      return;
+    }
+    if (e.key === 'Backspace') { e.preventDefault(); oskNav = false; oskBackspace(); return; }
+    if (KEYMAP[e.key]) { e.preventDefault(); oskNav = true; move(KEYMAP[e.key]); return; }
     if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
       e.preventDefault();
+      oskNav = false;
       oskAddChar(e.key);
       return;
     }
