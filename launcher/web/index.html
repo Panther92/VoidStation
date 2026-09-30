@@ -1506,7 +1506,7 @@ let tvEpg = null, tvEpgTimer = null;
 async function refreshTvEpg() {
   if (!tvNow || offline) { tvEpg = null; renderTvNowHeader(); return; }
   try {
-    tvEpg = await getJSON('/api/tv/epg?id=' + encodeURIComponent(tvNow.key || '') + '&name=' + encodeURIComponent(tvNow.name || ''));
+    tvEpg = await getJSON('/api/tv/epg?id=' + encodeURIComponent(tvNow.cid || tvNow.key || '') + '&name=' + encodeURIComponent(tvNow.name || ''));
   } catch { tvEpg = null; }
   renderTvNowHeader();
 }
