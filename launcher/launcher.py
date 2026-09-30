@@ -1778,7 +1778,7 @@ class ROMManager:
         "snes": ["snes9x-gtk"],
         "nes": ["nestopia"],
         "psx": ["~/.local/share/voidstation/apps/duckstation/AppRun"],
-        "psp": ["ppsspp"],
+        "psp": ["PPSSPPSDL", "ppsspp", "PPSSPPQt"],   # erster vorhandener
         "nds": ["melonDS"],
         "dreamcast": ["flatpak", "run", "org.flycast.Flycast"],
         "gamecube": ["dolphin-emu"],
@@ -1828,24 +1828,24 @@ class ROMManager:
         if not target.is_file() or not target.is_relative_to(sys_dir):
             raise ValueError("Spieldatei nicht gefunden")
 
-        # 1. Kachel-Befehl aus tiles.json
-        tile = find_tile(system) or find_tile(self.SYSTEM_TO_TILE.get(canon, canon))
+        # 1. Kachel-Befehl (tiles.json), 2. Katalog (catalog.json) – nur als Liste;
+        #    Shell-Befehle (z. B. PPSSPP: "for b in ...; do exec $b; done") koennen keine Datei uebergeben
         cmd = None
-        if tile and tile.get("cmd"):
-            base = tile["cmd"] if isinstance(tile["cmd"], list) else shlex.split(tile["cmd"])
-            cmd = expand(base) + [str(target)]
-        else:
-            # 2. Katalog-Befehl aus catalog.json
-            cat = catalog_app(system) or catalog_app(self.SYSTEM_TO_TILE.get(canon, canon))
-            if cat and cat.get("cmd"):
-                if isinstance(cat["cmd"], list):
-                    cmd = expand(cat["cmd"]) + [str(target)]
-                elif isinstance(cat["cmd"], str) and not ("for " in cat["cmd"] or ";" in cat["cmd"]):
-                    cmd = expand(shlex.split(cat["cmd"])) + [str(target)]
-            if not cmd and canon in self.EMULATOR_CMD:
-                cmd = expand(self.EMULATOR_CMD[canon]) + [str(target)]
-            if not cmd:
-                raise ValueError(f"Kein Emulator fuer {canon} konfiguriert")
+        tid = self.SYSTEM_TO_TILE.get(canon, canon)
+        for src in (find_tile(system), find_tile(tid), catalog_app(system), catalog_app(tid)):
+            if src and isinstance(src.get("cmd"), list):
+                cmd = expand(src["cmd"]) + [str(target)]
+                break
+        # 3. Fallback: erstes vorhandene Programm aus EMULATOR_CMD
+        if not cmd and canon in self.EMULATOR_CMD:
+            cands = self.EMULATOR_CMD[canon]
+            if canon == "psp":
+                exe = next((c for c in cands if shutil.which(c)), None)
+                cmd = [exe, str(target)] if exe else None
+            else:
+                cmd = expand(cands) + [str(target)]
+        if not cmd:
+            raise ValueError(f"Kein Emulator fuer {canon} konfiguriert")
 
         return APPS.start(f"rom_{canon}", cmd)
 
@@ -1964,7 +1964,7 @@ class Handler(BaseHTTPRequestHandler):
                         summary[s] = len(r)
                 return self._json(200, {"systems": summary})
             roms = ROMS.list_roms(system)
-            return self._json(200, {"system": system, "count": len(roms), "roms": roms})
+            return self._json(200, {"system": ROMS.canonical_system(system), "count": len(roms), "roms": roms})
         if path == "/tiles.json":
             try:
                 c = json.loads(CONFIG.read_text(encoding="utf-8"))
@@ -2158,6 +2158,8 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     res = ROMS.launch(sys_id, filename)
                     return self._json(200, {"result": res, "running": APPS.running()})
+                except OSError as e:          # Emulator nicht installiert
+                    return self._json(400, {"error": f"Emulator nicht gefunden: {e.filename or e}"})
                 except (ValueError, RuntimeError) as e:
                     return self._json(400, {"error": str(e)})
             if parts[:2] == ["api", "volume"] and len(parts) == 3:

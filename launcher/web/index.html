@@ -2438,7 +2438,7 @@ async function renderRoms() {
     const info = document.createElement('div');
     info.className = 'info';
     info.style.marginTop = '12px';
-    info.textContent = T('roms.hint', { host, system: curRomTile.id });
+    info.textContent = T('roms.hint', { host, system: data.system || curRomTile.id });
     wrap.append(empty, info);
     section(tr, sysName, wrap);
   }
