@@ -22,7 +22,7 @@ This site sets no cookies, stores nothing in your browser and embeds no content 
 
 ## Links and downloads {#links}
 
-Links lead to GitHub and SourceForge (ISO download), among others. If you follow them, the privacy policies of those providers apply.
+Links lead to GitHub, SourceForge (ISO download) and Buy Me a Coffee (donations), among others. If you follow them, the privacy policies of those providers apply.
 
 ## Contact {#contact}
 

@@ -6,6 +6,8 @@ VoidStation comes as a live ISO: write it to a USB stick, boot from it, try it o
 
 {{latest}}
 
+{{support}}
+
 ## Requirements {#requirements}
 
 - 64-bit PC (x86_64) – mini PC, older office PC or laptop

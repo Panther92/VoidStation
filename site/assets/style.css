@@ -241,6 +241,15 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 6px; font: inherit; fo
 
 .address p { margin: 0 0 12px; }
 
+/* Spenden-Hinweis (Download, Mitmachen) */
+.support { display: flex; gap: 18px; align-items: flex-start; background: var(--surface-card); padding: 16px; margin: 6px 0 22px; }
+.support .sq { flex: none; width: 64px; height: 64px; display: grid; place-items: center; background: var(--c); }
+.support .sq svg { width: 52%; height: 52%; }
+.support p { margin: 0 0 12px; }
+.support p:last-child { margin: 0; }
+.support .btn { min-height: 38px; }
+@media (max-width: 560px) { .support .sq { width: 46px; height: 46px; } }
+
 /* ---------------------------------------------------------------- News */
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 22px; }
 .chips a.pill { margin-left: auto; }

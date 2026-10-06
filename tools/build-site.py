@@ -75,6 +75,7 @@ ICONS = {
     "rss":      '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M10 22a16 16 0 0 1 16 16M10 11a27 27 0 0 1 27 27"/><circle cx="12" cy="36" r="2.4" fill="currentColor"/></svg>',
     "bug":      '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><rect x="15" y="14" width="18" height="26" rx="9"/><path d="M19 14a5 5 0 0 1 10 0M24 22v18M15 24H7M41 24h-8M15 33l-7 4M33 33l7 4M16 17l-6-5M32 17l6-5"/></svg>',
     "help":     '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="24" cy="24" r="18"/><path d="M18.5 19a5.5 5.5 0 1 1 7.7 5c-1.4.6-2.2 1.7-2.2 3.2V29"/><circle cx="24" cy="34.5" r="1.2" fill="currentColor"/></svg>',
+    "coffee":   '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M8 19h27v9a11 11 0 0 1-11 11h-5A11 11 0 0 1 8 28z"/><path d="M35 22h3a5 5 0 0 1 0 10h-4M6 43h31M16 6c-2 2.5 2 4.5 0 7M23 6c-2 2.5 2 4.5 0 7M30 6c-2 2.5 2 4.5 0 7"/></svg>',
     "scale":    '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M24 6v36M14 42h20M8 12h32M8 12l-5 13a6 6 0 0 0 10 0zM40 12l-5 13a6 6 0 0 0 10 0z"/></svg>',
     "github":   '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.72.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.71 1.26 3.37.96.1-.75.4-1.26.73-1.55-2.56-.29-5.25-1.28-5.25-5.69 0-1.26.45-2.29 1.19-3.09-.12-.29-.52-1.46.11-3.05 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.59.23 2.76.11 3.05.74.8 1.19 1.83 1.19 3.09 0 4.42-2.7 5.39-5.27 5.68.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5z"/></svg>',
 }
@@ -344,6 +345,7 @@ class Site:
             f'<a href="{self.url("privacy", lang)}">{esc(self.t(lang, "foot.privacy"))}</a>',
             f'<a href="{esc(self.cfg["github"])}" rel="noopener">GitHub</a>',
             f'<a href="{self.url("news", lang)}feed.xml">RSS</a>',
+            *([f'<a href="{esc(self.cfg["donate"])}" rel="noopener">{esc(self.t(lang, "foot.donate"))}</a>'] if self.cfg.get("donate") else []),
             f'<a href="{alt[other]}" hreflang="{other}" lang="{other}">{esc(self.t(other, "lang.name"))}</a>',
         ])
         return f"""<!doctype html>
@@ -403,6 +405,8 @@ class Site:
                 return self.address(lang, full=True)
             if name == "controller":
                 return self.address(lang, full=False)
+            if name == "support":
+                return self.support(lang)
             if name == "latest":
                 return (f'<p class="dim">{esc(self.t(lang, "latest.line", v=self.latest["version"], d=self.fmt_date(self.latest["date"], lang)))} '
                         f'<a href="{self.url("news", lang)}v{esc(self.latest["version"])}/">{esc(self.t(lang, "latest.more"))}</a></p>')
@@ -454,6 +458,14 @@ class Site:
     <p>{esc(self.t(lang, 'iso.soon.text'))}{sf_link}</p>
   </div>
 </div>"""
+
+    def support(self, lang):
+        url = self.cfg.get("donate")
+        if not url:
+            return ""
+        return (f'<div class="support"><span class="sq" style="--c:#74461f">{ICONS["coffee"]}</span>'
+                f'<div><p><strong>{esc(self.t(lang, "don.title"))}</strong> {esc(self.t(lang, "don.text"))}</p>'
+                f'<p><a class="btn" href="{esc(url)}" rel="noopener">{esc(self.t(lang, "don.button"))}</a></p></div></div>')
 
     def shot(self, lang, f):
         """Screenshot in der Sprache der Seite (docs/screenshots/en/…), sonst der deutsche"""
@@ -621,14 +633,15 @@ class Site:
                 self.tile("wide", "#6e2b2b", u("features"), t("t.features"), "play", t("t.features.sub")),
             ])
             g3 = "".join([
-                # links drei breite (News, GitHub, Fragen), rechts drei kleine (Fehler, Mitmachen, Lizenz)
+                # links drei breite (News, GitHub, Fragen), rechts drei kleine (Fehler, Mitmachen, Unterstuetzen)
                 self.tile("wide", "#24414a", f'{u("news")}{news["slug"]}/', t("t.news"),
                           extra=f'<span class="kick">{esc(self.fmt_date(news["date"], lang))}</span><span class="txt">{esc(news["title"][lang])}</span>', cls="text"),
                 self.tile("wide", "#2f3238", gh, "GitHub", sub=t("t.github.sub"), extra=f'<span class="icon">{ICONS["github"]}</span>', ext=True),
                 self.tile("wide", "#2b5f46", gh + "/discussions", t("t.discuss"), "help", t("t.discuss.sub"), ext=True),
                 self.tile("medium", "#6e2b2b", gh + "/issues", t("t.issues"), "bug", ext=True),
                 self.tile("medium", "#39414d", u("contribute"), t("t.contribute"), "chat"),
-                self.tile("medium", "#3a3f46", u("contribute", "lizenz" if lang == "de" else "license"), "GPL-3.0", "scale"),
+                (self.tile("medium", "#74461f", self.cfg["donate"], t("t.donate"), "coffee", ext=True) if self.cfg.get("donate") else
+                 self.tile("medium", "#3a3f46", u("contribute", "lizenz" if lang == "de" else "license"), "GPL-3.0", "scale")),
             ])
             groups = (f'<section class="group g1"><h2>{esc(t("g.start"))}</h2><div class="grid">{g1}</div></section>'
                       f'<section class="group g2"><h2>{esc(t("g.explore"))}</h2><div class="grid">{g2}</div></section>'

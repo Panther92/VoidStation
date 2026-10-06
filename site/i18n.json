@@ -35,6 +35,7 @@
     "t.issues": "Fehler melden",
     "t.discuss": "Fragen & Hilfe",
     "t.discuss.sub": "GitHub Discussions",
+    "t.donate": "Unterstützen",
 
     "s.start": "Startseite",
     "s.tv": "Fernsehen",
@@ -55,6 +56,9 @@
 
     "latest.line": "Aktuelle Version: {v} vom {d}.",
     "latest.more": "Was ist neu?",
+    "don.title": "Gefällt dir VoidStation?",
+    "don.text": "Es ist kostenlos, ohne Werbung und ohne Tracking – und bleibt es auch. Wenn du magst, kannst du die Weiterentwicklung mit einem Kaffee unterstützen.",
+    "don.button": "Einen Kaffee spendieren",
 
     "news.title": "News",
     "news.lead": "Neue Versionen und Neuigkeiten rund um VoidStation.",
@@ -75,6 +79,7 @@
 
     "foot.impressum": "Impressum",
     "foot.privacy": "Datenschutz",
+    "foot.donate": "Unterstützen",
     "foot.license": "Freie Software unter GPL-3.0",
     "foot.ai": "Mit KI-Unterstützung (Claude) entwickelt",
 
@@ -121,6 +126,7 @@
     "t.issues": "Report a bug",
     "t.discuss": "Questions & help",
     "t.discuss.sub": "GitHub Discussions",
+    "t.donate": "Donate",
 
     "s.start": "Start screen",
     "s.tv": "TV",
@@ -141,6 +147,9 @@
 
     "latest.line": "Current version: {v} from {d}.",
     "latest.more": "What's new?",
+    "don.title": "Enjoying VoidStation?",
+    "don.text": "It's free, with no ads and no tracking – and it will stay that way. If you like, you can support its development with a coffee.",
+    "don.button": "Buy me a coffee",
 
     "news.title": "News",
     "news.lead": "New releases and news about VoidStation.",
@@ -161,6 +170,7 @@
 
     "foot.impressum": "Legal notice",
     "foot.privacy": "Privacy",
+    "foot.donate": "Donate",
     "foot.license": "Free software under GPL-3.0",
     "foot.ai": "Developed with AI assistance (Claude)",
 

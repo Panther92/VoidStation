@@ -22,7 +22,7 @@ Diese Seite setzt keine Cookies, speichert nichts in deinem Browser und bindet k
 
 ## Links und Downloads {#links}
 
-Links führen unter anderem zu GitHub und zu SourceForge (Download der ISO). Wenn du ihnen folgst, gelten dort die Datenschutzbestimmungen des jeweiligen Anbieters.
+Links führen unter anderem zu GitHub, zu SourceForge (Download der ISO) und zu Buy Me a Coffee (Spenden). Wenn du ihnen folgst, gelten dort die Datenschutzbestimmungen des jeweiligen Anbieters.
 
 ## Kontakt {#kontakt}
 

@@ -31,6 +31,10 @@ Pull requests are welcome. New versions get an entry in `CHANGELOG.md` and `CHAN
 
 Credit where credit is due: a large part of the code was written with the help of Claude (Anthropic). Ideas, testing on real hardware, decisions and releases are down to the human behind the project.
 
+## Support {#support}
+
+{{support}}
+
 ## Thanks {#thanks}
 
 - **DevSpeX** for themes, the on-screen keyboard, Bluetooth, game lists, the program guide and controller support

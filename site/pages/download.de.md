@@ -6,6 +6,8 @@ VoidStation gibt es als Live-ISO: auf einen USB-Stick schreiben, davon starten, 
 
 {{latest}}
 
+{{support}}
+
 ## Voraussetzungen {#voraussetzungen}
 
 - 64-Bit-PC (x86_64) – Mini-PC, älterer Büro-PC oder Laptop

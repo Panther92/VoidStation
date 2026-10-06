@@ -31,6 +31,10 @@ Pull Requests sind willkommen. Neue Versionen bekommen einen Eintrag in `CHANGEL
 
 Ehre, wem Ehre gebührt: Ein großer Teil des Codes ist mit Hilfe von Claude (Anthropic) entstanden. Ideen, Tests auf echter Hardware, Entscheidungen und Veröffentlichung liegen beim Menschen hinter dem Projekt.
 
+## Unterstützen {#unterstuetzen}
+
+{{support}}
+
 ## Danke {#danke}
 
 - **DevSpeX** für Designs, Bildschirmtastatur, Bluetooth, Spielelisten, Programmvorschau und Controller-Unterstützung
