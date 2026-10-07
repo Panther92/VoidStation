@@ -172,7 +172,8 @@ VoidStation erkennt neue CSS-Dateien im Theme-Ordner automatisch und bietet sie 
 ## Spiele, Bluetooth, Programmvorschau
 
 - **Spiele:** ROMs in die Freigabe unter `share/ROMs/<System>` kopieren (`gba`, `snes`, `nes`, `psx`, `psp`, `nds`, `gamecube`, `dreamcast` …). Die Emulator-Kachel zeigt dann eine Spieleliste; ohne Spiele startet der Emulator direkt.
-- **Bluetooth:** Einstellungen → Bluetooth. Bringt `bluez` und `libspa-bluetooth` (Ton über PipeWire) mit; der Benutzer ist in der Gruppe `bluetooth`.
+- **Bluetooth:** Einstellungen → Bluetooth. Bringt `bluez` und `libspa-bluetooth` (Ton über PipeWire) mit; der Benutzer ist in der Gruppe `bluetooth`. VoidStation koppelt mit eigenem Agenten über D-Bus: „Just Works“ wird bestätigt, alte PIN-Geräte bekommen 0000/1234/1111, Tastatur-Codes stehen auf dem Bildschirm; Anfragen nur während der Suche (+3 Min.). Bei mehreren Adaptern gewinnt die neueste Bluetooth-Version (fest wählen: Adresse in `/usr/local/share/voidstation/bt-adapter`).
+- **Controller:** udev-Regeln geben Steam, Emulatoren und SDL direkten Zugriff (hidraw, uinput) auf Controller aller gängigen Hersteller. Die Startseite versteht Standard-Pads, einfache USB-Pads, Joysticks und Arcade-Sticks; eigene Belegung in `~/.config/voidstation/pads.json` (`{"<Name oder vid:pid>": {"<evdev-Code>": "a|b|x|y|lb|rb|lt|rt|select|start|up|down|left|right"}}`).
 - **Programmvorschau (EPG):** standardmäßig aus. Einschalten, indem man die Adresse einer XMLTV-Datei (`.xml` oder `.xml.gz`) einträgt:
   `echo 'https://…/epg.xml.gz' | sudo tee /usr/local/share/voidstation/epg-url`
   Die Datei wird täglich geladen, im Hintergrund eingelesen und als kleine `~/.local/share/voidstation/cache/epg.json` zwischengespeichert.

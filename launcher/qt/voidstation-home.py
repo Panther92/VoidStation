@@ -141,8 +141,43 @@ def theme_tokens(name):
 # ---------------------------------------------------------------------------
 class Gamepad:
     REPEAT = {"left", "right", "up", "down", "lb", "rb", "lt", "rt"}
+    # Controller mit Kernel-Treiber (Xbox, PlayStation, Switch, 8BitDo, Steam …): einheitliche Tasten
     KEYS = {304: "a", 305: "b", 307: "x", 308: "y", 310: "lb", 311: "rb", 312: "lt", 313: "rt",
             314: "select", 315: "start", 544: "up", 545: "down", 546: "left", 547: "right"}
+    # Einfache USB-Pads ohne eigenen Treiber (DragonRise u. a., Tasten ab BTN_TRIGGER): Taste 3 unten = A,
+    # Taste 2 rechts = B (SNES- wie PlayStation-Nachbauten)
+    GENERIC = {288: "y", 289: "b", 290: "a", 291: "x", 292: "lb", 293: "rb", 294: "lt", 295: "rt",
+               296: "select", 297: "start"}
+    # Joysticks / Flugsteuerung: Abzug = A, Daumentaste = B
+    JOY = {288: "a", 289: "b", 290: "x", 291: "y", 292: "lb", 293: "rb", 294: "select", 295: "start"}
+    # Arcade-Sticks u. ae. mit Tasten ab BTN_0
+    MISC = {256: "a", 257: "b", 258: "x", 259: "y", 260: "lb", 261: "rb", 262: "select", 263: "start"}
+    OVERRIDE = Path.home() / ".config/voidstation/pads.json"   # {"<Geraetename oder vid:pid>": {"<Code>": "a", …}}
+
+    @classmethod
+    def keymap(cls, dev, keys, abs_codes):
+        """Tastenbelegung fuer ein Geraet; None = kein Controller."""
+        from evdev import ecodes as E
+        info = dev.info
+        ids = (dev.name, f"{info.vendor:04x}:{info.product:04x}")
+        try:
+            own = json.loads(cls.OVERRIDE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            own = {}
+        for i in ids:
+            if isinstance(own.get(i), dict):
+                return {int(k): str(v) for k, v in own[i].items() if str(k).isdigit()}
+        if E.BTN_SOUTH in keys:
+            return dict(cls.KEYS)
+        pen = keys & {E.BTN_TOUCH, E.BTN_TOOL_PEN, E.BTN_STYLUS, E.BTN_TOOL_FINGER}
+        if E.BTN_TRIGGER in keys and not pen:
+            stick = abs_codes & {E.ABS_THROTTLE, E.ABS_RUDDER}    # Schubregler/Ruder: Flugsteuerung
+            m = dict(cls.JOY if stick else cls.GENERIC)
+            m.update({k: v for k, v in cls.KEYS.items() if k >= 544})      # Steuerkreuz als Tasten
+            return m
+        if E.BTN_0 in keys and not pen and {E.ABS_X, E.ABS_Y} <= abs_codes and "wacom" not in dev.name.lower():
+            return dict(cls.MISC)
+        return None
 
     def __init__(self):
         self.state = {}            # (geraet, taste) -> gedrueckt
@@ -181,13 +216,14 @@ class Gamepad:
                         dev = evdev.InputDevice(path)
                         caps = dev.capabilities()
                         keys = set(caps.get(E.EV_KEY, []))
-                        if not (keys & {E.BTN_SOUTH, E.BTN_TRIGGER, E.BTN_JOYSTICK}):
-                            dev.close()
-                            continue
                         axes = {}
                         for code, info in caps.get(E.EV_ABS, []):
                             axes[code] = info
-                        known[path] = (dev, axes)
+                        kmap = self.keymap(dev, keys, set(axes))
+                        if kmap is None:
+                            dev.close()
+                            continue
+                        known[path] = (dev, axes, kmap)
                         sel.register(dev, selectors.EVENT_READ)
                         with self.lock:
                             self.names.append(dev.name)
@@ -196,11 +232,11 @@ class Gamepad:
                         pass
             for key, _ in sel.select(timeout=1):
                 dev = key.fileobj
-                axes = known.get(dev.path, (None, {}))[1]
+                _d, axes, kmap = known.get(dev.path, (None, {}, {}))
                 try:
                     for ev in dev.read():
-                        if ev.type == E.EV_KEY and ev.code in self.KEYS:
-                            self._set(dev.path, self.KEYS[ev.code], ev.value != 0)
+                        if ev.type == E.EV_KEY and ev.code in kmap:
+                            self._set(dev.path, kmap[ev.code], ev.value != 0)
                         elif ev.type == E.EV_ABS:
                             self._abs(dev.path, ev.code, ev.value, axes.get(ev.code))
                 except OSError:

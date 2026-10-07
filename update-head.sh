@@ -127,20 +127,9 @@ xbps-query vba-m >/dev/null 2>&1 && xbps-remove -Ry vba-m >/dev/null 2>&1 && ech
 # Bluetooth: bluetoothctl braucht die Gruppe bluetooth (wirkt nach dem naechsten Neustart)
 getent group bluetooth >/dev/null && usermod -aG bluetooth "$VSUSER" || true
 
-# Bluetooth & Controller: DualSense / DualShock drahtlos (ClassicBondedOnly=false, UserspaceHID=true)
-if [ -f /etc/bluetooth/input.conf ]; then
-  grep -q '^UserspaceHID=true' /etc/bluetooth/input.conf || sed -i 's/^#*UserspaceHID=.*/UserspaceHID=true/' /etc/bluetooth/input.conf
-  grep -q '^ClassicBondedOnly=false' /etc/bluetooth/input.conf || sed -i 's/^#*ClassicBondedOnly=.*/ClassicBondedOnly=false/' /etc/bluetooth/input.conf
-fi
-mkdir -p /etc/udev/rules.d
-cat > /etc/udev/rules.d/70-gamepad.rules <<'EOF'
-# PlayStation DualSense & DualShock (USB & Bluetooth)
-KERNEL=="hidraw*", ATTRS{idVendor}=="054c", MODE="0660", TAG+="uaccess"
-SUBSYSTEM=="input", ATTRS{idVendor}=="054c", MODE="0660", TAG+="uaccess"
-KERNEL=="uinput", MODE="0660", GROUP="input", OPTIONS+="static_node=uinput"
-EOF
+# Bluetooth & Controller (BlueZ-Einstellungen, udev-Regeln, uinput): sysfix.sh
 
-say "Systemkorrekturen (elogind, WLAN, GRUB)"
+say "Systemkorrekturen (elogind, WLAN, GRUB, Bluetooth, Controller)"
 sh "$TV/sysfix.sh" || warn "Systemkorrekturen unvollstaendig"
 
 say "3/8  AppCenter-Helfer (installiert nur freigegebene Pakete)"

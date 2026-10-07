@@ -258,9 +258,24 @@ Layer {
     function btCall(path, body, busy, ok, okErr) {
         if (busy) app.toast(busy)
         Api.post(path, body, function (r) {
-            update(function () { bt = r && r.status ? r.status : (r && r.available !== undefined ? r : bt) })
-            if (ok) app.toast(r && r.ok === false && okErr ? okErr : ok, !!(r && r.ok === false && okErr))
-        }, fail)
+            btPairPoll.stop()
+            update(function () { bt = r && r.status && r.status.available !== undefined ? r.status : (r && r.available !== undefined ? r : bt) })
+            if (!ok) return
+            var bad = !!(r && r.ok === false && okErr)
+            app.toast(bad && r.error ? Ui.t(r.error) : bad ? okErr : ok, bad)   // Fehler mit Ursache (bt.err.*)
+        }, function (e) { btPairPoll.stop(); fail(e) })
+    }
+    function btPair(mac) {
+        btPairPoll.t0 = Date.now(); btPairPoll.shown = ""; btPairPoll.start()
+        btCall("/api/bluetooth/pair", { mac: mac }, Ui.t("bt.pairing"), Ui.t("bt.pairedToast"), Ui.t("bt.pairFailed"))
+    }
+    function btExtra(d) {                       // " · Controller · 80 % · Verbunden"
+        var p = []
+        if (d.kind && d.kind !== "other") p.push(Ui.t("bt.kind." + d.kind))
+        if (d.battery !== null && d.battery !== undefined) p.push(Ui.num(d.battery) + " %")
+        if (d.connected) p.push(Ui.t("bt.connected"))
+        else if (d.paired) p.push(Ui.t("bt.paired"))
+        return p.length ? " · " + Ui.esc(p.join(" · ")) : ""
     }
     function btScan() {
         if (btScanning) return
@@ -273,8 +288,21 @@ Layer {
         property real t0: 0
         onTriggered: Api.get("/api/bluetooth/status", function (b) {
             s.update(function () { s.bt = b })
-            if (!b.scanning || Date.now() - btPoll.t0 > 14000) { btPoll.stop(); s.btScanning = false }
+            if (!b.scanning || Date.now() - btPoll.t0 > 35000) { btPoll.stop(); s.btScanning = false }
         }, function () { btPoll.stop(); s.btScanning = false })
+    }
+    // Waehrend des Koppelns: verlangt eine Tastatur einen Code, steht er unten rechts, bis die Kopplung durch ist
+    Timer {
+        id: btPairPoll; interval: 1000; repeat: true
+        property real t0: 0
+        property string shown: ""
+        onTriggered: Api.get("/api/bluetooth/status", function (b) {
+            if (b.prompt && b.prompt.code && b.prompt.code !== btPairPoll.shown) {
+                btPairPoll.shown = b.prompt.code
+                toastBox.show(Ui.t("bt.typeCode", { code: b.prompt.code }), false, 60000)
+            }
+            if (Date.now() - btPairPoll.t0 > 150000) btPairPoll.stop()   // sonst beendet btCall die Abfrage
+        }, function () { btPairPoll.stop() })
     }
     function setFrontend(fe) {
         if (sett.frontend === fe) return
@@ -492,6 +520,11 @@ Layer {
                        onTriggered: s.btCall("/api/bluetooth/power", { powered: !s.bt.powered }, Ui.t(s.bt.powered ? "bt.poweringOff" : "bt.poweringOn")) }
                 Pill { property string key: "btscan"; visible: !!s.bt && s.bt.powered; text: s.btScanning ? Ui.t("bt.scanning") : Ui.t("bt.scan"); onTriggered: s.btScan() }
             }
+            Info { visible: !!s.bt && s.bt.available && s.bt.service && !!s.bt.blocked; html: Ui.esc(Ui.t("bt.blocked")) }
+            // Hinweis zum Kopplungsmodus, solange (noch) kein neues Geraet gefunden ist
+            Info { visible: !!s.bt && s.bt.available && s.bt.service && s.bt.powered &&
+                            (s.btScanning || !(s.bt.devices || []).some(function (d) { return !d.paired }))
+                   html: Ui.t("bt.hint") }
             Info { visible: !!s.bt && s.bt.available && s.bt.service && s.bt.powered && !(s.bt.devices || []).length
                    html: Ui.esc(s.btScanning ? Ui.t("bt.scanning") : Ui.t("bt.noDevices")) }
             SetRow {
@@ -508,13 +541,12 @@ Layer {
                             rich: true
                             maxWidth: Ui.screenW * 0.4 - (rm.visible ? rm.width + 8 * Ui.f : 0)
                             on: !!modelData.connected
-                            text: Ui.esc(modelData.name || modelData.mac) + "<font color='" + Ui.c.textFaint + "'>" +
-                                  (modelData.connected ? " · " + Ui.t("bt.connected") : modelData.paired ? " · " + Ui.t("bt.paired") : "") + "</font>"
+                            text: Ui.esc(modelData.name || modelData.mac) + "<font color='" + Ui.c.textFaint + "'>" + s.btExtra(modelData) + "</font>"
                             onTriggered: {
                                 var m = modelData.mac
                                 if (modelData.connected) s.btCall("/api/bluetooth/disconnect", { mac: m }, Ui.t("bt.disconnecting"), Ui.t("bt.disconnectedToast"))
                                 else if (modelData.paired) s.btCall("/api/bluetooth/connect", { mac: m }, Ui.t("bt.connecting"), Ui.t("bt.connectedToast"), Ui.t("bt.connectFailed"))
-                                else s.btCall("/api/bluetooth/pair", { mac: m }, Ui.t("bt.pairing"), Ui.t("bt.pairedToast"), Ui.t("bt.pairFailed"))
+                                else s.btPair(m)
                             }
                         }
                         Pill {

@@ -3,6 +3,20 @@
 English version of `CHANGELOG.md`, shown in the update dialog when the interface is set to English.
 Same format and the same version headings: `## <version> – <YYYY-MM-DD>`, followed by bullet points.
 
+## 0.15.0 – 2026-10-07
+- Bluetooth rebuilt: VoidStation now handles pairing itself, no keyboard needed – headphones, controllers and joysticks using “Just Works” are confirmed, older devices that need a PIN automatically get 0000, 1234 or 1111. Until now such devices failed silently
+- Keyboards that ask for a code while pairing: the code is shown at the bottom right until pairing is done
+- Other devices cannot pair on their own – requests are only accepted during a scan and for 3 minutes after it
+- Scanning takes 30 instead of 10 seconds; found devices stay selectable for 3 minutes. If a device has disappeared in the meantime, a short rescan runs before pairing
+- Cleaner list: phones, PCs and TVs nearby and devices without a name no longer show up. Instead each entry says what it is (audio, controller, keyboard, mouse) and – where the device reports it – the battery level
+- Error messages with a reason (“Device is not responding – is it in pairing mode?” instead of just “Pairing failed”) and a hint on how common devices enter pairing mode (AirPods, PlayStation, Xbox, Switch)
+- Headphones: sound switches to them right after connecting
+- Two Bluetooth adapters (e.g. a USB dongle in addition to the built-in chip): the newer one is used, the other is switched off. To pick one: put its address in `/usr/local/share/voidstation/bt-adapter`
+- Bluetooth blocked by the radio switch: “Turn on” lifts the block
+- Controllers that forgot their pairing (reset, other device) pair again without “Unpair” first; headphones reconnect faster
+- Start page: plain USB pads without their own driver, joysticks and arcade sticks now control the interface too. Custom mapping via `~/.config/voidstation/pads.json`
+- Steam, emulators and SDL games may access controllers from all common brands directly (Sony, Microsoft, Nintendo, Valve, 8BitDo, Logitech, Hori, PDP, PowerA, Thrustmaster, GameSir and more, over USB and Bluetooth) – previously PlayStation only
+
 ## 0.14.3 – 2026-10-05
 - Old kernels are removed automatically once the system runs fine with the newest kernel (interface up for 10 minutes) – saves about 300 MB per kernel
 - Direct boot (EFISTUB): if the firmware rearranges the boot order itself (e.g. always GRUB first), it is left that way instead of being overwritten on every kernel update – GRUB also starts the newest kernel. To force it: `sudo voidstation-efistub --order`

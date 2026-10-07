@@ -11,6 +11,7 @@ Kleiner lokaler Dienst fuer die Kacheloberflaeche:
   * Radio im Hintergrund (mpv), Sendersuche ueber radio-browser.info, Favoriten
   * Lautstaerke (wpctl)
   * optional: Guide-/Home-Taste am Gamepad (python3-evdev)
+  * Bluetooth: BlueZ ueber D-Bus mit eigenem Kopplungs-Agenten (python3-gobject)
 
 Lauscht ausschliesslich auf 127.0.0.1.
 """
@@ -2520,121 +2521,606 @@ class ROMManager:
 
 
 ROMS = ROMManager()
-#  Bluetooth: Audio-Kopfhörer und Wireless Gamepads
+
+
 # ---------------------------------------------------------------------------
+#  Bluetooth: Kopfhoerer, Controller, Joysticks, Tastaturen – BlueZ ueber D-Bus
+# ---------------------------------------------------------------------------
+BT_AGENT_XML = """
+<node>
+  <interface name="org.bluez.Agent1">
+    <method name="Release"/>
+    <method name="RequestPinCode"><arg type="o" direction="in"/><arg type="s" direction="out"/></method>
+    <method name="DisplayPinCode"><arg type="o" direction="in"/><arg type="s" direction="in"/></method>
+    <method name="RequestPasskey"><arg type="o" direction="in"/><arg type="u" direction="out"/></method>
+    <method name="DisplayPasskey"><arg type="o" direction="in"/><arg type="u" direction="in"/><arg type="q" direction="in"/></method>
+    <method name="RequestConfirmation"><arg type="o" direction="in"/><arg type="u" direction="in"/></method>
+    <method name="RequestAuthorization"><arg type="o" direction="in"/></method>
+    <method name="AuthorizeService"><arg type="o" direction="in"/><arg type="s" direction="in"/></method>
+    <method name="Cancel"/>
+  </interface>
+</node>
+"""
+
+# Geraeteart aus dem BlueZ-Symbol; was nicht gekoppelt ist und hier "hide" ergibt, erscheint nicht in der Liste
+BT_KIND_BY_ICON = (("audio", "audio"), ("input-gaming", "gamepad"), ("input-keyboard", "keyboard"),
+                   ("input-mouse", "mouse"), ("input-tablet", "mouse"), ("phone", "hide"),
+                   ("computer", "hide"), ("video-display", "hide"), ("printer", "hide"),
+                   ("camera", "hide"), ("network", "hide"), ("modem", "hide"))
+BT_KIND_ORDER = {"audio": 0, "gamepad": 1, "keyboard": 2, "mouse": 3, "other": 4, "hide": 5}
+
+# BlueZ-Fehler -> Schluessel in i18n (bt.err.*)
+BT_ERRORS = (("AuthenticationFailed", "auth"), ("AuthenticationRejected", "auth"), ("AuthenticationCanceled", "auth"),
+             ("AuthenticationTimeout", "timeout"), ("ConnectionAttemptFailed", "timeout"), ("Page Timeout", "timeout"),
+             ("page-timeout", "timeout"), ("Host is down", "timeout"), ("UnknownObject", "gone"),
+             ("DoesNotExist", "gone"), ("does not exist", "gone"), ("NotReady", "off"), ("Blocked", "off"),
+             ("InProgress", "busy"), ("profile-unavailable", "profile"), ("NotAvailable", "profile"))
+
+
+def bt_error_key(msg):
+    for needle, key in BT_ERRORS:
+        if needle.lower() in (msg or "").lower():
+            return "bt.err." + key
+    return "bt.err.other"
+
+
 class BluetoothManager:
-    """Verwaltet Bluetooth-Geräte (Headsets, Gamepads, etc.) über bluetoothctl."""
+    """BlueZ ueber D-Bus (python3-gobject) mit eigenem Kopplungs-Agenten.
+
+    Der Agent beantwortet Kopplungsanfragen selbst, ohne Tastatur am Fernseher:
+      * Just Works / Bestaetigung (Kopfhoerer, Controller, AirPods): annehmen
+      * alte Geraete mit PIN: nacheinander 0000, 1234, 1111
+      * Tastaturen, die einen Code verlangen: Code steht in status()["prompt"] (Oberflaeche zeigt ihn)
+    Anfragen, die ein Geraet von sich aus stellt, nimmt er nur im Kopplungsfenster an (Suche + 3 Min.)
+    oder fuer bereits gekoppelte Geraete – sonst koennte sich jedes Geraet in Reichweite koppeln.
+    Mehrere Adapter (z. B. USB-Stick + eingebauter Chip): der neueste Bluetooth-Standard gewinnt,
+    die anderen werden ausgeschaltet. Fest waehlbar ueber /usr/local/share/voidstation/bt-adapter
+    (Adresse des Adapters)."""
+
+    MAC_RE = re.compile(r"^[0-9A-F]{2}(:[0-9A-F]{2}){5}$", re.I)
+    AGENT_PATH = "/org/voidstation/btagent"
+    PINS = ("0000", "1234", "1111")
+    SCAN_SECONDS = 30
+    WINDOW = 180
+    ADAPTER_FILE = Path("/usr/local/share/voidstation/bt-adapter")
 
     def __init__(self):
         self.lock = threading.Lock()
+        self.bus = None
+        self.Gio = self.GLib = None
+        self._agent_ok = False
+        self._started = False
         self._scanning = False
+        self._scan_until = 0.0
+        self._window_until = 0.0
+        self._pairing = None          # D-Bus-Pfad des Geraets, das gerade gekoppelt wird
+        self._pin = "0000"
+        self._pin_asked = False
+        self._prompt = None           # {"mac", "code"} fuer Tastaturen
+        self._adapter_path = None
+        self._last_err = ""
 
+    # ---- Verbindung zu BlueZ ----
+    def start(self):
+        """Agent-Thread starten (einmal, beim Start des Launchers)."""
+        if self._started:
+            return
+        self._started = True
+        try:
+            import gi
+            gi.require_version("Gio", "2.0")
+            from gi.repository import Gio, GLib
+        except (ImportError, ValueError) as e:
+            log("Bluetooth: python3-gobject fehlt, nur bluetoothctl:", e)
+            return
+        self.Gio, self.GLib = Gio, GLib
+        threading.Thread(target=self._agent_thread, daemon=True).start()
+
+    def _connect_bus(self):
+        Gio = self.Gio
+        addr = os.environ.get("VS_BT_BUS")             # nur fuer Tests (eigener D-Bus mit nachgebautem BlueZ)
+        if addr:
+            return Gio.DBusConnection.new_for_address_sync(
+                addr, Gio.DBusConnectionFlags.AUTHENTICATION_CLIENT | Gio.DBusConnectionFlags.MESSAGE_BUS_CONNECTION, None, None)
+        return Gio.bus_get_sync(Gio.BusType.SYSTEM, None)
+
+    def _agent_thread(self):
+        Gio, GLib = self.Gio, self.GLib
+        ctx = GLib.MainContext()
+        ctx.push_thread_default()
+        while self.bus is None:
+            try:
+                self.bus = self._connect_bus()
+            except GLib.Error as e:
+                log("Bluetooth: kein System-D-Bus:", e.message)
+                time.sleep(10)
+        node = Gio.DBusNodeInfo.new_for_xml(BT_AGENT_XML)
+        self.bus.register_object(self.AGENT_PATH, node.interfaces[0], self._agent_call, None, None)
+        self.bus.signal_subscribe("org.freedesktop.DBus", "org.freedesktop.DBus", "NameOwnerChanged",
+                                  "/org/freedesktop/DBus", "org.bluez", Gio.DBusSignalFlags.NONE,
+                                  self._owner_changed, None)
+        self._register_agent()
+        GLib.MainLoop(ctx).run()
+
+    def _owner_changed(self, _conn, _sender, _path, _iface, _sig, params, _data):
+        name, _old, new = params.unpack()
+        if name != "org.bluez":
+            return
+        self._agent_ok = False
+        self._adapter_path = None
+        if new:                                         # bluetoothd (neu) gestartet
+            threading.Thread(target=lambda: (time.sleep(1), self._register_agent()), daemon=True).start()
+
+    def _register_agent(self):
+        if not self.bus:
+            return False
+        try:
+            self._call("/org/bluez", "org.bluez.AgentManager1", "RegisterAgent",
+                       self.GLib.Variant("(os)", (self.AGENT_PATH, "KeyboardDisplay")))
+        except RuntimeError as e:
+            if "AlreadyExists" not in str(e):
+                if "ServiceUnknown" not in str(e) and "NameHasNoOwner" not in str(e):
+                    log("Bluetooth: Agent nicht angemeldet:", e)
+                return False
+        try:
+            self._call("/org/bluez", "org.bluez.AgentManager1", "RequestDefaultAgent",
+                       self.GLib.Variant("(o)", (self.AGENT_PATH,)))
+        except RuntimeError as e:
+            log("Bluetooth: Agent nicht Standard:", e)
+        if not self._agent_ok:
+            log("Bluetooth: Kopplungs-Agent aktiv")
+        self._agent_ok = True
+        return True
+
+    def _call(self, path, iface, method, params=None, timeout=10):
+        """Methode bei BlueZ aufrufen; Fehler -> RuntimeError mit D-Bus-Fehlername und Text."""
+        if not self.bus:
+            raise RuntimeError("org.bluez.Error.NotReady: kein D-Bus")
+        try:
+            r = self.bus.call_sync("org.bluez", path, iface, method, params, None,
+                                   self.Gio.DBusCallFlags.NONE, int(timeout * 1000), None)
+            return r.unpack() if r is not None else ()
+        except self.GLib.Error as e:
+            name = self.Gio.DBusError.get_remote_error(e) or ""
+            msg = re.sub(r"^GDBus\.Error:[\w.]+: ", "", e.message or "")
+            raise RuntimeError(f"{name}: {msg}") from None
+
+    def _set_prop(self, path, iface, prop, variant):
+        self._call(path, "org.freedesktop.DBus.Properties", "Set", self.GLib.Variant("(ssv)", (iface, prop, variant)))
+
+    def _objects(self):
+        try:
+            return self._call("/", "org.freedesktop.DBus.ObjectManager", "GetManagedObjects")[0]
+        except RuntimeError:
+            return {}
+
+    def _bluez_running(self):
+        if not self.bus:
+            return False
+        try:
+            r = self.bus.call_sync("org.freedesktop.DBus", "/org/freedesktop/DBus", "org.freedesktop.DBus",
+                                   "NameHasOwner", self.GLib.Variant("(s)", ("org.bluez",)), None,
+                                   self.Gio.DBusCallFlags.NONE, 3000, None)
+            return bool(r.unpack()[0])
+        except self.GLib.Error:
+            return False
+
+    # ---- Adapter ----
+    def _adapter(self, objs=None):
+        """Pfad des Adapters, mit dem VoidStation arbeitet (siehe Klassenbeschreibung)."""
+        objs = objs if objs is not None else self._objects()
+        ads = sorted((p, o["org.bluez.Adapter1"]) for p, o in objs.items() if "org.bluez.Adapter1" in o)
+        if not ads:
+            self._adapter_path = None
+            return None
+        try:
+            want = self.ADAPTER_FILE.read_text(encoding="utf-8").strip().upper()
+        except OSError:
+            want = ""
+        pick = next((p for p, a in ads if want and str(a.get("Address", "")).upper() == want), None)
+        if not pick:
+            usable = [(p, a) for p, a in ads if a.get("PowerState") != "off-blocked"] or ads
+            pick = max(usable, key=lambda pa: (int(pa[1].get("Version", 0) or 0), -ads.index(pa)))[0]
+        if pick != self._adapter_path:
+            self._adapter_path = pick
+            a = dict(ads)[pick]
+            log("Bluetooth-Adapter:", pick, a.get("Address", ""), "Version", a.get("Version", "?"))
+            for p, other in ads:                           # zweiter Adapter aus, sonst antworten beide
+                if p != pick and other.get("Powered"):
+                    try:
+                        self._set_prop(p, "org.bluez.Adapter1", "Powered", self.GLib.Variant("b", False))
+                        log("Bluetooth: weiterer Adapter ausgeschaltet:", p, other.get("Address", ""))
+                    except RuntimeError as e:
+                        log("Bluetooth:", p, e)
+        return pick
+
+    def _dev_path(self, adapter, mac):
+        return f"{adapter}/dev_{mac.upper().replace(':', '_')}"
+
+    @staticmethod
+    def _mac_of(path):
+        m = re.search(r"dev_([0-9A-F_]{17})$", path or "", re.I)
+        return m.group(1).replace("_", ":").upper() if m else ""
+
+    # ---- Agent (laeuft im Agent-Thread) ----
+    def _allowed(self, path):
+        return path == self._pairing or time.time() < self._window_until
+
+    def _known(self, path):
+        d = self._objects().get(path, {}).get("org.bluez.Device1", {})
+        return bool(d.get("Paired") or d.get("Trusted"))
+
+    def _agent_call(self, _conn, _sender, _path, _iface, method, params, inv):
+        GLib = self.GLib
+        args = params.unpack()
+        dev = args[0] if args else ""
+        mac = self._mac_of(dev)
+
+        def reject(why="Rejected"):
+            log("Bluetooth-Agent:", method, mac, "abgelehnt")
+            inv.return_dbus_error("org.bluez.Error." + why, "VoidStation: nicht im Kopplungsfenster")
+
+        if method == "Release":
+            self._agent_ok = False
+            return inv.return_value(None)
+        if method == "Cancel":
+            self._prompt = None
+            return inv.return_value(None)
+        if method == "RequestPinCode":
+            if not self._allowed(dev):
+                return reject()
+            self._pin_asked = True
+            log("Bluetooth-Agent: PIN", self._pin, "fuer", mac)
+            return inv.return_value(GLib.Variant("(s)", (self._pin,)))
+        if method == "DisplayPinCode":
+            self._prompt = {"mac": mac, "code": args[1]}
+            return inv.return_value(None)
+        if method == "RequestPasskey":
+            if not self._allowed(dev):
+                return reject()
+            return inv.return_value(GLib.Variant("(u)", (0,)))
+        if method == "DisplayPasskey":
+            self._prompt = {"mac": mac, "code": f"{args[1]:06d}", "entered": args[2]}
+            return inv.return_value(None)
+        if method in ("RequestConfirmation", "RequestAuthorization"):
+            if not self._allowed(dev):
+                return reject()
+            return inv.return_value(None)
+        if method == "AuthorizeService":
+            if self._known(dev) or self._allowed(dev):
+                return inv.return_value(None)
+            return reject()
+        inv.return_dbus_error("org.bluez.Error.Rejected", "unbekannt")
+
+    # ---- Abfragen ----
     def is_available(self):
         return bool(shutil.which("bluetoothctl"))
 
     def is_service_active(self):
-        return os.path.exists("/var/service/bluetoothd")
-
-    def is_powered(self):
-        r = run(["bluetoothctl", "show"])
-        if r and r.returncode == 0:
-            for line in r.stdout.splitlines():
-                if "Powered: yes" in line:
-                    return True
-        return False
-
-    def status(self):
-        available = self.is_available()
-        service = self.is_service_active()
-        powered = self.is_powered() if (available and service) else False
-        devices = self.list_devices() if powered else []
-        return {
-            "available": available,
-            "service": service,
-            "powered": powered,
-            "scanning": self._scanning,
-            "devices": devices,
-        }
-
-    MAC_RE = re.compile(r"^[0-9A-F]{2}(:[0-9A-F]{2}){5}$", re.I)
+        return os.path.exists("/var/service/bluetoothd") or self._bluez_running()
 
     @staticmethod
-    def _named(mac, name):
-        # Geraete ohne Namen (bluetoothctl zeigt dann die MAC mit Bindestrichen) nicht anbieten
-        return name.replace("-", ":").upper() != mac.upper()
+    def _kind(dev):
+        icon = str(dev.get("Icon") or "")
+        for prefix, kind in BT_KIND_BY_ICON:
+            if icon.startswith(prefix):
+                return kind
+        cls = int(dev.get("Class") or 0)
+        major, minor = (cls >> 8) & 0x1F, (cls >> 2) & 0x3F
+        if major == 0x04:
+            return "audio"
+        if major == 0x05:
+            if (minor & 0x0F) in (1, 2):                       # Joystick, Gamepad
+                return "gamepad"
+            return "keyboard" if minor & 0x10 else "mouse" if minor & 0x20 else "gamepad"
+        if major in (0x01, 0x02):
+            return "hide"
+        uuids = " ".join(str(u) for u in dev.get("UUIDs") or [])
+        if "0000110b" in uuids or "0000111e" in uuids:
+            return "audio"
+        if "00001124" in uuids or "00001812" in uuids:      # HID (klassisch / LE)
+            return "gamepad"
+        return "other"
 
-    def list_devices(self):
+    def _devices(self, objs, adapter):
+        out = []
+        for path, o in objs.items():
+            d = o.get("org.bluez.Device1")
+            if not d or not path.startswith(adapter + "/"):
+                continue
+            mac = str(d.get("Address") or self._mac_of(path)).upper()
+            name = str(d.get("Name") or "")
+            alias = str(d.get("Alias") or "")
+            if alias.replace("-", ":").upper() == mac:
+                alias = ""
+            paired = bool(d.get("Paired") or d.get("Bonded"))
+            kind = self._kind(d)
+            if not paired and (not (name or alias) or kind == "hide"):
+                continue
+            bat = o.get("org.bluez.Battery1", {}).get("Percentage")
+            out.append({"mac": mac, "name": alias or name, "paired": paired,
+                        "connected": bool(d.get("Connected")), "trusted": bool(d.get("Trusted")),
+                        "kind": "other" if kind == "hide" else kind,
+                        "icon": "audio" if kind == "audio" else "gamepad" if kind == "gamepad" else "bluetooth",
+                        "battery": int(bat) if bat is not None else None,
+                        "rssi": int(d["RSSI"]) if d.get("RSSI") is not None else None})
+        out.sort(key=lambda x: (not x["connected"], not x["paired"], BT_KIND_ORDER.get(x["kind"], 4),
+                                -(x["rssi"] if x["rssi"] is not None else -999), x["name"].lower()))
+        return out[:30]
+
+    def status(self):
+        if not self.bus:
+            return self._legacy_status()
+        objs = self._objects()
+        adapter = self._adapter(objs)
+        service = self.is_service_active()
+        if adapter and not self._agent_ok:
+            self._register_agent()
+        a = objs.get(adapter, {}).get("org.bluez.Adapter1", {}) if adapter else {}
+        powered = bool(a.get("Powered"))
+        prompt = self._prompt if self._pairing else None
+        return {
+            "available": self.is_available() and (adapter is not None or not self._bluez_running()),
+            "service": service,
+            "powered": powered,
+            "blocked": a.get("PowerState") == "off-blocked",
+            "scanning": self._scanning,
+            "pairing": self._mac_of(self._pairing) if self._pairing else None,
+            "prompt": prompt,
+            "adapter": str(a.get("Address", "")),
+            "devices": self._devices(objs, adapter) if (adapter and powered) else [],
+        }
+
+    # ---- Suche ----
+    def start_scan(self, seconds=None):
+        if not self.bus:
+            return self._legacy_scan()
+        seconds = seconds or self.SCAN_SECONDS
+        adapter = self._adapter()
+        if not adapter:
+            return
+        self._register_agent()                          # Standard-Agent holen (falls bluetoothctl ihn hatte)
+        now = time.time()
+        self._window_until = max(self._window_until, now + seconds + self.WINDOW)
+        with self.lock:
+            self._scan_until = max(self._scan_until, now + seconds)
+            if self._scanning:
+                return
+            self._scanning = True
+        try:
+            self._call(adapter, "org.bluez.Adapter1", "SetDiscoveryFilter",
+                       self.GLib.Variant("(a{sv})", ({"Transport": self.GLib.Variant("s", "auto"),
+                                                       "DuplicateData": self.GLib.Variant("b", False)},)))
+        except RuntimeError as e:
+            log("Bluetooth: Suchfilter:", e)
+        try:
+            self._call(adapter, "org.bluez.Adapter1", "StartDiscovery")
+        except RuntimeError as e:
+            if "InProgress" not in str(e):
+                log("Bluetooth: Suche:", e)
+                with self.lock:
+                    self._scanning = False
+                return
+
+        def stop_later():
+            while time.time() < self._scan_until and self._scanning:
+                time.sleep(0.5)
+            self._stop_scan(adapter)
+
+        threading.Thread(target=stop_later, daemon=True).start()
+
+    def _stop_scan(self, adapter=None):
+        adapter = adapter or self._adapter_path
+        with self.lock:
+            was, self._scanning = self._scanning, False
+        if was and adapter:
+            try:
+                self._call(adapter, "org.bluez.Adapter1", "StopDiscovery")
+            except RuntimeError:
+                pass
+
+    # ---- Koppeln / Verbinden ----
+    def pair(self, mac):
+        """Koppeln, vertrauen, verbinden. Rueckgabe (ok, Fehlerschluessel oder None)."""
+        if not self.bus:
+            return self._legacy_pair(mac), None
+        adapter = self._adapter()
+        if not adapter:
+            return False, "bt.err.off"
+        path = self._dev_path(adapter, mac)
+        self._window_until = max(self._window_until, time.time() + self.WINDOW)
+        if path not in self._objects():                # BlueZ vergisst ungekoppelte Geraete nach der Suche
+            self.start_scan(20)
+            t0 = time.time()
+            while path not in self._objects() and time.time() - t0 < 15:
+                time.sleep(0.5)
+            if path not in self._objects():
+                return False, "bt.err.gone"
+        self._stop_scan(adapter)                        # manche Controller koppeln nicht, solange gesucht wird
+        self._register_agent()
+        self._pairing, self._prompt = path, None
+        try:
+            err = None
+            for i, pin in enumerate(self.PINS):
+                self._pin, self._pin_asked = pin, False
+                try:
+                    self._call(path, "org.bluez.Device1", "Pair", timeout=60)
+                    err = None
+                    break
+                except RuntimeError as e:
+                    err = str(e)
+                    if "AlreadyExists" in err:          # war schon gekoppelt
+                        err = None
+                        break
+                    log("Bluetooth: Koppeln", mac, "fehlgeschlagen:", err)
+                    if self._pin_asked and bt_error_key(err) == "bt.err.auth" and i + 1 < len(self.PINS):
+                        time.sleep(1)
+                        continue
+                    break
+            if err:
+                return False, bt_error_key(err)
+            log("Bluetooth: gekoppelt", mac)
+            try:
+                self._set_prop(path, "org.bluez.Device1", "Trusted", self.GLib.Variant("b", True))
+            except RuntimeError as e:
+                log("Bluetooth: vertrauen", mac, e)
+            ok, cerr = self._connect_path(path, mac)
+            return ok, cerr
+        finally:
+            self._pairing, self._prompt = None, None
+
+    def _connect_path(self, path, mac):
+        err = ""
+        for attempt in range(2):
+            try:
+                self._call(path, "org.bluez.Device1", "Connect", timeout=30)
+                err = ""
+                break
+            except RuntimeError as e:
+                err = str(e)
+                if "AlreadyConnected" in err or "InProgress" in err:
+                    err = ""
+                    break
+                log("Bluetooth: verbinden", mac, f"(Versuch {attempt + 1}):", err)
+                time.sleep(2)
+        d = self._objects().get(path, {}).get("org.bluez.Device1", {})
+        if err and not d.get("Connected"):
+            return False, bt_error_key(err)
+        if self._kind(d) == "audio":
+            threading.Thread(target=bt_audio_follow, args=(mac,), daemon=True).start()
+        return True, None
+
+    def connect(self, mac):
+        if not self.bus:
+            return self._legacy_connect(mac), None
+        adapter = self._adapter()
+        if not adapter:
+            return False, "bt.err.off"
+        path = self._dev_path(adapter, mac)
+        if path not in self._objects():
+            return False, "bt.err.gone"
+        self._stop_scan(adapter)
+        return self._connect_path(path, mac)
+
+    def disconnect(self, mac):
+        if not self.bus:
+            return self._legacy_simple("disconnect", mac)
+        adapter = self._adapter()
+        try:
+            self._call(self._dev_path(adapter, mac), "org.bluez.Device1", "Disconnect", timeout=15)
+            return True
+        except (RuntimeError, TypeError) as e:
+            log("Bluetooth: trennen", mac, e)
+            return False
+
+    def remove(self, mac):
+        if not self.bus:
+            return self._legacy_simple("remove", mac)
+        adapter = self._adapter()
+        try:
+            self._call(adapter, "org.bluez.Adapter1", "RemoveDevice",
+                       self.GLib.Variant("(o)", (self._dev_path(adapter, mac),)), timeout=15)
+            return True
+        except (RuntimeError, TypeError) as e:
+            log("Bluetooth: entfernen", mac, e)
+            return False
+
+    def power(self, on):
+        if not self.bus:
+            return self._legacy_simple("power", "on" if on else "off")
+        adapter = self._adapter()
+        if not adapter:
+            return False
+        for attempt in range(2):
+            try:
+                self._set_prop(adapter, "org.bluez.Adapter1", "Powered", self.GLib.Variant("b", bool(on)))
+                return True
+            except RuntimeError as e:
+                log("Bluetooth: Ein/Aus:", e)
+                if on and attempt == 0:                 # per Funkschalter (rfkill) gesperrt -> freigeben
+                    subprocess.run(["sudo", "-n", PKG_HELPER, "bluetooth", "on"],
+                                   capture_output=True, text=True, timeout=30)
+                    time.sleep(1)
+        return False
+
+    # ---- Rueckfall ohne python3-gobject: bluetoothctl (ohne eigenen Agenten) ----
+    def _legacy_status(self):
+        available = self.is_available()
+        service = os.path.exists("/var/service/bluetoothd")
+        powered = False
+        if available and service:
+            r = run(["bluetoothctl", "show"])
+            powered = bool(r and r.returncode == 0 and "Powered: yes" in r.stdout)
         devs = {}
-        # BlueZ 5: 'devices Paired'
-        r = run(["bluetoothctl", "devices", "Paired"])
-        if r and r.returncode == 0:
-            for line in r.stdout.splitlines():
-                parts = line.strip().split(None, 2)
-                if len(parts) >= 3 and parts[0] == "Device":
-                    mac = parts[1]
-                    name = parts[2]
-                    devs[mac] = {"mac": mac, "name": name, "paired": True, "connected": False, "icon": "bluetooth"}
-        r = run(["bluetoothctl", "devices"])
-        if r and r.returncode == 0:
-            for line in r.stdout.splitlines():
-                parts = line.strip().split(None, 2)
-                if len(parts) >= 3 and parts[0] == "Device":
-                    mac = parts[1]
-                    name = parts[2]
-                    if mac not in devs and self._named(mac, name):
-                        devs[mac] = {"mac": mac, "name": name, "paired": False, "connected": False, "icon": "bluetooth"}
-
-        for mac, d in list(devs.items())[:25]:
-            info = run(["bluetoothctl", "info", mac])
-            if info and info.returncode == 0:
-                for line in info.stdout.splitlines():
+        if powered:
+            for args, paired in ((["devices", "Paired"], True), (["devices"], False)):
+                r = run(["bluetoothctl", *args])
+                for line in (r.stdout.splitlines() if r and r.returncode == 0 else []):
+                    p = line.strip().split(None, 2)
+                    if len(p) >= 3 and p[0] == "Device" and p[1] not in devs:
+                        if paired or p[2].replace("-", ":").upper() != p[1].upper():
+                            devs[p[1]] = {"mac": p[1], "name": p[2], "paired": paired, "connected": False,
+                                          "icon": "bluetooth", "kind": "other", "battery": None}
+            for mac, d in list(devs.items())[:25]:
+                info = run(["bluetoothctl", "info", mac])
+                for line in (info.stdout.splitlines() if info and info.returncode == 0 else []):
                     line = line.strip()
                     if line.startswith("Connected: yes"):
                         d["connected"] = True
                     elif line.startswith("Icon:"):
-                        icon_type = line.split(":", 1)[1].strip()
-                        if any(w in icon_type for w in ("audio", "headset", "headphone")):
-                            d["icon"] = "audio"
-                        elif any(w in icon_type for w in ("gamepad", "joystick", "input-gaming")):
-                            d["icon"] = "gamepad"
-        return sorted(devs.values(), key=lambda x: (-x["connected"], -x["paired"], x["name"].lower()))
+                        ic = line.split(":", 1)[1].strip()
+                        d["kind"] = self._kind({"Icon": ic})
+                        d["icon"] = "audio" if d["kind"] == "audio" else "gamepad" if d["kind"] == "gamepad" else "bluetooth"
+        lst = sorted(devs.values(), key=lambda x: (not x["connected"], not x["paired"], x["name"].lower()))
+        return {"available": available, "service": service, "powered": powered, "scanning": self._scanning,
+                "pairing": None, "prompt": None, "devices": lst}
 
-    def start_scan(self):
+    def _legacy_scan(self):
         with self.lock:
             if self._scanning:
                 return
             self._scanning = True
 
-        def _do_scan():
+        def _do():
             try:
-                run(["bluetoothctl", "--timeout", "10", "scan", "on"], timeout=15)
+                run(["bluetoothctl", "--timeout", str(self.SCAN_SECONDS), "scan", "on"], timeout=self.SCAN_SECONDS + 5)
             finally:
                 with self.lock:
                     self._scanning = False
 
-        threading.Thread(target=_do_scan, daemon=True).start()
+        threading.Thread(target=_do, daemon=True).start()
 
-    def pair(self, mac):
-        run(["bluetoothctl", "pair", mac], timeout=20)
+    def _legacy_pair(self, mac):
+        run(["bluetoothctl", "pair", mac], timeout=30)
         run(["bluetoothctl", "trust", mac], timeout=10)
+        return self._legacy_connect(mac)
+
+    def _legacy_connect(self, mac):
         r = run(["bluetoothctl", "connect", mac], timeout=20)
         return bool(r and r.returncode == 0)
 
-    def connect(self, mac):
-        r = run(["bluetoothctl", "connect", mac], timeout=20)
+    def _legacy_simple(self, cmd, arg):
+        r = run(["bluetoothctl", cmd, arg], timeout=15)
         return bool(r and r.returncode == 0)
 
-    def disconnect(self, mac):
-        r = run(["bluetoothctl", "disconnect", mac], timeout=15)
-        return bool(r and r.returncode == 0)
 
-    def remove(self, mac):
-        r = run(["bluetoothctl", "remove", mac], timeout=15)
-        return bool(r and r.returncode == 0)
-
-    def power(self, on):
-        r = run(["bluetoothctl", "power", "on" if on else "off"], timeout=10)
-        return bool(r and r.returncode == 0)
+def bt_audio_follow(mac, wait=10):
+    """Ton auf den gerade verbundenen Bluetooth-Kopfhoerer legen (PipeWire merkt sich das als Standard:
+    verbindet er sich spaeter von selbst, wechselt der Ton wieder dorthin)."""
+    key = mac.upper().replace(":", "_")
+    t0 = time.time()
+    while time.time() - t0 < wait:
+        for s in pactl_json("list", "sinks") or []:
+            name = s.get("name", "")
+            props = s.get("properties") or {}
+            if key in name.upper() or str(props.get("api.bluez5.address", "")).upper() == mac.upper():
+                run(["pactl", "set-default-sink", name])
+                run(["pactl", "set-sink-mute", name, "0"])
+                log("Ton auf Bluetooth:", name)
+                return True
+        time.sleep(0.5)
+    log("Bluetooth: kein Tonausgang fuer", mac, "(Geraet ohne Audio-Profil oder PipeWire-Bluetooth fehlt)")
+    return False
 
 
 BLUETOOTH = BluetoothManager()
@@ -2980,14 +3466,14 @@ class Handler(BaseHTTPRequestHandler):
                 mac = str(self._body().get("mac", ""))
                 if not BLUETOOTH.MAC_RE.match(mac):
                     return self._json(400, {"error": "ungueltige Geraeteadresse"})
-                ok = BLUETOOTH.pair(mac)
-                return self._json(200, {"ok": ok, "status": BLUETOOTH.status()})
+                ok, err = BLUETOOTH.pair(mac)
+                return self._json(200, {"ok": ok, "error": err, "status": BLUETOOTH.status()})
             if parts == ["api", "bluetooth", "connect"]:
                 mac = str(self._body().get("mac", ""))
                 if not BLUETOOTH.MAC_RE.match(mac):
                     return self._json(400, {"error": "ungueltige Geraeteadresse"})
-                ok = BLUETOOTH.connect(mac)
-                return self._json(200, {"ok": ok, "status": BLUETOOTH.status()})
+                ok, err = BLUETOOTH.connect(mac)
+                return self._json(200, {"ok": ok, "error": err, "status": BLUETOOTH.status()})
             if parts == ["api", "bluetooth", "disconnect"]:
                 mac = str(self._body().get("mac", ""))
                 if not BLUETOOTH.MAC_RE.match(mac):
@@ -3096,6 +3582,7 @@ def main():
     apply_appearance(s)
     apply_resolution(s.get("resolution"))
     threading.Thread(target=gamepad_watcher, daemon=True).start()
+    BLUETOOTH.start()                               # Kopplungs-Agent (BlueZ ueber D-Bus)
     if not LIVE:                                    # im Live-System gibt es keine Updates
         threading.Thread(target=updates_background_check, daemon=True).start()
         threading.Thread(target=kernel_autopurge, daemon=True).start()

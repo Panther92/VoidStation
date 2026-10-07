@@ -612,5 +612,19 @@
   "bt.pairFailed": "Koppeln fehlgeschlagen",
   "bt.remove": "Entkoppeln",
   "bt.noDevices": "Keine Geräte gefunden",
-  "bt.unsupported": "Kein Bluetooth-Adapter gefunden"
+  "bt.unsupported": "Kein Bluetooth-Adapter gefunden",
+  "bt.hint": "Gerät in den Kopplungsmodus bringen, dann suchen. <b>AirPods</b>: Knopf hinten halten (AirPods 4: vorn doppelt tippen) · <b>PlayStation</b>: Create + PS · <b>Xbox</b>: Kopplungstaste · <b>Switch</b>: Sync-Taste",
+  "bt.typeCode": "Auf der Tastatur {code} eintippen und Enter drücken",
+  "bt.blocked": "Bluetooth ist per Funkschalter gesperrt – „Einschalten“ hebt die Sperre auf.",
+  "bt.kind.audio": "Audio",
+  "bt.kind.gamepad": "Controller",
+  "bt.kind.keyboard": "Tastatur",
+  "bt.kind.mouse": "Maus",
+  "bt.err.auth": "Kopplung abgelehnt – Gerät erneut in den Kopplungsmodus bringen und nochmal versuchen",
+  "bt.err.timeout": "Gerät antwortet nicht – ist es im Kopplungsmodus und in der Nähe?",
+  "bt.err.gone": "Gerät nicht mehr sichtbar – Kopplungsmodus neu starten und erneut suchen",
+  "bt.err.off": "Bluetooth ist aus oder nicht bereit",
+  "bt.err.busy": "Bluetooth ist gerade beschäftigt – gleich nochmal versuchen",
+  "bt.err.profile": "Gekoppelt, aber die Verbindung klappt nicht – Gerät aus- und wieder einschalten",
+  "bt.err.other": "Koppeln fehlgeschlagen"
 }

@@ -74,9 +74,11 @@ bluetooth_ctl() {
     on)
       [ -d /etc/sv/bluetoothd ] || xbps-install -Sy bluez || return 1
       if [ -f /etc/bluetooth/input.conf ]; then
-        grep -q '^UserspaceHID=true' /etc/bluetooth/input.conf || sed -i 's/^#*UserspaceHID=.*/UserspaceHID=true/' /etc/bluetooth/input.conf
-        grep -q '^ClassicBondedOnly=false' /etc/bluetooth/input.conf || sed -i 's/^#*ClassicBondedOnly=.*/ClassicBondedOnly=false/' /etc/bluetooth/input.conf
+        # (sysfix.sh stellt BlueZ bei jedem Update ein – hier nur fuer nachtraeglich installiertes bluez)
+        grep -Eq '^UserspaceHID *= *true' /etc/bluetooth/input.conf || sed -Ei 's/^#*UserspaceHID *=.*/UserspaceHID=true/' /etc/bluetooth/input.conf
+        grep -Eq '^ClassicBondedOnly *= *false' /etc/bluetooth/input.conf || sed -Ei 's/^#*ClassicBondedOnly *=.*/ClassicBondedOnly=false/' /etc/bluetooth/input.conf
       fi
+      rfkill unblock bluetooth 2>/dev/null || true     # per Funkschalter gesperrt
       [ -e /var/service/bluetoothd ] || ln -s /etc/sv/bluetoothd /var/service/
       echo "Bluetooth an"
       ;;

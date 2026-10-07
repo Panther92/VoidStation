@@ -26,11 +26,11 @@ Rectangle {
         wrapMode: Text.Wrap
         elide: Text.ElideNone
     }
-    function show(msg, isErr) {
+    function show(msg, isErr, ms) {             // ms: feste Anzeigedauer (z. B. Kopplungscode), sonst nach Laenge
         label.text = msg
         err = isErr
         inAnim.restart()
-        timer.interval = Math.max(isErr ? 5000 : 2800, msg.length * 55)
+        timer.interval = ms ? ms : Math.max(isErr ? 5000 : 2800, msg.length * 55)
         timer.restart()
     }
     function hide() { timer.stop(); outAnim.restart() }

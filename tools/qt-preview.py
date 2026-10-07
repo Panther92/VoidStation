@@ -23,6 +23,7 @@ sys.path.insert(0, str(REPO / "tools"))
 import screenshots as S  # noqa: E402  (Beispieldaten und Web-Auslieferung)
 
 PORT = 8766
+BT = {"pairing": None, "prompt": None}         # Bluetooth-Kopplung (Vorschau)
 STATE = {"running": ["youtube"], "radio": S.RADIO_NOW, "tv": None, "favs": list(S.RADIO_FAVS), "tvfavs": list(S.TV_FAVS),
          "volume": dict(S.SETTINGS["volume"]), "bt_powered": True, "update": {"available": True, "version": "0.13.0"}}
 STATIONS = [{"name": f"Testsender {i}", "url": f"https://example.invalid/s{i}", "favicon": ""} for i in range(1, 15)]
@@ -134,9 +135,13 @@ class H(S.H):
                                                 "appimage": [], "proton": None, "checked": True, "due": False, "due_at": 0},
                                      "reboot": {}},
             "/api/bluetooth/status": lambda: {"available": True, "service": True, "powered": st["bt_powered"], "scanning": False,
+                                              "pairing": BT["pairing"], "prompt": BT["prompt"], "blocked": False,
                                               "devices": [{"mac": "11:22:33:44:55:66", "name": "Xbox Wireless Controller",
-                                                           "paired": True, "connected": True},
-                                                          {"mac": "AA:BB:CC:DD:EE:FF", "name": "JBL Flip 5", "paired": False}]},
+                                                           "paired": True, "connected": True, "kind": "gamepad", "battery": 80},
+                                                          {"mac": "AA:BB:CC:DD:EE:01", "name": "AirPods", "paired": False,
+                                                           "kind": "audio", "battery": None},
+                                                          {"mac": "AA:BB:CC:DD:EE:FF", "name": "JBL Flip 5", "paired": True,
+                                                           "kind": "audio", "battery": None}]},
             "/api/wifi/scan": lambda: [{"ssid": "FRITZ!Box 7530", "signal": 72, "secure": True, "active": True},
                                        {"ssid": "Nachbar", "signal": 31, "secure": True, "active": False}],
             "/api/roms": lambda: {"system": q.get("system", ["gba"])[0], "count": len(ROMS), "roms": ROMS},
@@ -192,6 +197,12 @@ class H(S.H):
             return self.j({"keymap": body.get("keymap"), "running": True})
         if p == "/api/install/savelog":
             return self.j({"ok": False, "code": "no_usb"})
+        if p == "/api/bluetooth/pair":           # Koppeln: Tastatur-Code 3 s anzeigen, dann je nach Geraet Erfolg/Fehler
+            BT.update(pairing=body.get("mac"), prompt={"mac": body.get("mac"), "code": "482913"})
+            time.sleep(3)
+            BT.update(pairing=None, prompt=None)
+            ok = not body.get("mac", "").endswith("01")
+            return self.j({"ok": ok, "error": None if ok else "bt.err.timeout", "status": {}})
         if p.startswith("/api/launch/"):
             tid = p.rsplit("/", 1)[1]
             if tid not in st["running"]:

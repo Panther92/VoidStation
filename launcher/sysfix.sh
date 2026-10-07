@@ -11,6 +11,8 @@
 #   2. WLAN: Funkregeln des Landes (sonst Kanaele 12/13 und viele 5-GHz-Kanaele nur passiv),
 #      USB-Sticks: keine Zufalls-MAC beim Suchen, kein Stromsparmodus.
 #   3. GRUB-Start ohne Meldungsflut (quiet), wie beim EFISTUB-Start.
+#   4. Bluetooth & Controller: BlueZ fuer Kopfhoerer/Controller eingestellt, Zugriff auf Controller
+#      (hidraw, uinput) fuer Steam, Emulatoren und SDL, uinput beim Start laden.
 # =====================================================================
 CHROOT="${VOIDSTATION_CHROOT:-0}"
 say() { printf '%s\n' "$*"; }
@@ -93,4 +95,59 @@ if [ -f /etc/default/grub ] && ! grep -q '^GRUB_CMDLINE_LINUX_DEFAULT=.*quiet' /
     update-grub >/dev/null 2>&1 || grub-mkconfig -o /boot/grub/grub.cfg >/dev/null 2>&1 || say "GRUB-Menue nicht erneuert"
   fi
 fi
+
+# ---------------------------------------------------------------------
+# 4. Bluetooth & Controller
+# Setzt "Schluessel = Wert" im Abschnitt einer ini-Datei (ersetzt auch auskommentierte Vorgaben)
+ini_set() {
+  [ -f "$1" ] || return 0
+  awk -v sec="[$2]" -v key="$3" -v val="$4" '
+    function put() { if (!done) { print key " = " val; done = 1 } }
+    /^[ \t]*\[.*\][ \t]*$/ { if (insec) put(); insec = ($0 == sec); if (insec) seen = 1; print; next }
+    insec && $0 ~ ("^[ \t]*" key "[ \t]*=") { put(); next }
+    insec && $0 ~ ("^[#;][ \t]*" key "[ \t]*=") { if (!done) put(); else print; next }
+    { print }
+    END { if (insec) put(); else if (!seen) { print ""; print sec; print key " = " val } }' "$1" > "$1.vs-new" \
+    && cat "$1.vs-new" > "$1"
+  rm -f "$1.vs-new"
+}
+# BlueZ (wirkt ab dem naechsten Start von bluetoothd):
+#  - Controller, die ihre Kopplung vergessen haben (anderes Geraet, Reset), koppeln neu ohne "Entkoppeln"
+#  - Kopfhoerer verbinden sich schneller wieder, Adapter ist nach dem Start an
+#  - gefundene Geraete bleiben 3 Minuten waehlbar (Standard 30 s – zu knapp fuer die Fernbedienung)
+#  - PlayStation-Controller drahtlos (ClassicBondedOnly=false), Controller ueber die Kernel-Treiber (UserspaceHID)
+ini_set /etc/bluetooth/main.conf General JustWorksRepairing always
+ini_set /etc/bluetooth/main.conf General FastConnectable true
+ini_set /etc/bluetooth/main.conf General TemporaryTimeout 180
+ini_set /etc/bluetooth/main.conf Policy AutoEnable true
+ini_set /etc/bluetooth/input.conf General UserspaceHID true
+ini_set /etc/bluetooth/input.conf General ClassicBondedOnly false
+[ -f /etc/bluetooth/main.conf ] && say "Bluetooth: Neukopplung, schnelles Wiederverbinden, Controller drahtlos"
+
+# Controller-Zugriff: Steam, Emulatoren und SDL lesen Controller direkt (hidraw) und legen virtuelle an (uinput).
+# USB ueber die Herstellerkennung, Bluetooth ueber die HID-Kennung (0005:<Hersteller>:<Produkt>).
+mkdir -p /etc/udev/rules.d /etc/modules-load.d
+{
+  echo "# VoidStation: Controller, Lenkraeder und Joysticks fuer den angemeldeten Benutzer (wird bei Updates neu geschrieben)"
+  # Sony, Microsoft, Nintendo, Valve, 8BitDo, Logitech, Hori, PDP, PowerA, Nacon/BigBen, Mad Catz, Razer,
+  # Thrustmaster, GameSir, ShanWan, DragonRise, Betop, Google (Stadia), SteelSeries, Saitek, VKB, Virpil, Nacon (neu)
+  for v in 054c 045e 057e 28de 2dc8 046d 0f0d 0e6f 20d6 24c6 146b 0738 1532 044f 3537 2563 0079 11c0 11c1 18d1 1038 06a3 231d 3344 3285; do
+    V="$(printf '%s' "$v" | tr 'a-f' 'A-F')"
+    printf 'SUBSYSTEM=="hidraw", ATTRS{idVendor}=="%s", MODE="0660", GROUP="input", TAG+="uaccess"\n' "$v"
+    printf 'SUBSYSTEM=="hidraw", KERNELS=="*:%s:*", MODE="0660", GROUP="input", TAG+="uaccess"\n' "$V"
+  done
+  echo '# alle Joysticks/Gamepads als Eingabegeraet'
+  echo 'SUBSYSTEM=="input", ENV{ID_INPUT_JOYSTICK}=="1", MODE="0660", GROUP="input", TAG+="uaccess"'
+  echo '# virtuelle Controller (Steam Input, AntiMicroX)'
+  echo 'KERNEL=="uinput", SUBSYSTEM=="misc", MODE="0660", GROUP="input", OPTIONS+="static_node=uinput", TAG+="uaccess"'
+} > /etc/udev/rules.d/70-gamepad.rules
+echo uinput > /etc/modules-load.d/voidstation-gamepad.conf
+if [ "$CHROOT" != 1 ]; then
+  modprobe uinput 2>/dev/null || true
+  if command -v udevadm >/dev/null 2>&1; then
+    udevadm control --reload-rules 2>/dev/null || true
+    udevadm trigger --subsystem-match=hidraw --subsystem-match=input --subsystem-match=misc 2>/dev/null || true
+  fi
+fi
+say "Controller: Zugriff fuer Steam/Emulatoren (hidraw, uinput)"
 exit 0

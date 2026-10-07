@@ -1542,13 +1542,22 @@ const SET_PAGES = {
       const pwr = pill(esc(T(btState.powered ? 'bt.powerOff' : 'bt.powerOn')), btTogglePower, btState.powered); pwr.dataset.key = 'btpwr'; rbt.appendChild(pwr);
       if (btState.powered) {
         const scn = pill(esc(btScanning ? T('bt.scanning') : T('bt.scan')), btScan); scn.dataset.key = 'btscan'; rbt.appendChild(scn);
+        if (btScanning || !(btState.devices || []).some(d => !d.paired)) {   // Hinweis, bis ein neues Geraet auftaucht
+          const hint = document.createElement('div'); hint.className = 'info';
+          hint.innerHTML = T('bt.hint');
+          bc.appendChild(hint);
+        }
         const devs = btState.devices || [];
         if (devs.length) {
           const rd = row(bc, T('bt.available'));
           rd.classList.add('btlist');
           for (const d of devs.slice(0, 10)) {
             const isConn = !!d.connected, isPaired = !!d.paired;
-            const statusTxt = isConn ? ` · ${T('bt.connected')}` : isPaired ? ` · ${T('bt.paired')}` : '';
+            const extra = [];
+            if (d.kind && d.kind !== 'other') extra.push(T('bt.kind.' + d.kind));
+            if (d.battery !== null && d.battery !== undefined) extra.push(`${d.battery} %`);
+            if (isConn) extra.push(T('bt.connected')); else if (isPaired) extra.push(T('bt.paired'));
+            const statusTxt = extra.length ? ' · ' + esc(extra.join(' · ')) : '';
             const b = pill(`${esc(d.name || d.mac)}<span class="sig">${statusTxt}</span>`, () => {
               if (isConn) btDisconnect(d.mac);
               else if (isPaired) btConnect(d.mac);
@@ -1827,7 +1836,7 @@ async function btScan() {
       try {
         btState = await getJSON('/api/bluetooth/status');
         if (layer() === 'settings') renderSettings();
-        if (!btState.scanning || Date.now() - start > 14000) {
+        if (!btState.scanning || Date.now() - start > 35000) {
           clearInterval(iv);
           btScanning = false;
           if (layer() === 'settings') renderSettings();
@@ -1848,7 +1857,7 @@ async function btConnect(mac) {
   try {
     const res = await api('/api/bluetooth/connect', { mac });
     btState = res.status || btState;
-    toast(res.ok ? T('bt.connectedToast') : T('bt.connectFailed'), !res.ok);
+    toast(res.ok ? T('bt.connectedToast') : res.error ? T(res.error) : T('bt.connectFailed'), !res.ok);
     renderSettings();
   } catch (e) { toast(T('common.failedMsg', { msg: e.message }), true); }
 }
@@ -1863,12 +1872,21 @@ async function btDisconnect(mac) {
 }
 async function btPair(mac) {
   toast(T('bt.pairing'));
+  // Verlangt eine Tastatur einen Code, wird er waehrend der Kopplung angezeigt
+  let shown = '';
+  const iv = setInterval(async () => {
+    try {
+      const b = await getJSON('/api/bluetooth/status');
+      if (b.prompt && b.prompt.code && b.prompt.code !== shown) { shown = b.prompt.code; toast(T('bt.typeCode', { code: shown })); }
+    } catch { /* naechster Versuch */ }
+  }, 1000);
   try {
     const res = await api('/api/bluetooth/pair', { mac });
     btState = res.status || btState;
-    toast(res.ok ? T('bt.pairedToast') : T('bt.pairFailed'), !res.ok);
+    toast(res.ok ? T('bt.pairedToast') : res.error ? T(res.error) : T('bt.pairFailed'), !res.ok);
     renderSettings();
   } catch (e) { toast(T('common.failedMsg', { msg: e.message }), true); }
+  clearInterval(iv);
 }
 async function btRemove(mac) {
   toast(T('bt.disconnecting'));

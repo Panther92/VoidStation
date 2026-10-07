@@ -4,6 +4,20 @@ Neueste Version oben. Die erste Überschrift bestimmt die Versionsnummer, die Ge
 Format: `## <Version> – <JJJJ-MM-TT>`, darunter Stichpunkte.
 Jede Version steht auch in `CHANGELOG.en.md` (englisch) – sonst bricht `build.sh` ab.
 
+## 0.15.0 – 2026-10-07
+- Bluetooth neu gebaut: VoidStation koppelt jetzt selbst, ohne Tastatur – Kopfhörer, Controller und Joysticks mit „Just Works“ werden bestätigt, ältere Geräte mit PIN-Kopplung bekommen automatisch 0000, 1234 oder 1111. Bisher scheiterten solche Geräte stumm
+- Tastaturen, die beim Koppeln einen Code verlangen: der Code steht unten rechts, bis die Kopplung durch ist
+- Fremde Geräte können sich nicht von selbst koppeln – Anfragen werden nur während und bis 3 Minuten nach der Suche angenommen
+- Suche dauert 30 statt 10 Sekunden; gefundene Geräte bleiben 3 Minuten wählbar. Ist ein Gerät inzwischen verschwunden, wird vor dem Koppeln kurz neu gesucht
+- Liste aufgeräumt: Handys, PCs und Fernseher in der Nachbarschaft sowie Geräte ohne Namen erscheinen nicht mehr. Dafür steht dabei, was es ist (Audio, Controller, Tastatur, Maus) und – wo das Gerät es meldet – der Akkustand
+- Fehlermeldungen mit Ursache („Gerät antwortet nicht – ist es im Kopplungsmodus?“ statt nur „Koppeln fehlgeschlagen“) und ein Hinweis, wie gängige Geräte in den Kopplungsmodus kommen (AirPods, PlayStation, Xbox, Switch)
+- Kopfhörer: nach dem Verbinden läuft der Ton sofort über sie
+- Zwei Bluetooth-Adapter (z. B. USB-Stick zusätzlich zum eingebauten Chip): der neuere wird benutzt, der andere ausgeschaltet. Fest wählen: Adresse in `/usr/local/share/voidstation/bt-adapter`
+- Bluetooth per Funkschalter gesperrt: „Einschalten“ hebt die Sperre auf
+- Controller, die ihre Kopplung vergessen haben (Reset, anderes Gerät), koppeln neu, ohne vorher „Entkoppeln“; Kopfhörer verbinden sich schneller wieder
+- Startseite: auch einfache USB-Pads ohne eigenen Treiber, Joysticks und Arcade-Sticks steuern die Oberfläche. Eigene Belegung möglich über `~/.config/voidstation/pads.json`
+- Steam, Emulatoren und SDL-Spiele dürfen Controller aller gängigen Hersteller direkt ansprechen (Sony, Microsoft, Nintendo, Valve, 8BitDo, Logitech, Hori, PDP, PowerA, Thrustmaster, GameSir u. a., per USB und Bluetooth) – bisher nur PlayStation
+
 ## 0.14.3 – 2026-10-05
 - Alte Kernel werden automatisch entfernt, sobald das System mit dem neuesten Kernel fehlerfrei läuft (Oberfläche seit 10 Minuten oben) – spart pro Kernel rund 300 MB
 - Direktstart (EFISTUB): Stellt die Firmware die Startreihenfolge selbst um (z. B. GRUB immer zuerst), bleibt das so, statt bei jedem Kernel-Update dagegen anzuschreiben – GRUB startet ebenfalls den neuesten Kernel. Erzwingen: `sudo voidstation-efistub --order`

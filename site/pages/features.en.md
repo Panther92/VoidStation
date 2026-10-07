@@ -9,7 +9,7 @@ Everything you need from the couch – on a small PC next to the TV, with no acc
 ## Interface {#interface}
 
 - Tiles in the style of Windows 8, sorted into groups – add your own tiles
-- Control it with a gamepad, remote, mouse or keyboard; Xbox and PlayStation controllers (DualSense, DualShock) also via Bluetooth
+- Control it with a gamepad, remote, mouse or keyboard; controllers from Xbox, PlayStation, Nintendo, 8BitDo & co., plain USB pads and joysticks – also via Bluetooth, pairing without a keyboard
 - On-screen keyboard for every input field – in Firefox and on YouTube too
 - Themes: Dark, Light, High contrast and Nord; your own themes as a single CSS file
 - Adjustable scaling and resolution, 60 Hz preferred

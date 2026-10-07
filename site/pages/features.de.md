@@ -9,7 +9,7 @@ Alles, was man vom Sofa aus braucht – auf einem kleinen PC am Fernseher, ohne 
 ## Oberfläche {#oberflaeche}
 
 - Kacheln im Stil von Windows 8, in Gruppen sortiert – eigene Kacheln lassen sich ergänzen
-- Bedienung mit Gamepad, Fernbedienung, Maus oder Tastatur; Xbox- und PlayStation-Controller (DualSense, DualShock) auch per Bluetooth
+- Bedienung mit Gamepad, Fernbedienung, Maus oder Tastatur; Controller von Xbox, PlayStation, Nintendo, 8BitDo & Co., einfache USB-Pads und Joysticks – auch per Bluetooth, Kopplung ohne Tastatur
 - Bildschirmtastatur für jedes Eingabefeld – auch in Firefox und auf YouTube
 - Designs: Dunkel, Hell, Hoher Kontrast und Nord; eigene Designs als einzelne CSS-Datei
 - Skalierung und Auflösung einstellbar, 60 Hz werden bevorzugt
