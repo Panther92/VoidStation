@@ -4,10 +4,10 @@
   "sourceforge": "https://sourceforge.net/projects/voidstation/files/",
   "donate": "https://buymeacoffee.com/paulvolz92n",
   "iso": {
-    "version": "0.14.0",
-    "date": "2026-10-04",
-    "url": "https://sourceforge.net/projects/voidstation/files/0.14.0/voidstation-0.14.0-20261004.iso/download",
+    "version": "0.15.0",
+    "date": "2026-10-11",
+    "url": "https://sourceforge.net/projects/voidstation/files/0.15.0/voidstation-0.15.0-20261011.iso/download",
     "size_mb": 2503,
-    "sha256": "67f871a68dcefa1a7a857dc07dd99d45dad5869e2aaa6cf95165b2b1c1b13e03"
+    "sha256": "6fbd7b1cb52aa9bd26e9a32c402d560f278441798843ad55a5acb64174bd21f9"
   }
 }
