@@ -1,0 +1,34 @@
+# GitHub-Releases pflegen (tools/gh-release.py):
+#   Push nach stable (vspub --release)  -> Tag v<version> + Release mit dem englischen Changelog
+#   Push nach main  (vspub --iso)       -> hat die neue ISO schon ein Release, kommt der Download-Abschnitt dazu
+# Die ISO selbst bleibt auf SourceForge (zu gross fuer GitHub-Releases), das Release verweist darauf.
+name: Releases
+
+on:
+  push:
+    branches: [stable, main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: releases
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: stable
+          path: stable
+      - uses: actions/checkout@v6
+        with:
+          ref: main
+          path: main
+      - name: Release anlegen bzw. ISO nachtragen
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 main/tools/gh-release.py --stable stable --main main --repo "${{ github.repository }}"
