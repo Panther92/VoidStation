@@ -30,7 +30,9 @@ def changelog(path):
     with open(path, encoding="utf-8") as f:
         for line in f:
             m = HEAD_RE.match(line)
-            if m:
+            if m and m.group(1) == "Testing":
+                cur = None                      # noch nicht freigegeben (sollte auf stable nie stehen)
+            elif m:
                 cur = {"date": m.group(2), "lines": []}
                 entries[m.group(1)] = cur
                 order.append(m.group(1))

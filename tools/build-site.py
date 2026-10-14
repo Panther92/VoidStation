@@ -256,7 +256,7 @@ def parse_changelog(path):
             cur["body"].append(line)
     for e in entries:
         e["body"] = "\n".join(e["body"]).strip()
-    return entries
+    return [e for e in entries if e["version"] != "Testing"]     # noch nicht freigegeben
 
 
 # ===================================================================== Seite bauen

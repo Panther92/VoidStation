@@ -1791,11 +1791,24 @@ def net_online():
 
 
 def vtuple(v):
-    """"0.7.2" -> (0, 7, 2); unbekannt -> None"""
+    """Version -> vergleichbares Tupel; unbekannt -> None.
+    "0.7.2" -> (0, 7, 2) · "2026.11" -> (2026, 11) · "2026.11.1" -> (2026, 11, 1)
+    "2026.11+testing.20261020" (Testing-Stand nach 2026.11) -> (2026, 11, 0, 20261020):
+    neuer als 2026.11, aber aelter als 2026.11.1 und 2026.12."""
+    s = str(v or "")
+    base, _, extra = s.partition("+")
     try:
-        return tuple(int(x) for x in str(v).split("."))
-    except (TypeError, ValueError):
+        t = tuple(int(x) for x in base.split("."))
+    except ValueError:
         return None
+    if not extra:
+        return t
+    m = re.fullmatch(r"testing\.(\d{8})", extra)
+    if not m:
+        return None
+    if len(t) == 2:
+        t += (0,)                                     # Testing nach 2026.11 liegt vor 2026.11.1
+    return t + (int(m.group(1)),)
 
 
 def vs_state():

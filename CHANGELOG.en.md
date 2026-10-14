@@ -1,7 +1,16 @@
 # Changes
 
 English version of `CHANGELOG.md`, shown in the update dialog when the interface is set to English.
-Same format and the same version headings: `## <version> – <YYYY-MM-DD>`, followed by bullet points.
+Same format and the same headings as the German file, followed by bullet points.
+
+Calendar versions (since 2026.11): `## 2026.11 – 2026-11-07` (the November release train),
+hotfixes to it `## 2026.11.1 – …`. New changes go first under `## Testing – <date of the last change>`
+at the top; `vspub --release` or `vspub --hotfix` assigns the number when releasing (see `RELEASING.md`).
+Older versions (up to 0.15.0) still use the old numbering.
+
+## Testing – 2026-10-14
+- Calendar version numbers: year and month of the release, e.g. 2026.11. Hotfixes to it are 2026.11.1, 2026.11.2 and so on; the live ISO carries the same number as the version it contains
+- The Testing channel shows its state as e.g. “2026.11+testing.20261120” (after 2026.11, last change on 20 Nov). Switching from Testing to Stable still never offers an older update
 
 ## 0.15.0 – 2026-10-07
 - Bluetooth rebuilt: VoidStation now handles pairing itself, no keyboard needed – headphones, controllers and joysticks using “Just Works” are confirmed, older devices that need a PIN automatically get 0000, 1234 or 1111. Until now such devices failed silently

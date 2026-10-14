@@ -1,8 +1,16 @@
 # Änderungen
 
 Neueste Version oben. Die erste Überschrift bestimmt die Versionsnummer, die Geräte im Update-Dialog anzeigen.
-Format: `## <Version> – <JJJJ-MM-TT>`, darunter Stichpunkte.
-Jede Version steht auch in `CHANGELOG.en.md` (englisch) – sonst bricht `build.sh` ab.
+Jede Änderung steht auch in `CHANGELOG.en.md` (englisch) – sonst bricht `build.sh` ab.
+
+Versionen nach Kalender (seit 2026.11): `## 2026.11 – 2026-11-07` (Release-Zug im November),
+Hotfixes dazu `## 2026.11.1 – …`. Neues kommt zuerst unter `## Testing – <Datum der letzten Änderung>`
+ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freigeben (siehe `RELEASING.md`).
+Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
+
+## Testing – 2026-10-14
+- Versionsnummern nach Kalender: Jahr und Monat der Freigabe, z. B. 2026.11. Hotfixes dazu heißen 2026.11.1, 2026.11.2 usw.; die Live-ISO trägt dieselbe Nummer wie die Version, die sie enthält
+- Kanal Testing zeigt den Stand als z. B. „2026.11+testing.20261120“ (nach 2026.11, letzte Änderung am 20.11.). Wer von Testing auf Stable wechselt, bekommt weiterhin kein älteres Update angeboten
 
 ## 0.15.0 – 2026-10-07
 - Bluetooth neu gebaut: VoidStation koppelt jetzt selbst, ohne Tastatur – Kopfhörer, Controller und Joysticks mit „Just Works“ werden bestätigt, ältere Geräte mit PIN-Kopplung bekommen automatisch 0000, 1234 oder 1111. Bisher scheiterten solche Geräte stumm

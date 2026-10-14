@@ -27,6 +27,14 @@ warn() { printf '\033[1;33m[!] %s\033[0m\n' "$*"; }
 die()  { printf '\n\033[1;31m[x] %s\033[0m\n' "$*"; exit 1; }
 
 [ "$(id -u)" -eq 0 ] || die "Bitte mit sudo starten: sudo bash build-iso.sh"
+# ISOs nur aus freigegebenen Staenden (Zweig stable) – der Testing-Stand traegt "+testing" in der Version
+case "$VS_VERSION" in
+  *+testing*)
+    [ "${VS_ALLOW_TESTING:-0}" = 1 ] || die "Das ist der Testing-Stand ($VS_VERSION) – ISOs werden aus Stable gebaut:
+    git -C ~/VoidStation fetch -q origin && git -C ~/VoidStation show origin/stable:dist/build-iso.sh > /var/tmp/build-iso.sh
+    sudo bash /var/tmp/build-iso.sh
+  (Nur zum Ausprobieren trotzdem aus Testing: sudo VS_ALLOW_TESTING=1 bash build-iso.sh)" ;;
+esac
 command -v xbps-install >/dev/null || die "Das geht nur auf Void Linux."
 [ "$(uname -m)" = x86_64 ] || die "Gebaut wird auf einem x86_64-Rechner."
 VSUSER="${VSUSER:-${SUDO_USER:-paul}}"

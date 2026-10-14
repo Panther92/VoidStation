@@ -8,8 +8,8 @@
 #    version.txt             – nur die Build-Kennung (fuer aeltere Geraete)
 #
 #  Eingaben:
-#    CHANGELOG.md                 – erste Ueberschrift = Versionsnummer
-#    CHANGELOG.en.md              – englische Fassung, neueste Version muss drinstehen
+#    CHANGELOG.md                 – erste Ueberschrift = Versionsnummer (JJJJ.MM[.N]) oder "Testing"
+#    CHANGELOG.en.md              – englische Fassung, oberster Abschnitt muss drinstehen
 #    launcher/web/i18n/*.json     – Texte der Oberflaeche (en.json muss alle Schluessel aus de.json haben)
 #    update-url                   – Update-Quelle der Geraete ({channel} = stable/main)
 #    keys/voidstation-release.pub – oeffentlicher Signaturschluessel (optional)
@@ -56,31 +56,66 @@ BUILD="$( { cat "$tmp/payload.tgz" install-head.sh update-head.sh CHANGELOG.md C
           | sha256sum | cut -c1-12)"
 
 # Versionsnummer und Aenderungen aus CHANGELOG.md (deutsch) und CHANGELOG.en.md (englisch)
+#  Freigegebene Versionen: Kalenderversion JJJJ.MM bzw. JJJJ.MM.N (Hotfix), aeltere 0.x.y bleiben gueltig.
+#  Oben darf ein Abschnitt "## Testing – JJJJ-MM-TT" stehen (noch nicht freigegeben); die Geraete
+#  sehen dann z. B. "2026.11.1+testing.20261020" (= Stand nach 2026.11.1, letzte Aenderung am 20.10.).
+#  Die echte Nummer vergibt  vspub --release  bzw.  --hotfix  beim Freigeben.
 python3 - "$BUILD" > "$tmp/version.json" <<'PYEOF'
 import json, re, sys
+HEAD = re.compile(r"^##\s+(\S+)\s+[–-]\s+(\d{4}-\d{2}-\d{2})")
+CALVER = re.compile(r"^(\d{4})\.(0[1-9]|1[0-2])(?:\.([1-9]\d*))?$")
+LEGACY = re.compile(r"^0\.\d+\.\d+$")
 def parse(fn):
     entries, cur = [], None
     for line in open(fn, encoding="utf-8"):
-        m = re.match(r"^##\s+(\S+)\s+[–-]\s+(\d{4}-\d{2}-\d{2})", line)
+        m = HEAD.match(line)
         if m:
             cur = {"version": m.group(1), "date": m.group(2), "changes": []}
             entries.append(cur)
         elif cur and line.startswith("- "):
             cur["changes"].append(line[2:].strip())
     return entries
+def key(v):
+    return tuple(int(x) for x in v.split("."))
+def check(fn, entries):
+    """Format und Reihenfolge: Testing nur ganz oben, sonst Kalender- oder alte 0.x-Versionen, absteigend."""
+    seen_calver, last = False, None
+    for i, e in enumerate(entries):
+        v = e["version"]
+        if v == "Testing":
+            if i:
+                sys.exit(f"{fn}: 'Testing' darf nur ganz oben stehen")
+            continue
+        if CALVER.match(v):
+            seen_calver = True
+        elif LEGACY.match(v):
+            pass
+        else:
+            sys.exit(f"{fn}: ungueltige Version '{v}' (erwartet: JJJJ.MM, JJJJ.MM.N oder 'Testing')")
+        if last and key(v) >= key(last):
+            sys.exit(f"{fn}: Versionen muessen absteigend sortiert sein ({last} steht ueber {v})")
+        last = v
+    return seen_calver
 entries = parse("CHANGELOG.md")
 if not entries:
-    sys.exit("CHANGELOG.md: keine Version gefunden (Format: '## 0.4.0 – 2026-09-28')")
+    sys.exit("CHANGELOG.md: keine Version gefunden (Format: '## 2026.11 – 2026-11-07' oder '## Testing – 2026-10-20')")
+check("CHANGELOG.md", entries)
 try:
-    en = {e["version"]: e for e in parse("CHANGELOG.en.md")}
+    en_list = parse("CHANGELOG.en.md")
 except FileNotFoundError:
     sys.exit("CHANGELOG.en.md fehlt (englische Fassung von CHANGELOG.md)")
+check("CHANGELOG.en.md", en_list)
+en = {e["version"]: e for e in en_list}
 top = entries[0]["version"]
 if not en.get(top, {}).get("changes"):
-    sys.exit(f"CHANGELOG.en.md: Version {top} fehlt – jede neue Version braucht auch einen englischen Eintrag")
+    sys.exit(f"CHANGELOG.en.md: Abschnitt {top} fehlt – jede Aenderung braucht auch einen englischen Eintrag")
 for e in entries:
     if en.get(e["version"], {}).get("changes"):
         e["changes_en"] = en[e["version"]]["changes"]
+if top == "Testing":
+    base = next((e["version"] for e in entries[1:]), "0.0.0")
+    top = f"{base}+testing.{entries[0]['date'].replace('-', '')}"
+    entries[0]["version"] = top
 print(json.dumps({"version": top, "build": sys.argv[1], "date": entries[0]["date"],
                   "history": entries[:10]}, ensure_ascii=False))
 PYEOF
