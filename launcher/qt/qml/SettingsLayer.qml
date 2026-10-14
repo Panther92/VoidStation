@@ -141,7 +141,7 @@ Layer {
         var y = vsState.system, sum = sysSummary(vsState)
         var line = sum ? "<b>" + Ui.esc(sum) + "</b>" : Ui.esc(y.checked ? Ui.t("upd.sysCurrent") : Ui.t("upd.sysUnchecked"))
         if (sum && y.due_at && !y.due && !vsState.available)
-            line += "<br>" + Ui.esc(Ui.t("upd.sysDueAt", { date: Ui.loc.toString(new Date(y.due_at * 1000), Ui.lang === "de" ? "d. MMMM yyyy" : "MMMM d, yyyy") }))
+            line += "<br>" + Ui.esc(Ui.t("upd.sysDueAt", { date: Ui.loc.toString(new Date(y.due_at * 1000), Ui.t("fmt.dateYear", null, "d. MMMM yyyy")) }))
         if (y.error && !(y.pkgs && y.pkgs.length)) line = Ui.esc(Ui.t("upd.sysError"))
         var rb = vsState.reboot || {}
         if (rb.kernel || rb.voidstation) line += "<br><b>" + Ui.esc(Ui.t(rb.kernel ? "upd.rebootKernel" : "upd.rebootVs")) + "</b>"
@@ -169,7 +169,8 @@ Layer {
             var parts = []
             if (v.available) {
                 var news = (v.changes || []).map(function (e) {
-                    var ch = (Ui.lang !== "de" && e["changes_" + Ui.lang] && e["changes_" + Ui.lang].length) ? e["changes_" + Ui.lang] : e.changes
+                    var tr = Ui.lang === "de" ? null : ((e["changes_" + Ui.lang] || []).length ? e["changes_" + Ui.lang] : e.changes_en)   // Changelog gibt es de + en
+                    var ch = (tr && tr.length) ? tr : e.changes
                     return e.version + ":\n" + ch.map(function (c) { return "\u2022 " + c }).join("\n")
                 }).join("\n\n")
                 parts.push(Ui.t("upd.confirmText", { remote: v.remote, local: v.local || "\u2013", channel: chLabel(v) }) + (news ? "\n\n" + Ui.t("upd.news") + "\n" + news : ""))

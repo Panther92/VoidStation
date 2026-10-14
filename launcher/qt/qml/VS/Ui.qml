@@ -20,7 +20,7 @@ QtObject {
     property real screenH: 720
     property Item app                         // Hauptfenster (Main.qml): Aktionen wie toast(), openLayer()
     readonly property string font: Qt.application.font.family
-    readonly property var loc: Qt.locale(lang === "en" ? "en_US" : "de_DE")
+    readonly property var loc: Qt.locale(s["fmt.locale"] || (lang === "en" ? "en_US" : "de_DE"))   // Zahlen, Datum
     readonly property int ease: Easing.OutQuint
 
     // Text der Oberflaeche; {name} wird durch vars.name ersetzt
@@ -31,9 +31,10 @@ QtObject {
         if (vars) t = t.replace(/\{(\w+)\}/g, function (m, k) { return vars[k] !== undefined ? vars[k] : m })
         return t
     }
-    // Kachel-, Gruppen- und App-Namen: {"de": …, "en": …} oder deutscher Name (uebersetzt ueber "labels")
+    // Kachel-, Gruppen- und App-Namen: {"de": …, "en": …} oder deutscher Name (uebersetzt ueber "labels";
+    // vs.strings bringt bei weiteren Sprachen die englischen labels als Rueckfall schon mit)
     function l(v) {
-        if (v && typeof v === "object") return v[lang] || v.de || ""
+        if (v && typeof v === "object") return v[lang] || (lang !== "de" ? v.en : "") || v.de || ""
         if (!v || lang === "de") return v || ""
         var lab = s.labels || {}
         return lab[v] !== undefined ? lab[v] : v
@@ -56,7 +57,7 @@ QtObject {
         if (n < 1) { n = 1; k = avail / cell }
         return { n: n, k: k }
     }
-    function pct(n) { return lang === "de" ? n + " %" : n + "%" }
+    function pct(n) { return t("fmt.pct", { n: n }, n + "%") }
     // Bild-Adresse wie im Web: "/bild.jpg" kommt vom Launcher, volle Adressen bleiben
     function url(p) {
         if (!p) return ""
@@ -70,7 +71,8 @@ QtObject {
     function regionName(code) {
         var names = s["region." + code]
         if (names) return names
-        return regions[lang] && regions[lang][code] ? regions[lang][code] : code
+        var r = regions[lang] || regions.en           // weitere Sprachen: region.XX in ihrer i18n-Datei
+        return r[code] ? r[code] : code
     }
     readonly property var regions: ({
         de: { DE: "Deutschland", AT: "Österreich", CH: "Schweiz", FR: "Frankreich", IT: "Italien", GB: "Vereinigtes Königreich",

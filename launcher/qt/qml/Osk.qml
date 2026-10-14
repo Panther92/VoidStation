@@ -18,7 +18,7 @@ Rectangle {
         us: ["1234567890-", "qwertyuiop@", "asdfghjkl;'", "zxcvbnm,./"],
         sym: ["!\"§$%&/()=?", "€@{}[]\\~*+#", ":;_<>|^°'`´", "²³µ«»¿¡¬¦"]
     })
-    readonly property var rows: sym ? layouts.sym : (Ui.lang === "en" ? layouts.us : layouts.de)
+    readonly property var rows: sym ? layouts.sym : (Ui.lang === "de" ? layouts.de : layouts.us)
     z: 45
     color: Ui.c.surfaceOverlay
     visible: open

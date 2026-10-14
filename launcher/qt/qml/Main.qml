@@ -305,13 +305,13 @@ Window {
         // Uhr
         function tick() {
             var d = new Date()
-            if (Ui.lang === "de") { clockMain = Qt.formatTime(d, "HH:mm"); clockAp = "" }
+            if (Ui.t("fmt.clock") !== "12") { clockMain = Qt.formatTime(d, "HH:mm"); clockAp = "" }
             else {                                        // 12-Stunden-Uhr: "h" allein waere in Qt 0–23
                 clockMain = ((d.getHours() % 12) || 12) + ":" + Qt.formatTime(d, "mm")
                 clockAp = d.getHours() < 12 ? "AM" : "PM"
             }
             hdrTime = clockAp ? clockMain + " " + clockAp : clockMain
-            clockDate = Ui.lang === "de" ? Ui.loc.toString(d, "dddd, d. MMMM") : Ui.loc.toString(d, "dddd, MMMM d")
+            clockDate = Ui.loc.toString(d, Ui.t("fmt.date", null, "dddd, d. MMMM"))
         }
         Timer { interval: 5000; running: true; repeat: true; triggeredOnStart: true; onTriggered: app.tick() }
         Connections { target: vs; function onStringsChanged() { app.tick() } }

@@ -356,10 +356,16 @@ class Vs(QObject):
             return {}
 
     def _set_lang(self, lang):
-        self._lang = lang if (WEB / "i18n" / f"{lang}.json").exists() else "de"
+        ok = bool(lang) and all(c.isalnum() or c == "-" for c in lang) and (WEB / "i18n" / f"{lang}.json").exists()
+        self._lang = lang if ok else "de"
+        # Rueckfall wie im Web: Sprache -> Englisch -> Deutsch (Deutsch selbst faellt nicht auf Englisch zurueck,
+        # sonst kaemen z. B. die englischen App-Beschreibungen statt der deutschen aus catalog.json)
         s = dict(self._de)
-        if self._lang != "de":
-            s.update(self._load_lang(self._lang))
+        for l in [] if self._lang == "de" else (["en"] if self._lang == "en" else ["en", self._lang]):
+            d = self._load_lang(l)
+            labels = {**s.get("labels", {}), **d.get("labels", {})}
+            s.update(d)
+            s["labels"] = labels
         self._strings = s
 
     def _get_strings(self):

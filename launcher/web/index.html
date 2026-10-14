@@ -690,31 +690,38 @@ const lastFocus = {};
    Statisches HTML: data-i18n (Text), data-i18n-html, data-i18n-ph (Platzhalter), data-i18n-aria */
 let LANG = 'de';
 const STR = { de: {}, en: {} };
-const LOCALE = { de: 'de-DE', en: 'en-US' };
+// Rueckfall: Sprache -> Englisch -> Deutsch. Deutsch selbst faellt nicht auf Englisch zurueck
+// (sonst kaemen z. B. die englischen App-Beschreibungen statt der deutschen aus catalog.json)
+const chain = () => LANG === 'de' ? [STR.de] : LANG === 'en' ? [STR.en, STR.de] : [STR[LANG] || {}, STR.en, STR.de];
 function T(key, vars, fallback) {
-  let s = STR[LANG][key] ?? STR.de[key] ?? fallback ?? key;
+  let s;
+  for (const d of chain()) { if (d[key] != null) { s = d[key]; break; } }
+  s = s ?? fallback ?? key;
   if (vars) s = String(s).replace(/\{(\w+)\}/g, (m, k) => (vars[k] ?? m));
   return s;
 }
 function L(v) {
-  if (v && typeof v === 'object') return v[LANG] ?? v.de ?? Object.values(v)[0] ?? '';
+  if (v && typeof v === 'object') return v[LANG] ?? (LANG !== 'de' ? v.en : undefined) ?? v.de ?? Object.values(v)[0] ?? '';
   if (!v || LANG === 'de') return v || '';
-  return (STR[LANG].labels || {})[v] ?? v;
+  for (const d of chain()) { const t = (d.labels || {})[v]; if (t != null) return t; }
+  return v;
 }
-const loc = () => LOCALE[LANG] || 'de-DE';
+// Zahlen und Datum im Format der Sprache (fmt.locale in der i18n-Datei, z. B. pt_BR -> pt-BR)
+const loc = () => String(T('fmt.locale', null, 'de_DE')).replace('_', '-');
 const num = n => Number(n).toLocaleString(loc());
-const pct = n => LANG === 'de' ? `${n} %` : `${n}%`;
+const pct = n => T('fmt.pct', { n }, `${n}%`);
 async function loadLang(lang) {
-  LANG = STR[lang] ? lang : 'de';
-  document.documentElement.lang = LANG;
-  for (const l of new Set(['de', LANG])) {
-    if (Object.keys(STR[l]).length) continue;
+  if (!/^[A-Za-z]{2,3}(-[A-Za-z]{2})?$/.test(lang || '')) lang = 'de';
+  for (const l of new Set(['de', 'en', lang])) {
+    if (STR[l] && Object.keys(STR[l]).length) continue;
     try { STR[l] = await getJSON(`i18n/${l}.json`); } catch { STR[l] = {}; }   // offline (file://): Texte bleiben deutsch
   }
+  LANG = lang;
+  document.documentElement.lang = LANG;
   applyStatic();
 }
 function applyStatic(root = document) {
-  const has = k => k in STR[LANG] || k in STR.de;
+  const has = k => chain().some(d => k in d);
   root.querySelectorAll('[data-i18n]').forEach(e => { if (has(e.dataset.i18n)) e.textContent = T(e.dataset.i18n); });
   root.querySelectorAll('[data-i18n-html]').forEach(e => { if (has(e.dataset.i18nHtml)) e.innerHTML = T(e.dataset.i18nHtml); });
   root.querySelectorAll('[data-i18n-ph]').forEach(e => { if (has(e.dataset.i18nPh)) e.placeholder = T(e.dataset.i18nPh); });
@@ -908,7 +915,7 @@ async function load() {
 function tick() {
   const d = new Date();
   // Uhrzeit im Format der Sprache (de: 20:15, en: 8:15 PM); AM/PM auf der Uhr-Kachel kleiner
-  const parts = new Intl.DateTimeFormat(loc(), { hour: LANG === 'de' ? '2-digit' : 'numeric', minute: '2-digit' }).formatToParts(d);
+  const parts = new Intl.DateTimeFormat(loc(), { hour: T('fmt.clock') === '12' ? 'numeric' : '2-digit', minute: '2-digit' }).formatToParts(d);
   const ap = parts.filter(p => p.type === 'dayPeriod').map(p => p.value).join('');
   const hm = parts.filter(p => p.type !== 'dayPeriod').map(p => p.value).join('').trim();
   const date = d.toLocaleDateString(loc(), { weekday: 'long', day: 'numeric', month: 'long' });
@@ -1734,7 +1741,7 @@ async function runUpdates() {
   const parts = [];
   if (vsState.available) {
     // "Was ist neu" in der eingestellten Sprache (changes_en ab 0.6.0, sonst deutsch)
-    const news = (vsState.changes || []).map(e => `${e.version}:\n` + ((LANG !== 'de' && e['changes_' + LANG]?.length) ? e['changes_' + LANG] : e.changes).map(c => '• ' + c).join('\n')).join('\n\n');
+    const news = (vsState.changes || []).map(e => `${e.version}:\n` + ((LANG !== 'de' && (e['changes_' + LANG]?.length ? e['changes_' + LANG] : e.changes_en)?.length) ? (e['changes_' + LANG]?.length ? e['changes_' + LANG] : e.changes_en) : e.changes).map(c => '• ' + c).join('\n')).join('\n\n');
     parts.push(T('upd.confirmText', { remote: vsState.remote, local: vsState.local || '–', channel: chLabel(vsState) }) + (news ? `\n\n${T('upd.news')}\n${news}` : ''));
   }
   const y = vsState.system;
@@ -3187,7 +3194,7 @@ function renderOskKeys() {
   if (!grid) return;
   const keep = focusEl?.dataset?.key;
   grid.innerHTML = '';
-  const mapKey = LANG === 'en' ? 'us' : 'de';
+  const mapKey = LANG === 'de' ? 'de' : 'us';
   const rows = oskSym ? OSK.sym : (OSK[mapKey] || OSK.de);
   rows.forEach((r, ri) => {
     [...r].forEach((c, ci) => {

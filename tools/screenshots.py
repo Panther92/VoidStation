@@ -7,6 +7,7 @@ Aufruf:    python3 tools/screenshots.py              -> docs/screenshots/*.webp
 """
 import json
 import os
+import re
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -17,6 +18,10 @@ TILES = json.loads((REPO / "launcher" / "tiles.json").read_text(encoding="utf-8"
 TILES["user"] = "Paul"
 CAT = json.loads((REPO / "launcher" / "catalog.json").read_text(encoding="utf-8"))
 LANG = os.environ.get("VS_LANG", "de")
+# Sprachliste wie auf dem Geraet (LANG_TABLE in launcher.py), ohne launcher.py zu importieren
+_src = (REPO / "launcher" / "launcher.py").read_text(encoding="utf-8")
+_tab = _src[_src.index("LANG_TABLE = ["):]
+LANGS = [{"id": i, "label": n} for i, n in re.findall(r'^\s*\("([A-Za-z-]+)", "([^"]+)"', _tab[:_tab.index("\n]")], re.M)]
 INSTALLED = {"steam", "retroarch", "duckstation", "kodi", "youtube-tv", "supertuxkart", "jellyfin", "netflix"}
 
 RADIO_NOW = {"station": {"name": "Deutschlandfunk", "url": "https://example.invalid/dlf"}, "title": "Nachrichten"}
@@ -43,7 +48,7 @@ COUNTRIES = [{"code": c, "n": n} for c, n in [("DE", 212), ("AT", 48), ("CH", 61
                                               ("GB", 150), ("US", 1400), ("ES", 260), ("NL", 90), ("PL", 120)]]
 
 SETTINGS = {
-    "lang": LANG, "langs": [{"id": "de", "label": "Deutsch"}, {"id": "en", "label": "English"}],
+    "lang": LANG, "langs": LANGS,
     "scale": float(os.environ.get("SCALE", "1.25")), "scales": [1, 1.25, 1.5, 1.75, 2, 2.25],
     "theme": "default-dark", "themes": ["default-dark", "default-light", "high-contrast", "nord"],
     "cursor": {"theme": "Bibata-Modern-Ice", "size": 48,

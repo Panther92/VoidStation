@@ -11,7 +11,8 @@ Auch der Installer im Live-System ist Qt. Die bisherige Web-Oberfläche (WebKitG
 **Funktionen:** YouTube (Firefox im Kiosk-Modus), Radio mit Suche und Favoriten, TV-Sender aus aller Welt (iptv-org),
 Emulatoren, AppCenter für optionale Apps (xbps, Flatpak, AppImage, Web), Einstellungen (Sprache, Skalierung, Auflösung,
 Tonausgang, WLAN, Bluetooth, Mauszeiger), Samba-Freigabe `\\<rechner>\share`, mehrere Apps parallel mit Umschalten.
-Oberfläche auf **Deutsch oder Englisch** (Einstellungen → Sprache · Language).
+Oberfläche auf **Deutsch oder Englisch**, dazu elf maschinell übersetzte Sprachen: Español, Français, Italiano, Latviešu, Magyar,
+Nederlands, Polski, Português (Brasil), Ελληνικά, Русский, Українська (Einstellungen → Sprache). Den Installer gibt es vorerst nur auf Deutsch/Englisch.
 Grafik-Server ist [XLibre](https://github.com/X11Libre/xserver) (Pakete von [xlibre-void](https://github.com/xlibre-void/xlibre));
 X.Org wird nicht verwendet. Startet die Oberfläche zweimal nicht, installiert VoidStation XLibre einmal neu;
 danach folgt eine Rettungskonsole. Von Hand: `sudo /usr/local/sbin/voidstation-pkg xserver ensure|repair|status`.
@@ -137,16 +138,26 @@ Warten Updates (oder ist nach einem neuen Kernel ein Neustart nötig), steht unt
 
 ## Sprachen
 
-Alle Texte der Oberfläche stehen in `launcher/web/i18n/de.json` und `en.json` (Schlüssel → Text, `{name}` = Platzhalter).
+Alle Texte der Oberfläche stehen in `launcher/web/i18n/<sprache>.json` (Schlüssel → Text, `{name}` = Platzhalter).
 Im Code: `T('schlüssel', { name })` für Texte, `L(text)` für Kachel-, Gruppen- und App-Namen.
-Neue Texte gehören immer in **beide** Dateien – `build.sh` bricht ab, wenn in `en.json` ein Schlüssel oder Platzhalter fehlt.
+Deutsch und Englisch werden von Hand gepflegt: Neue Texte gehören immer in **beide** Dateien `de.json` und `en.json` –
+`build.sh` bricht ab, wenn in `en.json` ein Schlüssel oder Platzhalter fehlt.
 
-- Sprache wählen: Einstellungen → Sprache · Language. Ohne Wahl gilt `LANG` der Sitzung (`en_US…` → Englisch, sonst Deutsch).
+Die übrigen Sprachen (`es`, `fr`, `it`, `lv`, `hu`, `nl`, `pl`, `pt-BR`, `el`, `ru`, `uk`) sind maschinell übersetzt –
+Korrekturen von Muttersprachlern sind sehr willkommen. Fehlt ein Text, gilt Englisch, dann Deutsch; ein neues Feature
+macht also keine Sprache kaputt. `build.sh` zeigt, wie viele Texte noch englisch sind, und lehnt unbekannte Schlüssel oder
+falsche Platzhalter ab. Installer-Texte (`inst.*`) sind noch nicht übersetzt.
+
+- Neue Sprache: eine Zeile in `LANG_TABLE` in `launcher/launcher.py` (Kennung, Name in der Sprache, Locale, Firefox-Sprache)
+  plus `launcher/web/i18n/<kennung>.json`. Formate stehen in der Datei selbst: `fmt.locale`, `fmt.date` / `fmt.dateYear`
+  (Qt-Datumsmuster), `fmt.clock` (`12`/`24`), `fmt.pct`; Ländernamen für den TV-Filter als `region.XX`.
+
+- Sprache wählen: Einstellungen → Sprache. Ohne Wahl gilt `LANG` der Sitzung (`fr_FR…` → Französisch, `pt_BR…` → Portugiesisch (Brasilien), Unbekanntes → Deutsch).
 - Programme aus den Kacheln starten mit `LANG`/`LANGUAGE` der gewählten Sprache (VLC, PCManFM, GTK/Qt); Firefox-Profile bekommen
   vor jedem Start `intl.locale.requested` und `intl.accept_languages`. Programme mit eigener Spracheinstellung (Steam, Kodi) bleiben dabei.
-- Kacheln: Deutsche Standardnamen (z. B. „Fernsehen“) übersetzt `labels` in `en.json`; eigene Namen bleiben, wie sie sind.
+- Kacheln: Deutsche Standardnamen (z. B. „Fernsehen“) übersetzt `labels` in der jeweiligen Sprachdatei; eigene Namen bleiben, wie sie sind.
   Eigene Kacheln können auch zweisprachig sein: `"label": {"de": "Fernsehen", "en": "TV"}`.
-- AppCenter: Beschreibungen über `app.<id>.desc` in `en.json`, sonst gilt der Text aus `catalog.json`; Hinweise nach der
+- AppCenter: Beschreibungen über `app.<id>.desc` in der Sprachdatei, sonst gilt der Text aus `catalog.json`; Hinweise nach der
   Installation (`note` im Katalog) über `app.<id>.note`. Kategorien kommen aus `categories` in `catalog.json` (Reihenfolge =
   Seitenleiste, Name über `labels`, Untertitel über `apps.catDesc.<Kategorie>`); „Installiert“ baut die Oberfläche selbst.
 - Englisch heißt `en_US`: 12-Stunden-Uhr (8:15 PM), Datum und Zahlen im US-Format.
@@ -203,7 +214,7 @@ VoidStation erkennt neue CSS-Dateien im Theme-Ordner automatisch und bietet sie 
 | `launcher/qt/` | Startseite und Installer (Python + Qt 6): `voidstation-home.py` (Fenster, Gamepad, Texte, Farben), `qml/` (Oberfläche), `icons.py` |
 | `launcher/web/index.html` | Web-Oberfläche (Kacheln, Radio, TV, AppCenter, Einstellungen, Installer) – Rückfall, falls Qt nicht startet |
 | `launcher/web/themes/` | Themes als modulare CSS-Dateien (`default-dark`, `default-light`, `high-contrast`, `nord`) – gelten für beide Oberflächen |
-| `launcher/web/i18n/` | Texte beider Oberflächen: `de.json`, `en.json` |
+| `launcher/web/i18n/` | Texte beider Oberflächen, eine Datei je Sprache (`de.json`, `en.json`, …) |
 | `launcher/voidstation-shell.py` | Vollbild-Fenster (WebKitGTK) für die Web-Oberfläche; Firefox als Rückfall |
 | `launcher/home.sh` | wählt die Oberfläche (Datei `frontend`: `qt` oder `web`) und hält sie am Leben |
 | `launcher/tiles.json` | Standard-Kacheln |

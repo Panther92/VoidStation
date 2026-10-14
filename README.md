@@ -11,7 +11,8 @@ The installer in the live system is Qt as well. The previous web interface (WebK
 **Features:** YouTube (Firefox in kiosk mode), radio with search and favorites, TV channels from around the world (iptv-org),
 emulators, an AppCenter for optional apps (xbps, Flatpak, AppImage, web), settings (language, scaling, resolution,
 audio output, Wi-Fi, Bluetooth, mouse pointer), a Samba share `\\<hostname>\share`, several apps side by side with switching.
-Interface in **English or German** (Settings → Language · Sprache).
+Interface in **English or German**, plus eleven machine-translated languages: Español, Français, Italiano, Latviešu, Magyar,
+Nederlands, Polski, Português (Brasil), Ελληνικά, Русский, Українська (Settings → Language). The installer is English/German only for now.
 The display server is [XLibre](https://github.com/X11Libre/xserver) (packages from [xlibre-void](https://github.com/xlibre-void/xlibre));
 X.Org is not used. If the interface fails to start twice, VoidStation reinstalls XLibre once;
 after that, a rescue console appears. By hand: `sudo /usr/local/sbin/voidstation-pkg xserver ensure|repair|status`.
@@ -136,16 +137,26 @@ When updates are waiting (or a restart is needed after a new kernel), a yellow h
 
 ## Languages
 
-All interface texts live in `launcher/web/i18n/de.json` and `en.json` (key → text, `{name}` = placeholder).
+All interface texts live in `launcher/web/i18n/<language>.json` (key → text, `{name}` = placeholder).
 In code: `T('key', { name })` for texts, `L(text)` for tile, group and app names.
-New texts always go into **both** files – `build.sh` aborts if a key or placeholder is missing in `en.json`.
+German and English are maintained by hand: new texts always go into **both** `de.json` and `en.json` –
+`build.sh` aborts if a key or placeholder is missing in `en.json`.
 
-- Choosing the language: Settings → Language · Sprache. Without a choice, the session's `LANG` applies (`en_US…` → English, otherwise German).
+The other languages (`es`, `fr`, `it`, `lv`, `hu`, `nl`, `pl`, `pt-BR`, `el`, `ru`, `uk`) were machine-translated –
+corrections by native speakers are very welcome. A missing text falls back to English, then German, so a new
+feature never breaks a language; `build.sh` lists how many texts are still English and rejects unknown keys or
+wrong placeholders. Installer texts (`inst.*`) are not translated yet.
+
+- New language: a line in `LANG_TABLE` in `launcher/launcher.py` (id, name in that language, locale, Firefox language)
+  plus `launcher/web/i18n/<id>.json`. Formats live in the file itself: `fmt.locale`, `fmt.date` / `fmt.dateYear`
+  (Qt date patterns), `fmt.clock` (`12`/`24`), `fmt.pct`; country names for the TV filter as `region.XX`.
+
+- Choosing the language: Settings → Language. Without a choice, the session's `LANG` applies (`fr_FR…` → French, `pt_BR…` → Portuguese (Brazil), unknown → German).
 - Programs started from tiles get `LANG`/`LANGUAGE` of the chosen language (VLC, PCManFM, GTK/Qt); Firefox profiles get
   `intl.locale.requested` and `intl.accept_languages` before every start. Programs with their own language setting (Steam, Kodi) keep it.
-- Tiles: German default names (e.g. “Fernsehen”) are translated via `labels` in `en.json`; your own names stay as they are.
+- Tiles: German default names (e.g. “Fernsehen”) are translated via `labels` in each language file; your own names stay as they are.
   Your own tiles can be bilingual too: `"label": {"de": "Fernsehen", "en": "TV"}`.
-- AppCenter: descriptions via `app.<id>.desc` in `en.json`, otherwise the text from `catalog.json` applies; post-install
+- AppCenter: descriptions via `app.<id>.desc` in the language file, otherwise the text from `catalog.json` applies; post-install
   hints (`note` in the catalog) via `app.<id>.note`. Categories come from `categories` in `catalog.json` (order =
   sidebar, name via `labels`, subtitle via `apps.catDesc.<category>`); the interface builds “Installed” itself.
 - English means `en_US`: 12-hour clock (8:15 PM), dates and numbers in US format.
@@ -202,7 +213,7 @@ VoidStation picks up new CSS files in the theme folder automatically and offers 
 | `launcher/qt/` | Start screen and installer (Python + Qt 6): `voidstation-home.py` (window, gamepad, texts, colors), `qml/` (interface), `icons.py` |
 | `launcher/web/index.html` | Web interface (tiles, radio, TV, AppCenter, settings, installer) – fallback if Qt doesn't start |
 | `launcher/web/themes/` | Themes as modular CSS files (`default-dark`, `default-light`, `high-contrast`, `nord`) – apply to both interfaces |
-| `launcher/web/i18n/` | Texts of both interfaces: `de.json`, `en.json` |
+| `launcher/web/i18n/` | Texts of both interfaces, one file per language (`de.json`, `en.json`, …) |
 | `launcher/voidstation-shell.py` | Full-screen window (WebKitGTK) for the web interface; Firefox as fallback |
 | `launcher/home.sh` | picks the interface (file `frontend`: `qt` or `web`) and keeps it alive |
 | `launcher/tiles.json` | Default tiles |

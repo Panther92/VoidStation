@@ -9,6 +9,7 @@ at the top; `vspub --release` or `vspub --hotfix` assigns the number when releas
 Older versions (up to 0.15.0) still use the old numbering.
 
 ## Testing – 2026-10-14
+- Eleven new interface languages: Español, Français, Italiano, Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Ελληνικά, Русский, Українська – Settings → Language. Date, time and numbers follow the language; programs like VLC and YouTube follow on their next start. The translations are machine-made – corrections are welcome as pull requests. The installer and the boot menu of the stick stay German/English for now
 - Calendar version numbers: year and month of the release, e.g. 2026.11. Hotfixes to it are 2026.11.1, 2026.11.2 and so on; the live ISO carries the same number as the version it contains
 - The Testing channel shows its state as e.g. “2026.11+testing.20261120” (after 2026.11, last change on 20 Nov). Switching from Testing to Stable still never offers an older update
 

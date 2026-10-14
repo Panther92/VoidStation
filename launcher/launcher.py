@@ -387,8 +387,26 @@ SETTINGS = BASE / "settings.json"
 DEFAULTS = {"scale": 1.75, "resolution": None, "cursor_theme": "Bibata-Modern-Ice", "cursor_size": 48, "lang": None, "theme": "default-dark",
             "sysupd_days": 90}
 SYSUPD_DAYS = (30, 60, 90)                  # Erinnerung an Systemupdates (ohne VoidStation-Update) nach … Tagen
-# Sprachen der Oberflaeche (Texte in web/i18n/<id>.json); Anzeige immer in der eigenen Sprache
-LANGS = [{"id": "de", "label": "Deutsch"}, {"id": "en", "label": "English"}]
+# Sprachen der Oberflaeche: Texte in web/i18n/<id>.json, fehlende Texte kommen aus en.json, dann aus de.json.
+# Anzeige immer in der eigenen Sprache. Je Sprache auch das Locale fuer gestartete Programme (LANG/LANGUAGE) und
+# die Firefox-Sprache (Menues nur mit installiertem Sprachpaket, Webseiten wie YouTube immer).
+# Neue Sprache: Zeile hier + web/i18n/<id>.json (build.sh prueft Schluessel und Platzhalter gegen de.json).
+LANG_TABLE = [  # (id, Name, Locale, Firefox-Sprache)
+    ("de", "Deutsch", "de_DE", "de"),
+    ("en", "English", "en_US", "en-US"),
+    ("es", "Español", "es_ES", "es-ES"),
+    ("fr", "Français", "fr_FR", "fr"),
+    ("it", "Italiano", "it_IT", "it"),
+    ("lv", "Latviešu", "lv_LV", "lv"),
+    ("hu", "Magyar", "hu_HU", "hu"),
+    ("nl", "Nederlands", "nl_NL", "nl"),
+    ("pl", "Polski", "pl_PL", "pl"),
+    ("pt-BR", "Português (Brasil)", "pt_BR", "pt-BR"),
+    ("el", "Ελληνικά", "el_GR", "el"),
+    ("ru", "Русский", "ru_RU", "ru"),
+    ("uk", "Українська", "uk_UA", "uk"),
+]
+LANGS = [{"id": i, "label": n} for i, n, _, _ in LANG_TABLE]
 CURSOR_SIZES = [32, 48, 64, 80, 96]
 CURSOR_NAMES = {"Bibata-Modern-Ice": "Hell", "Bibata-Modern-Classic": "Dunkel", "Adwaita": "Adwaita"}
 SCALES = [1.0, 1.25, 1.5, 1.75, 2.0, 2.25]
@@ -425,22 +443,26 @@ def cmdline_value(name):
 
 def ui_lang(s=None):
     """Sprache der Oberflaeche: Einstellung, im Live-System sonst die Sprache aus dem Startmenue,
-    sonst aus LANG der Sitzung (en_US.UTF-8 -> en), sonst Deutsch."""
+    sonst aus LANG der Sitzung (pt_BR.UTF-8 -> pt-BR, en_GB.UTF-8 -> en), sonst Deutsch."""
     ids = {l["id"] for l in LANGS}
     lang = (s or settings_load()).get("lang")
     if lang in ids:
         return lang
     if Path("/etc/voidstation-live").exists() and cmdline_value("voidstation.lang") in ids:
         return cmdline_value("voidstation.lang")
-    env = os.environ.get("LC_ALL") or os.environ.get("LC_MESSAGES") or os.environ.get("LANG") or ""
-    return "en" if env.startswith("en") else "de"
+    env = (os.environ.get("LC_ALL") or os.environ.get("LC_MESSAGES") or os.environ.get("LANG") or "").split(".")[0]
+    for cand in (env.replace("_", "-"), env.split("_")[0]):
+        if cand in ids:
+            return cand
+    return "de"
 
 
 # Sprache fuer gestartete Programme: VLC, PCManFM und andere GTK-/Qt-Programme folgen LANG/LANGUAGE,
 # Firefox (YouTube) bekommt Oberflaechen- und Webseiten-Sprache ueber sein Profil
-LOCALES = {"de": "de_DE.UTF-8", "en": "en_US.UTF-8"}
-LANGUAGE_ENV = {"de": "de_DE:de", "en": "en_US:en"}
-FIREFOX_LANG = {"de": ("de", "de-DE, de, en-US, en"), "en": ("en-US", "en-US, en")}
+LOCALES = {i: f"{loc}.UTF-8" for i, _, loc, _ in LANG_TABLE}
+LANGUAGE_ENV = {i: f"{loc}:{loc.split('_')[0]}" for i, _, loc, _ in LANG_TABLE}
+FIREFOX_LANG = {i: (ff, ", ".join(dict.fromkeys([loc.replace("_", "-"), loc.split("_")[0], "en-US", "en"])))
+                for i, _, loc, ff in LANG_TABLE}
 _LOCALES_AVAIL = None
 
 
@@ -2150,7 +2172,7 @@ def _desktop_entry(path):
 
 def local_apps():
     """Programme mit .desktop-Datei, die weder im Katalog noch als eigene Kachel vorkommen."""
-    lang = ui_lang()
+    lang = ui_lang().replace("-", "_")               # .desktop-Schluessel: Name[pt_BR], Name[fr]
     cat = catalog()
     known_bins = {Path(str(a["cmd"][0])).name for a in cat["apps"] if isinstance(a.get("cmd"), list) and a["cmd"]}
     known_bins |= {a["source"].get("pkg") for a in cat["apps"] if a["source"].get("pkg")}
@@ -2193,8 +2215,9 @@ def local_apps():
                 args = ["xterm", "-fa", "DejaVu Sans Mono", "-fs", "14", "-e"] + args
             cats = e.get("Categories", "")
             icon = next((i for k, i in LOCAL_ICONS if k in cats.split(";")), "globe")
-            name = e.get(f"Name[{lang}]") or e["Name"]
-            desc = e.get(f"Comment[{lang}]") or e.get("Comment") or e.get(f"GenericName[{lang}]") or e.get("GenericName") or ""
+            loc = lambda k: e.get(f"{k}[{lang}]") or e.get(f"{k}[{lang.split('_')[0]}]")   # pt_BR, sonst pt
+            name = loc("Name") or e["Name"]
+            desc = loc("Comment") or e.get("Comment") or loc("GenericName") or e.get("GenericName") or ""
             out.append({"id": aid, "name": name, "desc": desc, "cmd": args, "icon": icon, "tile": aid in tiles,
                         "game": "Game" in cats})
     return sorted(out, key=lambda a: a["name"].lower())
@@ -2296,7 +2319,7 @@ class Installer:
         p["screen"] = {"name": disp[0]["name"], "mode": disp[0]["current"], "rate": disp[0].get("rate")} if disp else None
         p["favs"] = {"radio": len(favs_load()), "tv": len(tvfavs_load())}
         p["live_home"] = str(Path.home())
-        p["lang"] = ui_lang()
+        p["lang"] = ui_lang() if ui_lang() in ("de", "en") else "en"   # Installer kennt bisher nur de/en
         self.probe_cache = p
         return p
 

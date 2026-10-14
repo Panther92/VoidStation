@@ -1,4 +1,9 @@
 {
+  "fmt.locale": "de_DE",
+  "fmt.date": "dddd, d. MMMM",
+  "fmt.dateYear": "d. MMMM yyyy",
+  "fmt.clock": "24",
+  "fmt.pct": "{n} %",
   "common.back": "Zurück",
   "common.cancel": "Abbrechen",
   "common.close": "Schließen",

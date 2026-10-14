@@ -10,7 +10,8 @@
 #  Eingaben:
 #    CHANGELOG.md                 – erste Ueberschrift = Versionsnummer (JJJJ.MM[.N]) oder "Testing"
 #    CHANGELOG.en.md              – englische Fassung, oberster Abschnitt muss drinstehen
-#    launcher/web/i18n/*.json     – Texte der Oberflaeche (en.json muss alle Schluessel aus de.json haben)
+#    launcher/web/i18n/*.json     – Texte der Oberflaeche (en.json muss alle Schluessel aus de.json haben,
+#                                   weitere Sprachen nur bekannte Schluessel; fehlende = Englisch)
 #    update-url                   – Update-Quelle der Geraete ({channel} = stable/main)
 #    keys/voidstation-release.pub – oeffentlicher Signaturschluessel (optional)
 #
@@ -38,10 +39,15 @@ if [ -s keys/voidstation-release.pub ]; then
   SIGNERS="voidstation-release namespaces=\"voidstation\" $ktype $kdata"
 fi
 
-# Sprachdateien: jeder Text aus de.json muss in en.json stehen, mit denselben {Platzhaltern}
-python3 - launcher/web/i18n/de.json launcher/web/i18n/en.json <<'PYEOF'
+# Sprachdateien: jeder Text aus de.json muss in en.json stehen, mit denselben {Platzhaltern}.
+# Weitere Sprachen (es.json, fr.json, ...) duerfen unvollstaendig sein (es gilt dann Englisch), aber nur bekannte
+# Schluessel enthalten (zusaetzlich region.XX fuer Laendernamen) – mit denselben Platzhaltern wie en.json.
+# Jede Sprachdatei braucht ihre Zeile in LANG_TABLE (launcher/launcher.py) und umgekehrt.
+python3 - launcher/web/i18n launcher/launcher.py <<'PYEOF'
 import json, re, sys
-de, en = (json.load(open(p, encoding="utf-8")) for p in sys.argv[1:3])
+from pathlib import Path
+d = Path(sys.argv[1])
+de, en = (json.load(open(d / f"{l}.json", encoding="utf-8")) for l in ("de", "en"))
 ph = lambda s: sorted(re.findall(r"\{(\w+)\}", s)) if isinstance(s, str) else []
 missing = [k for k in de if k != "labels" and k not in en]
 wrong = [k for k in de if k in en and ph(de[k]) != ph(en[k])]
@@ -49,6 +55,30 @@ for k in missing: print(f"  fehlt in en.json: {k}", file=sys.stderr)
 for k in wrong:   print(f"  andere Platzhalter in en.json: {k}", file=sys.stderr)
 if missing or wrong:
     sys.exit("i18n: en.json ist unvollstaendig – jeder neue Text gehoert in de.json UND en.json")
+src = Path(sys.argv[2]).read_text(encoding="utf-8")
+block = src[src.index("LANG_TABLE = ["):]
+table = set(re.findall(r'^\s*\("([A-Za-z-]+)",', block[:block.index("\n]")], re.M))
+files = {p.stem for p in d.glob("*.json")}
+bad = [f"  {l}.json ohne Zeile in LANG_TABLE" for l in sorted(files - table)]
+bad += [f"  LANG_TABLE: {l}.json fehlt" for l in sorted(table - files)]
+known = set(de) | set(en)
+for f in sorted(files - {"de", "en"}):
+    x = json.load(open(d / f"{f}.json", encoding="utf-8"))
+    for k, v in x.items():
+        if k == "labels":                        # deutsche Kachel-/Gruppennamen -> Uebersetzung (frei)
+            bad += [f"  {f}.json: Label {n!r} ist kein Text" for n, t in v.items() if not isinstance(t, str)]
+        elif k.startswith("region."):
+            continue
+        elif k not in known:
+            bad.append(f"  {f}.json: unbekannter Schluessel {k}")
+        elif ph(v) != ph(en.get(k, de.get(k))):
+            bad.append(f"  {f}.json: andere Platzhalter in {k}")
+    left = [k for k in en if k not in x and not k.startswith(("inst.", "hint.inst"))]
+    if left:
+        print(f"  {f}.json: {len(left)} Texte noch englisch", file=sys.stderr)
+for b in bad: print(b, file=sys.stderr)
+if bad:
+    sys.exit("i18n: Sprachdateien passen nicht zu de.json/en.json bzw. LANG_TABLE")
 PYEOF
 
 # Build-Kennung = Pruefsumme ueber alles, was auf dem Geraet landet (reproduzierbar)

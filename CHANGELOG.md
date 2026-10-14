@@ -9,6 +9,7 @@ ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freig
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
 ## Testing – 2026-10-14
+- Elf neue Sprachen für die Oberfläche: Español, Français, Italiano, Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Ελληνικά, Русский, Українська – Einstellungen → Sprache. Datum, Uhrzeit und Zahlen im Format der Sprache; Programme wie VLC und YouTube folgen beim nächsten Start. Die Übersetzungen sind maschinell erstellt – Korrekturen gern als Pull Request. Installer und Startmenü des Sticks bleiben vorerst Deutsch/Englisch
 - Versionsnummern nach Kalender: Jahr und Monat der Freigabe, z. B. 2026.11. Hotfixes dazu heißen 2026.11.1, 2026.11.2 usw.; die Live-ISO trägt dieselbe Nummer wie die Version, die sie enthält
 - Kanal Testing zeigt den Stand als z. B. „2026.11+testing.20261120“ (nach 2026.11, letzte Änderung am 20.11.). Wer von Testing auf Stable wechselt, bekommt weiterhin kein älteres Update angeboten
 
