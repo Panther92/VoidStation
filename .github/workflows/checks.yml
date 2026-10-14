@@ -1,0 +1,36 @@
+# Pruefungen fuer Pull Requests und jeden Push nach main (tools/check.sh):
+# Shell-Skripte, Python-Syntax, JSON, build.sh (i18n, CHANGELOG de + en) und Webseite.
+# Bei Pull Requests ausserdem: dist/ und keys/ bleiben unangetastet – die erzeugt
+# und signiert nur tools/publish.sh auf dem Rechner des Herausgebers.
+name: Checks
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+      - name: Pruefen (tools/check.sh)
+        run: bash tools/check.sh
+      - name: dist/ und keys/ unveraendert
+        if: github.event_name == 'pull_request'
+        run: |
+          # HEAD = Merge-Commit des PRs, HEAD^1 = aktueller Zielzweig
+          changed="$(git diff --name-only HEAD^1 HEAD -- dist keys)"
+          if [ -n "$changed" ]; then
+            echo "::error::This pull request changes generated or signed files:"
+            echo "$changed"
+            echo "dist/ and keys/ are only written by tools/publish.sh – please drop these changes from the PR."
+            exit 1
+          fi
+          echo "ok"
