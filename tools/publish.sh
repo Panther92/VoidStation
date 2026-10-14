@@ -149,7 +149,7 @@ days_ago()  { echo $(( ($(date +%s) - $1) / 86400 )); }
 # ---------------------------------------------------------------------
 PEND_SHA=(); PEND_TS=(); PEND_TXT=()
 collect_pending() {
-  local tip="${1:-origin/main}" c ts txt
+  local c ts txt
   PEND_SHA=(); PEND_TS=(); PEND_TXT=()
   while read -r c ts; do
     [ -n "$c" ] || continue
@@ -162,7 +162,7 @@ collect_pending() {
       txt="$(git log -1 --format=%s "$c")"
     fi
     PEND_SHA+=("$c"); PEND_TS+=("$ts"); PEND_TXT+=("${txt:0:90}")
-  done < <(git log --first-parent --format='%H %ct' "origin/stable..$tip")
+  done < <(git log --first-parent --format='%H %ct' origin/stable..origin/main)
 }
 
 # Release-Zug: neuester Stand, in dem alles mind. SOAK_DAYS in Testing lag -> RIPE (leer = nichts reif)
