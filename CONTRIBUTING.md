@@ -3,7 +3,7 @@
 Thanks for helping out! Bug reports, ideas, translations, themes and code are all welcome.
 You can write in **English or German** – issues, discussions and pull requests alike.
 
-By taking part you agree to the [Code of Conduct](CODE_OF_CONDUCT.md).
+VoidStation follows [No Code of Conduct](CODE_OF_CONDUCT.md): we are all adults, we accept anyone's contributions, nothing else matters.
 Security problems please **don't** report in a public issue – see [SECURITY.md](SECURITY.md).
 
 ## Where to go

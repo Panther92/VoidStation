@@ -280,7 +280,7 @@ python3 -m http.server -d _site 8000       # dann http://<rechner>:8000
 ## Mitmachen
 
 Fehlerberichte, Ideen, Übersetzungen, Themes und Pull Requests sind willkommen – auf Deutsch oder Englisch.
-Siehe [CONTRIBUTING.md](CONTRIBUTING.md) (Pull Requests gehen an `main`), den [Verhaltenskodex](CODE_OF_CONDUCT.md)
+Siehe [CONTRIBUTING.md](CONTRIBUTING.md) (Pull Requests gehen an `main`), [No Code of Conduct](CODE_OF_CONDUCT.md)
 und für Sicherheitsprobleme [SECURITY.md](SECURITY.md).
 
 ## Lizenz

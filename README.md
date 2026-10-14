@@ -279,7 +279,7 @@ python3 -m http.server -d _site 8000       # then http://<host>:8000
 ## Contributing
 
 Bug reports, ideas, translations, themes and pull requests are welcome – in English or German.
-See [CONTRIBUTING.md](CONTRIBUTING.md) (pull requests go to `main`), the [Code of Conduct](CODE_OF_CONDUCT.md)
+See [CONTRIBUTING.md](CONTRIBUTING.md) (pull requests go to `main`), [No Code of Conduct](CODE_OF_CONDUCT.md)
 and, for security problems, [SECURITY.md](SECURITY.md).
 
 ## License
