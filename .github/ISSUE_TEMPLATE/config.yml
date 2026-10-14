@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and ideas
+    url: https://github.com/Panther92/VoidStation/discussions
+    about: Ask questions, discuss ideas, show your setup – English or German.
+  - name: Report a security problem
+    url: https://github.com/Panther92/VoidStation/security/advisories/new
+    about: Please report vulnerabilities privately, not as a public issue.
+  - name: Download and help (voidstation.de)
+    url: https://voidstation.de/en/
+    about: Live ISO, installation guide and news.

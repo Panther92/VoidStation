@@ -1,6 +1,8 @@
 # VoidStation
 
-English · **[Deutsch](README.de.md)** · [voidstation.de](https://voidstation.de/en/) · [Download](https://voidstation.de/en/download/) · [Questions](https://github.com/Panther92/VoidStation/discussions) · [Report a bug](https://github.com/Panther92/VoidStation/issues)
+English · **[Deutsch](README.de.md)** · [voidstation.de](https://voidstation.de/en/) · [Download](https://voidstation.de/en/download/) · [Questions](https://github.com/Panther92/VoidStation/discussions) · [Report a bug](https://github.com/Panther92/VoidStation/issues/new/choose)
+
+[![Stable](https://img.shields.io/github/v/release/Panther92/VoidStation?label=stable&sort=semver)](https://github.com/Panther92/VoidStation/releases/latest) [![Checks](https://github.com/Panther92/VoidStation/actions/workflows/checks.yml/badge.svg)](https://github.com/Panther92/VoidStation/actions/workflows/checks.yml) [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE) [![ISO downloads](https://img.shields.io/sourceforge/dt/voidstation?label=ISO%20downloads)](https://sourceforge.net/projects/voidstation/files/)
 
 Void Linux as a TV station: a dark tile interface in the style of Windows 8, controlled with a gamepad, remote, mouse or keyboard.
 It runs on Openbox; the start screen is a dedicated Python + Qt 6 program that draws straight on the GPU.
@@ -102,6 +104,8 @@ xbps package and only comes via the button or `vsctl update`.
 
 **Channels:** *Stable* (branch `stable`, default) or *Testing* (branch `main`, new versions first) –
 switchable under Settings → Updates → Update channel.
+Every version released to *Stable* is tagged `v<version>` and listed under
+[Releases](https://github.com/Panther92/VoidStation/releases) – with a link to its live ISO, if that version has one.
 
 **Signatures:** Updates run as root, so devices only install updates signed with the publisher's key
 (`ssh-keygen -Y`, namespace `voidstation`). The public key is in `keys/voidstation-release.pub` and comes onto
@@ -204,7 +208,8 @@ VoidStation picks up new CSS files in the theme folder automatically and offers 
 | `iso/` | ISO build (`build-iso-head.sh`, `postsetup.sh`, boot menu `grub-entries.py`, artwork `art/`) |
 | `docs/screenshots/` | Screenshots (German, `en/` English) |
 | `site/`, `tools/build-site.py` | Website voidstation.de (sources and build), published by `.github/workflows/pages.yml` |
-| `tools/` | `publish.sh` (publishing), `qt-preview.py` (Qt interface with sample data), `qt-screenshots.py` (screenshots), `screenshots.py` (screenshots of the web interface), `boot-art.py` (artwork for boot menu and splash → `iso/art/`) |
+| `.github/` | Workflows (website, checks, releases), issue forms, pull request template |
+| `tools/` | `publish.sh` (publishing), `check.sh` (checks before a pull request), `gh-release.py` (GitHub releases), `qt-preview.py` (Qt interface with sample data), `qt-screenshots.py` (screenshots), `screenshots.py` (screenshots of the web interface), `boot-art.py` (artwork for boot menu and splash → `iso/art/`) |
 | `update-url` | Update source of the devices (`{channel}` = stable/main) |
 | `CHANGELOG.md`, `CHANGELOG.en.md` | Version number and changes, German and English (shown in the update dialog) |
 | `keys/` | Public signing key |
@@ -237,6 +242,11 @@ run), switches the download on voidstation.de (`site/config.json`) and then dele
 (`Host frs.sourceforge.net` · `User <SourceForge name>` · `IdentityFile ~/.ssh/sourceforge`).
 Afterwards, mark the ISO as *Default Download* in the browser.
 
+**GitHub Releases** are created by `.github/workflows/release.yml` – nothing to do by hand: `vspub --release`
+creates the tag `v<version>` and a release with the English changelog; once `vspub --iso` has uploaded the ISO
+of that version, the release gets a download section (link, size, SHA-256, signature). The ISO itself stays on
+SourceForge – GitHub allows at most 2 GiB per release file. Don't create tags by hand.
+
 New versions get an entry at the top of `CHANGELOG.md` (`## 0.4.1 – YYYY-MM-DD` plus bullet points)
 and the same entry in English in `CHANGELOG.en.md` – if it's missing, `build.sh` aborts.
 `dist/` is generated only by `publish.sh` and never edited by hand.
@@ -265,6 +275,12 @@ Previewing without publishing:
 python3 tools/build-site.py --preview      # --preview shows everything, even without a legal notice
 python3 -m http.server -d _site 8000       # then http://<host>:8000
 ```
+
+## Contributing
+
+Bug reports, ideas, translations, themes and pull requests are welcome – in English or German.
+See [CONTRIBUTING.md](CONTRIBUTING.md) (pull requests go to `main`), the [Code of Conduct](CODE_OF_CONDUCT.md)
+and, for security problems, [SECURITY.md](SECURITY.md).
 
 ## License
 

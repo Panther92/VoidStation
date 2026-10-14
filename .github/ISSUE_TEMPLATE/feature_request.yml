@@ -1,0 +1,34 @@
+name: Feature request
+description: Suggest something new or a change (English or German is fine)
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Not sure yet or want to talk it through first? Start a thread in [Discussions → Ideas](https://github.com/Panther92/VoidStation/discussions).
+        *Deutsch ist auch in Ordnung.*
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to do?
+      description: Describe the situation in front of the TV – what's missing or annoying today?
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Your idea
+      description: How could VoidStation solve it? For apps, mention whether there is a native Void package.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives
+      description: Workarounds or other ways you've thought of.
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Contributing
+      options:
+        - label: I'd like to work on this myself (see CONTRIBUTING.md)

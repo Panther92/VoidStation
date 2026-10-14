@@ -1,6 +1,8 @@
 # VoidStation
 
-**[English](README.md)** · Deutsch · [voidstation.de](https://voidstation.de) · [Download](https://voidstation.de/download/) · [Fragen](https://github.com/Panther92/VoidStation/discussions) · [Fehler melden](https://github.com/Panther92/VoidStation/issues)
+**[English](README.md)** · Deutsch · [voidstation.de](https://voidstation.de) · [Download](https://voidstation.de/download/) · [Fragen](https://github.com/Panther92/VoidStation/discussions) · [Fehler melden](https://github.com/Panther92/VoidStation/issues/new/choose)
+
+[![Stable](https://img.shields.io/github/v/release/Panther92/VoidStation?label=stable&sort=semver)](https://github.com/Panther92/VoidStation/releases/latest) [![Checks](https://github.com/Panther92/VoidStation/actions/workflows/checks.yml/badge.svg)](https://github.com/Panther92/VoidStation/actions/workflows/checks.yml) [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE) [![ISO downloads](https://img.shields.io/sourceforge/dt/voidstation?label=ISO%20downloads)](https://sourceforge.net/projects/voidstation/files/)
 
 Void Linux als TV-Station: Kacheloberfläche im Stil von Windows 8, dunkel, bedienbar mit Gamepad, Fernbedienung, Maus und Tastatur.
 Läuft auf Openbox; die Startseite ist ein eigenes Programm in Python + Qt 6, das direkt auf der Grafikkarte zeichnet.
@@ -103,6 +105,8 @@ xbps-Paket und kommt nur über den Knopf bzw. `vsctl update`.
 
 **Kanäle:** *Stable* (Zweig `stable`, Standard) oder *Testing* (Zweig `main`, neue Versionen zuerst) –
 umschaltbar unter Einstellungen → Updates → Update-Kanal.
+Jede für *Stable* freigegebene Version bekommt den Tag `v<version>` und steht unter
+[Releases](https://github.com/Panther92/VoidStation/releases) – mit Link zur Live-ISO, falls es für diese Version eine gibt.
 
 **Signaturen:** Updates laufen als root, deshalb installieren Geräte nur Updates, die mit dem Schlüssel des
 Herausgebers signiert sind (`ssh-keygen -Y`, Namensraum `voidstation`). Der öffentliche Schlüssel liegt in
@@ -205,7 +209,8 @@ VoidStation erkennt neue CSS-Dateien im Theme-Ordner automatisch und bietet sie 
 | `iso/` | ISO-Bau (`build-iso-head.sh`, `postsetup.sh`, Startmenü `grub-entries.py`, Grafiken `art/`) |
 | `docs/screenshots/` | Screenshots (deutsch, `en/` englisch) |
 | `site/`, `tools/build-site.py` | Webseite voidstation.de (Quellen und Bau), veröffentlicht von `.github/workflows/pages.yml` |
-| `tools/` | `publish.sh` (veröffentlichen), `qt-preview.py` (Qt-Oberfläche mit Beispieldaten), `qt-screenshots.py` (Screenshots), `screenshots.py` (Screenshots der Web-Oberfläche), `boot-art.py` (Grafiken für Startmenü und Startbild → `iso/art/`) |
+| `.github/` | Workflows (Webseite, Prüfungen, Releases), Issue-Formulare, Vorlage für Pull Requests |
+| `tools/` | `publish.sh` (veröffentlichen), `check.sh` (Prüfungen vor einem Pull Request), `gh-release.py` (GitHub-Releases), `qt-preview.py` (Qt-Oberfläche mit Beispieldaten), `qt-screenshots.py` (Screenshots), `screenshots.py` (Screenshots der Web-Oberfläche), `boot-art.py` (Grafiken für Startmenü und Startbild → `iso/art/`) |
 | `update-url` | Update-Quelle der Geräte (`{channel}` = stable/main) |
 | `CHANGELOG.md`, `CHANGELOG.en.md` | Versionsnummer und Änderungen, deutsch und englisch (erscheinen im Update-Dialog) |
 | `keys/` | öffentlicher Signaturschlüssel |
@@ -238,6 +243,11 @@ lokal. Am besten in `tmux` starten. Einmalig nötig: SSH-Schlüssel bei SourceFo
 eintragen (`Host frs.sourceforge.net` · `User <SourceForge-Name>` · `IdentityFile ~/.ssh/sourceforge`).
 Danach im Browser die ISO als *Default Download* markieren.
 
+**GitHub-Releases** legt `.github/workflows/release.yml` an – von Hand ist nichts zu tun: `vspub --release`
+erzeugt den Tag `v<version>` und ein Release mit dem englischen Changelog; sobald `vspub --iso` die ISO dieser
+Version hochgeladen hat, bekommt das Release einen Download-Abschnitt (Link, Größe, SHA-256, Signatur). Die ISO selbst
+bleibt auf SourceForge – GitHub erlaubt pro Release-Datei höchstens 2 GiB. Tags bitte nicht von Hand anlegen.
+
 Neue Versionen bekommen einen Eintrag oben in `CHANGELOG.md` (`## 0.4.1 – JJJJ-MM-TT` plus Stichpunkte)
 und denselben Eintrag auf Englisch in `CHANGELOG.en.md` – fehlt er, bricht `build.sh` ab.
 `dist/` wird nur von `publish.sh` erzeugt und nicht von Hand geändert.
@@ -266,6 +276,12 @@ Ansehen ohne Veröffentlichen:
 python3 tools/build-site.py --preview      # --preview zeigt alles, auch ohne Impressum
 python3 -m http.server -d _site 8000       # dann http://<rechner>:8000
 ```
+
+## Mitmachen
+
+Fehlerberichte, Ideen, Übersetzungen, Themes und Pull Requests sind willkommen – auf Deutsch oder Englisch.
+Siehe [CONTRIBUTING.md](CONTRIBUTING.md) (Pull Requests gehen an `main`), den [Verhaltenskodex](CODE_OF_CONDUCT.md)
+und für Sicherheitsprobleme [SECURITY.md](SECURITY.md).
 
 ## Lizenz
 

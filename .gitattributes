@@ -2,3 +2,6 @@
 launcher/vsctl text eol=lf
 launcher/voidstation-pkg text eol=lf
 launcher/home.sh text eol=lf
+
+# Generiert von build.sh/publish.sh: in Diffs eingeklappt, nicht in der Sprachstatistik
+dist/** linguist-generated=true

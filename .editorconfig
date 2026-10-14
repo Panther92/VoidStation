@@ -1,0 +1,27 @@
+# https://editorconfig.org – gemeinsame Grundeinstellungen fuer Editoren
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+indent_style = space
+indent_size = 4
+
+[*.{sh,json,yml,yaml,html,css,js}]
+indent_size = 2
+
+[launcher/{voidstation-pkg,voidstation-efistub,vsctl,xstart}]
+indent_size = 2
+
+[*.md]
+trim_trailing_whitespace = false
+
+[dist/**]
+charset = unset
+end_of_line = unset
+insert_final_newline = unset
+trim_trailing_whitespace = unset
+indent_style = unset
+indent_size = unset

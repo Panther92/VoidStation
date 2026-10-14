@@ -1,0 +1,67 @@
+name: Bug report
+description: Something doesn't work as it should (English or German is fine)
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting! Questions and ideas are better placed in [Discussions](https://github.com/Panther92/VoidStation/discussions).
+        Security problems please report [privately](https://github.com/Panther92/VoidStation/security/advisories/new) instead.
+        *Deutsch ist auch in Ordnung.*
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where does it happen?
+      options:
+        - Installed system – Stable channel
+        - Installed system – Testing channel
+        - Live ISO (trying out)
+        - Live ISO – installer
+        - Website / download
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: VoidStation version
+      description: Shown under Settings → Updates. For the live ISO, the file name (e.g. voidstation-0.15.0-20261011.iso).
+      placeholder: "0.15.0"
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What did you expect, and what happened instead?
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Open …
+        2. Press …
+        3. …
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware
+      description: CPU, GPU, RAM, TV or monitor, controller / remote. `fastfetch` shows most of it.
+      placeholder: "e.g. Ryzen R2544 (Vega 3), 8 GB, Samsung 4K TV via HDMI, Xbox controller via Bluetooth"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: |
+        Installed system: files from `~/.local/share/voidstation/logs/`.
+        Installer: `/run/voidstation-installer/install.log` (the error screen can save it to a USB stick).
+        Please remove anything private (Wi-Fi names, IP addresses) before posting.
+      render: text
+  - type: textarea
+    id: extra
+    attributes:
+      label: Anything else?
+      description: Screenshots or photos of the TV help a lot.
