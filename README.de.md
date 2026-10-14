@@ -2,7 +2,7 @@
 
 **[English](README.md)** · Deutsch · [voidstation.de](https://voidstation.de) · [Download](https://voidstation.de/download/) · [Fragen](https://github.com/Panther92/VoidStation/discussions) · [Fehler melden](https://github.com/Panther92/VoidStation/issues/new/choose)
 
-[![Stable](https://img.shields.io/github/v/release/Panther92/VoidStation?label=stable&sort=semver)](https://github.com/Panther92/VoidStation/releases/latest) [![Checks](https://github.com/Panther92/VoidStation/actions/workflows/checks.yml/badge.svg)](https://github.com/Panther92/VoidStation/actions/workflows/checks.yml) [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE) [![ISO downloads](https://img.shields.io/sourceforge/dt/voidstation?label=ISO%20downloads)](https://sourceforge.net/projects/voidstation/files/)
+[![Stable](https://img.shields.io/github/v/release/Panther92/VoidStation?label=stable)](https://github.com/Panther92/VoidStation/releases/latest) [![Checks](https://github.com/Panther92/VoidStation/actions/workflows/checks.yml/badge.svg)](https://github.com/Panther92/VoidStation/actions/workflows/checks.yml) [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE) [![ISO downloads](https://img.shields.io/sourceforge/dt/voidstation?label=ISO%20downloads)](https://sourceforge.net/projects/voidstation/files/)
 
 Void Linux als TV-Station: Kacheloberfläche im Stil von Windows 8, dunkel, bedienbar mit Gamepad, Fernbedienung, Maus und Tastatur.
 Läuft auf Openbox; die Startseite ist ein eigenes Programm in Python + Qt 6, das direkt auf der Grafikkarte zeichnet.
@@ -79,10 +79,12 @@ Unter Windows: `certutil -hashfile voidstation-<version>-<datum>.iso SHA256` und
 
 ### ISO bauen
 
-Auf einem Void-System (z. B. einer VoidStation), dauert 25–50 Minuten:
+Auf einem Void-System (z. B. einer VoidStation), dauert 25–50 Minuten. Offizielle ISOs werden aus dem Zweig `stable` gebaut:
 
 ```sh
-sudo bash dist/build-iso.sh
+git clone https://github.com/Panther92/VoidStation && cd VoidStation   # oder: git fetch im vorhandenen Klon
+git show origin/stable:dist/build-iso.sh > /var/tmp/build-iso.sh
+sudo bash /var/tmp/build-iso.sh
 ```
 
 Die ISO landet unter `~/share/ISO/` (mit `.sha256`), eigene Radio- und TV-Favoriten kommen mit.
@@ -107,6 +109,10 @@ xbps-Paket und kommt nur über den Knopf bzw. `vsctl update`.
 umschaltbar unter Einstellungen → Updates → Update-Kanal.
 Jede für *Stable* freigegebene Version bekommt den Tag `v<version>` und steht unter
 [Releases](https://github.com/Panther92/VoidStation/releases) – mit Link zur Live-ISO, falls es für diese Version eine gibt.
+
+**Versionen** richten sich nach dem Kalender: `2026.11` ist die Version vom November 2026, Hotfixes dazu heißen
+`2026.11.1`, `2026.11.2` … Neues liegt mindestens 14 Tage in *Testing*, bevor es mit dem monatlichen Release-Zug
+nach *Stable* geht; eine neue Live-ISO gibt es alle drei Monate. Einzelheiten: [RELEASING.md](RELEASING.md) (englisch).
 
 **Signaturen:** Updates laufen als root, deshalb installieren Geräte nur Updates, die mit dem Schlüssel des
 Herausgebers signiert sind (`ssh-keygen -Y`, Namensraum `voidstation`). Der öffentliche Schlüssel liegt in
@@ -210,9 +216,10 @@ VoidStation erkennt neue CSS-Dateien im Theme-Ordner automatisch und bietet sie 
 | `docs/screenshots/` | Screenshots (deutsch, `en/` englisch) |
 | `site/`, `tools/build-site.py` | Webseite voidstation.de (Quellen und Bau), veröffentlicht von `.github/workflows/pages.yml` |
 | `.github/` | Workflows (Webseite, Prüfungen, Releases), Issue-Formulare, Vorlage für Pull Requests |
-| `tools/` | `publish.sh` (veröffentlichen), `check.sh` (Prüfungen vor einem Pull Request), `gh-release.py` (GitHub-Releases), `qt-preview.py` (Qt-Oberfläche mit Beispieldaten), `qt-screenshots.py` (Screenshots), `screenshots.py` (Screenshots der Web-Oberfläche), `boot-art.py` (Grafiken für Startmenü und Startbild → `iso/art/`) |
+| `tools/` | `publish.sh` (veröffentlichen), `changelog.py` (Changelog-Helfer fürs Veröffentlichen), `check.sh` (Prüfungen vor einem Pull Request), `gh-release.py` (GitHub-Releases), `qt-preview.py` (Qt-Oberfläche mit Beispieldaten), `qt-screenshots.py` (Screenshots), `screenshots.py` (Screenshots der Web-Oberfläche), `boot-art.py` (Grafiken für Startmenü und Startbild → `iso/art/`) |
 | `update-url` | Update-Quelle der Geräte (`{channel}` = stable/main) |
 | `CHANGELOG.md`, `CHANGELOG.en.md` | Versionsnummer und Änderungen, deutsch und englisch (erscheinen im Update-Dialog) |
+| `RELEASING.md` | Versionsnummern, Release-Zug, Hotfixes, ISO-Rhythmus |
 | `keys/` | öffentlicher Signaturschlüssel |
 | `dist/` | **fertige Skripte**, erzeugt mit `./build.sh` |
 
@@ -225,6 +232,7 @@ Screenshots neu erzeugen (Beispieldaten, ohne Void, deutsch und englisch): `pyth
 ## Veröffentlichen (Herausgeber)
 
 Gebaut und signiert wird auf dem Rechner des Herausgebers mit `tools/publish.sh` – dort liegt der private Schlüssel.
+Wann was freigegeben wird – Release-Zug, Hotfixes, ISO-Rhythmus – steht in [RELEASING.md](RELEASING.md).
 
 ```sh
 git config --global credential.helper store      # einmalig: GitHub-Zugang (Token) merken
@@ -232,7 +240,9 @@ echo "alias vspub='bash ~/VoidStation/tools/publish.sh'" >> ~/.bashrc   # einmal
 vspub --init-key                                 # einmalig: Signaturschlüssel anlegen (Sicherungskopie!)
 vspub                                            # Bundle aus ~/share/Updates übernehmen, bauen, signieren,
                                                  # nach main (Kanal Testing) pushen
-vspub --release                                  # Test-Stand für alle freigeben (stable)
+vspub --status                                   # was liegt in Testing, seit wann, was ist reif?
+vspub --release                                  # Release-Zug: alles ab 14 Tagen in Testing -> stable als JJJJ.MM
+vspub --hotfix <commit>                          # einzelne Fehlerbehebung aus Testing sofort -> stable als JJJJ.MM.N
 vspub --iso                                      # neueste Live-ISO aus ~/share/ISO nach SourceForge
 ```
 
@@ -248,8 +258,8 @@ erzeugt den Tag `v<version>` und ein Release mit dem englischen Changelog; sobal
 Version hochgeladen hat, bekommt das Release einen Download-Abschnitt (Link, Größe, SHA-256, Signatur). Die ISO selbst
 bleibt auf SourceForge – GitHub erlaubt pro Release-Datei höchstens 2 GiB. Tags bitte nicht von Hand anlegen.
 
-Neue Versionen bekommen einen Eintrag oben in `CHANGELOG.md` (`## 0.4.1 – JJJJ-MM-TT` plus Stichpunkte)
-und denselben Eintrag auf Englisch in `CHANGELOG.en.md` – fehlt er, bricht `build.sh` ab.
+Neues kommt oben in `CHANGELOG.md` unter `## Testing – JJJJ-MM-TT` (Stichpunkte) und dasselbe auf Englisch in
+`CHANGELOG.en.md` – fehlt es, bricht `build.sh` ab. Die Versionsnummer vergibt `vspub` beim Freigeben.
 `dist/` wird nur von `publish.sh` erzeugt und nicht von Hand geändert.
 Forks tragen ihre eigene Adresse in `update-url` ein und legen einen eigenen Schlüssel an.
 Ist ein Remote `codeberg` eingerichtet, pflegt `publish.sh` ihn als Spiegel mit (früherer Standort des Projekts).

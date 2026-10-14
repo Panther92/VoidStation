@@ -20,11 +20,14 @@ Security problems please **don't** report in a public issue – see [SECURITY.md
 | Branch | Update channel | Contents |
 |---|---|---|
 | `main` | *Testing* | the next version – **all pull requests go here** |
-| `stable` | *Stable* (default on devices) | what every device gets; only the maintainer pushes here (`vspub --release`) |
+| `stable` | *Stable* (default on devices) | what every device gets; only the maintainer releases here (`vspub --release` / `--hotfix`) |
 
 Devices download their updates straight from these branches (`update-url`), so both names are part of the
 update mechanism and must not be renamed. Released versions are tagged `v<version>` and listed under
 [Releases](https://github.com/Panther92/VoidStation/releases) – the tags and releases are created automatically.
+
+Versions follow the calendar (`2026.11`, hotfixes `2026.11.1`). Merged changes spend at least 14 days in *Testing*
+before the monthly release train takes them to *Stable* – see [RELEASING.md](RELEASING.md).
 
 ## Pull requests
 
@@ -51,8 +54,9 @@ update mechanism and must not be renamed. Released versions are tagged `v<versio
 - **Texts in both languages.** Every new interface text goes into `launcher/web/i18n/de.json` **and** `en.json`
   with the same `{placeholders}` – `build.sh` refuses to build otherwise. If you only speak one of the two
   languages, write that one and say so in the PR; the other gets filled in during review.
-- **Changelog:** don't add a new version heading to `CHANGELOG.md` – the maintainer writes the entry
-  (German and English) when publishing. A short line in the PR description about what users will notice is perfect.
+- **Changelog:** don't add version headings to `CHANGELOG.md` – the maintainer writes the entry under
+  `## Testing` (German and English) when merging, and the version number is assigned at release time.
+  A short line in the PR description about what users will notice is perfect.
 - **Packages:** native Void packages first. Flatpak or AppImage only when there is no Void package.
   AppCenter apps are listed in `launcher/catalog.json`.
 - **New files** start with an SPDX line, e.g. `# SPDX-License-Identifier: GPL-3.0-or-later`.
