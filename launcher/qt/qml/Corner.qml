@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Heisse Ecke unten rechts: Ist ein Programm vorn und bleibt die Maus kurz ganz in der Ecke,
-// klappt hier ein kleines Feld auf – Startseite (Programm laeuft weiter, wie Win / Guide) oder App schliessen
-// (das Programm im Vordergrund). Ausgeloest wird erst per Klick, eine Maus, die zufaellig in der Ecke parkt, stoert nicht.
+// Heisse Ecke unten rechts: Ist ein Programm vorn und bleibt die Maus kurz ganz in der Ecke, schwebt dort eine
+// kleine Karte in der Kachelfarbe des Programms – Startseite (Programm laeuft weiter, wie Win / Guide) oder
+// App schliessen. Ausgeloest wird erst per Klick, eine Maus, die zufaellig in der Ecke parkt, stoert nicht.
 // Eigenes Fenster ohne Fensterverwaltung (X11 override-redirect): liegt so auch ueber Vollbild-Programmen
-// und nimmt ihnen den Tastaturfokus nicht weg.
+// und nimmt ihnen den Tastaturfokus nicht weg. Eckig wie die Kacheln der Startseite (runde Ecken gingen ohne
+// Compositor nur als Fenstermaske ohne Kantenglaettung).
 import QtQuick
 import QtQuick.Window
 import VS
@@ -13,24 +14,26 @@ Window {
     flags: Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.BypassWindowManagerHint
            | Qt.WindowDoesNotAcceptFocus
     transientParent: null
-    color: Ui.c.surfaceDialog
+    color: cardColor
     visible: false
     width: box.width + 2 * pad
     height: box.height + 2 * pad
 
-    property real pad: 10 * Ui.f
-    property real tileS: 128 * Ui.f
-    property var front: null              // Kachel des Programms im Vordergrund (null: unbekannt -> nur Startseite)
+    property real pad: 6 * Ui.f
+    property real gap: 24 * Ui.f              // Abstand zum Bildschirmrand: die Karte schwebt
+    property var front: null                  // Kachel des Programms im Vordergrund (null: unbekannt -> nur Startseite)
+    readonly property color cardColor: front && front.color ? front.color : Ui.c.surfaceDialog
+    readonly property color fg: front && front.color ? Ui.c.tileText : Ui.c.textPrimary
     property real rightX: 0
     property real bottomY: 0
     property int awayMs: 0
     property bool asking: false
+    property real askT0: 0
 
     signal goHome()
     signal closeFront(var t)
 
     // right / bottom: rechte und untere Kante (letztes Pixel) des Bildschirms, auf dem der Zeiger steht
-    property real askT0: 0
     function openAt(right, bottom) {
         if (asking && Date.now() - askT0 < 3000) return    // Antwort steht noch aus (nach 3 s neu fragen)
         asking = true
@@ -45,72 +48,90 @@ Window {
         front = t
         rightX = right
         bottomY = bottom
-        cw.x = right - cw.width + 1
-        cw.y = bottom - cw.height + 1
+        cw.x = right - gap - cw.width + 1
+        cw.y = bottom - gap - cw.height + 1
         visible = true
         raise()
-        vs.log("Ecke: Feld offen " + cw.width + "x" + cw.height + " bei " + cw.x + "," + cw.y
-               + ", sichtbar: " + cw.visible + ", vorn: " + (t ? t.id : "unbekannt"))
+        vs.log("Ecke: Karte offen bei " + cw.x + "," + cw.y + ", vorn: " + (t ? t.id : "unbekannt"))
     }
-    function close(why) {                               // front bleibt bis zum naechsten Oeffnen (place)
-        if (visible) vs.log("Ecke: Feld zu (" + (why || "Startseite vorn") + ")")
+    function close(why) {                                   // front bleibt bis zum naechsten Oeffnen (place)
+        if (visible) vs.log("Ecke: Karte zu (" + (why || "Startseite vorn") + ")")
         visible = false
         awayMs = 0
     }
-    onWidthChanged: if (visible) cw.x = rightX - cw.width + 1
-    onHeightChanged: if (visible) cw.y = bottomY - cw.height + 1
+    onWidthChanged: if (visible) cw.x = rightX - gap - cw.width + 1
+    onHeightChanged: if (visible) cw.y = bottomY - gap - cw.height + 1
 
-    Rectangle { anchors.fill: parent; color: "transparent"; border.width: 1; border.color: Ui.c.borderMuted }
+    // feine hellere Kante, damit sich die Karte auch von gleichfarbigem Hintergrund abhebt
+    Rectangle {
+        anchors.fill: parent
+        color: "transparent"
+        border.width: Math.max(1, Math.round(Ui.f))
+        border.color: Qt.lighter(cw.cardColor, 1.6)
+    }
     HoverHandler { id: hov }
 
     Row {
         id: box
         x: cw.pad
         y: cw.pad
-        spacing: 8 * Ui.f
         Repeater {
-            model: cw.front ? ["home", "close"] : ["home"]     // Startseite zuerst, daneben (an der Ecke) App schliessen
-            Rectangle {
-                width: cw.tileS
-                height: cw.tileS
-                color: ma.containsMouse ? Ui.c.surfaceCardHover : Ui.c.surfaceCard
-                border.width: ma.containsMouse ? 2 : 0
-                border.color: Ui.c.borderFocus
-                Glyph {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    y: parent.height * 0.18
-                    width: parent.width * 0.34
-                    height: width
-                    name: modelData === "home" ? "home" : "bad"
-                    color: Ui.c.textPrimary
+            model: cw.front ? ["home", "close"] : ["home"]  // Startseite zuerst, daneben (an der Ecke) App schliessen
+            Item {
+                width: btn.width + (index > 0 ? sep.width : 0)
+                height: btn.height
+                Rectangle {                                 // Trennstrich zwischen den Knoepfen
+                    id: sep
+                    visible: index > 0
+                    width: Math.max(1, Math.round(Ui.f))
+                    height: parent.height * 0.5
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: cw.fg
+                    opacity: 0.25
                 }
-                Txt {
-                    anchors.left: parent.left
-                    anchors.right: parent.right
-                    anchors.bottom: parent.bottom
-                    anchors.margins: 10 * Ui.f
-                    text: Ui.t(modelData === "home" ? "corner.home" : "corner.close")
-                    font.pixelSize: 15 * Ui.f
-                    wrapMode: Text.WordWrap
-                    maximumLineCount: 2
-                }
-                MouseArea {
-                    id: ma
-                    anchors.fill: parent
-                    hoverEnabled: true
-                    cursorShape: Qt.PointingHandCursor
-                    // erst ausloesen, dann zu: Schliessen baut sonst diese Kachel ab, solange der Klick noch laeuft
-                    onClicked: {
-                        if (modelData === "home") cw.goHome()
-                        else cw.closeFront(cw.front)
-                        cw.close(modelData === "home" ? "Startseite gewaehlt" : "App schliessen gewaehlt")
+                Rectangle {
+                    id: btn
+                    x: index > 0 ? sep.width : 0
+                    width: content.width + 2 * 16 * Ui.f
+                    height: 48 * Ui.f
+                    color: ma.containsMouse ? Qt.rgba(1, 1, 1, ma.pressed ? 0.24 : 0.14) : "transparent"
+                    Row {
+                        id: content
+                        anchors.centerIn: parent
+                        spacing: 10 * Ui.f
+                        Glyph {
+                            anchors.verticalCenter: parent.verticalCenter
+                            width: 20 * Ui.f
+                            height: width
+                            name: modelData === "home" ? "home" : "bad"
+                            color: cw.fg
+                        }
+                        Txt {
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: Ui.t(modelData === "home" ? "corner.home" : "corner.close")
+                            font.pixelSize: 16 * Ui.f
+                            color: cw.fg
+                            elide: Text.ElideNone
+                        }
+                    }
+                    MouseArea {
+                        id: ma
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        // erst ausloesen, dann zu: Schliessen baut sonst diesen Knopf ab, solange der Klick noch laeuft
+                        onClicked: {
+                            if (modelData === "home") cw.goHome()
+                            else cw.closeFront(cw.front)
+                            cw.close(modelData === "home" ? "Startseite gewaehlt" : "App schliessen gewaehlt")
+                        }
                     }
                 }
             }
         }
     }
 
-    // Wieder zu, sobald die Maus eine Sekunde lang weder ueber dem Feld noch in der Ecke ist
+    // Wieder zu, sobald die Maus eine Sekunde lang weder ueber der Karte noch in der Ecke ist
     Timer {
         interval: 200
         repeat: true

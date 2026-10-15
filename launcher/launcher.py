@@ -137,12 +137,14 @@ class AppManager:
         self.procs = {}                       # tile_id -> Popen
         self.shown = set()                    # tile_ids, deren Programm schon ein Fenster hat
         self.recent = []                      # tile_ids, zuletzt gestartet / nach vorn geholt (neueste hinten)
+        self.claimed = {}                     # tile_id -> Fenster-IDs ohne passende Prozess-ID (Flatpak), beim Start zugeordnet
 
     def running(self):
         with self.lock:
             for tid in [t for t, p in self.procs.items() if p.poll() is not None]:
                 del self.procs[tid]
                 self.shown.discard(tid)
+                self.claimed.pop(tid, None)
             return list(self.procs)
 
     def starting(self):
@@ -156,14 +158,41 @@ class AppManager:
             p = self.procs.get(tile_id)
             return p if p and p.poll() is None else None
 
+    def _windows_of(self, tid, proc, wl=None):
+        """Fenster eines Programms: ueber die Prozess-IDs seiner Sitzung, dazu die beim Start zugeordneten.
+        Flatpaks melden als Prozess-ID die aus ihrer Sandbox – die passt zu keiner Sitzung."""
+        wl = windows() if wl is None else wl
+        pids = session_pids(proc.pid)
+        with self.lock:
+            claimed = set(self.claimed.get(tid, ()))
+        return [w for w in wl if (w[1] in pids or int(w[0], 16) in claimed) and HOME_TITLE not in w[2]]
+
+    def _claim_new(self, tid, wl, before):
+        """Fenster, die es vor dem Start noch nicht gab und die keinem anderen Programm gehoeren, dieser Kachel
+        zuordnen (Programme, deren Fenster sich nicht ueber die Prozess-ID finden lassen, z. B. Flatpaks)."""
+        with self.lock:
+            others = [p for t, p in self.procs.items() if t != tid and p.poll() is None]
+            taken = set().union(*self.claimed.values()) if self.claimed else set()
+        other_pids = set()
+        for op in others:
+            other_pids |= session_pids(op.pid)
+        new = [w for w in wl if int(w[0], 16) not in before and int(w[0], 16) not in taken
+               and w[1] not in other_pids and HOME_TITLE not in w[2]]
+        if new:
+            with self.lock:
+                self.claimed.setdefault(tid, set()).update(int(w[0], 16) for w in new)
+            log(tid, "Fenster ohne passende Prozess-ID zugeordnet:", ", ".join(w[0] for w in new))
+        return new
+
     def focus(self, tile_id):
         p = self._get(tile_id)
         if not p:
             return False
-        pids = session_pids(p.pid)
-        wins = [w for w in windows() if w[1] in pids]
+        wins = self._windows_of(tile_id, p)
         for wid, _, _ in wins:
             run(["wmctrl", "-i", "-a", wid])
+        if not wins:
+            log("kein Fenster gefunden fuer", tile_id)
         return bool(wins)
 
     def _touch(self, tid):
@@ -190,6 +219,7 @@ class AppManager:
         logdir = BASE / "logs"
         logdir.mkdir(exist_ok=True)
         out = open(logdir / f"{tid}.log", "w")   # Ausgaben je Programm, hilft bei Abstuerzen
+        before = {int(w, 16) for w, _, _ in windows()}  # Fenster vor dem Start (Zuordnung ohne Prozess-ID)
         if Path(args[0]).name == "firefox":
             firefox_prefs(args, ui_lang(), theme_is_dark(settings_load().get("theme") or DEFAULTS["theme"]))
         proc = subprocess.Popen(args, cwd=str(Path.home()), stdin=subprocess.DEVNULL, env=app_env(),
@@ -201,10 +231,10 @@ class AppManager:
         self._touch(tid)
         # Neues Fenster aktiv nach vorn holen (Openbox verhindert sonst u. U. den Fokuswechsel,
         # und das Programm laeuft unsichtbar hinter der Startseite)
-        threading.Thread(target=self._bring_up, args=(tid, proc), daemon=True).start()
+        threading.Thread(target=self._bring_up, args=(tid, proc, before), daemon=True).start()
         return "started"
 
-    def _bring_up(self, tid, proc):
+    def _bring_up(self, tid, proc, before=frozenset()):
         # Auf das erste Fenster warten: anfangs schnell, danach gemaechlich - Steam braucht
         # bei der Ersteinrichtung mehrere Minuten, bis sich ein Fenster zeigt
         t0 = time.monotonic()
@@ -214,7 +244,10 @@ class AppManager:
                 log(tid, "beendet mit Code", proc.returncode)
                 return
             pids = session_pids(proc.pid)
-            wins = [w for w in windows() if w[1] in pids and HOME_TITLE not in w[2]]
+            wl = windows()
+            wins = [w for w in wl if w[1] in pids and HOME_TITLE not in w[2]]
+            if not wins and time.monotonic() - t0 > 1.0:  # Flatpak & Co.: neues Fenster ohne passende Prozess-ID
+                wins = self._claim_new(tid, wl, before)
             if wins:
                 with self.lock:
                     self.shown.add(tid)
@@ -230,11 +263,14 @@ class AppManager:
         with self.lock:
             proc = self.procs.pop(tile_id, None)
         if not proc or proc.poll() is not None:
+            with self.lock:
+                self.claimed.pop(tile_id, None)
             return
         sid = proc.pid
-        pids = session_pids(sid)
-        log("schliesse", tile_id, sorted(pids))
-        wins = [w for w in windows() if w[1] in pids]
+        wins = self._windows_of(tile_id, proc)
+        with self.lock:
+            self.claimed.pop(tile_id, None)
+        log("schliesse", tile_id, sorted(session_pids(sid)))
         for wid, _, _ in wins:                 # hoeflich, wie Alt+F4 -> Spielstaende werden gespeichert
             run(["wmctrl", "-i", "-c", wid])
         if wins:
@@ -254,21 +290,27 @@ class AppManager:
 
     def front(self):
         """Kachel des Programms im Vordergrund (fuer die heisse Ecke), sonst None.
-        1. Prozess-ID des aktiven Fensters gehoert zu einem gestarteten Programm -> dieses.
-        2. Sonst (Flatpaks melden die Prozess-ID aus ihrer Sandbox): unter den Programmen, denen sich kein
-           Fenster zuordnen laesst, das zuletzt gestartete bzw. nach vorn geholte."""
+        1. Aktives Fenster wurde beim Start einer Kachel zugeordnet (Flatpak & Co.) -> diese.
+        2. Prozess-ID des aktiven Fensters gehoert zu einem gestarteten Programm -> dieses.
+        3. Sonst: unter den Programmen, denen sich kein Fenster zuordnen laesst, das zuletzt gestartete bzw.
+           nach vorn geholte."""
         running = self.running()
         if not running:
             return None
         with self.lock:
             procs = {t: p for t, p in self.procs.items() if t in running}
             recent = list(self.recent)
+            claimed = {t: set(w) for t, w in self.claimed.items() if t in running}
+        act = active_window()
+        for tid, ws in claimed.items():
+            if act in ws:
+                return tid
         owner = {}
         for tid, proc in procs.items():
             for pid in session_pids(proc.pid):
                 owner[pid] = tid
         wins = windows()
-        wid = active_window()
+        wid = act
         if wid:
             pid = next((p for w, p, _ in wins if int(w, 16) == wid), None)
             if pid in owner:
