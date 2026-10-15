@@ -16,7 +16,7 @@ Window {
     flags: Qt.Window | Qt.FramelessWindowHint
     color: Ui.c.bgMain
     onActiveChanged: {
-        if (active) { app.forceActiveFocus(); app.poll() }
+        if (active) { corner.close(); app.forceActiveFocus(); app.poll() }
         else if (app.splashTile) hideSplashLater.restart()     // Programm hat ein Fenster: Startbildschirm weg
     }
     Timer { id: hideSplashLater; interval: 400; onTriggered: if (!win.active) app.hideSplash() }
@@ -381,6 +381,31 @@ Window {
                 toast(Ui.t("home.closed", { name: Ui.l(t.label) || Ui.t("common.program") }))
             }, function () { toast(Ui.t("home.closeFailed"), true) })
         }
+        function tileById(id) {
+            var gs = cfg ? cfg.groups : []
+            for (var i = 0; i < gs.length; i++)
+                for (var j = 0; j < (gs[i].tiles || []).length; j++)
+                    if (gs[i].tiles[j].id === id) return gs[i].tiles[j]
+            return null
+        }
+
+        // ------------------------------------------------------------ Heisse Ecke (Maus unten rechts)
+        // Nur solange ein Programm vorn ist: Zeiger alle 150 ms abfragen (eine kurze X-Anfrage). Das Feld kommt
+        // erst, wenn die Maus rund 0,3 s in der Ecke bleibt – dort liegen oft Player-Knoepfe (Vollbild & Co.)
+        property int cornerHits: 0
+        Timer {
+            interval: 150
+            repeat: true
+            running: app.started && !win.active && app.running.length > 0 && !corner.visible
+            onRunningChanged: app.cornerHits = 0
+            onTriggered: {
+                var p = vs.cornerHit()
+                if (!p.length) { app.cornerHits = 0; return }
+                if (++app.cornerHits < 2) return
+                app.cornerHits = 0
+                corner.openAt(p[0], p[1])
+            }
+        }
         function showSplash(t) {
             splashTile = t
             splashT0 = Date.now()
@@ -553,6 +578,11 @@ Window {
         HintBar { id: hint }
         AppDialog { id: adlg; anchors.fill: parent }
         PowerDialog { id: powerDlg; anchors.fill: parent }
+        Corner {
+            id: corner
+            onGoHome: Api.post("/api/home", null, function (r) { app.running = r.running || [] })
+            onCloseFront: function (t) { app.closeApp(t) }
+        }
         Osk { id: osk; anchors.fill: parent }
         Splash { id: splash; anchors.fill: parent; tile: app.splashTile }
         Toast { id: toastBox }

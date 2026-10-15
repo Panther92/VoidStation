@@ -48,6 +48,8 @@
   "home.background": "{name} turpina startēt fonā",
   "home.closed": "{name} aizvērts",
   "home.closeFailed": "Neizdevās aizvērt",
+  "corner.home": "Sākums",
+  "corner.close": "Aizvērt lietotni",
   "splash.key": "<b>Esc / B</b> turpināt startēšanu fonā",
   "scroll.prev": "Iepriekšējā grupa",
   "scroll.next": "Nākamā grupa",

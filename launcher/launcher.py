@@ -112,6 +112,14 @@ def session_pids(sid):
     return pids or {sid}
 
 
+def active_window():
+    """Kennung des aktiven Fensters (_NET_ACTIVE_WINDOW) oder None."""
+    r = run(["xprop", "-root", "-notype", "_NET_ACTIVE_WINDOW"])
+    m = re.search(r"0x[0-9a-fA-F]+", r.stdout) if r and r.returncode == 0 else None
+    wid = int(m.group(0), 16) if m else 0
+    return wid or None
+
+
 def raise_home():
     for wid, _pid, title in windows():
         if HOME_TITLE in title:
@@ -128,6 +136,7 @@ class AppManager:
         self.lock = threading.Lock()
         self.procs = {}                       # tile_id -> Popen
         self.shown = set()                    # tile_ids, deren Programm schon ein Fenster hat
+        self.recent = []                      # tile_ids, zuletzt gestartet / nach vorn geholt (neueste hinten)
 
     def running(self):
         with self.lock:
@@ -157,10 +166,17 @@ class AppManager:
             run(["wmctrl", "-i", "-a", wid])
         return bool(wins)
 
+    def _touch(self, tid):
+        with self.lock:
+            if tid in self.recent:
+                self.recent.remove(tid)
+            self.recent.append(tid)
+
     def launch(self, tile):
         tid = tile["id"]
         if self._get(tid):
             log("schon offen, nach vorn:", tid)
+            self._touch(tid)
             self.focus(tid)
             return "focused"
         cmd = tile.get("cmd")
@@ -182,6 +198,7 @@ class AppManager:
         with self.lock:
             self.procs[tid] = proc
             self.shown.discard(tid)
+        self._touch(tid)
         # Neues Fenster aktiv nach vorn holen (Openbox verhindert sonst u. U. den Fokuswechsel,
         # und das Programm laeuft unsichtbar hinter der Startseite)
         threading.Thread(target=self._bring_up, args=(tid, proc), daemon=True).start()
@@ -234,6 +251,34 @@ class AppManager:
                 if proc.poll() is not None:
                     return
                 time.sleep(0.1)
+
+    def front(self):
+        """Kachel des Programms im Vordergrund (fuer die heisse Ecke), sonst None.
+        1. Prozess-ID des aktiven Fensters gehoert zu einem gestarteten Programm -> dieses.
+        2. Sonst (Flatpaks melden die Prozess-ID aus ihrer Sandbox): unter den Programmen, denen sich kein
+           Fenster zuordnen laesst, das zuletzt gestartete bzw. nach vorn geholte."""
+        running = self.running()
+        if not running:
+            return None
+        with self.lock:
+            procs = {t: p for t, p in self.procs.items() if t in running}
+            recent = list(self.recent)
+        owner = {}
+        for tid, proc in procs.items():
+            for pid in session_pids(proc.pid):
+                owner[pid] = tid
+        wins = windows()
+        wid = active_window()
+        if wid:
+            pid = next((p for w, p, _ in wins if int(w, 16) == wid), None)
+            if pid in owner:
+                return owner[pid]
+        seen = {owner[p] for _, p, _ in wins if p in owner}
+        cands = [t for t in running if t not in seen] or running
+        for tid in reversed(recent):
+            if tid in cands:
+                return tid
+        return cands[0] if len(cands) == 1 else None
 
     def close_all(self):
         for tid in self.running():
@@ -3252,6 +3297,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(403)
         url = urllib.parse.urlparse(self.path)
         path = url.path
+        if path == "/api/front":
+            return self._json(200, {"id": APPS.front()})
         if path == "/api/status":
             running = APPS.running()
             return self._json(200, {"running": running, "starting": APPS.starting(), "radio": RADIO.status(),

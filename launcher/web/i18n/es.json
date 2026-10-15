@@ -48,6 +48,8 @@
   "home.background": "{name} se sigue iniciando en segundo plano",
   "home.closed": "{name} cerrado",
   "home.closeFailed": "No se pudo cerrar",
+  "corner.home": "Inicio",
+  "corner.close": "Cerrar app",
   "splash.key": "<b>Esc / B</b> seguir iniciando en segundo plano",
   "scroll.prev": "Grupo anterior",
   "scroll.next": "Grupo siguiente",

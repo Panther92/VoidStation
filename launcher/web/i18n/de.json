@@ -48,6 +48,8 @@
   "home.background": "{name} startet im Hintergrund weiter",
   "home.closed": "{name} geschlossen",
   "home.closeFailed": "Schließen fehlgeschlagen",
+  "corner.home": "Startseite",
+  "corner.close": "App schließen",
   "splash.key": "<b>Esc / B</b> im Hintergrund weiter starten",
   "scroll.prev": "Vorige Gruppe",
   "scroll.next": "Nächste Gruppe",

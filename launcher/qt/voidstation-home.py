@@ -46,7 +46,7 @@ sys.path.insert(0, str(HERE))
 from icons import ICONS  # noqa: E402
 
 from PySide6.QtCore import (Property, QObject, QTimer, QUrl, Signal, Slot)  # noqa: E402
-from PySide6.QtGui import QFontDatabase, QGuiApplication  # noqa: E402
+from PySide6.QtGui import QCursor, QFontDatabase, QGuiApplication  # noqa: E402
 from PySide6.QtQml import QQmlApplicationEngine  # noqa: E402
 from PySide6.QtQuick import QQuickWindow  # noqa: E402,F401  (macht Fenster aus QML zu QQuickWindow)
 
@@ -434,6 +434,20 @@ class Vs(QObject):
     def padDown(self, key):
         """Wird diese Gamepad-Taste gerade gehalten? (Installieren: A halten)"""
         return self.pad is not None and key in self.pad.pressed()
+
+    @Slot(result="QVariantList")
+    def cornerHit(self):
+        """Heisse Ecke: Steht der Mauszeiger ganz unten rechts auf einem Bildschirm? Dann [rechte Kante, untere
+        Kante] dieses Bildschirms, sonst []. Fragt die Position beim X-Server ab, geht also auch, wenn ein
+        anderes Programm vorn ist."""
+        pos = QCursor.pos()
+        scr = QGuiApplication.screenAt(pos)
+        if scr is None:
+            return []
+        g = scr.geometry()
+        if pos.x() >= g.right() - 1 and pos.y() >= g.bottom() - 1:
+            return [g.right(), g.bottom()]
+        return []
 
     @Slot(result=float)
     def uptime(self):

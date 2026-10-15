@@ -21,7 +21,8 @@ Zum Lesen brauchst du kein Konto, zum Schreiben ein kostenloses GitHub-Konto.
 | Leiser / lauter | <kbd>LB</kbd> / <kbd>RB</kbd> | <kbd>−</kbd> / <kbd>+</kbd> | |
 | Update öffnen (wenn unten rechts angezeigt) | <kbd>Select</kbd> | <kbd>U</kbd> | Klick auf den Hinweis |
 | Ausschalten | <kbd>Start</kbd> | | ⏻ oben rechts |
-| Zurück zur Startseite (aus jedem Programm) | <kbd>Guide</kbd> / Home | <kbd>Win</kbd> | |
+| Zurück zur Startseite (aus jedem Programm) | <kbd>Guide</kbd> / Home | <kbd>Win</kbd> | Ecke unten rechts, dann **Startseite** |
+| Programm schließen (aus dem Programm heraus) | | | Ecke unten rechts, dann **App schließen** |
 
 Die Pfeile oben rechts erscheinen, sobald eine Seite breiter als der Bildschirm ist; der helle Punkt zeigt die aktuelle Gruppe. Gamepads per Bluetooth koppelst du unter **Einstellungen → Bluetooth**.
 

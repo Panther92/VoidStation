@@ -51,7 +51,7 @@ for d in /sys/bus/pci/devices/*; do
     0x10de) echo "GPU: NVIDIA (nouveau)"; GPU_PKGS="$GPU_PKGS mesa-nouveau-dri" ;;
   esac
 done
-PKGS="xinit xauth xset xrandr setxkbmap $GPU_PKGS \
+PKGS="xinit xauth xset xrandr xprop setxkbmap $GPU_PKGS \
   openbox dbus elogind xrdb pulseaudio-utils curl python3 python3-evdev wmctrl unclutter-xfixes \
   firefox vlc mpv samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 pcmanfm gvfs xterm \
   python3-pyside6-declarative qt6-svg qt6-imageformats qt6-plugin-tls-openssl \

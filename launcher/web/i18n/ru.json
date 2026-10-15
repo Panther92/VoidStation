@@ -48,6 +48,8 @@
   "home.background": "{name} продолжает запускаться в фоне",
   "home.closed": "{name} закрыт",
   "home.closeFailed": "Не удалось закрыть",
+  "corner.home": "Главный экран",
+  "corner.close": "Закрыть приложение",
   "splash.key": "<b>Esc / B</b> продолжить запуск в фоне",
   "scroll.prev": "Предыдущая группа",
   "scroll.next": "Следующая группа",

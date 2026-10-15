@@ -21,7 +21,8 @@ Reading needs no account; posting needs a free GitHub account.
 | Volume down / up | <kbd>LB</kbd> / <kbd>RB</kbd> | <kbd>−</kbd> / <kbd>+</kbd> | |
 | Open update (when shown at the bottom right) | <kbd>Select</kbd> | <kbd>U</kbd> | Click the notice |
 | Power off | <kbd>Start</kbd> | | ⏻ at the top right |
-| Back to the start screen (from any program) | <kbd>Guide</kbd> / Home | <kbd>Win</kbd> | |
+| Back to the start screen (from any program) | <kbd>Guide</kbd> / Home | <kbd>Win</kbd> | Bottom right corner, then **Start screen** |
+| Close a program (from inside it) | | | Bottom right corner, then **Close app** |
 
 The arrows at the top right appear as soon as a page is wider than the screen; the bright dot marks the current group. Pair Bluetooth gamepads under **Settings → Bluetooth**.
 

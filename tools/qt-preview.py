@@ -117,6 +117,7 @@ class H(S.H):
             "/tiles.json": lambda: TILES,
             "/api/status": lambda: {"running": st["running"], "starting": [], "radio": st["radio"], "tv": st["tv"],
                                     "update": st["update"] if not LIVE["on"] else {"available": False}, "live": LIVE["on"]},
+            "/api/front": lambda: {"id": st["running"][0] if st["running"] else None},
             "/api/volume": lambda: st["volume"],
             "/api/settings": settings,
             "/api/radio/favs": lambda: st["favs"],

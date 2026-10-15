@@ -48,6 +48,8 @@
   "home.background": "{name} uruchamia się dalej w tle",
   "home.closed": "Zamknięto {name}",
   "home.closeFailed": "Nie udało się zamknąć",
+  "corner.home": "Ekran startowy",
+  "corner.close": "Zamknij aplikację",
   "splash.key": "<b>Esc / B</b> uruchamiaj dalej w tle",
   "scroll.prev": "Poprzednia grupa",
   "scroll.next": "Następna grupa",

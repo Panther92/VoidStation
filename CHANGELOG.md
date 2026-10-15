@@ -9,6 +9,7 @@ ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freig
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
 ## Testing – 2026-10-15
+- Mit der Maus zurück zur Startseite: Maus ganz in die Ecke unten rechts schieben – solange ein Programm läuft, erscheinen dort „Startseite“ (Programm läuft weiter) und „App schließen“. Gilt für jedes Programm aus einer Kachel, auch im Vollbild (Wunsch aus der Community)
 - Programme und Browser folgen dem VoidStation-Theme: Steht in FreeTube & Co. „Systemvorgabe“ als Farbschema, war das bisher immer hell, YouTube und die Mediatheken waren dagegen immer dunkel. Jetzt alles dunkel bei dunklen Themes und hell bei „Default Light“ – Firefox-Kacheln, Chromium, Brave, LibreWolf, GTK- und Qt-Programme. Wirkt beim nächsten Start des Programms, manche wechseln sofort
 - Blätter-Pfeile oben rechts auf der Startseite: Sie bewegten oft nur den Fokusrahmen in die nächste Gruppe, ohne zu blättern. Jetzt rückt die nächste bzw. vorige Gruppe an den linken Rand; LT/RT und Bild auf/ab blättern genauso
 - FreeTube und andere Flatpak-Programme: Der Dateidialog zeigte nur ein leeres Homeverzeichnis – z. B. ließen sich keine Abos importieren. Jetzt öffnet sich ein Dialog mit Zugriff auf alle eigenen Ordner; das Programm bekommt nur die gewählte Datei. Gilt für Programme, die nach dem Update gestartet werden

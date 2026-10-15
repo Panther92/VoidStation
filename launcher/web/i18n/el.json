@@ -48,6 +48,8 @@
   "home.background": "Το {name} συνεχίζει να ξεκινά στο παρασκήνιο",
   "home.closed": "Το {name} έκλεισε",
   "home.closeFailed": "Δεν ήταν δυνατό το κλείσιμο",
+  "corner.home": "Αρχική",
+  "corner.close": "Κλείσιμο εφαρμογής",
   "splash.key": "<b>Esc / B</b> συνέχεια εκκίνησης στο παρασκήνιο",
   "scroll.prev": "Προηγούμενη ομάδα",
   "scroll.next": "Επόμενη ομάδα",

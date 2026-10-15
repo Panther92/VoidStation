@@ -51,7 +51,7 @@ done
 
 say "1/8  Pakete"
 MISSING=""
-for p in curl elogind xrdb pulseaudio-utils mpv samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 \
+for p in curl elogind xrdb pulseaudio-utils mpv samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf xprop adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 \
          bluez libspa-bluetooth htop nano fastfetch mousepad python3-pyside6-declarative qt6-svg qt6-imageformats qt6-plugin-tls-openssl \
          wireless-regdb; do
   xbps-query "$p" >/dev/null 2>&1 || MISSING="$MISSING $p"

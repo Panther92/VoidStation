@@ -48,6 +48,8 @@
   "home.background": "{name} keeps starting in the background",
   "home.closed": "{name} closed",
   "home.closeFailed": "Could not close",
+  "corner.home": "Start screen",
+  "corner.close": "Close app",
   "splash.key": "<b>Esc / B</b> keep starting in the background",
   "scroll.prev": "Previous group",
   "scroll.next": "Next group",

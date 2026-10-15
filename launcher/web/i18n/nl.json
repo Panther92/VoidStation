@@ -48,6 +48,8 @@
   "home.background": "{name} start verder op de achtergrond",
   "home.closed": "{name} gesloten",
   "home.closeFailed": "Sluiten mislukt",
+  "corner.home": "Startscherm",
+  "corner.close": "App sluiten",
   "splash.key": "<b>Esc / B</b> op de achtergrond verder starten",
   "scroll.prev": "Vorige groep",
   "scroll.next": "Volgende groep",

@@ -48,6 +48,8 @@
   "home.background": "A(z) {name} a háttérben indul tovább",
   "home.closed": "{name} bezárva",
   "home.closeFailed": "Nem sikerült bezárni",
+  "corner.home": "Kezdőlap",
+  "corner.close": "Alkalmazás bezárása",
   "splash.key": "<b>Esc / B</b> indulás folytatása a háttérben",
   "scroll.prev": "Előző csoport",
   "scroll.next": "Következő csoport",

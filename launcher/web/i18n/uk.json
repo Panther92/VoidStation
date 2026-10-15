@@ -48,6 +48,8 @@
   "home.background": "{name} продовжує запускатися у фоні",
   "home.closed": "{name} закрито",
   "home.closeFailed": "Не вдалося закрити",
+  "corner.home": "Головний екран",
+  "corner.close": "Закрити застосунок",
   "splash.key": "<b>Esc / B</b> продовжити запуск у фоні",
   "scroll.prev": "Попередня група",
   "scroll.next": "Наступна група",

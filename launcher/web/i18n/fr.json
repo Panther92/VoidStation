@@ -48,6 +48,8 @@
   "home.background": "{name} continue de démarrer en arrière-plan",
   "home.closed": "{name} fermé",
   "home.closeFailed": "Impossible de fermer",
+  "corner.home": "Accueil",
+  "corner.close": "Fermer l’app",
   "splash.key": "<b>Échap / B</b> continuer à démarrer en arrière-plan",
   "scroll.prev": "Groupe précédent",
   "scroll.next": "Groupe suivant",
