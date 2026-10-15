@@ -28,7 +28,8 @@ user_pref("dom.gamepad.enabled", true);
 user_pref("intl.locale.requested", "de");
 user_pref("browser.backup.enabled", false);
 user_pref("browser.backup.scheduled.enabled", false);
-// Dunkles Erscheinungsbild (Browser und Webseiten, z. B. YouTube)
+// Erscheinungsbild (Browser und Webseiten, z. B. YouTube): Vorgabe dunkel. Der Launcher setzt die drei Werte
+// vor jedem Start nach dem VoidStation-Theme (0 = dunkel, 1 = hell), siehe firefox_prefs() in launcher.py
 user_pref("layout.css.prefers-color-scheme.content-override", 0);
 user_pref("browser.theme.toolbar-theme", 0);
 user_pref("browser.theme.content-theme", 0);

@@ -14,7 +14,7 @@ Row {
         size: 34 * Ui.f; iconName: "chevleft"
         off: !si.track || si.track.contentX < 2
         anchors.verticalCenter: parent.verticalCenter
-        onTriggered: Ui.app.jumpGroup(-1)
+        onTriggered: Ui.app.jumpGroup(-1, true)
     }
     Row {
         spacing: 6 * Ui.f
@@ -35,6 +35,6 @@ Row {
         size: 34 * Ui.f; iconName: "chevright"
         off: !si.track || si.track.contentX > si.track.maxX - 2
         anchors.verticalCenter: parent.verticalCenter
-        onTriggered: Ui.app.jumpGroup(1)
+        onTriggered: Ui.app.jumpGroup(1, true)
     }
 }

@@ -9,6 +9,8 @@ ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freig
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
 ## Testing – 2026-10-15
+- Programme und Browser folgen dem VoidStation-Theme: Steht in FreeTube & Co. „Systemvorgabe“ als Farbschema, war das bisher immer hell, YouTube und die Mediatheken waren dagegen immer dunkel. Jetzt alles dunkel bei dunklen Themes und hell bei „Default Light“ – Firefox-Kacheln, Chromium, Brave, LibreWolf, GTK- und Qt-Programme. Wirkt beim nächsten Start des Programms, manche wechseln sofort
+- Blätter-Pfeile oben rechts auf der Startseite: Sie bewegten oft nur den Fokusrahmen in die nächste Gruppe, ohne zu blättern. Jetzt rückt die nächste bzw. vorige Gruppe an den linken Rand; LT/RT und Bild auf/ab blättern genauso
 - FreeTube und andere Flatpak-Programme: Der Dateidialog zeigte nur ein leeres Homeverzeichnis – z. B. ließen sich keine Abos importieren. Jetzt öffnet sich ein Dialog mit Zugriff auf alle eigenen Ordner; das Programm bekommt nur die gewählte Datei. Gilt für Programme, die nach dem Update gestartet werden
 - Elf neue Sprachen für die Oberfläche: Español, Français, Italiano, Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Ελληνικά, Русский, Українська – Einstellungen → Sprache. Datum, Uhrzeit und Zahlen im Format der Sprache; Programme wie VLC und YouTube folgen beim nächsten Start. Die Übersetzungen sind maschinell erstellt – Korrekturen gern als Pull Request. Installer und Startmenü des Sticks bleiben vorerst Deutsch/Englisch
 - Versionsnummern nach Kalender: Jahr und Monat der Freigabe, z. B. 2026.11. Hotfixes dazu heißen 2026.11.1, 2026.11.2 usw.; die Live-ISO trägt dieselbe Nummer wie die Version, die sie enthält
