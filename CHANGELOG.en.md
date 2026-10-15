@@ -9,6 +9,7 @@ at the top; `vspub --release` or `vspub --hotfix` assigns the number when releas
 Older versions (up to 0.15.0) still use the old numbering.
 
 ## Testing – 2026-10-15
+- Interface changes sometimes didn't arrive after an update: the start screen kept running a cached older version until Void next updated Qt. It now detects changed files itself
 - Back to the start screen with the mouse: move the pointer all the way into the bottom right corner – while a program is open, “Start screen” (the program keeps running) and “Close app” appear there. Works for every program started from a tile, fullscreen included (a community request)
 - Programs and browsers follow the VoidStation theme: with “System default” as colour scheme in FreeTube and others, it used to be always light, while YouTube and the media libraries were always dark. Now everything is dark with dark themes and light with “Default Light” – Firefox tiles, Chromium, Brave, LibreWolf, GTK and Qt programs. Applies the next time a program starts, some switch right away
 - Page arrows at the top right of the start screen: they often only moved the focus frame to the next group without scrolling. Now the next or previous group moves to the left edge; LT/RT and Page Up/Down scroll the same way

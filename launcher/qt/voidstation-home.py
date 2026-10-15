@@ -18,6 +18,7 @@ Test ohne Geraet: VS_API=http://127.0.0.1:8766 python3 voidstation-home.py  (z. 
 """
 import base64
 import glob
+import hashlib
 import json
 import os
 import re
@@ -43,6 +44,12 @@ os.environ.setdefault("QT_QPA_PLATFORM", "xcb")
 os.environ["QT_ENABLE_HIGHDPI_SCALING"] = "0"
 os.environ.pop("QT_SCALE_FACTOR", None)
 
+# Updates packen alle Dateien mit festem Zeitstempel (reproduzierbarer Build: tar --mtime). Python prueft
+# seinen Bytecode nur gegen Zeitstempel und Groesse – darum fuer icons.py & Co. keinen Bytecode, alte weg.
+import shutil  # noqa: E402
+
+sys.dont_write_bytecode = True
+shutil.rmtree(HERE / "__pycache__", ignore_errors=True)
 sys.path.insert(0, str(HERE))
 from icons import ICONS  # noqa: E402
 
@@ -480,11 +487,40 @@ class Vs(QObject):
         os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
+def drop_stale_qml_cache():
+    """Qt speichert kompiliertes QML in ~/.cache/voidstation/qmlcache. Qt 6.11 (Void) prueft dabei nur den
+    Zeitstempel der Quelldatei – und der ist nach jedem Update derselbe (tar --mtime im Build). Ohne diese Pruefung
+    liefe nach einem Update weiter das alte QML (in Qt 6.11.2 nachgestellt). Darum: Pruefsumme ueber den Inhalt
+    aller QML-Dateien merken und den Cache verwerfen, sobald sie sich aendert. Kostet beim Start wenige ms."""
+    from PySide6.QtCore import QStandardPaths
+    h = hashlib.sha256()
+    for p in sorted((HERE / "qml").rglob("*")):
+        if p.is_file() and (p.suffix in (".qml", ".js") or p.name == "qmldir"):
+            h.update(str(p.relative_to(HERE)).encode())
+            h.update(p.read_bytes())
+    stamp = h.hexdigest()[:16]
+    cache = Path(QStandardPaths.writableLocation(QStandardPaths.CacheLocation)) / "qmlcache"
+    mark = cache / ".voidstation-qml"
+    try:
+        if mark.read_text(encoding="utf-8").strip() == stamp:
+            return
+    except OSError:
+        pass
+    shutil.rmtree(cache, ignore_errors=True)
+    try:
+        cache.mkdir(parents=True, exist_ok=True)
+        mark.write_text(stamp + "\n", encoding="utf-8")
+    except OSError as e:
+        log("QML-Cache: Kennung nicht gespeichert:", e)
+    log("QML-Cache verworfen (Oberflaeche geaendert):", stamp)
+
+
 def main():
     QGuiApplication.setApplicationName("voidstation")
     QGuiApplication.setApplicationDisplayName(TITLE)
     QGuiApplication.setDesktopFileName("voidstation")
     app = QGuiApplication(sys.argv)
+    drop_stale_qml_cache()                       # vor dem ersten Laden von QML
     families = set(QFontDatabase.families())
     for fam in ("Noto Sans", "DejaVu Sans"):
         if fam in families:
