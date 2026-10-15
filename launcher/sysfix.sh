@@ -13,6 +13,9 @@
 #   3. GRUB-Start ohne Meldungsflut (quiet), wie beim EFISTUB-Start.
 #   4. Bluetooth & Controller: BlueZ fuer Kopfhoerer/Controller eingestellt, Zugriff auf Controller
 #      (hidraw, uinput) fuer Steam, Emulatoren und SDL, uinput beim Start laden.
+#   5. Flatpak-Programme: Dateidialog ueber xdg-desktop-portal (GTK-Oberflaeche). Ohne Portal sehen
+#      Flatpaks ohne Dateirechte (z. B. FreeTube beim Abo-Import) nur ein leeres Homeverzeichnis.
+#      Unter Openbox ist XDG_CURRENT_DESKTOP leer, darum legt portals.conf das GTK-Backend fest.
 # =====================================================================
 CHROOT="${VOIDSTATION_CHROOT:-0}"
 say() { printf '%s\n' "$*"; }
@@ -150,4 +153,16 @@ if [ "$CHROOT" != 1 ]; then
   fi
 fi
 say "Controller: Zugriff fuer Steam/Emulatoren (hidraw, uinput)"
+
+# ---------------------------------------------------------------------
+# 5. Flatpak: Dateidialog ueber xdg-desktop-portal
+mkdir -p /etc/xdg-desktop-portal
+cat > /etc/xdg-desktop-portal/portals.conf <<'EOF'
+# VoidStation: Openbox hat kein eigenes Portal-Backend – alles ueber xdg-desktop-portal-gtk
+# (Dateidialog fuer Flatpak-Programme wie FreeTube, Flycast, Moonlight)
+[preferred]
+default=gtk
+EOF
+chmod 644 /etc/xdg-desktop-portal/portals.conf
+say "Flatpak: Dateidialog ueber xdg-desktop-portal (GTK)"
 exit 0
