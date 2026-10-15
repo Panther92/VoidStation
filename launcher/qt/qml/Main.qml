@@ -390,14 +390,21 @@ Window {
         }
 
         // ------------------------------------------------------------ Heisse Ecke (Maus unten rechts)
-        // Nur solange ein Programm vorn ist: Zeiger alle 150 ms abfragen (eine kurze X-Anfrage). Das Feld kommt
-        // erst, wenn die Maus rund 0,3 s in der Ecke bleibt – dort liegen oft Player-Knoepfe (Vollbild & Co.)
+        // Solange die Startseite nicht vorn ist: Zeiger alle 150 ms abfragen (eine kurze X-Anfrage) – unabhaengig
+        // davon, ob der Launcher das Programm kennt („Startseite“ geht immer). Das Feld kommt erst, wenn die Maus
+        // rund 0,3 s in der Ecke bleibt – dort liegen oft Player-Knoepfe (Vollbild & Co.).
+        // Zustandswechsel stehen als „Ecke: …“ in logs/home.log (nur bei Wechseln, nicht im Takt).
         property int cornerHits: 0
         Timer {
+            id: cornerPoll
             interval: 150
             repeat: true
-            running: app.started && !win.active && app.running.length > 0 && !corner.visible
-            onRunningChanged: app.cornerHits = 0
+            running: app.started && !win.active && !corner.visible
+            onRunningChanged: {
+                app.cornerHits = 0
+                vs.log("Ecke: Abfrage " + (running ? "an" : "aus") + " (Startseite aktiv: " + win.active
+                       + ", Feld offen: " + corner.visible + ", Programme: " + app.running.join(",") + ")")
+            }
             onTriggered: {
                 var p = vs.cornerHit()
                 if (!p.length) { app.cornerHits = 0; return }

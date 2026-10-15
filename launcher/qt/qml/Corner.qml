@@ -30,12 +30,15 @@ Window {
     signal closeFront(var t)
 
     // right / bottom: rechte und untere Kante (letztes Pixel) des Bildschirms, auf dem der Zeiger steht
+    property real askT0: 0
     function openAt(right, bottom) {
-        if (asking) return
+        if (asking && Date.now() - askT0 < 3000) return    // Antwort steht noch aus (nach 3 s neu fragen)
         asking = true
+        askT0 = Date.now()
         awayMs = 0
+        vs.log("Ecke: getroffen bei " + right + "," + bottom + " – frage, welches Programm vorn ist")
         Api.get("/api/front", function (r) { place(right, bottom, r && r.id ? Ui.app.tileById(r.id) : null) },
-                function () { place(right, bottom, null) })
+                function (e) { vs.log("Ecke: /api/front fehlgeschlagen: " + e); place(right, bottom, null) })
     }
     function place(right, bottom, t) {
         asking = false
@@ -46,8 +49,14 @@ Window {
         cw.y = bottom - cw.height + 1
         visible = true
         raise()
+        vs.log("Ecke: Feld offen " + cw.width + "x" + cw.height + " bei " + cw.x + "," + cw.y
+               + ", sichtbar: " + cw.visible + ", vorn: " + (t ? t.id : "unbekannt"))
     }
-    function close() { visible = false; awayMs = 0 }      // front bleibt bis zum naechsten Oeffnen (place)
+    function close(why) {                               // front bleibt bis zum naechsten Oeffnen (place)
+        if (visible) vs.log("Ecke: Feld zu (" + (why || "Startseite vorn") + ")")
+        visible = false
+        awayMs = 0
+    }
     onWidthChanged: if (visible) cw.x = rightX - cw.width + 1
     onHeightChanged: if (visible) cw.y = bottomY - cw.height + 1
 
@@ -94,7 +103,7 @@ Window {
                     onClicked: {
                         if (modelData === "home") cw.goHome()
                         else cw.closeFront(cw.front)
-                        cw.close()
+                        cw.close(modelData === "home" ? "Startseite gewaehlt" : "App schliessen gewaehlt")
                     }
                 }
             }
@@ -109,7 +118,7 @@ Window {
         onTriggered: {
             if (hov.hovered || vs.cornerHit().length) { cw.awayMs = 0; return }
             cw.awayMs += interval
-            if (cw.awayMs >= 1000) cw.close()
+            if (cw.awayMs >= 1000) cw.close("Maus weg")
         }
     }
 }
