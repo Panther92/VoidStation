@@ -390,26 +390,31 @@ Window {
         }
 
         // ------------------------------------------------------------ Heisse Ecke (Maus unten rechts)
-        // Solange die Startseite nicht vorn ist: Zeiger alle 150 ms abfragen (eine kurze X-Anfrage) – unabhaengig
-        // davon, ob der Launcher das Programm kennt („Startseite“ geht immer). Das Feld kommt erst, wenn die Maus
-        // rund 0,3 s in der Ecke bleibt – dort liegen oft Player-Knoepfe (Vollbild & Co.).
-        // Zustandswechsel stehen als „Ecke: …“ in logs/home.log (nur bei Wechseln, nicht im Takt).
+        // Zeiger alle 150 ms abfragen (eine kurze X-Anfrage), unabhaengig davon, ob der Launcher das Programm kennt
+        // („Startseite“ geht immer). Das Feld kommt erst, wenn die Maus rund 0,3 s in der Ecke bleibt – dort liegen
+        // oft Player-Knoepfe (Vollbild & Co.). Ob die Startseite selbst vorn ist, entscheidet nicht win.active
+        // allein: Qt haelt sich auf manchen Geraeten fuer aktiv, obwohl ein Programm vorn ist (NiPoGi + FreeTube
+        // als Flatpak). Haelt Qt sich fuer aktiv, fragt vs.homeInFront() den X-Server – nur bei Zeiger in der
+        // Ecke, und steht dort wirklich die Startseite, erst nach 2 s wieder.
+        // Entscheidungen stehen als „Ecke: …“ in logs/home.log.
         property int cornerHits: 0
+        property real cornerQuietUntil: 0
         Timer {
             id: cornerPoll
             interval: 150
             repeat: true
-            running: app.started && !win.active && !corner.visible
-            onRunningChanged: {
-                app.cornerHits = 0
-                vs.log("Ecke: Abfrage " + (running ? "an" : "aus") + " (Startseite aktiv: " + win.active
-                       + ", Feld offen: " + corner.visible + ", Programme: " + app.running.join(",") + ")")
-            }
+            running: app.started && !corner.visible
+            onRunningChanged: app.cornerHits = 0
             onTriggered: {
                 var p = vs.cornerHit()
                 if (!p.length) { app.cornerHits = 0; return }
-                if (++app.cornerHits < 2) return
+                if (++app.cornerHits < 2 || Date.now() < app.cornerQuietUntil) return
                 app.cornerHits = 0
+                if (win.active && vs.homeInFront()) {
+                    app.cornerQuietUntil = Date.now() + 2000
+                    return
+                }
+                if (win.active) vs.log("Ecke: Qt meldet die Startseite als aktiv, vorn ist aber ein anderes Fenster")
                 corner.openAt(p[0], p[1])
             }
         }

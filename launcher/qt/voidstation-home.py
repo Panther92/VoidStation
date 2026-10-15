@@ -21,6 +21,7 @@ import glob
 import json
 import os
 import re
+import subprocess
 import sys
 import threading
 import time
@@ -434,6 +435,22 @@ class Vs(QObject):
     def padDown(self, key):
         """Wird diese Gamepad-Taste gerade gehalten? (Installieren: A halten)"""
         return self.pad is not None and key in self.pad.pressed()
+
+    @Slot(result=bool)
+    def homeInFront(self):
+        """Steht laut Fenstermanager (_NET_ACTIVE_WINDOW) ein Fenster der Startseite vorn? Qt haelt sich auf manchen
+        Geraeten weiter fuer aktiv, obwohl ein Programm vorn ist (NiPoGi, FreeTube als Flatpak: Fokus ueber
+        WM_TAKE_FOCUS) – die heisse Ecke fragt darum im Zweifel den X-Server. Nur bei Zeiger in der Ecke."""
+        try:
+            r = subprocess.run(["xprop", "-root", "-notype", "_NET_ACTIVE_WINDOW"],
+                               capture_output=True, text=True, timeout=2)
+            m = re.search(r"0x[0-9a-fA-F]+", r.stdout)
+            act = int(m.group(0), 16) if m else 0
+        except (OSError, subprocess.SubprocessError):
+            return True                                  # unklar: lieber kein Feld ueber der Startseite
+        if not act:
+            return True
+        return act in {int(w.winId()) for w in QGuiApplication.topLevelWindows()}
 
     @Slot(result="QVariantList")
     def cornerHit(self):
