@@ -2,6 +2,8 @@
 
 Die nächste VoidStation heißt nicht 0.16.0, sondern **2026.11**. Ab jetzt sagt die Versionsnummer, *wann* eine Version erschienen ist – Jahr und Monat. Dazu kommt ein fester Rhythmus: jeden Monat ein Update für alle, alle drei Monate eine neue Live-ISO.
 
+> Nachtrag vom 16. Oktober 2026: Die erste Kalendernummer kam einen Monat früher als angekündigt. Drei Fehlerkorrekturen – Abo-Import in FreeTube, das Farbschema der Programme und die Blätter-Pfeile auf der Startseite – sollten nicht bis November warten. Weil es auf Stable noch keine Kalendernummer gab, an die ein Hotfix wie „.1“ hätte anschließen können, heißt diese Korrektur **2026.10**. Am Plan ändert sich nichts: Das erste reguläre Monats-Update mit neuen Funktionen ist 2026.11 Anfang November, Hotfixes heißen ab jetzt wie beschrieben 2026.10.1, 2026.11.1 usw.
+
 ## Warum? {#warum}
 
 **VoidStation steht auf einem Rolling Release.** Void Linux bekommt laufend neue Pakete, es gibt kein „Void 5“ und kein „Void 6“. Eine VoidStation-ISO ist deshalb immer ein Schnappschuss: VoidStation plus alle Void-Pakete vom Tag des Baus. Bei so einem Schnappschuss ist das Datum die ehrlichste Angabe – genau so machen es auch Arch Linux bei seinen ISOs oder Ubuntu mit Nummern wie 24.04.
