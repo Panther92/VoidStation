@@ -264,6 +264,8 @@
   "job.toastFailed": "{name}: sikertelen – részletek a naplóban",
   "power.title": "Kikapcsolás",
   "power.text": "A megnyitott programok előbb bezáródnak.",
+  "power.textStandby": "Leállításkor és újraindításkor a nyitott programok bezárulnak. Alvó módban minden nyitva marad – ébreszd billentyűzettel, egérrel vagy távirányítóval.",
+  "power.standby": "Alvó mód",
   "power.off": "Leállítás",
   "power.reboot": "Újraindítás",
   "power.rebooting": "Újraindítás…",

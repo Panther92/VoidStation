@@ -69,6 +69,17 @@ selfupdate() {
 # ---------------------------------------------------------------------
 #  Bluetooth-Dienst (bluetoothd) an/aus
 # ---------------------------------------------------------------------
+suspend_now() {
+  # Standby (Suspend-to-RAM bzw. s2idle). Bevorzugt ueber elogind: dann erfahren NetworkManager, BlueZ & Co.
+  # vorher davon (PrepareForSleep) und melden sich danach selbst wieder. Rueckfall: zzz (runit-void).
+  states="$(cat /sys/power/state 2>/dev/null)"
+  case " $states " in *" mem "*|*" freeze "*) ;; *) echo "Standby wird von diesem Geraet nicht unterstuetzt"; return 3 ;; esac
+  [ -e /etc/voidstation-live ] && { echo "Im Live-System gibt es keinen Standby"; return 3; }
+  if command -v loginctl >/dev/null 2>&1 && loginctl suspend 2>/dev/null; then return 0; fi
+  echo "elogind nicht erreichbar – Standby ueber zzz"
+  zzz -z
+}
+
 bluetooth_ctl() {
   case "$1" in
     on)
@@ -247,6 +258,9 @@ main() {
     bluetooth)                              # Bluetooth-Dienst: on | off | status
       bluetooth_ctl "$1"
       ;;
+    suspend)                                # Standby (Weckquellen: sysfix.sh, Abschnitt 6)
+      suspend_now
+      ;;
     kernelpurge)                            # alte Kernel weg, wenn der neueste laeuft
       kernel_purge
       ;;
@@ -255,7 +269,7 @@ main() {
         *) echo "Kanal muss stable oder main sein"; return 2 ;; esac
       ;;
     *)
-      echo "Benutzung: voidstation-pkg install|remove|markauto <paket>... | sync | update | check [--nosync] | selfupdate | kernelpurge | channel stable|main | xserver ensure|repair|status | ssh on|off|status | bluetooth on|off|status"
+      echo "Benutzung: voidstation-pkg install|remove|markauto <paket>... | sync | update | check [--nosync] | selfupdate | kernelpurge | channel stable|main | xserver ensure|repair|status | ssh on|off|status | bluetooth on|off|status | suspend"
       return 2
       ;;
   esac

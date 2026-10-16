@@ -597,6 +597,7 @@ Layer {
                 Pill { property string key: "reload"; text: Ui.t("settings.reload"); onTriggered: vs.restart() }
                 Pill { property string key: "reboot"; text: Ui.t("settings.reboot"); onTriggered: app.power("reboot") }
                 Pill { property string key: "off"; text: Ui.t("settings.poweroff"); onTriggered: app.power("poweroff") }
+                Pill { property string key: "standby"; visible: !!(app.sett && app.sett.standby); text: Ui.t("power.standby"); onTriggered: app.power("suspend") }
             }
         }
         SetGroup {

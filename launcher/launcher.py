@@ -55,6 +55,7 @@ MIME = {
 POWER = {
     "poweroff": ["sudo", "-n", "/usr/bin/poweroff"],
     "reboot": ["sudo", "-n", "/usr/bin/reboot"],
+    "suspend": ["sudo", "-n", "/usr/local/sbin/voidstation-pkg", "suspend"],
 }
 
 
@@ -2408,9 +2409,41 @@ def ssh_state():
     return Path("/var/service/sshd").exists()
 
 
+def can_suspend():
+    """Standby moeglich? Der Kernel muss "mem" oder "freeze" anbieten; im Live-System nie."""
+    if LIVE:
+        return False
+    try:
+        states = Path("/sys/power/state").read_text().split()
+    except OSError:
+        return False
+    return "mem" in states or "freeze" in states
+
+
+def resume_watcher():
+    """Nach dem Standby: Aufloesung erneut setzen (manche HDMI-Ausgaenge kommen sonst mit anderem Modus zurueck –
+    apply_resolution aendert nur, was abweicht) und ins Protokoll schreiben. Erkennt das Aufwachen daran, dass
+    CLOCK_BOOTTIME die Schlafzeit mitzaehlt, CLOCK_MONOTONIC nicht."""
+    def gap():
+        return time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
+    last = gap()
+    while True:
+        time.sleep(5)
+        g = gap()
+        if g - last > 10:
+            log(f"aus dem Standby zurueck (nach {(g - last) / 60:.1f} min)")
+            time.sleep(3)                               # Bildschirm und Treiber erst aufwachen lassen
+            try:
+                apply_resolution(settings_load().get("resolution"))
+            except Exception as e:  # noqa: BLE001
+                log("Aufloesung nach dem Standby:", e)
+        last = g
+
+
 def settings_payload():
     s = settings_load()
-    return {"version": vs_version(), "ssh": ssh_state(), "live": LIVE, "lang": ui_lang(s), "langs": LANGS,
+    return {"version": vs_version(), "ssh": ssh_state(), "live": LIVE, "standby": can_suspend(),
+            "lang": ui_lang(s), "langs": LANGS,
             "scale": s["scale"], "scales": SCALES,
             "theme": s.get("theme", "default-dark"), "themes": available_themes(),
             "cursor": {"theme": s.get("cursor_theme"), "size": s.get("cursor_size"),
@@ -3678,6 +3711,14 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, BLUETOOTH.status())
             if parts[:2] == ["api", "volume"] and len(parts) == 3:
                 return self._json(200, volume_set(parts[2]) or {})
+            if parts == ["api", "power", "suspend"]:
+                if not can_suspend():
+                    return self._json(400, {"error": "Standby wird hier nicht unterstuetzt"})
+                RADIO.stop()                           # wie beim Fernseher: Ton aus; Programme bleiben offen
+                log("Standby")
+                # kurz warten, damit die Antwort noch rausgeht und die Oberflaeche den Dialog schliesst
+                threading.Timer(0.8, lambda: subprocess.Popen(POWER["suspend"])).start()
+                return self._json(200, {"ok": True})
             if parts[:2] == ["api", "power"] and len(parts) == 3 and parts[2] in POWER:
                 RADIO.stop()
                 APPS.close_all()
@@ -3761,6 +3802,7 @@ def main():
     apply_appearance(s)
     apply_resolution(s.get("resolution"))
     threading.Thread(target=gamepad_watcher, daemon=True).start()
+    threading.Thread(target=resume_watcher, daemon=True).start()
     BLUETOOTH.start()                               # Kopplungs-Agent (BlueZ ueber D-Bus)
     if not LIVE:                                    # im Live-System gibt es keine Updates
         threading.Thread(target=updates_background_check, daemon=True).start()

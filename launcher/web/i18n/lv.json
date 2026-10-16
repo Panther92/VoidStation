@@ -264,6 +264,8 @@
   "job.toastFailed": "{name}: neizdevās – sīkāk žurnālā",
   "power.title": "Izslēgt",
   "power.text": "Atvērtās programmas vispirms tiek aizvērtas.",
+  "power.textStandby": "Izslēdzot vai restartējot, atvērtās programmas tiek aizvērtas. Miega režīmā viss paliek atvērts – pamodini ar tastatūru, peli vai pulti.",
+  "power.standby": "Miega režīms",
   "power.off": "Izslēgt",
   "power.reboot": "Restartēt",
   "power.rebooting": "Restartē…",

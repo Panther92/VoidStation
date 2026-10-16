@@ -20,9 +20,11 @@ Reading needs no account; posting needs a free GitHub account.
 | Next / previous group | <kbd>RT</kbd> / <kbd>LT</kbd> | PgDn / PgUp | Arrows at the top right |
 | Volume down / up | <kbd>LB</kbd> / <kbd>RB</kbd> | <kbd>−</kbd> / <kbd>+</kbd> | |
 | Open update (when shown at the bottom right) | <kbd>Select</kbd> | <kbd>U</kbd> | Click the notice |
-| Power off | <kbd>Start</kbd> | | ⏻ at the top right |
+| Power off, sleep | <kbd>Start</kbd> | | ⏻ at the top right |
 | Back to the start screen (from any program) | <kbd>Guide</kbd> / Home | <kbd>Win</kbd> | Bottom right corner, then **Start screen** |
 | Close a program (from inside it) | | | Bottom right corner, then **Close app** |
+
+**Sleep** (⏻ → Sleep, or Settings → System): programs stay open, the radio stops. Wake it with a USB keyboard, mouse or a remote with a USB receiver (air mouse) – a Bluetooth keyboard works too if the adapter supports it. Controllers usually can't wake a PC. If waking doesn't work, look for “Wake on USB” or similar in the BIOS/UEFI.
 
 The arrows at the top right appear as soon as a page is wider than the screen; the bright dot marks the current group. Pair Bluetooth gamepads under **Settings → Bluetooth**.
 

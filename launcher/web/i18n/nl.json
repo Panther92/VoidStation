@@ -264,6 +264,8 @@
   "job.toastFailed": "{name}: mislukt – zie het logboek voor details",
   "power.title": "Uitschakelen",
   "power.text": "Geopende programma’s worden eerst gesloten.",
+  "power.textStandby": "Bij afsluiten of herstarten worden open programma’s gesloten. In de slaapstand blijft alles open – wek hem met het toetsenbord, de muis of de afstandsbediening.",
+  "power.standby": "Slaapstand",
   "power.off": "Uitschakelen",
   "power.reboot": "Herstarten",
   "power.rebooting": "Herstarten…",

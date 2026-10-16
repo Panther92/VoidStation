@@ -264,6 +264,8 @@
   "job.toastFailed": "{name} : échec – détails dans le journal",
   "power.title": "Éteindre",
   "power.text": "Les programmes ouverts sont d’abord fermés.",
+  "power.textStandby": "L’arrêt ou le redémarrage ferme les programmes ouverts. En veille, tout reste ouvert – réveillez-le avec le clavier, la souris ou la télécommande.",
+  "power.standby": "Veille",
   "power.off": "Éteindre",
   "power.reboot": "Redémarrer",
   "power.rebooting": "Redémarrage…",

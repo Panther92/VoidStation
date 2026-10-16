@@ -264,6 +264,8 @@
   "job.toastFailed": "{name}: failed – see the log for details",
   "power.title": "Power",
   "power.text": "Open programs are closed first.",
+  "power.textStandby": "Shutting down or restarting closes open programs. In sleep mode everything stays open – wake it with the keyboard, mouse or remote.",
+  "power.standby": "Sleep",
   "power.off": "Shut down",
   "power.reboot": "Restart",
   "power.rebooting": "Restarting …",

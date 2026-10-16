@@ -264,6 +264,8 @@
   "job.toastFailed": "{name}: non riuscito – dettagli nel registro",
   "power.title": "Spegni",
   "power.text": "I programmi aperti vengono chiusi prima.",
+  "power.textStandby": "Spegnendo o riavviando, i programmi aperti vengono chiusi. In sospensione resta tutto aperto: riattivalo con tastiera, mouse o telecomando.",
+  "power.standby": "Sospendi",
   "power.off": "Spegni",
   "power.reboot": "Riavvia",
   "power.rebooting": "Riavvio…",

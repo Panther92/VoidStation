@@ -264,6 +264,8 @@
   "job.toastFailed": "{name}: niepowodzenie – szczegóły w dzienniku",
   "power.title": "Wyłącz",
   "power.text": "Otwarte programy zostaną najpierw zamknięte.",
+  "power.textStandby": "Wyłączenie lub ponowne uruchomienie zamyka otwarte programy. W trybie uśpienia wszystko zostaje otwarte – obudź klawiaturą, myszą lub pilotem.",
+  "power.standby": "Uśpij",
   "power.off": "Wyłącz",
   "power.reboot": "Uruchom ponownie",
   "power.rebooting": "Ponowne uruchamianie…",

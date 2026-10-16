@@ -455,7 +455,8 @@ Window {
         function refreshVolume() { Api.get("/api/volume", showVol) }
         function power(action) {
             if (powerDlg.open) powerDlg.close()
-            toast(action === "reboot" ? Ui.t("power.rebooting") : Ui.t("power.shuttingDown"))
+            // Standby: keine Meldung – sie stuende nach dem Aufwachen noch da
+            if (action !== "suspend") toast(action === "reboot" ? Ui.t("power.rebooting") : Ui.t("power.shuttingDown"))
             Api.post("/api/power/" + action, null, null, function () { toast(Ui.t("common.failed"), true) })
         }
         function toast(msg, err) { toastBox.show(String(msg), !!err) }

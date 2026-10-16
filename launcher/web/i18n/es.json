@@ -264,6 +264,8 @@
   "job.toastFailed": "{name}: error – detalles en el registro",
   "power.title": "Apagar",
   "power.text": "Antes se cierran los programas abiertos.",
+  "power.textStandby": "Al apagar o reiniciar se cierran los programas abiertos. En suspensión todo queda abierto: despiértalo con el teclado, el ratón o el mando.",
+  "power.standby": "Suspender",
   "power.off": "Apagar",
   "power.reboot": "Reiniciar",
   "power.rebooting": "Reiniciando…",

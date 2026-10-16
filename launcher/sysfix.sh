@@ -13,6 +13,8 @@
 #   3. GRUB-Start ohne Meldungsflut (quiet), wie beim EFISTUB-Start.
 #   4. Bluetooth & Controller: BlueZ fuer Kopfhoerer/Controller eingestellt, Zugriff auf Controller
 #      (hidraw, uinput) fuer Steam, Emulatoren und SDL, uinput beim Start laden.
+#   6. Standby: USB-Tastaturen, -Maeuse, Fernbedienungen mit USB-Empfaenger und der Bluetooth-Adapter duerfen
+#      wecken (Kernel-Vorgabe ist oft "aus"); dazu der USB-Controller selbst.
 #   5. Flatpak-Programme: Dateidialog ueber xdg-desktop-portal (GTK-Oberflaeche). Ohne Portal sehen
 #      Flatpaks ohne Dateirechte (z. B. FreeTube beim Abo-Import) nur ein leeres Homeverzeichnis.
 #      Unter Openbox ist XDG_CURRENT_DESKTOP leer, darum legt portals.conf das GTK-Backend fest.
@@ -165,4 +167,25 @@ default=gtk
 EOF
 chmod 644 /etc/xdg-desktop-portal/portals.conf
 say "Flatpak: Dateidialog ueber xdg-desktop-portal (GTK)"
+
+# ---------------------------------------------------------------------
+# 6. Standby: Weckquellen
+mkdir -p /etc/udev/rules.d
+cat > /etc/udev/rules.d/71-voidstation-wakeup.rules <<'EOF'
+# VoidStation: aus dem Standby wecken per USB-Tastatur, -Maus und Fernbedienung mit USB-Empfaenger (HID, Klasse 03)
+# sowie ueber den Bluetooth-Adapter (Klasse e0: gekoppelte Tastaturen; Controller koennen PCs meist nicht wecken)
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_interface", ATTR{bInterfaceClass}=="03|e0", RUN+="/bin/sh -c 'echo enabled > /sys%p/../power/wakeup'"
+# USB-Controller (xHCI)
+ACTION=="add", SUBSYSTEM=="pci", ATTR{class}=="0x0c0330", ATTR{power/wakeup}="enabled"
+EOF
+chmod 644 /etc/udev/rules.d/71-voidstation-wakeup.rules
+if [ "$CHROOT" != 1 ]; then                       # schon angeschlossene Geraete gleich freischalten
+  for i in /sys/bus/usb/devices/*:*; do
+    case "$(cat "$i/bInterfaceClass" 2>/dev/null)" in 03|e0) echo enabled > "$i/../power/wakeup" 2>/dev/null ;; esac
+  done
+  for d in /sys/bus/pci/devices/*; do
+    [ "$(cat "$d/class" 2>/dev/null)" = 0x0c0330 ] && echo enabled > "$d/power/wakeup" 2>/dev/null
+  done
+fi
+say "Standby: wecken per USB-Tastatur/-Maus/Fernbedienung und Bluetooth-Adapter"
 exit 0

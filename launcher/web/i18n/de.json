@@ -264,6 +264,8 @@
   "job.toastFailed": "{name}: fehlgeschlagen – Details im Protokoll",
   "power.title": "Ausschalten",
   "power.text": "Offene Programme werden vorher geschlossen.",
+  "power.textStandby": "Beim Herunterfahren und Neustarten werden offene Programme geschlossen. Im Standby bleibt alles offen – aufwecken mit Tastatur, Maus oder Fernbedienung.",
+  "power.standby": "Standby",
   "power.off": "Herunterfahren",
   "power.reboot": "Neu starten",
   "power.rebooting": "Neustart …",

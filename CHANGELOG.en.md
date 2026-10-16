@@ -8,7 +8,8 @@ hotfixes to it `## 2026.11.1 – …`. New changes go first under `## Testing �
 at the top; `vspub --release` or `vspub --hotfix` assigns the number when releasing (see `RELEASING.md`).
 Older versions (up to 0.15.0) still use the old numbering.
 
-## Testing – 2026-10-15
+## Testing – 2026-10-16
+- Sleep: ⏻ → Sleep (also under Settings → System). Programs stay open, the radio stops. Wake it with a USB keyboard, mouse or a remote with a USB receiver, depending on the adapter also with a Bluetooth keyboard. Wi-Fi and Bluetooth reconnect on their own afterwards (a community request)
 - Back to the start screen with the mouse: move the pointer all the way into the bottom right corner – while a program is open, a small card in the colour of its tile floats there with “Start screen” (the program keeps running) and “Close app”. Works for every program started from a tile, fullscreen included (a community request)
 - Flatpak programs (e.g. FreeTube, Brave): if the program was already running, its tile didn't bring it back to the front, and the start screen kept treating it as “still starting”. Their windows are now recognised at start
 - Eleven new interface languages: Español, Français, Italiano, Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Ελληνικά, Русский, Українська – Settings → Language. Date, time and numbers follow the language; programs like VLC and YouTube follow on their next start. The translations are machine-made – corrections are welcome as pull requests. The installer and the boot menu of the stick stay German/English for now

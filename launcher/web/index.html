@@ -631,6 +631,7 @@
     <div class="btns">
       <button class="btn danger dnav" data-power="poweroff" data-i18n="power.off">Herunterfahren</button>
       <button class="btn dnav" data-power="reboot" data-i18n="power.reboot">Neu starten</button>
+      <button class="btn dnav" id="pwrStandby" data-power="suspend" data-i18n="power.standby">Standby</button>
       <button class="btn dnav" data-close data-i18n="common.cancel">Abbrechen</button>
     </div>
   </div>
@@ -1624,6 +1625,7 @@ const SET_PAGES = {
     const rb = pill(esc(T('settings.reboot')), () => power('reboot')); rb.dataset.key = 'reboot';
     const po = pill(esc(T('settings.poweroff')), () => power('poweroff')); po.dataset.key = 'off';
     rsys.append(rl, rb, po);
+    if (sett.standby) { const sb = pill(esc(T('power.standby')), () => power('suspend')); sb.dataset.key = 'standby'; rsys.append(sb); }
     if ((sett.frontends || []).length > 1) {                 // Oberflaeche: neu (Qt) oder klassisch (Web)
       const fc = col(tr, T('settings.frontend'));
       const rf = row(fc);
@@ -2260,7 +2262,7 @@ function openDialog() { $('#dialog').classList.add('open'); setFocus($('.dnav[da
 function closeDialog() { $('#dialog').classList.remove('open'); const l = layer(); setFocus(lastFocus[l] || $('#power')); updateHint(); }
 async function power(action) {
   if (layer() === 'dialog') closeDialog();
-  toast(action === 'reboot' ? T('power.rebooting') : T('power.shuttingDown'));
+  if (action !== 'suspend') toast(action === 'reboot' ? T('power.rebooting') : T('power.shuttingDown'));
   try { await api('/api/power/' + action); } catch { toast(T('common.failed'), true); }
 }
 let toastT;
@@ -3357,6 +3359,8 @@ document.fonts?.ready.then(() => layout());
   try {
     if (!offline) {
       const s = await getJSON('/api/settings');
+      if (s.standby) $('#dialog p').dataset.i18n = 'power.textStandby';
+      else $('#pwrStandby').remove();
       scale = s.scale || 1.75;
       lang = s.lang || lang;
       if (s.theme) th = s.theme;

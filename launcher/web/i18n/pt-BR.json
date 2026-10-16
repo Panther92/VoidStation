@@ -264,6 +264,8 @@
   "job.toastFailed": "{name}: falhou – detalhes no registro",
   "power.title": "Desligar",
   "power.text": "Os programas abertos são fechados antes.",
+  "power.textStandby": "Desligar ou reiniciar fecha os programas abertos. Na suspensão tudo continua aberto – desperte com o teclado, o mouse ou o controle remoto.",
+  "power.standby": "Suspender",
   "power.off": "Desligar",
   "power.reboot": "Reiniciar",
   "power.rebooting": "Reiniciando…",

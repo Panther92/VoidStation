@@ -50,6 +50,7 @@ def job():
 
 def settings():
     return dict(S.SETTINGS, volume=STATE["volume"], version={"version": "0.12.1", "build": "abc123"}, ssh=True, live=LIVE["on"],
+                standby=not LIVE["on"],
                 sysupd_days=90, sysupd_choices=[30, 60, 90], frontend=STATE.get("frontend", "qt"), frontends=["qt", "web"])
 
 

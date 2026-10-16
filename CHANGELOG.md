@@ -8,7 +8,8 @@ Hotfixes dazu `## 2026.11.1 – …`. Neues kommt zuerst unter `## Testing – <
 ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freigeben (siehe `RELEASING.md`).
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
-## Testing – 2026-10-15
+## Testing – 2026-10-16
+- Standby: ⏻ → Standby (auch unter Einstellungen → System). Programme bleiben offen, das Radio geht aus. Aufwecken per USB-Tastatur, -Maus oder Fernbedienung mit USB-Empfänger, je nach Adapter auch per Bluetooth-Tastatur. WLAN und Bluetooth melden sich danach von selbst wieder (Wunsch aus der Community)
 - Mit der Maus zurück zur Startseite: Maus ganz in die Ecke unten rechts schieben – solange ein Programm läuft, schwebt dort eine kleine Karte in der Farbe seiner Kachel mit „Startseite“ (Programm läuft weiter) und „App schließen“. Gilt für jedes Programm aus einer Kachel, auch im Vollbild (Wunsch aus der Community)
 - Flatpak-Programme (z. B. FreeTube, Brave): Lief das Programm schon, holte die Kachel es nicht wieder nach vorn, und die Startseite hielt es dauerhaft für „startet noch“. Ihre Fenster werden jetzt beim Start erkannt
 - Elf neue Sprachen für die Oberfläche: Español, Français, Italiano, Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Ελληνικά, Русский, Українська – Einstellungen → Sprache. Datum, Uhrzeit und Zahlen im Format der Sprache; Programme wie VLC und YouTube folgen beim nächsten Start. Die Übersetzungen sind maschinell erstellt – Korrekturen gern als Pull Request. Installer und Startmenü des Sticks bleiben vorerst Deutsch/Englisch
