@@ -29,6 +29,7 @@ import sys
 import tarfile
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -1000,6 +1001,23 @@ IPTV_API = "https://iptv-org.github.io/api/"
 CACHE = BASE / "cache"
 TVFAVS = BASE / "tvfavs.json"
 UA = {"User-Agent": "VoidStation/4.0"}
+TV_PAGE = 200                                # Sender je Seite der Liste (mehr Kacheln auf einmal bremsen schwache Geraete)
+TV_LETTERS = ["#"] + [chr(c) for c in range(ord("A"), ord("Z") + 1)]
+
+
+def tv_fold(name):
+    """Name ohne Akzente und in Kleinbuchstaben: „Österreich“ sortiert und sucht wie „osterreich“."""
+    s = unicodedata.normalize("NFKD", name or "")
+    return "".join(c for c in s if not unicodedata.combining(c)).casefold()
+
+
+def tv_letter(name):
+    """Anfangsbuchstabe fuer die A–Z-Leiste: erstes Zeichen ohne Akzent, A–Z, sonst „#“ (Ziffern, andere Schriften)."""
+    for c in tv_fold(name):
+        if c.isalnum():
+            u = c.upper()
+            return u if "A" <= u <= "Z" else "#"
+    return "#"
 
 
 def fetch(url, dest, max_age):
@@ -1046,31 +1064,7 @@ class IPTV:
                 lg = json.loads(fetch(IPTV_API + "logos.json", CACHE / "logos.json", 7 * day).read_text())
             except Exception:  # noqa: BLE001
                 lg = []
-            chans = {c["id"]: c for c in ch if not c.get("is_nsfw") and not c.get("closed")}
-            logos = {}
-            for l in lg:
-                if l.get("channel") and l.get("url") and not l.get("feed"):
-                    logos.setdefault(l["channel"], l["url"])
-            index, seen, counts = [], set(), {}
-            for s in st:
-                c = chans.get(s.get("channel"))
-                url = s.get("url") or ""
-                if not c or not url.startswith(("http://", "https://")):
-                    continue
-                dedup = (c["id"], s.get("feed"))
-                if dedup in seen:
-                    continue
-                seen.add(dedup)
-                key = hashlib.sha1(url.encode()).hexdigest()[:12]
-                e = {"key": key, "cid": c["id"], "name": c["name"], "alt": c.get("alt_names") or [],
-                     "country": c.get("country") or "", "cats": c.get("categories") or [],
-                     "quality": s.get("quality") or "", "logo": logos.get(c["id"], ""),
-                     "url": url, "ref": s.get("referrer") or "", "ua": s.get("user_agent") or ""}
-                if s.get("feed") and s.get("title") and s.get("title") != c["name"]:
-                    e["name"] = s["title"]
-                index.append(e)
-                counts[e["country"]] = counts.get(e["country"], 0) + 1
-            index.sort(key=lambda e: e["name"].lower())
+            index, counts = self.build_index(ch, st, lg)
             with self.lock:
                 self.index = index
                 self.by_key = {e["key"]: e for e in index}
@@ -1084,30 +1078,79 @@ class IPTV:
                 self.state, self.error = ("ready" if self.index else "error"), str(e)
 
     @staticmethod
+    def build_index(ch, st, lg):
+        """Senderliste aus channels/streams/logos.json: ein Eintrag je Sender und Feed, sortiert wie die A–Z-Leiste."""
+        chans = {c["id"]: c for c in ch if not c.get("is_nsfw") and not c.get("closed")}
+        logos = {}
+        for l in lg:
+            if l.get("channel") and l.get("url") and not l.get("feed"):
+                logos.setdefault(l["channel"], l["url"])
+        index, seen, counts = [], set(), {}
+        for s in st:
+            c = chans.get(s.get("channel"))
+            url = s.get("url") or ""
+            if not c or not url.startswith(("http://", "https://")):
+                continue
+            dedup = (c["id"], s.get("feed"))
+            if dedup in seen:
+                continue
+            seen.add(dedup)
+            key = hashlib.sha1(url.encode()).hexdigest()[:12]
+            e = {"key": key, "cid": c["id"], "name": c["name"], "alt": c.get("alt_names") or [],
+                 "country": c.get("country") or "", "cats": c.get("categories") or [],
+                 "quality": s.get("quality") or "", "logo": logos.get(c["id"], ""),
+                 "url": url, "ref": s.get("referrer") or "", "ua": s.get("user_agent") or ""}
+            if s.get("feed") and s.get("title") and s.get("title") != c["name"]:
+                e["name"] = s["title"]
+            e["fold"] = tv_fold(e["name"])
+            e["folds"] = [e["fold"]] + [tv_fold(a) for a in e["alt"]]
+            e["letter"] = tv_letter(e["name"])
+            index.append(e)
+            counts[e["country"]] = counts.get(e["country"], 0) + 1
+        # „#“ (Ziffern, andere Schriften) zuerst, dann A–Z – dieselbe Reihenfolge wie die Leiste
+        index.sort(key=lambda e: (e["letter"] != "#", e["fold"]))
+        return index, counts
+
+    @staticmethod
     def public(e):
         return {k: e[k] for k in ("key", "cid", "name", "country", "cats", "quality", "logo") if k in e}
 
-    def search(self, q, country, cat, limit=80):
-        self.ensure()
-        q = (q or "").strip().lower()
-        res = []
-        for e in self.index:
+    @staticmethod
+    def page_of(index, q="", country="", cat="", letter="", offset=0, limit=TV_PAGE):
+        """Eine Seite der Senderliste. Ohne Suche alphabetisch, wahlweise nur ein Anfangsbuchstabe;
+        mit Suche Treffer am Namensanfang zuerst. „letters“ zaehlt je Buchstabe (Land + Thema, ohne Suche)."""
+        q = tv_fold((q or "").strip())
+        letter = letter if letter in TV_LETTERS else ""
+        letters, hits = {}, []
+        for e in index:
             if country and e["country"] != country:
                 continue
             if cat and cat not in e["cats"]:
                 continue
+            L = e.get("letter") or tv_letter(e["name"])
+            letters[L] = letters.get(L, 0) + 1
             if q:
-                names = [e["name"].lower()] + [a.lower() for a in e["alt"]]
-                if not any(q in n for n in names):
-                    continue
-                rank = 0 if any(n.startswith(q) for n in names) else 1
-            else:
-                rank = 0
-            res.append((rank, e))
-            if not q and len(res) >= limit:
-                break
-        res.sort(key=lambda x: (x[0], x[1]["name"].lower()))
-        return [self.public(e) for _, e in res[:limit]]
+                folds = e.get("folds") or [tv_fold(n) for n in [e["name"]] + list(e.get("alt") or [])]
+                if any(q in n for n in folds):
+                    hits.append((0 if any(n.startswith(q) for n in folds) else 1, e))
+            elif not letter or L == letter:
+                hits.append((0, e))
+        hits.sort(key=lambda x: x[0])            # stabil: innerhalb des Rangs bleibt die A–Z-Reihenfolge
+        total = len(hits)
+        limit = max(1, min(int(limit or TV_PAGE), 1000))
+        offset = max(0, min(int(offset or 0), max(0, total - 1)))
+        offset -= offset % limit
+        return {"items": [IPTV.public(e) for _, e in hits[offset:offset + limit]], "total": total,
+                "offset": offset, "limit": limit, "letter": "" if q else letter,
+                "letters": [{"l": L, "n": letters.get(L, 0)} for L in TV_LETTERS]}
+
+    def page(self, q="", country="", cat="", letter="", offset=0, limit=TV_PAGE):
+        self.ensure()
+        return self.page_of(self.index, q, country, cat, letter, offset, limit)
+
+    def search(self, q, country, cat, limit=80):
+        """Alte Schnittstelle (/api/tv/search, z. B. fuer Forks): nur die ersten Treffer als Liste."""
+        return self.page(q, country, cat, limit=limit)["items"]
 
     def status(self):
         now = None
@@ -3383,10 +3426,14 @@ class Handler(BaseHTTPRequestHandler):
         if path == "/api/tv/status":
             TV.ensure()
             return self._json(200, TV.status())
-        if path == "/api/tv/search":
+        if path in ("/api/tv/list", "/api/tv/search"):
             qs = urllib.parse.parse_qs(url.query)
             g = lambda k: qs.get(k, [""])[0]
-            return self._json(200, TV.search(g("q"), g("country"), g("cat")))
+            if path == "/api/tv/search":
+                return self._json(200, TV.search(g("q"), g("country"), g("cat")))
+            num = lambda k, d: int(g(k)) if g(k).isdigit() else d
+            return self._json(200, TV.page(g("q"), g("country"), g("cat"), g("letter").upper(),
+                                           num("offset", 0), num("limit", TV_PAGE)))
         if path == "/api/tv/favs":
             return self._json(200, [IPTV.public(f) for f in tvfavs_load()])
         if path == "/api/tv/epg":

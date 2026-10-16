@@ -261,6 +261,18 @@
   .chan .q { position: absolute; left: 7%; top: 7%; font-size: calc(var(--u) * .07); color: rgba(255,255,255,.55); }
   .fchips { display: flex; flex-direction: column; gap: calc(10px * var(--f)); max-width: 42vw; }
   .fchips .row { gap: calc(8px * var(--f)); }
+  /* A–Z-Leiste: "Alle" oben, darunter die Buchstaben spaltenweise (Zeilenzahl setzt fitAz) */
+  .az { display: flex; flex-direction: column; gap: var(--azgap, calc(8px * var(--f))); }
+  .az .keys { display: grid; grid-auto-flow: column; grid-template-rows: repeat(var(--azrows, 6), var(--azh, calc(40px * var(--f)))); grid-auto-columns: calc(var(--azh, calc(40px * var(--f))) * 1.1); gap: var(--azgap, calc(8px * var(--f))); }
+  .az .pill { min-height: var(--azh, calc(40px * var(--f))); align-self: flex-start; }
+  .az .keys .pill { padding: 0; justify-content: center; font-size: min(calc(16px * var(--f)), calc(var(--azh, 40px) * .45)); }
+  .az .keys .pill.on { font-weight: 600; }
+  .az .keys .pill.on::before { content: none; }
+  .az .keys .pill[disabled] { opacity: .3; }
+  /* Blaettern am Anfang/Ende der Senderliste */
+  .chan.pg .logo svg { opacity: .8; }
+  .chan.pg .label { font-weight: 500; }
+  .chan.pg .label small { display: block; font-weight: 400; font-size: .83em; color: var(--text-dim); }
 
   /* AppCenter: links Kategorien, rechts die Apps – senkrecht scrollend, Spaltenzahl passt sich der Breite an */
   .astage { display: flex; gap: calc(var(--u) * .22); padding-left: calc(var(--pad-x) - 10px * var(--f)); }
@@ -815,6 +827,7 @@ function fitGrid(track, sel, max, pad = 0) {             // pad: Platz unten fre
 function fitGrids() {
   fitGrid($('#romTrack'), '.romgrid', 3);
   fitGrid($('#tTrack'), '.sgrid', 3);
+  fitAz();
   fitGrid($('#rTrack'), '.sgrid', 3);
   fitGrid($('#sTrack'), '.setgrid', 3, setRing());
   $$('#sTrack .col').forEach(colMore);
@@ -1909,6 +1922,10 @@ async function btRemove(mac) {
 
 /* ============================================================ Fernsehen */
 let tvQuery = '', tvCountry = 'DE', tvCat = '', tvFavs = [], tvResults = [], tvStatus = null, tvNow = null, tvMore = false;
+// Senderliste seitenweise (/api/tv/list): A–Z-Leiste, 200 je Seite, am Ende "Weitere Sender" bzw. naechster Buchstabe
+let tvLetter = '', tvLetters = [], tvOffset = 0, tvTotal = 0;
+const TV_PAGE = 200;
+const CHEV = d => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="${d > 0 ? 'M9 5l7 7-7 7' : 'M15 5l-7 7 7 7'}"/></svg>`;
 const regionName = (() => { const cache = {}; return c => { try { const d = cache[LANG] ||= new Intl.DisplayNames([loc()], { type: 'region' }); return d.of(c.toUpperCase()); } catch { return c; } }; })();
 const TV_CATS = ['', 'news', 'general', 'entertainment', 'movies', 'series', 'documentary', 'kids', 'music', 'sports', 'culture'];
 
@@ -1926,12 +1943,47 @@ async function tvOpen() {
   } else if (tvStatus.state === 'error') renderTv(T('tv.unreachable', { err: tvStatus.error || '' }));
   else tvSearch();
 }
-async function tvSearch() {
-  const qs = new URLSearchParams({ q: tvQuery, country: tvQuery ? (tvCountry === '*' ? '' : tvCountry) : (tvCountry === '*' ? '' : tvCountry), cat: tvCat });
-  try { tvResults = offline ? [] : await getJSON('/api/tv/search?' + qs); } catch { tvResults = []; }
+// opts: offset (Blaettern), keep (Fokus bleibt, z. B. auf dem Buchstaben), toList (Fokus auf den ersten Sender)
+async function tvSearch(opts = {}) {
+  tvOffset = opts.offset || 0;
+  const qs = new URLSearchParams({ q: tvQuery, country: tvCountry === '*' ? '' : tvCountry, cat: tvCat,
+                                   letter: tvQuery ? '' : tvLetter, offset: tvOffset, limit: TV_PAGE });
+  let j = null;
+  try { j = offline ? null : await getJSON('/api/tv/list?' + qs); } catch { j = null; }
+  if (j && tvLetter && !tvQuery && !j.total) { tvLetter = ''; return tvSearch(opts); }   // Buchstabe gibt es hier nicht
+  tvResults = j?.items || []; tvTotal = j?.total || 0; tvOffset = j?.offset || 0;
+  if (j?.letters) tvLetters = j.letters;
   $('#tSearch').blur();
   renderTv();
-  if (layer() === 'tv') setFocus($('#tTrack .chan') || $('#tSearch'), true);
+  if (layer() !== 'tv' || opts.keep) return;
+  setFocus((opts.toList && $('#tTrack .chan:not(.pg)')) || $('#tTrack .chan') || $('#tSearch'), true);
+}
+function tvNextLetter() {
+  if (!tvLetter || tvQuery) return null;
+  const i = tvLetters.findIndex(x => x.l === tvLetter);
+  return tvLetters.slice(i + 1).find(x => x.n > 0) || null;
+}
+function pageTile(dir, label, sub, fn) {
+  const el = document.createElement('div');
+  el.className = 'tile medium station chan pg tnav';
+  el.dataset.fk = 'pg' + dir;
+  el._flt = fn;
+  el.innerHTML = `<div class="logo">${CHEV(dir)}</div><div class="label">${esc(label)}${sub ? `<small>${esc(sub)}</small>` : ''}</div>`;
+  return el;
+}
+// A–Z-Leiste: so viele Zeilen, wie bis zur Hinweiszeile Platz haben (mind. 3); bei wenig Hoehe kleinere Tasten
+function fitAz() {
+  const az = $('#tTrack .az');
+  if (!az) return;
+  const f = parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--f')) || 1;
+  const hintEl = $('#hint');
+  const top = az.getBoundingClientRect().top;
+  const limit = hintEl.getBoundingClientRect().top + (parseFloat(getComputedStyle(hintEl).paddingTop) || 0);
+  if (!top || limit <= top) return;
+  const avail = limit - top - 4, gap = 8 * f;
+  const h = Math.max(16, Math.min(40 * f, (avail - 3 * gap) / 4));
+  az.style.setProperty('--azh', h + 'px');
+  az.style.setProperty('--azrows', Math.max(3, Math.floor((avail - h) / (h + gap))));
 }
 function chanTile(ch, i) {
   const el = document.createElement('div');
@@ -1970,17 +2022,38 @@ function renderTv(msg) {
     tvFavs.forEach((ch, i) => g.appendChild(chanTile(ch, i)));
     section(tr, T('common.favorites'), g);
   }
+  if (!msg && !tvQuery && tvLetters.length) {
+    const az = document.createElement('div'); az.className = 'az';
+    const all = fpill(T('tv.allLetters'), tvLetter === '', () => { tvLetter = ''; tvSearch({ keep: true }); }); all.dataset.fk = 'l'; az.appendChild(all);
+    const keys = document.createElement('div'); keys.className = 'keys';
+    for (const x of tvLetters) {
+      const b = fpill(x.l, tvLetter === x.l, () => { tvLetter = x.l; tvSearch({ keep: true }); });
+      b.dataset.fk = 'l' + x.l; b.disabled = !x.n; keys.appendChild(b);
+    }
+    az.appendChild(keys);
+    section(tr, 'A–Z', az);
+  }
   if (msg) { const e = document.createElement('div'); e.className = 'empty'; e.textContent = msg; section(tr, T('tv.channels'), e); }
   else {
     const g = document.createElement('div');
     g.className = tvResults.length ? 'sgrid' : 'empty';
-    if (tvResults.length) tvResults.forEach((ch, i) => g.appendChild(chanTile(ch, i)));
+    const num = n => n.toLocaleString(loc());
+    if (tvResults.length) {
+      if (tvOffset > 0) g.appendChild(pageTile(-1, T('common.back'), num(Math.max(1, tvOffset - TV_PAGE + 1)) + '–' + num(tvOffset), () => tvSearch({ offset: tvOffset - TV_PAGE, toList: true })));
+      tvResults.forEach((ch, i) => g.appendChild(chanTile(ch, i)));
+      const end = tvOffset + tvResults.length, nx = tvNextLetter();
+      if (end < tvTotal) g.appendChild(pageTile(1, T('tv.pageNext'), num(end + 1) + '–' + num(Math.min(tvTotal, end + TV_PAGE)), () => tvSearch({ offset: end, toList: true })));
+      else if (nx) g.appendChild(pageTile(1, T('tv.nextLetter', { l: nx.l }), T('tv.count', { n: num(nx.n) }), () => { tvLetter = nx.l; tvSearch({ toList: true }); }));
+    }
     else g.textContent = T('tv.none');
     const where = tvCountry === '*' ? T('tv.allCountriesLower') : regionName(tvCountry);
-    section(tr, tvQuery ? T('tv.query', { q: tvQuery, where }) : T('tv.list', { where }), g);
+    let title = tvQuery ? T('tv.query', { q: tvQuery, where }) : T('tv.list', { where }) + (tvLetter ? ' · ' + tvLetter : '');
+    if (tvTotal > tvResults.length) title += ' · ' + T('tv.range', { from: num(tvOffset + 1), to: num(tvOffset + tvResults.length), n: num(tvTotal) });
+    section(tr, title, g);
   }
   $('#tStop').disabled = !tvNow;
   fitGrid(tr, '.sgrid', 3);
+  fitAz();
   if (layer() === 'tv' && keep) {
     const again = $$('#tTrack .tnav').find(e => (e._chan && e._chan.key === keep) || e.dataset.fk === keep);
     if (again) setFocus(again, true);
@@ -2026,7 +2099,7 @@ function setTvNow(now) {
   if (tile) { tile.classList.toggle('playing', !!tvNow); tile.querySelector('.st').textContent = tvNow ? tvNow.name : ''; tile.querySelector('.ti').textContent = tvNow ? (tvNow.country ? regionName(tvNow.country) : T('common.live')) : ''; }
   renderTvNowHeader();
   if (prev !== tvNow?.key) {
-    $$('#tTrack .chan').forEach(e => e.classList.toggle('playing', !!tvNow && e._chan.key === tvNow.key));
+    $$('#tTrack .chan:not(.pg)').forEach(e => e.classList.toggle('playing', !!tvNow && e._chan.key === tvNow.key));
     clearInterval(tvEpgTimer);
     if (tvNow) {
       refreshTvEpg();

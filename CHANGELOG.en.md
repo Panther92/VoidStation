@@ -9,6 +9,7 @@ at the top; `vspub --release` or `vspub --hotfix` assigns the number when releas
 Older versions (up to 0.15.0) still use the old numbering.
 
 ## Testing – 2026-10-16
+- TV: the channel list stopped after 80 channels – in Germany around “F”, so ZDF and others could only be found via search. Now every channel is reachable: an A–Z bar next to the list jumps straight to a letter, and at the end of a letter “Next: …” moves on. Long lists come in pages of 200 channels (e.g. all countries under “T”: about 1,450) with “More channels” at the end and “Back” at the start. Search now also matches names without accents (reported by the community)
 - Sleep: ⏻ → Sleep (also under Settings → System). Programs stay open, the radio stops. Wake it with a USB keyboard, mouse or a remote with a USB receiver, depending on the adapter also with a Bluetooth keyboard. Wi-Fi and Bluetooth reconnect on their own afterwards (a community request)
 - Back to the start screen with the mouse: move the pointer all the way into the bottom right corner – while a program is open, a small card in the colour of its tile floats there with “Start screen” (the program keeps running) and “Close app”. Works for every program started from a tile, fullscreen included (a community request)
 - Flatpak programs (e.g. FreeTube, Brave): if the program was already running, its tile didn't bring it back to the front, and the start screen kept treating it as “still starting”. Their windows are now recognised at start

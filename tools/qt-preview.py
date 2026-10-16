@@ -37,6 +37,23 @@ TILES["groups"].insert(1, {"name": "Spiele", "tiles": [
 
 
 JOB = {}
+# VS_TVDATA=<Ordner mit channels.json, streams.json, logos.json von iptv-org>: echte Senderliste statt Beispieldaten
+TVREAL = {}
+
+
+def tv_list(q):
+    d = os.environ.get("VS_TVDATA")
+    if not d:
+        return S.tv_list(q)
+    if "index" not in TVREAL:
+        sys.path.insert(0, str(REPO / "launcher"))
+        import launcher as L  # noqa: E402
+        rd = lambda n: json.loads((Path(d) / n).read_text(encoding="utf-8")) if (Path(d) / n).exists() else []
+        TVREAL["L"] = L
+        TVREAL["index"] = L.IPTV.build_index(rd("channels.json"), rd("streams.json"), rd("logos.json"))[0]
+    g = lambda k: q.get(k, [""])[0]
+    num = lambda k, dflt: int(g(k)) if g(k).isdigit() else dflt
+    return TVREAL["L"].IPTV.page_of(TVREAL["index"], g("q"), g("country"), g("cat"), g("letter").upper(), num("offset", 0), num("limit", 200))
 
 
 def job():
@@ -126,6 +143,7 @@ class H(S.H):
             "/api/tv/status": lambda: {"state": "ready", "error": None, "count": 10432, "countries": S.COUNTRIES, "now": st["tv"]},
             "/api/tv/favs": lambda: st["tvfavs"],
             "/api/tv/search": lambda: [c for c in S.TV if not q.get("cat", [""])[0] or q["cat"][0] in c["cats"]],
+            "/api/tv/list": lambda: tv_list(q),
             "/api/tv/epg": lambda: {"current": {"title": "Tagesschau", "start": "20:00", "stop": "20:15", "progress": 60},
                                     "next": {"title": "Wetter"}},
             "/api/apps": S.apps,

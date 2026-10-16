@@ -44,6 +44,23 @@ CHANNELS = [
 TV = [{"key": f"k{i:02d}", "name": n, "country": "DE", "cats": [c], "quality": q, "logo": None}
       for i, (n, c, q) in enumerate(CHANNELS)]
 TV_FAVS = [TV[0], TV[1], TV[4], TV[6]]
+
+
+def tv_list(q, data=None):
+    """/api/tv/list wie im Launcher (Thema, Suche, A–Z, Seiten), Beispieldaten in fester Reihenfolge."""
+    g = lambda k: q.get(k, [""])[0]
+    letter_of = lambda n: (n[:1].upper() if n[:1].isalpha() and n[:1].upper() <= "Z" else "#")
+    sel = [c for c in (data or TV) if not g("cat") or g("cat") in c["cats"]]
+    letters = {}
+    for c in sel:
+        letters[letter_of(c["name"])] = letters.get(letter_of(c["name"]), 0) + 1
+    if g("q"):
+        sel = [c for c in sel if g("q").lower() in c["name"].lower()]
+    elif g("letter"):
+        sel = [c for c in sel if letter_of(c["name"]) == g("letter")]
+    off, lim = int(g("offset") or 0), int(g("limit") or 200)
+    return {"items": sel[off:off + lim], "total": len(sel), "offset": off, "limit": lim, "letter": g("letter"),
+            "letters": [{"l": L, "n": letters.get(L, 0)} for L in ["#"] + [chr(c) for c in range(65, 91)]]}
 COUNTRIES = [{"code": c, "n": n} for c, n in [("DE", 212), ("AT", 48), ("CH", 61), ("FR", 190), ("IT", 240),
                                               ("GB", 150), ("US", 1400), ("ES", 260), ("NL", 90), ("PL", 120)]]
 
@@ -102,6 +119,7 @@ class H(SimpleHTTPRequestHandler):
             "/api/tv/status": lambda: {"state": "ready", "error": None, "count": 10432, "countries": COUNTRIES, "now": None},
             "/api/tv/favs": lambda: TV_FAVS,
             "/api/tv/search": lambda: [c for c in TV if not q.get("cat", [""])[0] or q["cat"][0] in c["cats"]],
+            "/api/tv/list": lambda: tv_list(q),
             "/api/apps": apps,
             "/api/apps/job": lambda: None,
         }

@@ -9,6 +9,7 @@ ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freig
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
 ## Testing – 2026-10-16
+- Fernsehen: Die Senderliste brach nach 80 Sendern ab – in Deutschland etwa bei „F“, ZDF & Co. fand nur die Suche. Jetzt sind alle Sender erreichbar: neben der Liste eine A–Z-Leiste zum direkten Springen, am Ende eines Buchstabens geht es mit „Weiter mit …“ zum nächsten. Große Listen kommen in Seiten zu 200 Sendern (z. B. alle Länder unter „T“: rund 1.450) mit „Weitere Sender“ am Ende und „Zurück“ am Anfang. Die Suche findet Namen jetzt auch ohne Akzente (Hinweis aus der Community)
 - Standby: ⏻ → Standby (auch unter Einstellungen → System). Programme bleiben offen, das Radio geht aus. Aufwecken per USB-Tastatur, -Maus oder Fernbedienung mit USB-Empfänger, je nach Adapter auch per Bluetooth-Tastatur. WLAN und Bluetooth melden sich danach von selbst wieder (Wunsch aus der Community)
 - Mit der Maus zurück zur Startseite: Maus ganz in die Ecke unten rechts schieben – solange ein Programm läuft, schwebt dort eine kleine Karte in der Farbe seiner Kachel mit „Startseite“ (Programm läuft weiter) und „App schließen“. Gilt für jedes Programm aus einer Kachel, auch im Vollbild (Wunsch aus der Community)
 - Flatpak-Programme (z. B. FreeTube, Brave): Lief das Programm schon, holte die Kachel es nicht wieder nach vorn, und die Startseite hielt es dauerhaft für „startet noch“. Ihre Fenster werden jetzt beim Start erkannt
