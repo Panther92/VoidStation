@@ -43,7 +43,7 @@ Every VoidStation has a Windows share. On your PC, type `\\<hostname>\share` int
 
 ## Games and emulators {#games}
 
-Emulators are in the AppCenter under *Emulators*. ROMs go into the shared folder under `share/ROMs/<system>`, for example `gba`, `snes`, `nes`, `psx`, `psp`, `nds`, `gamecube` or `dreamcast`. The emulator tile then shows a game list; without games, the emulator starts directly.
+Emulators are in the AppCenter under *Emulators*. ROMs go into the shared folder under `share/ROMs/<system>`, for example `gba`, `gbc`, `snes`, `nes`, `psx`, `psp`, `nds`, `gamecube` or `dreamcast`. The emulator tile then shows a game list; without games, the emulator starts directly.
 
 ## TV program guide {#epg}
 

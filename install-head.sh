@@ -341,14 +341,14 @@ if ! sh /usr/local/sbin/voidstation-pkg xserver ensure; then
 fi
 
 say "Extra: Freigabe-Ordner $SHARE"
-for d in ROMs/gba ROMs/nes ROMs/snes ROMs/psx ROMs/psp ROMs/nds ROMs/gamecube ROMs/dreamcast \
+for d in ROMs/gba ROMs/gbc ROMs/nes ROMs/snes ROMs/psx ROMs/psp ROMs/nds ROMs/gamecube ROMs/dreamcast \
          ROMs/dos ROMs/c64 ROMs/atari2600 ROMs/scummvm BIOS Musik Videos Bilder; do
   mkdir -p "$SHARE/$d"
 done
 [ -f "$SHARE/LIESMICH.txt" ] || cat > "$SHARE/LIESMICH.txt" <<'EOF'
 VoidStation Freigabe
 =================
-ROMs/<system>   Spiele fuer die Emulatoren (gba, nes, snes, psx, psp, nds …)
+ROMs/<system>   Spiele fuer die Emulatoren (gba, gbc, nes, snes, psx, psp, nds …)
 BIOS            BIOS-Dateien (z. B. PlayStation fuer DuckStation)
 Musik, Videos   eigene Medien fuer VLC oder Kodi
 Bilder          fuer den Bildbetrachter

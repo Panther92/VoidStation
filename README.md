@@ -191,7 +191,7 @@ VoidStation picks up new CSS files in the theme folder automatically and offers 
 
 ## Games, Bluetooth, program guide
 
-- **Games:** copy ROMs into the share under `share/ROMs/<system>` (`gba`, `snes`, `nes`, `psx`, `psp`, `nds`, `gamecube`, `dreamcast` …). The emulator tile then shows a game list; without games, the emulator starts directly.
+- **Games:** copy ROMs into the share under `share/ROMs/<system>` (`gba`, `gbc`, `snes`, `nes`, `psx`, `psp`, `nds`, `gamecube`, `dreamcast` …). The emulator tile then shows a game list; without games, the emulator starts directly.
 - **Bluetooth:** Settings → Bluetooth. Comes with `bluez` and `libspa-bluetooth` (audio via PipeWire); the user is in the `bluetooth` group. VoidStation runs its own pairing agent over D-Bus: “Just Works” is confirmed, legacy PIN devices get 0000/1234/1111, keyboard codes are shown on screen; requests are only accepted during a scan (+3 min). With several adapters the newest Bluetooth version wins (override: address in `/usr/local/share/voidstation/bt-adapter`).
 - **Controllers:** udev rules give Steam, emulators and SDL direct access (hidraw, uinput) to controllers from all common brands. The start page understands standard pads, plain USB pads, joysticks and arcade sticks; custom mapping in `~/.config/voidstation/pads.json` (`{"<name or vid:pid>": {"<evdev code>": "a|b|x|y|lb|rb|lt|rt|select|start|up|down|left|right"}}`).
 - **Program guide (EPG):** off by default. Turn it on by entering the address of an XMLTV file (`.xml` or `.xml.gz`):

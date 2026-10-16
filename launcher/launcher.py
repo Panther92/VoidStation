@@ -224,6 +224,8 @@ class AppManager:
         before = {int(w, 16) for w, _, _ in windows()}  # Fenster vor dem Start (Zuordnung ohne Prozess-ID)
         if Path(args[0]).name == "firefox":
             firefox_prefs(args, ui_lang(), theme_is_dark(settings_load().get("theme") or DEFAULTS["theme"]))
+        if Path(args[0]).name in ("dosbox", "dosbox-staging"):
+            args = dosbox_prepare(args)
         proc = subprocess.Popen(args, cwd=str(Path.home()), stdin=subprocess.DEVNULL, env=app_env(),
                                 stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
         out.close()
@@ -607,6 +609,92 @@ def firefox_prefs(args, lang, dark):
     new = "\n".join(out) + "\n"
     if new != old:
         uj.write_text(new, encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+#  DOSBox Staging: Grundeinstellung beim ersten Start + Sprache/Tastatur/Laufwerk C vor jedem Start
+# ---------------------------------------------------------------------------
+# Zwei Dateien, DOSBox Staging liest sie nacheinander (spaetere gewinnt, [autoexec] wird zusammengefuegt):
+#  1. ~/.config/dosbox/dosbox-staging.conf – Grundeinstellung, legt VoidStation nur an, wenn es sie noch nicht gibt;
+#     danach gehoert sie dem Benutzer (eigene Aenderungen bleiben).
+#  2. <BASE>/dosbox/voidstation.conf (--conf) – vor jedem Start neu: Sprache der Oberflaeche, Tastatur wie unter X,
+#     Laufwerk C = ~/share/ROMs/dos. Wer davon abweichen will: dosbox --set … oder eigener Kachel-Befehl mit --conf.
+DOSBOX_LANG = {"de": "de", "en": "en", "es": "es", "fr": "fr", "it": "it", "nl": "nl", "pl": "pl", "pt-BR": "br", "ru": "ru"}
+# X-Tastaturbelegung -> DOS-Tastaturcode (FreeDOS KEYB); unbekannt -> auto
+DOSBOX_KEYB = {"de": "gr", "at": "gr", "ch": "sg", "us": "us", "gb": "uk", "fr": "fr", "it": "it", "es": "sp",
+               "nl": "nl", "be": "be", "pl": "pl", "hu": "hu", "ru": "ru", "ua": "ur", "gr": "gk", "br": "br",
+               "pt": "po", "dk": "dk", "se": "sv", "no": "no", "fi": "su", "cz": "cz", "sk": "sl", "tr": "tr"}
+DOSBOX_PRIMARY = """# DOSBox Staging – Grundeinstellung von VoidStation
+# Angelegt beim ersten Start ueber die Kachel. Die Datei gehoert jetzt dir: Aenderungen bleiben erhalten,
+# VoidStation schreibt sie nicht wieder ueber. Geloescht wird sie beim naechsten Start neu angelegt.
+# Nicht aufgefuehrte Einstellungen haben den Standardwert von DOSBox Staging; alle Einstellungen
+# mit Erklaerung: https://www.dosbox-staging.org/manual/
+#
+# Sprache, Tastatur und Laufwerk C setzt VoidStation vor jedem Start in einer eigenen Datei
+# (~/.local/share/voidstation/dosbox/voidstation.conf): Sprache wie die Oberflaeche, Tastatur wie
+# eingestellt, C: = Freigabe share/ROMs/dos.
+
+[sdl]
+# Fernseher: gleich im Vollbild (Alt+Enter schaltet um)
+fullscreen = true
+
+[cpu]
+# 386er mit dynamischem Kern: laeuft mit den meisten DOS-Spielen. Zu schnell/zu langsam?
+# Ctrl+F11 / Ctrl+F12 aendern die Geschwindigkeit um je 500 Zyklen, oder cpu_cycles hier anpassen
+# (Richtwerte: 286 = 1500, 386DX-33 = 6000, 486DX/2-66 = 25000, Pentium 90 = 50000).
+core                 = dynamic
+cputype              = 386
+cpu_cycles           = 4000
+cpu_cycles_protected = 60000
+cycleup              = 500
+cycledown            = 500
+"""
+
+
+def x_keyboard_layout():
+    """Erste X-Tastaturbelegung (setxkbmap -query), sonst aus 00-keyboard.conf, sonst None."""
+    r = run(["setxkbmap", "-query"])
+    m = re.search(r"^layout:\s*([A-Za-z]+)", r.stdout, re.M) if r and r.returncode == 0 else None
+    if m:
+        return m.group(1).lower()
+    try:
+        t = Path("/etc/X11/xorg.conf.d/00-keyboard.conf").read_text(encoding="utf-8")
+        m = re.search(r'XkbLayout"\s+"([A-Za-z]+)', t)
+        return m.group(1).lower() if m else None
+    except OSError:
+        return None
+
+
+def dosbox_prepare(args):
+    """Vor dem Start von DOSBox Staging: Grundeinstellung anlegen (falls noch keine da ist),
+    VoidStation-Datei schreiben und per --conf anhaengen. Gibt die Befehlszeile zurueck."""
+    if "--noprimaryconf" in args:
+        return args
+    home = Path.home()
+    rom_dir = home / "share" / "ROMs" / "dos"
+    vs_conf = BASE / "dosbox" / "voidstation.conf"
+    try:
+        rom_dir.mkdir(parents=True, exist_ok=True)
+        primary = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config") / "dosbox" / "dosbox-staging.conf"
+        if not primary.exists():
+            primary.parent.mkdir(parents=True, exist_ok=True)
+            primary.write_text(DOSBOX_PRIMARY, encoding="utf-8")
+            log("DOSBox: Grundeinstellung angelegt:", primary)
+        keyb = DOSBOX_KEYB.get(x_keyboard_layout() or "", "auto")
+        lang = DOSBOX_LANG.get(ui_lang(), "en")
+        vs_conf.parent.mkdir(parents=True, exist_ok=True)
+        vs_conf.write_text(
+            "# Von VoidStation vor jedem Start von DOSBox neu geschrieben – Aenderungen hier gehen verloren.\n"
+            "# Eigene Einstellungen: ~/.config/dosbox/dosbox-staging.conf\n\n"
+            f"[dosbox]\nlanguage = {lang}\n\n"
+            f"[dos]\nkeyboardlayout = {keyb}\n\n"
+            f'[autoexec]\nmount c "{rom_dir}"\nc:\n', encoding="utf-8")
+    except OSError as e:
+        log("DOSBox: Einstellungen nicht geschrieben:", e)
+        return args
+    if str(vs_conf) in args:
+        return args
+    return [args[0], "--conf", str(vs_conf)] + list(args[1:])
 
 
 def settings_save(s):
@@ -2676,9 +2764,16 @@ class ROMManager:
         "retroarch": "retroarch",
     }
     SYSTEM_TO_TILE = {v: k for k, v in TILE_TO_SYSTEM.items()}
+    SYSTEM_TO_TILE["gbc"] = "gba"
+    # Weitere Ordner, die eine Kachel mit anzeigt (erster Ordner = Hauptordner der Kachel).
+    # mGBA spielt auch Game Boy (Color): Spiele aus ROMs/gba und ROMs/gbc stehen in einer Liste.
+    SYSTEM_FOLDERS = {
+        "gba": ["gba", "gbc"],
+    }
 
     EXTENSIONS = {
         "gba": [".gba", ".gbc", ".gb", ".zip", ".7z"],
+        "gbc": [".gbc", ".gb", ".zip", ".7z"],
         "snes": [".sfc", ".smc", ".zip", ".7z"],
         "nes": [".nes", ".zip", ".7z"],
         "psx": [".iso", ".cue", ".bin", ".chd", ".pbp"],
@@ -2697,6 +2792,7 @@ class ROMManager:
     # Befehle aus catalog.json als Basis/Fallback
     EMULATOR_CMD = {
         "gba": ["mgba-qt"],
+        "gbc": ["mgba-qt"],
         "snes": ["snes9x-gtk"],
         "nes": ["nestopia"],
         "psx": ["~/.local/share/voidstation/apps/duckstation/AppRun"],
@@ -2714,12 +2810,17 @@ class ROMManager:
     def canonical_system(self, sys_or_tile):
         return self.TILE_TO_SYSTEM.get(sys_or_tile, sys_or_tile)
 
-    def list_roms(self, system):
-        canon = self.canonical_system(system)
-        sys_dir = self.rom_dir / canon
+    def folders(self, sys_or_tile):
+        """Ordner unter ~/share/ROMs, deren Spiele die Kachel bzw. das System zeigt (Hauptordner zuerst)."""
+        canon = self.canonical_system(sys_or_tile)
+        return list(self.SYSTEM_FOLDERS.get(canon, [canon]))
+
+    def list_folder(self, folder):
+        """Spiele genau eines Ordners ~/share/ROMs/<folder>."""
+        sys_dir = self.rom_dir / folder
         if not sys_dir.is_dir():
             return []
-        valid_exts = set(self.EXTENSIONS.get(canon, [".zip"]))
+        valid_exts = set(self.EXTENSIONS.get(folder, [".zip"]))
         roms = []
         try:
             for item in sorted(sys_dir.iterdir()):
@@ -2733,21 +2834,39 @@ class ROMManager:
                         "id": hashlib.sha1(str(item).encode()).hexdigest()[:10],
                         "name": clean_name,
                         "filename": item.name,
-                        "system": canon,
+                        "system": folder,
+                        "folder": folder,
                         "size": size_str,
                         "bytes": size_bytes,
                     })
         except OSError as e:
-            log(f"ROMs fuer {canon} nicht lesbar:", e)
+            log(f"ROMs fuer {folder} nicht lesbar:", e)
         return roms
 
-    def launch(self, system, filename):
+    def list_roms(self, system):
+        """Spiele einer Kachel bzw. eines Systems, aus allen zugehoerigen Ordnern, alphabetisch."""
+        folders = self.folders(system)
+        roms = []
+        for folder in folders:
+            roms += self.list_folder(folder)
+        if len(folders) > 1:
+            roms.sort(key=lambda r: (r["name"].casefold(), r["filename"].casefold()))
+        return roms
+
+    def launch(self, system, filename, folder=None):
         canon = self.canonical_system(system)
         safe_name = os.path.basename(filename)
-        sys_dir = (self.rom_dir / canon).resolve()
-        target = (sys_dir / safe_name).resolve()
-
-        if not target.is_file() or not target.is_relative_to(sys_dir):
+        # Ordner: der vom Spiel mitgeschickte (falls er zur Kachel gehoert), sonst alle der Kachel der Reihe nach
+        allowed = self.folders(system)
+        cands = [folder] if folder in allowed else allowed
+        target = None
+        for f in cands:
+            sys_dir = (self.rom_dir / f).resolve()
+            t = (sys_dir / safe_name).resolve()
+            if t.is_file() and t.is_relative_to(sys_dir):
+                target = t
+                break
+        if not target:
             raise ValueError("Spieldatei nicht gefunden")
 
         # 1. Kachel-Befehl (tiles.json), 2. Katalog (catalog.json) – nur als Liste;
@@ -2769,7 +2888,7 @@ class ROMManager:
         if not cmd:
             raise ValueError(f"Kein Emulator fuer {canon} konfiguriert")
 
-        return APPS.start(f"rom_{canon}", cmd)
+        return APPS.start(f"rom_{self.TILE_TO_SYSTEM.get(tid, canon)}", cmd)
 
 
 ROMS = ROMManager()
@@ -3494,12 +3613,13 @@ class Handler(BaseHTTPRequestHandler):
             if not system:
                 summary = {}
                 for s in ROMS.EXTENSIONS:
-                    r = ROMS.list_roms(s)
+                    r = ROMS.list_folder(s)
                     if r:
                         summary[s] = len(r)
                 return self._json(200, {"systems": summary})
             roms = ROMS.list_roms(system)
-            return self._json(200, {"system": ROMS.canonical_system(system), "count": len(roms), "roms": roms})
+            return self._json(200, {"system": ROMS.canonical_system(system), "folders": ROMS.folders(system),
+                                    "count": len(roms), "roms": roms})
         if path == "/api/bluetooth/status":
             return self._json(200, BLUETOOTH.status())
         if path == "/tiles.json":
@@ -3711,8 +3831,9 @@ class Handler(BaseHTTPRequestHandler):
                 b = self._body()
                 sys_id = str(b.get("system", ""))
                 filename = str(b.get("file") or b.get("filename") or b.get("path") or "")
+                folder = str(b.get("folder") or "") or None
                 try:
-                    res = ROMS.launch(sys_id, filename)
+                    res = ROMS.launch(sys_id, filename, folder)
                     return self._json(200, {"result": res, "running": APPS.running()})
                 except OSError as e:          # Emulator nicht installiert
                     return self._json(400, {"error": f"Emulator nicht gefunden: {e.filename or e}"})

@@ -338,7 +338,7 @@
   "app.retroarch.desc": "Mindent egyben emulátor rengeteg konzolhoz. A RetroArch az online menüjéből maga tölti le az emulátormagokat.",
   "app.duckstation.desc": "PlayStation 1. Nagyon pontos és gyors, BIOS-fájlok kellenek hozzá a share/bios mappában.",
   "app.ppsspp.desc": "PlayStation Portable. Sok játék régebbi gépeken is gördülékenyen fut.",
-  "app.gba.desc": "Game Boy, Game Boy Color és Game Boy Advance. A játékokat a share/ROMs/gba mappába tedd.",
+  "app.gba.desc": "Game Boy, Game Boy Color és Game Boy Advance. A játékokat a share/ROMs/gba vagy a share/ROMs/gbc mappába tedd.",
   "app.snes9x.desc": "Super Nintendo. Könnyű és bevált.",
   "app.nestopia.desc": "NES / Famicom.",
   "app.melonds.desc": "Nintendo DS. A két képernyő egymás mellett vagy egymás alatt.",

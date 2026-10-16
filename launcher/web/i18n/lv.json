@@ -338,7 +338,7 @@
   "app.retroarch.desc": "Viss vienā emulators milzīgam skaitam konsoļu. RetroArch pats lejupielādē emulatoru kodolus savā tiešsaistes izvēlnē.",
   "app.duckstation.desc": "PlayStation 1. Ļoti precīzs un ātrs, nepieciešami BIOS faili mapē share/bios.",
   "app.ppsspp.desc": "PlayStation Portable. Daudzas spēles darbojas raiti pat uz vecākiem datoriem.",
-  "app.gba.desc": "Game Boy, Game Boy Color un Game Boy Advance. Ieliec spēles mapē share/ROMs/gba.",
+  "app.gba.desc": "Game Boy, Game Boy Color un Game Boy Advance. Ieliec spēles mapē share/ROMs/gba vai share/ROMs/gbc.",
   "app.snes9x.desc": "Super Nintendo. Viegls un pārbaudīts.",
   "app.nestopia.desc": "NES / Famicom.",
   "app.melonds.desc": "Nintendo DS. Abi ekrāni blakus vai viens virs otra.",

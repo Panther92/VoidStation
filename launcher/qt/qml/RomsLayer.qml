@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Spiele eines Emulators (ROMs aus ~/share/ROMs/<system>) – Spiel starten oder Emulator ohne Spiel
+// Spiele eines Emulators (ROMs aus ~/share/ROMs/<system>, bei mGBA auch gbc) – Spiel starten oder Emulator ohne Spiel
 import QtQuick
 import VS
 
@@ -26,7 +26,7 @@ Layer {
     function firstFocus() { var it = Nav.collect(trk); return it.length ? it[0] : startEmu }
     function launchRom(r) {
         app.toast(Ui.t("common.starting", null, "Starte …") + " " + (r.title || r.name))
-        Api.post("/api/roms/launch", { system: tile.id, file: r.filename }, null,
+        Api.post("/api/roms/launch", { system: tile.id, file: r.filename, folder: r.folder || r.system || "" }, null,
                  function () { app.toast(Ui.t("home.launchFailed", { name: r.title || r.name }), true) })
     }
 

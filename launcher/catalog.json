@@ -299,7 +299,7 @@
       "id": "gba",
       "name": "mGBA",
       "cat": "Emulatoren",
-      "desc": "Game Boy, Game Boy Color und Game Boy Advance. Spiele in den Ordner share/ROMs/gba legen.",
+      "desc": "Game Boy, Game Boy Color und Game Boy Advance. Spiele in den Ordner share/ROMs/gba oder share/ROMs/gbc legen.",
       "source": {
         "type": "xbps",
         "pkg": "mgba-qt"

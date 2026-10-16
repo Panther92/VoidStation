@@ -338,7 +338,7 @@
   "app.retroarch.desc": "Εξομοιωτής «όλα σε ένα» για πάρα πολλές κονσόλες. Το RetroArch κατεβάζει μόνο του τους πυρήνες εξομοίωσης από το διαδικτυακό του μενού.",
   "app.duckstation.desc": "PlayStation 1. Πολύ ακριβές και γρήγορο, χρειάζεται αρχεία BIOS στον φάκελο share/bios.",
   "app.ppsspp.desc": "PlayStation Portable. Πολλά παιχνίδια τρέχουν ομαλά ακόμη και σε παλαιότερους υπολογιστές.",
-  "app.gba.desc": "Game Boy, Game Boy Color και Game Boy Advance. Βάλε τα παιχνίδια στον φάκελο share/ROMs/gba.",
+  "app.gba.desc": "Game Boy, Game Boy Color και Game Boy Advance. Βάλε τα παιχνίδια στον φάκελο share/ROMs/gba ή share/ROMs/gbc.",
   "app.snes9x.desc": "Super Nintendo. Ελαφρύ και δοκιμασμένο.",
   "app.nestopia.desc": "NES / Famicom.",
   "app.melonds.desc": "Nintendo DS. Οι δύο οθόνες δίπλα-δίπλα ή η μία πάνω από την άλλη.",

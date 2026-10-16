@@ -338,7 +338,7 @@
   "app.retroarch.desc": "Эмулятор «всё в одном» для огромного числа консолей. RetroArch сам загружает ядра эмуляторов через своё онлайн-меню.",
   "app.duckstation.desc": "PlayStation 1. Очень точный и быстрый, нужны файлы BIOS в папке share/bios.",
   "app.ppsspp.desc": "PlayStation Portable. Многие игры идут плавно даже на старых компьютерах.",
-  "app.gba.desc": "Game Boy, Game Boy Color и Game Boy Advance. Положите игры в папку share/ROMs/gba.",
+  "app.gba.desc": "Game Boy, Game Boy Color и Game Boy Advance. Положите игры в папку share/ROMs/gba или share/ROMs/gbc.",
   "app.snes9x.desc": "Super Nintendo. Лёгкий и проверенный.",
   "app.nestopia.desc": "NES / Famicom (Денди).",
   "app.melonds.desc": "Nintendo DS. Оба экрана рядом или один над другим.",

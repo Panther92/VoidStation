@@ -3179,7 +3179,7 @@ async function launchRom(rom) {
   if (!curRomTile || !rom) return;
   toast(T('common.starting', null, 'Starte …') + ' ' + (rom.title || rom.name));
   try {
-    await api('/api/roms/launch', { system: curRomTile.id, file: rom.filename });
+    await api('/api/roms/launch', { system: curRomTile.id, file: rom.filename, folder: rom.folder || rom.system || '' });
   } catch {
     toast(T('home.launchFailed', { name: rom.title || rom.name }), true);
   }

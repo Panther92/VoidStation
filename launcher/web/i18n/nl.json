@@ -338,7 +338,7 @@
   "app.retroarch.desc": "Alles-in-één-emulator voor enorm veel consoles. RetroArch downloadt emulatorcores zelf via het onlinemenu.",
   "app.duckstation.desc": "PlayStation 1. Zeer nauwkeurig en snel, heeft BIOS-bestanden nodig in de map share/bios.",
   "app.ppsspp.desc": "PlayStation Portable. Veel spellen draaien soepel, zelfs op oudere computers.",
-  "app.gba.desc": "Game Boy, Game Boy Color en Game Boy Advance. Zet spellen in de map share/ROMs/gba.",
+  "app.gba.desc": "Game Boy, Game Boy Color en Game Boy Advance. Zet spellen in share/ROMs/gba of share/ROMs/gbc.",
   "app.snes9x.desc": "Super Nintendo. Licht en beproefd.",
   "app.nestopia.desc": "NES / Famicom.",
   "app.melonds.desc": "Nintendo DS. Beide schermen naast of boven elkaar.",
