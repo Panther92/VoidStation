@@ -175,7 +175,7 @@ class AppManager:
         logdir.mkdir(exist_ok=True)
         out = open(logdir / f"{tid}.log", "w")   # Ausgaben je Programm, hilft bei Abstuerzen
         if Path(args[0]).name == "firefox":
-            firefox_lang(args, ui_lang())
+            firefox_prefs(args, ui_lang(), theme_is_dark(settings_load().get("theme") or DEFAULTS["theme"]))
         proc = subprocess.Popen(args, cwd=str(Path.home()), stdin=subprocess.DEVNULL, env=app_env(),
                                 stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
         out.close()
@@ -469,16 +469,20 @@ def app_env():
     return env
 
 
-def firefox_lang(args, lang):
-    """Firefox mit --profile: intl.locale.requested (Menues) und intl.accept_languages (Webseiten, z. B. YouTube)
-    vor jedem Start auf die Sprache der Oberflaeche setzen."""
+def firefox_prefs(args, lang, dark):
+    """Firefox mit --profile (Kacheln: YouTube, Mediatheken, Firefox): vor jedem Start in user.js setzen
+    - Sprache der Oberflaeche: intl.locale.requested (Menues), intl.accept_languages (Webseiten, z. B. YouTube)
+    - hell/dunkel nach dem VoidStation-Theme: Webseiten (prefers-color-scheme) und Leisten"""
     try:
         uj = Path(args[args.index("--profile") + 1]) / "user.js"
         old = uj.read_text(encoding="utf-8")
     except (ValueError, IndexError, OSError):
         return
     req, acc = FIREFOX_LANG[lang]
-    want = {"intl.locale.requested": req, "intl.accept_languages": acc}
+    scheme = 0 if dark else 1                    # 0 = dunkel, 1 = hell (2 waere "wie das System")
+    want = {"intl.locale.requested": req, "intl.accept_languages": acc,
+            "layout.css.prefers-color-scheme.content-override": scheme,
+            "browser.theme.toolbar-theme": scheme, "browser.theme.content-theme": scheme}
     out, seen = [], set()
     for line in old.splitlines():
         m = re.match(r'\s*user_pref\("([^"]+)"', line)
@@ -486,9 +490,9 @@ def firefox_lang(args, lang):
             if m.group(1) in seen:
                 continue
             seen.add(m.group(1))
-            line = f'user_pref("{m.group(1)}", "{want[m.group(1)]}");'
+            line = f'user_pref("{m.group(1)}", {json.dumps(want[m.group(1)])});'
         out.append(line)
-    out += [f'user_pref("{k}", "{v}");' for k, v in want.items() if k not in seen]
+    out += [f'user_pref("{k}", {json.dumps(v)});' for k, v in want.items() if k not in seen]
     new = "\n".join(out) + "\n"
     if new != old:
         uj.write_text(new, encoding="utf-8")
@@ -526,8 +530,42 @@ def _ini_set(path, section, values):
     path.write_text("\n".join(lines) + "\n")
 
 
+def theme_is_dark(theme):
+    """Dunkles VoidStation-Theme? Nach der Hintergrundfarbe (--bg-main) der Theme-Datei – so passen auch
+    neue Themes ohne Liste –, sonst nach dem Namen."""
+    try:
+        css = (WEB / "themes" / f"{theme}.css").read_text(encoding="utf-8")
+        m = re.search(r"--bg-main:\s*#([0-9a-fA-F]{6}|[0-9a-fA-F]{3})\b", css)
+        if m:
+            h = m.group(1)
+            if len(h) == 3:
+                h = "".join(c * 2 for c in h)
+            r, g, b = (int(h[i:i + 2], 16) / 255 for i in (0, 2, 4))
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b < 0.5
+    except OSError:
+        pass
+    return "light" not in theme
+
+
+def apply_color_scheme(dark):
+    """Farbschema fuer Programme, die es ueber GSettings bzw. das Settings-Portal lesen (Flatpaks wie FreeTube,
+    Chromium/Electron, GTK 4). Deren Einstellung "Systemvorgabe" war sonst immer hell. Laufende Programme
+    bekommen die Aenderung ueber das Portal mit, soweit sie darauf hoeren."""
+    if not shutil.which("gsettings"):
+        return
+    iface = "org.gnome.desktop.interface"
+    for key, val in (("color-scheme", "prefer-dark" if dark else "prefer-light"),
+                     ("gtk-theme", "Adwaita-dark" if dark else "Adwaita")):
+        r = run(["gsettings", "set", iface, key, val], timeout=10)
+        if (not r or r.returncode) and key == "color-scheme" and not dark:
+            r = run(["gsettings", "set", iface, key, "default"], timeout=10)   # aeltere Schemas ohne prefer-light
+        if not r or r.returncode:
+            log("gsettings", key, "nicht gesetzt:", (r.stderr.strip() if r else "nicht ausfuehrbar"))
+
+
 def apply_appearance(s):
-    """Skalierung (Xft.dpi) und Mauszeiger fuer neu gestartete Programme setzen."""
+    """Skalierung (Xft.dpi), Mauszeiger und Farbschema (hell/dunkel nach dem Theme) fuer neu gestartete
+    Programme setzen."""
     home = Path.home()
     dpi = round(96 * float(s["scale"]))
     theme = s.get("cursor_theme") or DEFAULTS["cursor_theme"]
@@ -542,18 +580,33 @@ def apply_appearance(s):
     lines += [f"Xft.dpi: {dpi}", f"Xcursor.theme: {theme}", f"Xcursor.size: {size}"]
     xres.write_text("\n".join(lines) + "\n")
     run(["xrdb", "-merge", str(xres)])
+    dark = theme_is_dark(s.get("theme") or DEFAULTS["theme"])
+    gtk_name = "Adwaita-dark" if dark else "Adwaita"
     for gtk in ("gtk-3.0", "gtk-4.0"):
-        _ini_set(home / ".config" / gtk / "settings.ini", "Settings",
-                 {"gtk-cursor-theme-name": theme, "gtk-cursor-theme-size": str(size)})
+        vals = {"gtk-cursor-theme-name": theme, "gtk-cursor-theme-size": str(size),
+                "gtk-application-prefer-dark-theme": "true" if dark else "false"}
+        if gtk == "gtk-3.0":
+            vals["gtk-theme-name"] = gtk_name
+        _ini_set(home / ".config" / gtk / "settings.ini", "Settings", vals)
+    gtk2 = home / ".gtkrc-2.0"
+    try:
+        txt = gtk2.read_text()
+        new = re.sub(r'(?m)^gtk-theme-name=.*$', f'gtk-theme-name="{gtk_name}"', txt)
+        if new != txt:
+            gtk2.write_text(new)
+    except OSError:
+        pass
     idx = home / ".icons" / "default" / "index.theme"
     idx.parent.mkdir(parents=True, exist_ok=True)
     idx.write_text(f"[Icon Theme]\nInherits={theme}\n")
+    qt_style, gtk_env = ("Adwaita-Dark", "Adwaita:dark") if dark else ("Adwaita", "Adwaita")
     (BASE / "env.sh").write_text(
         f"export XCURSOR_THEME={theme}\nexport XCURSOR_SIZE={size}\n"
-        "export QT_STYLE_OVERRIDE=Adwaita-Dark\nexport GTK_THEME=Adwaita:dark\n")
+        f"export QT_STYLE_OVERRIDE={qt_style}\nexport GTK_THEME={gtk_env}\n")
     os.environ.update({"XCURSOR_THEME": theme, "XCURSOR_SIZE": str(size),
-                       "QT_STYLE_OVERRIDE": "Adwaita-Dark", "GTK_THEME": "Adwaita:dark"})
+                       "QT_STYLE_OVERRIDE": qt_style, "GTK_THEME": gtk_env})
     run(["xsetroot", "-cursor_name", "left_ptr"])
+    threading.Thread(target=apply_color_scheme, args=(dark,), daemon=True).start()   # Start nicht aufhalten
 
 
 def restart_home_later(delay=0.8):
@@ -3405,6 +3458,7 @@ class Handler(BaseHTTPRequestHandler):
                 if th not in available_themes():
                     return self._json(400, {"error": "unbekanntes Theme"})
                 s = settings_load(); s["theme"] = th; settings_save(s)
+                apply_appearance(s)                    # Programme folgen hell/dunkel
                 return self._json(200, settings_payload())
             if parts == ["api", "settings", "frontend"]:
                 fe = str(self._body().get("frontend", ""))

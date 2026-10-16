@@ -4,6 +4,12 @@ Neueste Version oben. Die erste Überschrift bestimmt die Versionsnummer, die Ge
 Format: `## <Version> – <JJJJ-MM-TT>`, darunter Stichpunkte.
 Jede Version steht auch in `CHANGELOG.en.md` (englisch) – sonst bricht `build.sh` ab.
 
+## 2026.10 – 2026-10-16
+- FreeTube und andere Flatpak-Programme: Der Dateidialog zeigte nur ein leeres Homeverzeichnis – z. B. ließen sich keine Abos importieren. Jetzt öffnet sich ein Dialog mit Zugriff auf alle eigenen Ordner; das Programm bekommt nur die gewählte Datei. Gilt für Programme, die nach dem Update gestartet werden
+- Programme und Browser folgen dem VoidStation-Theme: Steht in FreeTube & Co. „Systemvorgabe“ als Farbschema, war das bisher immer hell, YouTube und die Mediatheken waren dagegen immer dunkel. Jetzt alles dunkel bei dunklen Themes und hell bei „Default Light“ – Firefox-Kacheln, Chromium, Brave, LibreWolf, GTK- und Qt-Programme. Wirkt beim nächsten Start des Programms, manche wechseln sofort
+- Blätter-Pfeile oben rechts auf der Startseite: Sie bewegten oft nur den Fokusrahmen in die nächste Gruppe, ohne zu blättern. Jetzt rückt die nächste bzw. vorige Gruppe an den linken Rand; LT/RT und Bild auf/ab blättern genauso
+- Änderungen an der Oberfläche kamen nach einem Update teils nicht an: Die Startseite lief mit einer zwischengespeicherten älteren Fassung weiter, bis Void das nächste Mal Qt aktualisierte. Jetzt erkennt sie geänderte Dateien selbst
+
 ## 0.15.0 – 2026-10-07
 - Bluetooth neu gebaut: VoidStation koppelt jetzt selbst, ohne Tastatur – Kopfhörer, Controller und Joysticks mit „Just Works“ werden bestätigt, ältere Geräte mit PIN-Kopplung bekommen automatisch 0000, 1234 oder 1111. Bisher scheiterten solche Geräte stumm
 - Tastaturen, die beim Koppeln einen Code verlangen: der Code steht unten rechts, bis die Kopplung durch ist

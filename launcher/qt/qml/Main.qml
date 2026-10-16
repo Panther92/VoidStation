@@ -172,19 +172,28 @@ Window {
             }
             if (layerRoot.secondary) layerRoot.secondary()
         }
-        function jumpGroup(dir) {
+        // LT / RT, Bild auf / ab: Fokus in die naechste / vorige Gruppe. Blaetter-Pfeile oben rechts (byView):
+        // vom sichtbaren Ausschnitt aus. Die Zielgruppe rutscht an den linken Rand – vorher wanderte nur der
+        // Fokusrahmen, wenn ihre erste Kachel schon zu sehen war, und es sah aus, als taete sich nichts.
+        function jumpGroup(dir, byView) {
             if (splashTile) return
             if (layerRoot.jump) return layerRoot.jump(dir)
             var tr = curTrack()
             if (!tr) return
             var groups = tr.groupList().filter(function (g) { return Nav.collect(g).length > 0 })
             if (!groups.length) return
-            var cur = Nav.current ? tr.groupOf(Nav.current) : null
-            var i = groups.indexOf(cur)
-            i = i < 0 ? (dir > 0 ? 0 : groups.length - 1) : Math.max(0, Math.min(groups.length - 1, i + dir))
-            if (groups[i] === cur) return
-            var first = Nav.collect(groups[i])
+            var target = null
+            if (byView) target = tr.pageTarget(dir, groups)
+            else {
+                var cur = Nav.current ? tr.groupOf(Nav.current) : null
+                var i = groups.indexOf(cur)
+                i = i < 0 ? (dir > 0 ? 0 : groups.length - 1) : Math.max(0, Math.min(groups.length - 1, i + dir))
+                if (groups[i] !== cur) target = groups[i]
+            }
+            if (!target) return
+            var first = Nav.collect(target)
             if (first.length) setFocus(first[0])
+            tr.alignGroup(target)
         }
         property real mouseGX: NaN
         property real mouseGY: NaN

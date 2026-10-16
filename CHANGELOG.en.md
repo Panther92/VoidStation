@@ -3,6 +3,12 @@
 English version of `CHANGELOG.md`, shown in the update dialog when the interface is set to English.
 Same format and the same version headings: `## <version> – <YYYY-MM-DD>`, followed by bullet points.
 
+## 2026.10 – 2026-10-16
+- FreeTube and other Flatpak programs: the file dialog only showed an empty home folder – e.g. subscriptions could not be imported. Now a dialog with access to all your folders opens; the program only gets the chosen file. Applies to programs started after the update
+- Programs and browsers follow the VoidStation theme: with “System default” as colour scheme in FreeTube and others, it used to be always light, while YouTube and the media libraries were always dark. Now everything is dark with dark themes and light with “Default Light” – Firefox tiles, Chromium, Brave, LibreWolf, GTK and Qt programs. Applies the next time a program starts, some switch right away
+- Page arrows at the top right of the start screen: they often only moved the focus frame to the next group without scrolling. Now the next or previous group moves to the left edge; LT/RT and Page Up/Down scroll the same way
+- Interface changes sometimes didn't arrive after an update: the start screen kept running a cached older version until Void next updated Qt. It now detects changed files itself
+
 ## 0.15.0 – 2026-10-07
 - Bluetooth rebuilt: VoidStation now handles pairing itself, no keyboard needed – headphones, controllers and joysticks using “Just Works” are confirmed, older devices that need a PIN automatically get 0000, 1234 or 1111. Until now such devices failed silently
 - Keyboards that ask for a code while pairing: the code is shown at the bottom right until pairing is done

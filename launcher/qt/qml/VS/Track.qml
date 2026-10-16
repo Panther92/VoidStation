@@ -55,6 +55,22 @@ Flickable {
         walk(row, 0)
         return out
     }
+    // Linke Kante einer Gruppe (Inhaltskoordinaten)
+    function groupX(g) { return g.mapToItem(tr.contentItem, 0, 0).x }
+    // Gruppe an den linken Rand holen – mit demselben Abstand wie die erste Gruppe
+    function alignGroup(g, instant) { scrollTo(groupX(g) - pad, instant) }
+    // Blaetter-Pfeile: naechste / vorige Gruppe vom sichtbaren Ausschnitt aus, nicht vom Fokus
+    // (der steht bei Mausbedienung oft schon in der Gruppe ganz rechts, die man auf dem Weg zum Pfeil ueberfahren hat)
+    function pageTarget(dir, groups) {
+        var base = anim.running ? anim.to : contentX
+        var i
+        if (dir > 0) {
+            for (i = 0; i < groups.length; i++) if (groupX(groups[i]) - pad > base + 2) return groups[i]
+        } else {
+            for (i = groups.length - 1; i >= 0; i--) if (groupX(groups[i]) - pad < base - 2) return groups[i]
+        }
+        return null
+    }
     function groupOf(item) {
         var g = null
         for (var p = item; p && p !== row; p = p.parent) if (p.isGroup) g = p
