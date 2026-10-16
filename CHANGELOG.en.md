@@ -9,15 +9,17 @@ at the top; `vspub --release` or `vspub --hotfix` assigns the number when releas
 Older versions (up to 0.15.0) still use the old numbering.
 
 ## Testing – 2026-10-15
-- Interface changes sometimes didn't arrive after an update: the start screen kept running a cached older version until Void next updated Qt. It now detects changed files itself
 - Back to the start screen with the mouse: move the pointer all the way into the bottom right corner – while a program is open, a small card in the colour of its tile floats there with “Start screen” (the program keeps running) and “Close app”. Works for every program started from a tile, fullscreen included (a community request)
 - Flatpak programs (e.g. FreeTube, Brave): if the program was already running, its tile didn't bring it back to the front, and the start screen kept treating it as “still starting”. Their windows are now recognised at start
-- Programs and browsers follow the VoidStation theme: with “System default” as colour scheme in FreeTube and others, it used to be always light, while YouTube and the media libraries were always dark. Now everything is dark with dark themes and light with “Default Light” – Firefox tiles, Chromium, Brave, LibreWolf, GTK and Qt programs. Applies the next time a program starts, some switch right away
-- Page arrows at the top right of the start screen: they often only moved the focus frame to the next group without scrolling. Now the next or previous group moves to the left edge; LT/RT and Page Up/Down scroll the same way
-- FreeTube and other Flatpak programs: the file dialog only showed an empty home folder – e.g. subscriptions could not be imported. Now a dialog with access to all your folders opens; the program only gets the chosen file. Applies to programs started after the update
 - Eleven new interface languages: Español, Français, Italiano, Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Ελληνικά, Русский, Українська – Settings → Language. Date, time and numbers follow the language; programs like VLC and YouTube follow on their next start. The translations are machine-made – corrections are welcome as pull requests. The installer and the boot menu of the stick stay German/English for now
 - Calendar version numbers: year and month of the release, e.g. 2026.11. Hotfixes to it are 2026.11.1, 2026.11.2 and so on; the live ISO carries the same number as the version it contains
 - The Testing channel shows its state as e.g. “2026.11+testing.20261120” (after 2026.11, last change on 20 Nov). Switching from Testing to Stable still never offers an older update
+
+## 2026.10 – 2026-10-16
+- FreeTube and other Flatpak programs: the file dialog only showed an empty home folder – e.g. subscriptions could not be imported. Now a dialog with access to all your folders opens; the program only gets the chosen file. Applies to programs started after the update
+- Programs and browsers follow the VoidStation theme: with “System default” as colour scheme in FreeTube and others, it used to be always light, while YouTube and the media libraries were always dark. Now everything is dark with dark themes and light with “Default Light” – Firefox tiles, Chromium, Brave, LibreWolf, GTK and Qt programs. Applies the next time a program starts, some switch right away
+- Page arrows at the top right of the start screen: they often only moved the focus frame to the next group without scrolling. Now the next or previous group moves to the left edge; LT/RT and Page Up/Down scroll the same way
+- Interface changes sometimes didn't arrive after an update: the start screen kept running a cached older version until Void next updated Qt. It now detects changed files itself
 
 ## 0.15.0 – 2026-10-07
 - Bluetooth rebuilt: VoidStation now handles pairing itself, no keyboard needed – headphones, controllers and joysticks using “Just Works” are confirmed, older devices that need a PIN automatically get 0000, 1234 or 1111. Until now such devices failed silently
