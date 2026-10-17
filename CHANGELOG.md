@@ -8,7 +8,8 @@ Hotfixes dazu `## 2026.11.1 – …`. Neues kommt zuerst unter `## Testing – <
 ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freigeben (siehe `RELEASING.md`).
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
-## Testing – 2026-10-16
+## Testing – 2026-10-17
+- Bluetooth: Gekoppelte Geräte lassen sich umbenennen – „Umbenennen“ neben „Entkoppeln“, z. B. „PS4-Controller“ statt „Wireless Controller“. Der Name bleibt gespeichert, bis das Gerät entkoppelt wird; „Originalname“ (oder ein leeres Feld) holt den Namen zurück, den das Gerät selbst meldet
 - Game Boy Color: Neuer Freigabe-Ordner `share/ROMs/gbc`. Die mGBA-Kachel zeigt die Spiele aus `gba` und `gbc` zusammen in einer Liste (Game-Boy-Spiele `.gb` gehen in beide Ordner)
 - DOSBox Staging startet fertig eingerichtet: im Vollbild, als 386er mit 4000 Zyklen (Strg+F11/F12 ändern die Geschwindigkeit), Laufwerk C ist die Freigabe `share/ROMs/dos`, Sprache und Tastatur wie in VoidStation eingestellt. Die Grundeinstellung (`~/.config/dosbox/dosbox-staging.conf`) wird nur angelegt, wenn es noch keine gibt – eigene Einstellungen bleiben
 - Fernsehen: Die Senderliste brach nach 80 Sendern ab – in Deutschland etwa bei „F“, ZDF & Co. fand nur die Suche. Jetzt sind alle Sender erreichbar: neben der Liste eine A–Z-Leiste zum direkten Springen, am Ende eines Buchstabens geht es mit „Weiter mit …“ zum nächsten. Große Listen kommen in Seiten zu 200 Sendern (z. B. alle Länder unter „T“: rund 1.450) mit „Weitere Sender“ am Ende und „Zurück“ am Anfang. Die Suche findet Namen jetzt auch ohne Akzente (Hinweis aus der Community)

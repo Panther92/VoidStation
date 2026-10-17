@@ -8,7 +8,8 @@ hotfixes to it `## 2026.11.1 – …`. New changes go first under `## Testing �
 at the top; `vspub --release` or `vspub --hotfix` assigns the number when releasing (see `RELEASING.md`).
 Older versions (up to 0.15.0) still use the old numbering.
 
-## Testing – 2026-10-16
+## Testing – 2026-10-17
+- Bluetooth: paired devices can be renamed – “Rename” next to “Unpair”, e.g. “PS4 controller” instead of “Wireless Controller”. The name is kept until the device is unpaired; “Original name” (or an empty field) brings back the name the device reports itself
 - Game Boy Color: new share folder `share/ROMs/gbc`. The mGBA tile lists the games from `gba` and `gbc` together (Game Boy `.gb` games work in either folder)
 - DOSBox Staging starts ready to use: fullscreen, as a 386 with 4000 cycles (Ctrl+F11/F12 change the speed), drive C is the share `share/ROMs/dos`, language and keyboard as set in VoidStation. The base settings (`~/.config/dosbox/dosbox-staging.conf`) are only created if there are none yet – your own settings are kept
 - TV: the channel list stopped after 80 channels – in Germany around “F”, so ZDF and others could only be found via search. Now every channel is reachable: an A–Z bar next to the list jumps straight to a letter, and at the end of a letter “Next: …” moves on. Long lists come in pages of 200 channels (e.g. all countries under “T”: about 1,450) with “More channels” at the end and “Back” at the start. Search now also matches names without accents (reported by the community)

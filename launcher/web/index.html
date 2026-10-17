@@ -351,7 +351,9 @@
   .romcard .romname { font-size: calc(16px * var(--f)); font-weight: 500; z-index: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .romcard .romsub { font-size: calc(12px * var(--f)); color: var(--text-dim); z-index: 1; margin-top: calc(2px * var(--f)); }
   .btlist { display: flex; flex-direction: column; gap: calc(6px * var(--f)); margin-top: calc(8px * var(--f)); align-items: flex-start; }
-  .btlist > .row { flex-wrap: nowrap; margin: 0; }
+  .btlist > .row { flex-wrap: nowrap; margin: 0; align-items: flex-start; }
+  .btlist .btside { display: flex; flex-direction: column; gap: calc(6px * var(--f)); }   /* Entkoppeln, darunter Umbenennen */
+  .btlist .btside > .pill { width: 100%; }
   /* Globales OSD-Keyboard */
   #osk.dialog { z-index: 45; }
   .osk-band { display: flex; flex-direction: column; gap: calc(14px * var(--f)); max-width: 90vw; margin: 0 auto; width: 100%; }
@@ -1114,6 +1116,7 @@ function back() {
   else if (l === 'tv' && tvQuery) { tvQuery = ''; $('#tSearch').value = ''; tvSearch(); }
   else if (l === 'radio' && results) { results = null; $('#rSearch').value = ''; renderStations(); }
   else if (l === 'settings' && wifiPick) { wifiPick = null; renderSettings(); }
+  else if (l === 'settings' && btRename) btRenameEnd();
   else if (l === 'settings' && sCat) settingsCat(null);
   else if (l === 'inst') instBack();
   else if (l !== 'home') closeLayer();
@@ -1218,7 +1221,7 @@ function showUpdBadge(u) {
 function openUpdate() {
   if (!updInfo || !TRACKS[layer()] || splashTile) return;
   if (layer() !== 'settings') { $$('.layer.open').forEach(e => e.classList.remove('open', 'shown')); openLayer('settings'); }
-  sCat = 'updates'; wifiPick = null;                       // direkt in den Bereich "Updates"
+  sCat = 'updates'; wifiPick = null; btRename = null;                       // direkt in den Bereich "Updates"
   if (sett) { renderSettings(); updateHint(); }
   setTimeout(runUpdates, 400);
 }
@@ -1230,7 +1233,7 @@ function openLayer(id) {
   el.classList.add('open');
   requestAnimationFrame(() => el.classList.add('shown'));
   if (id === 'radio') { renderStations(); refreshVolume(); }
-  if (id === 'settings') { sCat = null; wifiPick = null; $('#sTrack').innerHTML = ''; loadSettings(); }   // immer mit der Uebersicht beginnen
+  if (id === 'settings') { sCat = null; wifiPick = null; btRename = null; $('#sTrack').innerHTML = ''; loadSettings(); }   // immer mit der Uebersicht beginnen
   if (id === 'tv') { tvOpen(); refreshVolume(); }
   if (id === 'apps') { aFresh = true; loadApps(); }
   if (id === 'roms') renderRoms();
@@ -1345,7 +1348,7 @@ const DEMO_SETT = { scale: 1.75, scales: [1, 1.25, 1.5, 1.75, 2, 2.25], theme: '
   audio: { ok: true, outputs: [{ card: 'c', profile: 'output:hdmi-stereo', label: 'Digital Stereo (HDMI)', active: true }, { card: 'c', profile: 'output:analog-stereo', label: 'Analog Stereo', active: false }] },
   volume: { level: 45, muted: false }, net: { hostname: 'void', addresses: [{ iface: 'enp1s0', ip: '192.168.178.49' }] } };
 
-let btState = null, btScanning = false;
+let btState = null, btScanning = false, btRename = null;   // btRename: Geraet, das gerade umbenannt wird
 async function loadSettings() {
   try {
     sett = offline ? DEMO_SETT : await getJSON('/api/settings');
@@ -1428,7 +1431,7 @@ function updCatSubs() {                                    // Kachel-Zustand auf
 }
 function settingsCat(id) {
   const prev = sCat;
-  sCat = id; wifiPick = null;
+  sCat = id; wifiPick = null; btRename = null;
   renderSettings(id ? null : 'cat' + prev);               // zurueck: Fokus wieder auf die Kachel, von der man kam
   updateHint();
 }
@@ -1561,7 +1564,17 @@ const SET_PAGES = {
     } else {
       const rbt = row(bc);
       const pwr = pill(esc(T(btState.powered ? 'bt.powerOff' : 'bt.powerOn')), btTogglePower, btState.powered); pwr.dataset.key = 'btpwr'; rbt.appendChild(pwr);
-      if (btState.powered) {
+      if (btState.powered && btRename) {             // Umbenennen: Eingabefeld statt Liste, Esc / B bricht ab
+        const rr = row(bc, T('bt.rename'));
+        const inp = document.createElement('input');
+        inp.className = 'field snav'; inp.type = 'text'; inp.maxLength = 40; inp.id = 'btName'; inp.dataset.key = 'btname';
+        inp.placeholder = T('bt.renamePh', { name: btRename.orig || btRename.mac }); inp.value = btRename.draft ?? btRename.name ?? '';
+        inp.oninput = () => { if (btRename) btRename.draft = inp.value; };   // ueberlebt das Neuzeichnen waehrend einer Suche
+        rr.appendChild(inp);
+        const sv = pill(esc(T('bt.save')), () => btDoRename($('#btName').value)); sv.dataset.key = 'btsave'; rr.appendChild(sv);
+        if (btRename.custom) { const og = pill(esc(T('bt.resetName')), () => btDoRename('')); og.dataset.key = 'btorig'; rr.appendChild(og); }
+        const cc = pill(esc(T('common.cancel')), btRenameEnd); cc.dataset.key = 'btcancel'; rr.appendChild(cc);
+      } else if (btState.powered) {
         const scn = pill(esc(btScanning ? T('bt.scanning') : T('bt.scan')), btScan); scn.dataset.key = 'btscan'; rbt.appendChild(scn);
         if (btScanning || !(btState.devices || []).some(d => !d.paired)) {   // Hinweis, bis ein neues Geraet auftaucht
           const hint = document.createElement('div'); hint.className = 'info';
@@ -1589,9 +1602,14 @@ const SET_PAGES = {
               const dr = document.createElement('div');
               dr.className = 'row';
               dr.appendChild(b);
+              const side = document.createElement('div');
+              side.className = 'btside';
               const rm = pill(esc(T('bt.remove')), () => btRemove(d.mac));
               rm.dataset.key = 'btrm' + d.mac.replace(/[^A-Za-z0-9]/g, '');
-              dr.appendChild(rm);
+              const mv = pill(esc(T('bt.rename')), () => btRenameStart(d));
+              mv.dataset.key = 'btmv' + d.mac.replace(/[^A-Za-z0-9]/g, '');
+              side.append(rm, mv);
+              dr.appendChild(side);
               rd.appendChild(dr);
             } else {
               rd.appendChild(b);
@@ -1909,6 +1927,35 @@ async function btPair(mac) {
     renderSettings();
   } catch (e) { toast(T('common.failedMsg', { msg: e.message }), true); }
   clearInterval(iv);
+}
+function btRenameStart(d) {
+  btRename = { ...d };
+  renderSettings('btname');
+  const inp = $('#btName');
+  if (inp) setFocus(inp);
+}
+function btRenameEnd() {
+  const k = btRename ? 'btmv' + btRename.mac.replace(/[^A-Za-z0-9]/g, '') : 'btscan';
+  btRename = null;
+  renderSettings(k);
+  // Kommt aus der Bildschirmtastatur: das Feld ist weg, beim Schliessen auf "Umbenennen" zurueck
+  const el = layer() === 'osk' && $(`#sTrack [data-key="${k}"]`);
+  if (el) lastFocus.settings = el;
+}
+// Leerer Name oder der Name, den das Geraet selbst meldet = eigenen Namen wieder entfernen
+async function btDoRename(name) {
+  const d = btRename;
+  if (!d) return;
+  let n = String(name || '').replace(/\s+/g, ' ').trim();
+  if (n === (d.orig || '')) n = '';
+  btRenameEnd();
+  if (!n && !d.custom) return;
+  try {
+    const res = await api('/api/bluetooth/rename', { mac: d.mac, name: n });
+    btState = res.status || btState;
+    toast(!res.ok ? T('bt.renameFailed') : T(n ? 'bt.renamedToast' : 'bt.nameResetToast', { name: n || d.orig || d.mac }), !res.ok);
+    renderSettings();
+  } catch (e) { toast(T('common.failedMsg', { msg: e.message }), true); }
 }
 async function btRemove(mac) {
   toast(T('bt.disconnecting'));
@@ -3256,6 +3303,7 @@ function oskSubmit() {
     if (oskTarget.id === 'rSearch') search(oskTarget.value);
     else if (oskTarget.id === 'tSearch') { tvQuery = oskTarget.value.trim(); tvSearch(); }
     else if (oskTarget.id === 'wifiPw' && wifiPick) wifiConnect(wifiPick.ssid, oskTarget.value);
+    else if (oskTarget.id === 'btName' && btRename) btDoRename(oskTarget.value);
     else {
       oskTarget.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true }));
       const form = oskTarget.closest('form');
@@ -3314,7 +3362,7 @@ addEventListener('keydown', e => {
   if (layer() === 'inst' && instKey(e)) return;
   const inp = document.activeElement?.tagName === 'INPUT' && document.activeElement.id !== 'oskVal' ? document.activeElement : null;
   if (inp) {
-    if (e.key === 'Enter') { e.preventDefault(); if (inp.id === 'rSearch') search(inp.value); else if (inp.id === 'tSearch') { tvQuery = inp.value.trim(); tvSearch(); } else if (inp.id === 'wifiPw') wifiConnect(wifiPick.ssid, inp.value); }
+    if (e.key === 'Enter') { e.preventDefault(); if (inp.id === 'rSearch') search(inp.value); else if (inp.id === 'tSearch') { tvQuery = inp.value.trim(); tvSearch(); } else if (inp.id === 'wifiPw') wifiConnect(wifiPick.ssid, inp.value); else if (inp.id === 'btName') btDoRename(inp.value); }
     else if (e.key === 'Escape') { e.preventDefault(); inp.blur(); }
     else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); inp.blur(); move(KEYMAP[e.key]); }
     return;

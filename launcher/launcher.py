@@ -3209,7 +3209,8 @@ class BluetoothManager:
             if not paired and (not (name or alias) or kind == "hide"):
                 continue
             bat = o.get("org.bluez.Battery1", {}).get("Percentage")
-            out.append({"mac": mac, "name": alias or name, "paired": paired,
+            out.append({"mac": mac, "name": alias or name, "orig": name, "custom": bool(alias) and alias != name,
+                        "paired": paired,
                         "connected": bool(d.get("Connected")), "trusted": bool(d.get("Trusted")),
                         "kind": "other" if kind == "hide" else kind,
                         "icon": "audio" if kind == "audio" else "gamepad" if kind == "gamepad" else "bluetooth",
@@ -3396,6 +3397,34 @@ class BluetoothManager:
             log("Bluetooth: entfernen", mac, e)
             return False
 
+    # ---- Umbenennen: eigener Name als BlueZ-Alias (bei gekoppelten Geraeten dauerhaft gespeichert,
+    #      der vom Geraet gemeldete Name bleibt unberuehrt; leerer Name = wieder der Geraetename) ----
+    NAME_MAX = 40
+
+    @classmethod
+    def clean_name(cls, name):
+        name = re.sub(r"[\x00-\x1f\x7f]+", " ", str(name or ""))
+        name = re.sub(r"\s{2,}", " ", name).strip()
+        return name[:cls.NAME_MAX].strip()
+
+    def rename(self, mac, name):
+        name = self.clean_name(name)
+        if not self.bus:
+            return self._legacy_rename(mac, name)
+        adapter = self._adapter()
+        if not adapter:
+            return False
+        path = self._dev_path(adapter, mac)
+        if path not in self._objects():
+            return False
+        try:
+            self._set_prop(path, "org.bluez.Device1", "Alias", self.GLib.Variant("s", name))
+            log("Bluetooth: umbenannt", mac, "->", repr(name) if name else "(Geraetename)")
+            return True
+        except RuntimeError as e:
+            log("Bluetooth: umbenennen", mac, e)
+            return False
+
     def power(self, on):
         if not self.bus:
             return self._legacy_simple("power", "on" if on else "off")
@@ -3473,6 +3502,19 @@ class BluetoothManager:
     def _legacy_simple(self, cmd, arg):
         r = run(["bluetoothctl", cmd, arg], timeout=15)
         return bool(r and r.returncode == 0)
+
+    def _legacy_rename(self, mac, name):
+        """bluetoothctl kann den Alias nur fuer das gerade gewaehlte Geraet setzen -> direkt per dbus-send."""
+        dev = "dev_" + mac.upper().replace(":", "_")
+        hcis = sorted(p.name for p in Path("/sys/class/bluetooth").glob("hci*") if ":" not in p.name) if \
+            Path("/sys/class/bluetooth").is_dir() else []
+        for hci in hcis:
+            r = run(["dbus-send", "--system", "--print-reply", "--dest=org.bluez", f"/org/bluez/{hci}/{dev}",
+                     "org.freedesktop.DBus.Properties.Set", "string:org.bluez.Device1", "string:Alias",
+                     f"variant:string:{name}"], timeout=10)
+            if r and r.returncode == 0:
+                return True
+        return False
 
 
 def bt_audio_follow(mac, wait=10):
@@ -3865,6 +3907,13 @@ class Handler(BaseHTTPRequestHandler):
                 if not BLUETOOTH.MAC_RE.match(mac):
                     return self._json(400, {"error": "ungueltige Geraeteadresse"})
                 ok = BLUETOOTH.remove(mac)
+                return self._json(200, {"ok": ok, "status": BLUETOOTH.status()})
+            if parts == ["api", "bluetooth", "rename"]:
+                b = self._body()
+                mac = str(b.get("mac", ""))
+                if not BLUETOOTH.MAC_RE.match(mac):
+                    return self._json(400, {"error": "ungueltige Geraeteadresse"})
+                ok = BLUETOOTH.rename(mac, b.get("name", ""))
                 return self._json(200, {"ok": ok, "status": BLUETOOTH.status()})
             if parts == ["api", "bluetooth", "power"]:
                 b = self._body()

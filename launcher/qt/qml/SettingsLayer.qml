@@ -12,6 +12,7 @@ Layer {
     property var sett: null
     property var bt: null
     property bool btScanning: false
+    property var btRename: null                 // Geraet, das gerade umbenannt wird (Eingabefeld statt Liste)
     property var vsState: null
     property var wifiList: null
     property var wifiPick: null
@@ -32,7 +33,7 @@ Layer {
     readonly property var fit: Ui.fitRows(stage.height - 12 * Ui.f - Ui.u * 0.03 - (12 * Ui.f + 0.03 * Ui.u), Ui.u * 0.74, Ui.gap, 3)
     readonly property string ip: sett && sett.net && sett.net.addresses.length ? sett.net.addresses[0].ip : ""
 
-    onOpened: { cat = ""; wifiPick = null; load(); refreshVs(false) }
+    onOpened: { cat = ""; wifiPick = null; btRename = null; load(); refreshVs(false) }
     function firstFocus() { return Nav.collect(trk)[0] || null }
     function load() {
         Api.get("/api/settings", function (j) {
@@ -70,12 +71,14 @@ Layer {
         var prev = cat
         cat = id
         wifiPick = null
+        btRename = null
         trk.reset()
         wantFocus = id ? (id === "updates" ? "selfupd" : "") : "cat" + prev
         Qt.callLater(settle)
     }
     function handleBack() {
         if (wifiPick) { wifiPick = null; Qt.callLater(function () { refocus("scan") }); return true }
+        if (btRename) { btRenameEnd(); return true }
         if (cat) { openCat(""); return true }
         return false
     }
@@ -277,6 +280,28 @@ Layer {
         if (d.connected) p.push(Ui.t("bt.connected"))
         else if (d.paired) p.push(Ui.t("bt.paired"))
         return p.length ? " · " + Ui.esc(p.join(" · ")) : ""
+    }
+    function btKey(mac) { return mac.replace(/[^A-Za-z0-9]/g, "") }
+    function btRenameStart(d) {
+        btName.value = d.name || ""
+        btRename = d
+        Qt.callLater(function () { app.setFocus(btName, true); app.openOsk(btName) })
+    }
+    function btRenameEnd() {
+        var k = btRename ? "btmv" + btKey(btRename.mac) : "btscan"
+        btRename = null
+        Qt.callLater(function () { refocus(k) })
+    }
+    // Leerer Name oder der Name, den das Geraet selbst meldet = eigenen Namen wieder entfernen
+    function btDoRename(name) {
+        var d = btRename
+        if (!d) return
+        var n = (name || "").replace(/\s+/g, " ").trim()
+        if (n === (d.orig || "")) n = ""
+        if (n === "" && !d.custom) return btRenameEnd()                 // nichts zu tun
+        btRenameEnd()
+        btCall("/api/bluetooth/rename", { mac: d.mac, name: n }, "",
+               Ui.t(n ? "bt.renamedToast" : "bt.nameResetToast", { name: n || d.orig || d.mac }), Ui.t("bt.renameFailed"))
     }
     function btScan() {
         if (btScanning) return
@@ -522,14 +547,29 @@ Layer {
                 Pill { property string key: "btscan"; visible: !!s.bt && s.bt.powered; text: s.btScanning ? Ui.t("bt.scanning") : Ui.t("bt.scan"); onTriggered: s.btScan() }
             }
             Info { visible: !!s.bt && s.bt.available && s.bt.service && !!s.bt.blocked; html: Ui.esc(Ui.t("bt.blocked")) }
+            // Umbenennen: Eingabefeld (Bildschirmtastatur) statt Geraeteliste, Esc / B bricht ab
+            SetRow {
+                visible: !!s.btRename && !!s.bt && s.bt.powered
+                label: Ui.t("bt.rename")
+                Field {
+                    id: btName
+                    property string key: "btname"
+                    placeholder: s.btRename ? Ui.t("bt.renamePh", { name: s.btRename.orig || s.btRename.mac }) : ""
+                    onSubmitted: function (t) { s.btDoRename(t) }
+                }
+                Pill { property string key: "btsave"; text: Ui.t("bt.save"); onTriggered: s.btDoRename(btName.value) }
+                Pill { property string key: "btorig"; visible: !!s.btRename && !!s.btRename.custom
+                       text: Ui.t("bt.resetName"); onTriggered: s.btDoRename("") }
+                Pill { property string key: "btcancel"; text: Ui.t("common.cancel"); onTriggered: s.btRenameEnd() }
+            }
             // Hinweis zum Kopplungsmodus, solange (noch) kein neues Geraet gefunden ist
-            Info { visible: !!s.bt && s.bt.available && s.bt.service && s.bt.powered &&
+            Info { visible: !s.btRename && !!s.bt && s.bt.available && s.bt.service && s.bt.powered &&
                             (s.btScanning || !(s.bt.devices || []).some(function (d) { return !d.paired }))
                    html: Ui.t("bt.hint") }
             Info { visible: !!s.bt && s.bt.available && s.bt.service && s.bt.powered && !(s.bt.devices || []).length
                    html: Ui.esc(s.btScanning ? Ui.t("bt.scanning") : Ui.t("bt.noDevices")) }
             SetRow {
-                visible: !!s.bt && s.bt.available && s.bt.service && s.bt.powered && (s.bt.devices || []).length > 0
+                visible: !s.btRename && !!s.bt && s.bt.available && s.bt.service && s.bt.powered && (s.bt.devices || []).length > 0
                 label: Ui.t("bt.available")
                 Repeater {
                     model: s.bt && s.bt.devices ? s.bt.devices.slice(0, 10) : []
@@ -538,9 +578,9 @@ Layer {
                         property var dev: modelData
                         width: Ui.screenW * 0.4
                         Pill {
-                            property string key: "bt" + modelData.mac.replace(/[^A-Za-z0-9]/g, "")
+                            property string key: "bt" + s.btKey(modelData.mac)
                             rich: true
-                            maxWidth: Ui.screenW * 0.4 - (rm.visible ? rm.width + 8 * Ui.f : 0)
+                            maxWidth: Ui.screenW * 0.4 - (side.visible ? side.width + 8 * Ui.f : 0)
                             on: !!modelData.connected
                             text: Ui.esc(modelData.name || modelData.mac) + "<font color='" + Ui.c.textFaint + "'>" + s.btExtra(modelData) + "</font>"
                             onTriggered: {
@@ -550,12 +590,26 @@ Layer {
                                 else s.btPair(m)
                             }
                         }
-                        Pill {
-                            id: rm
-                            property string key: "btrm" + modelData.mac.replace(/[^A-Za-z0-9]/g, "")
+                        // Gekoppelte Geraete: Entkoppeln, darunter Umbenennen
+                        Column {
+                            id: side
                             visible: !!modelData.paired
-                            text: Ui.t("bt.remove")
-                            onTriggered: s.btCall("/api/bluetooth/remove", { mac: modelData.mac }, Ui.t("bt.disconnecting"), Ui.t("bt.disconnectedToast"))
+                            spacing: 8 * Ui.f
+                            readonly property real w: Math.max(rmP.implicitWidth, mvP.implicitWidth)   // beide gleich breit
+                            Pill {
+                                id: rmP
+                                width: side.w
+                                property string key: "btrm" + s.btKey(modelData.mac)
+                                text: Ui.t("bt.remove")
+                                onTriggered: s.btCall("/api/bluetooth/remove", { mac: modelData.mac }, Ui.t("bt.disconnecting"), Ui.t("bt.disconnectedToast"))
+                            }
+                            Pill {
+                                id: mvP
+                                width: side.w
+                                property string key: "btmv" + s.btKey(modelData.mac)
+                                text: Ui.t("bt.rename")
+                                onTriggered: s.btRenameStart(modelData)
+                            }
                         }
                     }
                 }
