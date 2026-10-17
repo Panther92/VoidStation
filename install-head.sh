@@ -53,7 +53,7 @@ for d in /sys/bus/pci/devices/*; do
 done
 PKGS="xinit xauth xset xrandr xprop setxkbmap $GPU_PKGS \
   openbox dbus elogind xrdb pulseaudio-utils curl python3 python3-evdev wmctrl unclutter-xfixes \
-  firefox vlc mpv samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 pcmanfm gvfs xterm \
+  firefox mpv python3-mpv ffmpegthumbnailer samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 pcmanfm gvfs xterm \
   python3-pyside6-declarative qt6-svg qt6-imageformats qt6-plugin-tls-openssl \
   pipewire wireplumber alsa-utils bluez libspa-bluetooth \
   noto-fonts-ttf noto-fonts-emoji noto-fonts-cjk dejavu-fonts-ttf \
@@ -81,7 +81,7 @@ if grep -q GenuineIntel /proc/cpuinfo 2>/dev/null && ! xbps-query intel-ucode >/
   fi
 fi
 
-# Sprachen der Oberflaeche: deutsches und englisches Locale erzeugen (VLC, Dateimanager usw. folgen der UI-Sprache)
+# Sprachen der Oberflaeche: deutsches und englisches Locale erzeugen (Dateimanager & Co. folgen der UI-Sprache)
 if [ -f /etc/default/libc-locales ]; then
   LCH=0
   for l in de_DE en_US; do
@@ -97,7 +97,7 @@ say "3/8  Dateien entpacken nach $TV"
 mkdir -p "$TV"
 [ -f "$TV/tiles.json" ] && cp "$TV/tiles.json" /tmp/tiles.json.keep
 sed -n '/^__PAYLOAD_BELOW__$/,$p' "$0" | tail -n +2 | base64 -d | tar -xz -C "$TV"
-chmod +x "$TV/launcher.py" "$TV/home.sh" "$TV/vsctl" "$TV/voidstation-shell.py" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/sysfix.sh"
+chmod +x "$TV/launcher.py" "$TV/home.sh" "$TV/vsctl" "$TV/voidstation-shell.py" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/qt/voidstation-player.py" "$TV/sysfix.sh"
 echo "__VS_VERSION__" > "$TV/VERSION"
 echo '__VS_VERSION_B64__' | base64 -d > "$TV/version.json" 2>/dev/null || true
 
@@ -350,7 +350,7 @@ VoidStation Freigabe
 =================
 ROMs/<system>   Spiele fuer die Emulatoren (gba, gbc, nes, snes, psx, psp, nds …)
 BIOS            BIOS-Dateien (z. B. PlayStation fuer DuckStation)
-Musik, Videos   eigene Medien fuer VLC oder Kodi
+Musik, Videos   eigene Medien (Kachel "Videos & Musik")
 Bilder          fuer den Bildbetrachter
 EOF
 chown -R "$VSUSER:$VSUSER" "$SHARE"

@@ -43,6 +43,7 @@ WEB = BASE / "web"
 CONFIG = Path(os.environ.get("VOIDSTATION_CONFIG", BASE / "tiles.json"))
 FAVS = BASE / "radio.json"
 MPV_SOCK = str(BASE / "mpv.sock")
+PLAYER_BIN = BASE / "qt" / "voidstation-player.py"    # eigener Player: Fernsehen, Videos & Musik
 HOME_TITLE = "VoidStation"                      # <title> der Startseite
 RADIO_SERVERS = ["de1.api.radio-browser.info", "de2.api.radio-browser.info",
                  "fi1.api.radio-browser.info", "at1.api.radio-browser.info"]
@@ -214,9 +215,11 @@ class AppManager:
         if not cmd:
             raise ValueError("Kachel hat keinen Befehl")
         args = expand(cmd if isinstance(cmd, list) else ["sh", "-c", cmd])
+        if Path(args[0]).name == PLAYER_BIN.name:          # Videos & Musik: eigener Player (Stufe, Absturzzaehler)
+            return PLAYERS.start(tid, args[2] if len(args) > 2 else "", mode="media")
         return self.start(tid, args)
 
-    def start(self, tid, args):
+    def start(self, tid, args, env=None):
         log("starte", tid, args)
         logdir = BASE / "logs"
         logdir.mkdir(exist_ok=True)
@@ -226,7 +229,9 @@ class AppManager:
             firefox_prefs(args, ui_lang(), theme_is_dark(settings_load().get("theme") or DEFAULTS["theme"]))
         if Path(args[0]).name in ("dosbox", "dosbox-staging"):
             args = dosbox_prepare(args)
-        proc = subprocess.Popen(args, cwd=str(Path.home()), stdin=subprocess.DEVNULL, env=app_env(),
+        penv = app_env()
+        penv.update(env or {})
+        proc = subprocess.Popen(args, cwd=str(Path.home()), stdin=subprocess.DEVNULL, env=penv,
                                 stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
         out.close()
         with self.lock:
@@ -332,6 +337,83 @@ class AppManager:
 
 
 APPS = AppManager()
+
+
+# ---------------------------------------------------------------------------
+#  Eigener Player (qt/voidstation-player.py): Fernsehen ("tv") und Videos & Musik ("media")
+# ---------------------------------------------------------------------------
+class PlayerManager:
+    """Startet den Player, reicht Auftraege an einen laufenden weiter (Socket) und stuft nach Abstuerzen hoch:
+    0 Video in der Oberflaeche (EGL) -> 1 GLX + Decoding mit Kopie -> 2 mpv im eigenen Fenster -> 3 (nur Fernsehen)
+    nacktes mpv wie frueher. Gilt bis zum Neustart des Launchers; fest: VS_PLAYER_LEVEL=0…3."""
+    CRASH = {-4, -6, -7, -8, -11}                # SIGILL, SIGABRT, SIGBUS, SIGFPE, SIGSEGV; dazu Exit-Codes > 0
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.fails = []
+
+    def level(self):
+        forced = os.environ.get("VS_PLAYER_LEVEL", "")
+        if forced in ("0", "1", "2", "3"):
+            return int(forced)
+        if not PLAYER_BIN.exists():
+            return 3
+        with self.lock:
+            return min(3, len(self.fails))
+
+    @staticmethod
+    def sock(mode):
+        return BASE / f"player-{mode}.sock"
+
+    def send(self, mode, msg):
+        """Auftrag an einen laufenden Player; False, wenn keiner antwortet."""
+        try:
+            with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as s:
+                s.settimeout(2)
+                s.connect(str(self.sock(mode)))
+                s.sendall((json.dumps(msg) + "\n").encode())
+                return b"ok" in s.recv(256)
+        except OSError:
+            return False
+
+    def start(self, tid, arg="", mode="media"):
+        level = min(self.level(), 2)
+        for other in ("tv", "media"):                # nur ein Video zur Zeit
+            if other != tid:
+                APPS.close(other)
+        if tid == "tv":
+            TV.raw = False
+        if APPS._get(tid):
+            msg = {"cmd": "tune", "key": arg} if mode == "tv" else {"cmd": "open", "path": arg}
+            if (not arg and mode == "media") or self.send(mode, msg):
+                APPS.focus(tid)
+                return "focused"
+            APPS.close(tid)
+        args = [sys.executable, str(PLAYER_BIN), "--" + mode] + ([arg] if arg else [])
+        res = APPS.start(tid, args, env={"VS_PLAYER_LEVEL": str(level)})
+        proc = APPS._get(tid)
+        if proc:
+            threading.Thread(target=self._watch, args=(tid, proc, level), daemon=True).start()
+        return res
+
+    def _watch(self, tid, proc, level):
+        t0 = time.monotonic()
+        rc = proc.wait()
+        if rc in self.CRASH or rc > 0:
+            with self.lock:
+                self.fails.append(time.time())
+                n = len(self.fails)
+            log(f"Player ({tid}, Stufe {level}) abgestuerzt nach {time.monotonic() - t0:.0f} s, Code {rc} – "
+                f"naechster Start mit Stufe {min(3, n)} (Protokoll: logs/{tid}.log)")
+
+    def active(self, tid):
+        """Laeuft fuer diese Kachel der eigene Player (nicht das nackte mpv)?"""
+        if tid == "media":
+            return True
+        return tid == "tv" and not TV.raw
+
+
+PLAYERS = PlayerManager()
 
 
 # ---------------------------------------------------------------------------
@@ -1088,6 +1170,7 @@ def share_info():
 IPTV_API = "https://iptv-org.github.io/api/"
 CACHE = BASE / "cache"
 TVFAVS = BASE / "tvfavs.json"
+TVRECENT = BASE / "tvrecent.json"           # zuletzt gesehene Sender (Player: Reiter „Zuletzt“)
 UA = {"User-Agent": "VoidStation/4.0"}
 TV_PAGE = 200                                # Sender je Seite der Liste (mehr Kacheln auf einmal bremsen schwache Geraete)
 TV_LETTERS = ["#"] + [chr(c) for c in range(ord("A"), ord("Z") + 1)]
@@ -1134,6 +1217,11 @@ class IPTV:
         self.index, self.by_key, self.countries = [], {}, []
         self.loaded_at = 0.0
         self.now = None
+        self.zap_keys = []          # Liste, in der der Player mit ▲▼ umschaltet (aus der heraus gestartet wurde)
+        self.recent = tvrecent_load()
+        self.broken = {}            # Sender -> Zeitpunkt, an dem er zuletzt nicht erreichbar war
+        self.failed = None          # Rueckfall (nacktes mpv): zuletzt gescheiterter Sender, fuer die Meldung
+        self.raw = False            # "tv" laeuft gerade als nacktes mpv (Stufe 3)
 
     def ensure(self):
         with self.lock:
@@ -1234,7 +1322,32 @@ class IPTV:
 
     def page(self, q="", country="", cat="", letter="", offset=0, limit=TV_PAGE):
         self.ensure()
-        return self.page_of(self.index, q, country, cat, letter, offset, limit)
+        res = self.page_of(self.index, q, country, cat, letter, offset, limit)
+        res["items"] = [self.mark(i) for i in res["items"]]
+        return res
+
+    def mark(self, pub):
+        """Oeffentlicher Eintrag + "broken", wenn der Sender in den letzten 24 h nicht erreichbar war."""
+        t = self.broken.get(pub.get("key"))
+        if t and time.time() - t < 86400:
+            pub = dict(pub, broken=True)
+        return pub
+
+    def filtered_keys(self, q="", country="", cat=""):
+        """Alle Sender zu Land/Thema/Suche (ohne Buchstabe, ohne Seiten) – Reihenfolge wie die Liste."""
+        q = tv_fold((q or "").strip())
+        out = []
+        for e in self.index:
+            if country and e["country"] != country:
+                continue
+            if cat and cat not in e["cats"]:
+                continue
+            if q:
+                folds = e.get("folds") or [tv_fold(n) for n in [e["name"]] + list(e.get("alt") or [])]
+                if not any(q in n for n in folds):
+                    continue
+            out.append(e["key"])
+        return out
 
     def search(self, q, country, cat, limit=80):
         """Alte Schnittstelle (/api/tv/search, z. B. fuer Forks): nur die ersten Treffer als Liste."""
@@ -1245,32 +1358,106 @@ class IPTV:
         if self.now and "tv" in APPS.running():
             now = self.now
         return {"state": self.state, "error": self.error, "count": len(self.index),
-                "countries": [{"code": c, "n": n} for c, n in self.countries[:40]], "now": now}
+                "countries": [{"code": c, "n": n} for c, n in self.countries[:40]], "now": now, "failed": self.failed}
 
     def entry(self, key):
         e = self.by_key.get(key)
         if e:
             return e
-        for f in tvfavs_load():
+        for f in tvfavs_load() + list(self.recent):
             if f.get("key") == key:
                 return f
         return None
 
-    def play(self, key):
+    def set_zap(self, key, ctx):
+        """Zapp-Liste fuer den Player: Favoriten oder die Liste mit Land/Thema/Suche, aus der gestartet wurde
+        (ohne Buchstaben-Filter, hoechstens 2000 Sender rund um den gewaehlten)."""
+        keys = []
+        if isinstance(ctx, dict):
+            if ctx.get("favs"):
+                keys = [f.get("key") for f in tvfavs_load() if f.get("key")]
+            elif self.index:
+                country = str(ctx.get("country") or "")
+                keys = self.filtered_keys(str(ctx.get("q") or ""), "" if country == "*" else country, str(ctx.get("cat") or ""))
+        if key not in keys:
+            if not keys and key in self.zap_keys:
+                return
+            keys = keys or [f.get("key") for f in tvfavs_load() if f.get("key")]
+            if key not in keys:
+                keys = [key] + keys
+        if len(keys) > 2000:
+            i = keys.index(key)
+            keys = keys[max(0, i - 1000):i + 1000]
+        self.zap_keys = keys
+
+    def zap(self):
+        items = [self.mark(self.public(e)) for e in (self.entry(k) for k in self.zap_keys) if e]
+        return {"items": items, "favs": [self.mark(self.public(f)) for f in tvfavs_load()],
+                "recent": [self.mark(self.public(f)) for f in self.recent], "key": (self.now or {}).get("key")}
+
+    def remember(self, e):
+        self.recent = [e] + [r for r in self.recent if r.get("key") != e.get("key")]
+        self.recent = self.recent[:15]
+        tvrecent_save(self.recent)
+
+    def tune(self, key):
+        """Player schaltet um: Stream-Adresse (bleibt im Launcher-Verzeichnis, nie in den Listen) + Angaben."""
         e = self.entry(key)
         if not e:
             raise ValueError("Sender unbekannt")
+        RADIO.stop()
+        self.now = self.public(e)
+        self.broken.pop(key, None)
+        self.remember(e)
+        log("TV:", e.get("name"), e.get("url"))
+        return {"entry": self.mark(self.public(e)), "url": e["url"], "ref": e.get("ref") or "", "ua": e.get("ua") or "",
+                "recent": [self.mark(self.public(f)) for f in self.recent]}
+
+    def mark_broken(self, key, reason=""):
+        self.broken[key] = time.time()
+        e = self.entry(key)
+        log("TV: nicht erreichbar:", (e or {}).get("name", key), reason)
+
+    def play(self, key, ctx=None):
+        e = self.entry(key)
+        if not e:
+            raise ValueError("Sender unbekannt")
+        self.set_zap(key, ctx)
+        RADIO.stop()
+        self.failed = None
+        if PLAYERS.level() < 3:
+            PLAYERS.start("tv", key, mode="tv")
+        else:
+            self.play_raw(e)
+            self.remember(e)
+        self.now = self.public(e)
+        return self.status()
+
+    def play_raw(self, e):
+        """Stufe 3: nacktes mpv im Vollbild (wie vor dem eigenen Player), mit Hardware-Decoding und Wiederverbinden."""
         args = ["mpv", "--fs", "--force-window=immediate", "--keep-open=no",
-                f"--title=TV · {e['name']}", "--cache=yes", "--demuxer-max-bytes=64MiB"]
+                f"--title=TV · {e['name']}", "--cache=yes", "--demuxer-max-bytes=64MiB", "--hwdec=auto-safe",
+                "--network-timeout=10", "--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
+                "--ytdl=no"]
         if e.get("ref"):
             args.append(f"--referrer={e['ref']}")
         if e.get("ua"):
             args.append(f"--user-agent={e['ua']}")
         args.append(e["url"])
+        APPS.close("media")
         APPS.close("tv")
         APPS.start("tv", args)
-        self.now = self.public(e)
-        return self.status()
+        self.raw = True
+        proc = APPS._get("tv")
+        if proc:
+            threading.Thread(target=self._watch_raw, args=(e, proc), daemon=True).start()
+
+    def _watch_raw(self, e, proc):
+        t0 = time.monotonic()
+        rc = proc.wait()
+        if rc not in (0, -signal.SIGTERM, -signal.SIGKILL) and time.monotonic() - t0 < 30:
+            self.failed = {"key": e["key"], "name": e["name"], "t": time.time()}
+            self.mark_broken(e["key"], f"mpv-Code {rc}")
 
 
 def tvfavs_load():
@@ -1278,6 +1465,23 @@ def tvfavs_load():
         return json.loads(TVFAVS.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return []
+
+
+def tvrecent_load():
+    try:
+        d = json.loads(TVRECENT.read_text(encoding="utf-8"))
+        return [x for x in d if isinstance(x, dict) and x.get("key") and x.get("url")]
+    except (OSError, ValueError):
+        return []
+
+
+def tvrecent_save(items):
+    try:
+        tmp = TVRECENT.with_suffix(".tmp")
+        tmp.write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(TVRECENT)
+    except OSError as e:
+        log("tvrecent.json:", e)
 
 
 def tvfavs_save(items):
@@ -1507,6 +1711,216 @@ EPG = EPGManager()
 
 
 # ---------------------------------------------------------------------------
+#  Videos & Musik: Mediathek fuer den Player (~/share/Videos, ~/share/Musik, USB-Laufwerke)
+# ---------------------------------------------------------------------------
+VIDEO_EXT = {".mp4", ".mkv", ".avi", ".mov", ".m4v", ".webm", ".ts", ".m2ts", ".mts", ".mpg", ".mpeg", ".wmv",
+             ".flv", ".ogv", ".3gp", ".vob", ".divx"}
+AUDIO_EXT = {".mp3", ".flac", ".ogg", ".oga", ".opus", ".m4a", ".aac", ".wav", ".wma", ".ape", ".mka", ".wv", ".aiff", ".alac"}
+COVER_NAMES = ("cover.jpg", "cover.png", "folder.jpg", "folder.png", "front.jpg", "front.png", "albumart.jpg", "album.jpg")
+RESUME = BASE / "resume.json"
+
+
+def natural_key(name):
+    """„Folge 2“ vor „Folge 10“: Zahlen als Zahlen sortieren, ohne Gross-/Kleinschreibung."""
+    return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", tv_fold(name))]
+
+
+class MediaLib:
+    """Ordner auflisten, Vorschaubilder (ffmpegthumbnailer, zwischengespeichert), Weiterschauen (resume.json).
+    Nur innerhalb von ~/share und eingehaengten Laufwerken unter /run/media und /media."""
+    THUMBS = Path.home() / ".cache" / "voidstation" / "thumbs"
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.sem = threading.Semaphore(2)          # hoechstens zwei Vorschaubilder gleichzeitig (schwache Geraete)
+        self.thumbnailer = shutil.which("ffmpegthumbnailer")
+
+    @staticmethod
+    def share():
+        return Path.home() / "share"
+
+    @staticmethod
+    def drives():
+        out = []
+        try:
+            lines = Path("/proc/mounts").read_text().splitlines()
+        except OSError:
+            lines = []
+        for line in lines:
+            parts = line.split()
+            if len(parts) < 2:
+                continue
+            mp = parts[1].replace("\\040", " ")
+            if mp.startswith(("/run/media/", "/media/")) and mp.count("/") >= 2 and os.path.isdir(mp):
+                out.append(mp)
+        return sorted(set(out))
+
+    def allowed_roots(self):
+        return [self.share().resolve()] + [Path(d).resolve() for d in self.drives()]
+
+    def resolve(self, path):
+        try:
+            p = Path(path).expanduser().resolve()
+        except (OSError, RuntimeError):
+            return None
+        for r in self.allowed_roots():
+            if p == r or r in p.parents:
+                return p
+        return None
+
+    def thumb_url(self, p, kind, st=None):
+        if kind == "video" and self.thumbnailer:
+            m = int(st.st_mtime) if st else 0
+            return "/api/media/thumb?path=" + urllib.parse.quote(str(p)) + f"&m={m}"
+        if kind in ("dir", "audio"):
+            folder = p if kind == "dir" else p.parent
+            for n in COVER_NAMES:
+                c = folder / n
+                if c.is_file():
+                    return "/api/media/thumb?path=" + urllib.parse.quote(str(c))
+        return ""
+
+    @staticmethod
+    def title(name):
+        stem = name.rsplit(".", 1)[0] if "." in name else name
+        return re.sub(r"[._]+", " ", stem).strip() or name
+
+    def resume_load(self):
+        try:
+            d = json.loads(RESUME.read_text(encoding="utf-8"))
+            return d if isinstance(d, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def resume_set(self, path, pos, dur):
+        p = self.resolve(path)
+        if not p:
+            raise ValueError("Pfad nicht erlaubt")
+        try:
+            pos, dur = float(pos), float(dur)
+        except (TypeError, ValueError):
+            raise ValueError("ungueltige Position")
+        with self.lock:
+            d = self.resume_load()
+            if dur > 0 and 60 <= pos < dur * 0.95 and dur - pos > 60:
+                d[str(p)] = {"pos": round(pos, 1), "dur": round(dur, 1), "t": int(time.time())}
+            else:                                      # kaum angesehen oder fast fertig: nichts merken
+                d.pop(str(p), None)
+            if len(d) > 300:
+                for k in sorted(d, key=lambda k: d[k].get("t", 0))[:len(d) - 300]:
+                    del d[k]
+            tmp = RESUME.with_suffix(".tmp")
+            tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+            tmp.replace(RESUME)
+
+    def entry(self, p, res=None):
+        try:
+            st = p.stat()
+        except OSError:
+            return None
+        if p.is_dir():
+            kind = "dir"
+        else:
+            ext = p.suffix.lower()
+            kind = "video" if ext in VIDEO_EXT else "audio" if ext in AUDIO_EXT else None
+            if not kind:
+                return None
+        e = {"name": p.name, "title": p.name if kind == "dir" else self.title(p.name), "path": str(p), "kind": kind,
+             "mtime": int(st.st_mtime), "thumb": self.thumb_url(p, kind, st)}
+        if kind != "dir":
+            e["bytes"] = st.st_size
+            r = (res or {}).get(str(p))
+            if r:
+                e["resume"] = {"pos": r.get("pos", 0), "dur": r.get("dur", 0)}
+        return e
+
+    def roots(self):
+        share = self.share()
+        out = [{"kind": "videos", "path": str(share / "Videos"), "title": "", "thumb": ""},
+               {"kind": "music", "path": str(share / "Musik"), "title": "", "thumb": ""}]
+        for d in self.drives():
+            out.append({"kind": "drive", "path": d, "title": os.path.basename(d), "thumb": ""})
+        res = self.resume_load()
+        cont = []
+        for path, r in sorted(res.items(), key=lambda kv: -kv[1].get("t", 0)):
+            p = self.resolve(path)
+            if p and p.is_file():
+                e = self.entry(p, res)
+                if e:
+                    e["kind"] = "resume"
+                    cont.append(e)
+            if len(cont) >= 12:
+                break
+        return {"roots": out, "resume": cont}
+
+    def listdir(self, path):
+        p = self.resolve(path)
+        if not p:
+            raise ValueError("Ordner nicht erlaubt")
+        select = ""
+        if p.is_file():
+            select, p = str(p), p.parent
+        if not p.is_dir():
+            if p in (self.share() / "Videos", self.share() / "Musik"):
+                p.mkdir(parents=True, exist_ok=True)
+            else:
+                raise FileNotFoundError(str(p))
+        res = self.resume_load()
+        dirs, files = [], []
+        try:
+            names = sorted(os.listdir(p), key=natural_key)
+        except OSError as e:
+            raise FileNotFoundError(str(e))
+        for n in names[:3000]:
+            if n.startswith("."):
+                continue
+            e = self.entry(p / n, res)
+            if not e:
+                continue
+            (dirs if e["kind"] == "dir" else files).append(e)
+        roots = self.allowed_roots()
+        parent = "" if p in roots or p.parent in (Path("/run/media"), Path("/media")) else str(p.parent)
+        if p.parent == self.share().resolve():
+            parent = ""                              # ~/share/Videos und ~/share/Musik: zurueck zur Startseite
+        return {"path": str(p), "name": p.name, "parent": parent, "items": dirs + files, "select": select,
+                "audio": sum(1 for f in files if f["kind"] == "audio")}
+
+    def thumb(self, path):
+        """Vorschaubild als (Bytes, MIME): Cover-Bilder direkt, Videos ueber ffmpegthumbnailer (Cache)."""
+        p = self.resolve(path)
+        if not p or not p.is_file():
+            return None
+        ext = p.suffix.lower()
+        if ext in (".jpg", ".jpeg", ".png"):
+            return p.read_bytes(), MIME.get(ext if ext != ".jpeg" else ".jpg", "image/jpeg")
+        if ext not in VIDEO_EXT or not self.thumbnailer:
+            return None
+        st = p.stat()
+        key = hashlib.sha1(f"{p}:{int(st.st_mtime)}:{st.st_size}".encode()).hexdigest()
+        out = self.THUMBS / f"{key}.jpg"
+        if not out.exists():
+            self.THUMBS.mkdir(parents=True, exist_ok=True)
+            with self.sem:
+                if not out.exists():                      # inzwischen von einer anderen Anfrage erzeugt?
+                    tmp = out.with_name(f"{key}.{threading.get_ident()}.tmp.jpg")
+                    r = run([self.thumbnailer, "-i", str(p), "-o", str(tmp), "-s", "480", "-t", "12%", "-q", "7"], timeout=25)
+                    if r and r.returncode == 0 and tmp.exists() and tmp.stat().st_size > 0:
+                        tmp.replace(out)
+                    else:
+                        try:
+                            tmp.unlink()
+                        except OSError:
+                            pass
+        try:
+            return out.read_bytes(), "image/jpeg"
+        except OSError:
+            return None
+
+
+MEDIA = MediaLib()
+
+
+# ---------------------------------------------------------------------------
 #  AppCenter: kuratierte optionale Programme
 # ---------------------------------------------------------------------------
 CATALOG = BASE / "catalog.json"
@@ -1529,6 +1943,8 @@ def pad_mouse_default(tile_id):
     weil dort rechter Stick und Schultertasten zum Spiel gehoeren – R3 schaltet trotzdem um. Sonst an."""
     if not tile_id:
         return True
+    if tile_id in ("tv", "media") and PLAYERS.active(tile_id):   # eigener Player: komplett mit dem Controller bedienbar
+        return False
     t = find_tile(tile_id) or {}
     if isinstance(t.get("mouse"), bool):
         return t["mouse"]
@@ -3604,7 +4020,7 @@ class Handler(BaseHTTPRequestHandler):
             running = APPS.running()
             return self._json(200, {"running": running, "starting": APPS.starting(), "radio": RADIO.status(),
                                     "update": updates_badge() if not LIVE else {"available": False},
-                                    "tv": TV.now if "tv" in running else None, "live": LIVE,
+                                    "tv": TV.now if "tv" in running else None, "tvFailed": TV.failed, "live": LIVE,
                                     "install": INSTALL.state.get("state") if INSTALL.state else None})
         if path == "/api/tv/status":
             TV.ensure()
@@ -3618,7 +4034,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, TV.page(g("q"), g("country"), g("cat"), g("letter").upper(),
                                            num("offset", 0), num("limit", TV_PAGE)))
         if path == "/api/tv/favs":
-            return self._json(200, [IPTV.public(f) for f in tvfavs_load()])
+            return self._json(200, [TV.mark(IPTV.public(f)) for f in tvfavs_load()])
+        if path == "/api/tv/zap":                    # Player: Liste zum Umschalten, Favoriten, zuletzt gesehen
+            TV.ensure()
+            return self._json(200, TV.zap())
+        if path == "/api/media/roots":
+            return self._json(200, MEDIA.roots())
+        if path == "/api/media/list":
+            try:
+                return self._json(200, MEDIA.listdir(urllib.parse.parse_qs(url.query).get("path", [""])[0]))
+            except (ValueError, FileNotFoundError, OSError) as e:
+                return self._json(404, {"error": str(e)})
+        if path == "/api/media/thumb":
+            r = MEDIA.thumb(urllib.parse.parse_qs(url.query).get("path", [""])[0])
+            if not r:
+                return self._send(404)
+            return self._send(200, r[0], r[1])
         if path == "/api/tv/epg":
             qs = urllib.parse.parse_qs(url.query)
             ch_id = qs.get("id", [""])[0] or qs.get("channel_id", [""])[0]
@@ -3742,7 +4173,18 @@ class Handler(BaseHTTPRequestHandler):
                 favs_save(favs)
                 return self._json(200, favs)
             if parts == ["api", "tv", "play"]:
-                return self._json(200, TV.play(str(self._body().get("key", ""))))
+                b = self._body()
+                return self._json(200, TV.play(str(b.get("key", "")), b.get("ctx")))
+            if parts == ["api", "tv", "tune"]:              # Player schaltet um
+                return self._json(200, TV.tune(str(self._body().get("key", ""))))
+            if parts == ["api", "tv", "broken"]:
+                b = self._body()
+                TV.mark_broken(str(b.get("key", "")), str(b.get("reason", ""))[:40])
+                return self._json(200, {"ok": True})
+            if parts == ["api", "media", "resume"]:
+                b = self._body()
+                MEDIA.resume_set(str(b.get("path", "")), b.get("pos"), b.get("dur"))
+                return self._json(200, {"ok": True})
             if parts == ["api", "tv", "stop"]:
                 APPS.close("tv")
                 TV.now = None

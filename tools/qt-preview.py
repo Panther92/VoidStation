@@ -6,6 +6,8 @@ Aufruf:    python3 tools/qt-preview.py                         -> Fenster 1280×
            python3 tools/qt-preview.py --size 1920x1080
            python3 tools/qt-preview.py --shot out.png --keys "right,a,shot:radio.png,b"   (ohne Bildschirm)
            VS_LANG=en …                                        -> englische Oberflaeche
+           python3 tools/qt-preview.py --player tv             -> Fernseh-Player (Teststream von mpv: Testbild)
+           python3 tools/qt-preview.py --player media --home DIR   -> Videos & Musik, DIR wie ein Home (DIR/share/Videos …)
 """
 import argparse
 import json
@@ -54,6 +56,28 @@ TILES["groups"].insert(1, {"name": "Spiele", "tiles": [
 
 
 JOB = {}
+# Player (--player): Teststream, zuletzt gesehen, Mediathek ueber den echten Launcher-Code (MediaLib) in --home
+PLAYER = {"stream": "av://lavfi:testsrc2=size=1280x720:rate=25", "recent": [], "media": None, "tmp": None}
+
+
+def media():
+    """MediaLib aus launcher.py mit HOME = --home; Weiterschauen und Vorschaubilder in einem Wegwerf-Ordner."""
+    if PLAYER["media"] is None:
+        import tempfile
+        sys.path.insert(0, str(REPO / "launcher"))
+        import launcher as L  # noqa: E402
+        tmp = Path(tempfile.mkdtemp(prefix="vs-preview-"))
+        L.RESUME = tmp / "resume.json"
+        L.MediaLib.THUMBS = tmp / "thumbs"
+        PLAYER["media"], PLAYER["tmp"] = L.MediaLib(), tmp
+    return PLAYER["media"]
+
+
+def media_list(q):
+    try:
+        return media().listdir(q.get("path", [""])[0])
+    except (ValueError, OSError) as e:
+        return {"error": str(e)}
 # VS_TVDATA=<Ordner mit channels.json, streams.json, logos.json von iptv-org>: echte Senderliste statt Beispieldaten
 TVREAL = {}
 
@@ -181,7 +205,22 @@ class H(S.H):
             "/api/install/status": lambda: dict(inst_status(), autostart=LIVE["on"] and INST.get("state") == "idle" and not INST.get("seen")),
             "/api/install/gparted": lambda: {"running": False},
             "/api/install/log": lambda: {"log": "[check] ok\n[partition] sgdisk …\n[boot] efibootmgr: Could not prepare Boot variable"},
+            "/api/tv/zap": lambda: {"items": S.TV, "favs": st["tvfavs"], "recent": PLAYER["recent"], "key": (st["tv"] or {}).get("key")},
+            "/api/media/roots": lambda: media().roots(),
+            "/api/media/list": lambda: media_list(q),
         }
+        if p == "/api/media/thumb":
+            r = media().thumb(q.get("path", [""])[0])
+            if not r:
+                self.send_response(404)
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", r[1])
+            self.send_header("Content-Length", str(len(r[0])))
+            self.end_headers()
+            self.wfile.write(r[0])
+            return
         if p in routes:
             return self.j(routes[p]())
         return super().do_GET()
@@ -211,6 +250,19 @@ class H(S.H):
             ch = next((c for c in S.TV if c["key"] == body.get("key")), None)
             st["tv"] = ch
             return self.j({"now": ch})
+        if p == "/api/tv/tune":                  # Player: Teststream; Sender mit "Fehler" im Namen scheitern
+            ch = next((c for c in S.TV if c["key"] == body.get("key")), None) or S.TV[0]
+            st["tv"] = ch
+            PLAYER["recent"] = [ch] + [r for r in PLAYER["recent"] if r["key"] != ch["key"]][:14]
+            url = "https://example.invalid/fehler.m3u8" if "Fehler" in ch["name"] else PLAYER["stream"]
+            return self.j({"entry": ch, "url": url, "ref": "", "ua": "", "recent": PLAYER["recent"]})
+        if p in ("/api/tv/fav", "/api/tv/unfav"):
+            ch = next((c for c in S.TV if c["key"] == body.get("key")), None)
+            st["tvfavs"] = [f for f in st["tvfavs"] if f["key"] != body.get("key")] + ([ch] if ch and p.endswith("/fav") else [])
+            return self.j(st["tvfavs"])
+        if p == "/api/media/resume":
+            media().resume_set(body.get("path", ""), body.get("pos"), body.get("dur"))
+            return self.j({"ok": True})
         if p in ("/api/apps/install", "/api/apps/remove", "/api/apps/update"):
             JOB.clear()
             JOB.update({"state": "running", "action": p.rsplit("/", 1)[1], "name": body.get("id", ""), "app": body.get("id"),
@@ -274,7 +326,15 @@ def main():
     ap.add_argument("--bios", action="store_true", help="Geraet im BIOS-Modus")
     ap.add_argument("--clean", action="store_true", help="fuer Screenshots: kein Update-Hinweis, keine laufende App")
     ap.add_argument("--scale", type=float, help="Skalierung der Oberflaeche (Standard 1.25)")
+    ap.add_argument("--player", choices=["tv", "media"], help="Player statt Startseite: Fernsehen bzw. Videos & Musik")
+    ap.add_argument("--stream", help="Stream/Datei fuer den Fernseh-Player (Standard: Testbild von mpv)")
+    ap.add_argument("--home", help="Ordner, der fuer die Mediathek als Home gilt (darin share/Videos, share/Musik)")
+    ap.add_argument("--arg", default="", help="Startargument des Players (Sender bzw. Datei/Ordner)")
     a = ap.parse_args()
+    if a.stream:
+        PLAYER["stream"] = a.stream
+    if a.home:
+        os.environ["HOME"] = str(Path(a.home).resolve())
     if a.clean:
         STATE["running"] = []
         STATE["update"] = {"available": False}
@@ -301,7 +361,16 @@ def main():
         if a.shot:
             env["VS_SCREENSHOT"] = a.shot
     t0 = time.monotonic()
-    r = subprocess.run([sys.executable, str(REPO / "launcher" / "qt" / "voidstation-home.py")], env=env)
+    if a.player:
+        prog = [sys.executable, str(REPO / "launcher" / "qt" / "voidstation-player.py"), "--" + a.player]
+        prog += [a.arg or (S.TV[0]["key"] if a.player == "tv" else "")]
+        env["VS_BASE"] = str(PLAYER["tmp"] or Path("/tmp"))      # Steuer-Socket nicht im Repo
+        if a.shot or a.keys:
+            env.pop("QT_QPA_PLATFORM", None) if os.environ.get("DISPLAY") else None
+            env.pop("QT_QUICK_BACKEND", None)
+        r = subprocess.run([x for x in prog if x != ""], env=env)
+    else:
+        r = subprocess.run([sys.executable, str(REPO / "launcher" / "qt" / "voidstation-home.py")], env=env)
     print(f"beendet nach {time.monotonic() - t0:.1f} s, Code {r.returncode}")
     srv.shutdown()
 

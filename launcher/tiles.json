@@ -49,14 +49,15 @@
           "type": "radio"
         },
         {
-          "id": "vlc",
-          "label": "VLC",
-          "sub": "Filme & Musik",
+          "id": "media",
+          "label": "Videos & Musik",
+          "sub": "Eigene Medien",
           "size": "medium",
           "color": "#74461f",
           "icon": "film",
           "cmd": [
-            "vlc"
+            "~/.local/share/voidstation/qt/voidstation-player.py",
+            "--media"
           ]
         }
       ]

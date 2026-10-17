@@ -11,6 +11,7 @@ Tile {
     property bool fav: false
     property bool playing: false
     property string quality: ""
+    property bool broken: false                  // zuletzt nicht erreichbar (Fernsehen): blasser, mit Hinweis
     property color accent: Ui.c.accentRadio
     tileColor: playing ? accent : Ui.c.surfaceCard
     readonly property color fg: playing || !Ui.c.light ? (Ui.c.light ? "#ffffff" : Ui.c.textPrimary) : Ui.c.textPrimary
@@ -51,6 +52,21 @@ Tile {
         text: "★"
         font.pixelSize: st.width * 0.1
         color: Ui.c.light && !st.playing ? Ui.c.textDim : "#a6ffffff"
+    }
+    Rectangle {                                  // zuletzt nicht erreichbar: abgedunkelt (opacity gehoert der Einflug-Animation)
+        anchors.fill: parent
+        visible: st.broken && !st.playing
+        color: Ui.alpha(Ui.c.bgMain, 0.5)
+        z: 40
+    }
+    Txt {
+        z: 41
+        visible: st.broken && !st.playing
+        anchors.right: parent.right; anchors.rightMargin: parent.width * 0.07
+        y: parent.height * 0.07 + (st.fav ? st.width * 0.14 : 0)
+        text: "⚠"
+        font.pixelSize: st.width * 0.1
+        color: Ui.c.statusWarnText
     }
     Txt {
         x: parent.width * 0.07

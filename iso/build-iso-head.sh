@@ -7,7 +7,7 @@
 #  Ergebnis: ~/share/ISO/voidstation-<version>-JJJJMMTT.iso  (+ .sha256)
 #
 #  Das Live-System ist eine komplette VoidStation (YouTube, Fernsehen, Radio,
-#  VLC …) mit der Kachel "VoidStation installieren". Der Installer kopiert
+#  Videos & Musik …) mit der Kachel "VoidStation installieren". Der Installer kopiert
 #  genau dieses System auf die SSD – dafuer braucht er kein Internet.
 #  Grafik-Server: XLibre (Paketquelle xlibre-void).
 #  Startmenue mit Logo (Start / Start NVIDIA only / Reboot), Startbild per Plymouth.

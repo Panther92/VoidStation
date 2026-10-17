@@ -51,7 +51,7 @@ done
 
 say "1/8  Pakete"
 MISSING=""
-for p in curl elogind xrdb pulseaudio-utils mpv samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf xprop adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 \
+for p in curl elogind xrdb pulseaudio-utils mpv python3-mpv ffmpegthumbnailer samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf xprop adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 \
          bluez libspa-bluetooth htop nano fastfetch mousepad python3-pyside6-declarative qt6-svg qt6-imageformats qt6-plugin-tls-openssl \
          wireless-regdb; do
   xbps-query "$p" >/dev/null 2>&1 || MISSING="$MISSING $p"
@@ -87,7 +87,7 @@ for f in tiles.json radio.json tvfavs.json settings.json; do [ -f "$TV/$f" ] && 
 sed -n '/^__PAYLOAD_BELOW__$/,$p' "$0" | tail -n +2 | base64 -d | tar -xz -C "$TV" || { warn "Entpacken fehlgeschlagen"; exit 1; }
 for f in tiles.json radio.json tvfavs.json settings.json; do [ -f "$KEEP/$f" ] && cp "$KEEP/$f" "$TV/$f"; done
 rm -rf "$KEEP"
-chmod +x "$TV/launcher.py" "$TV/home.sh" "$TV/vsctl" "$TV/voidstation-shell.py" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/sysfix.sh"
+chmod +x "$TV/launcher.py" "$TV/home.sh" "$TV/vsctl" "$TV/voidstation-shell.py" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/qt/voidstation-player.py" "$TV/sysfix.sh"
 echo "__VS_VERSION__" > "$TV/VERSION"
 echo '__VS_VERSION_B64__' | base64 -d > "$TV/version.json" 2>/dev/null || true
 cp "$TV/openbox/"{rc.xml,menu.xml,autostart} "$HOMEDIR/.config/openbox/"
@@ -113,6 +113,19 @@ def add(tile, gname, pos):
 add({"id": "tv", "label": "Fernsehen", "sub": "Sender aus aller Welt", "size": "wide", "color": "#24414a", "icon": "tv", "type": "tv"}, "Unterhaltung", 1)
 add({"id": "settings", "label": "Einstellungen", "size": "medium", "color": "#3a3f46", "icon": "gear", "type": "settings"}, "System", 1)
 add({"id": "appcenter", "label": "AppCenter", "sub": "Programme", "size": "medium", "color": "#39414d", "icon": "store", "type": "apps"}, "System", 2)
+# Eigener Player: Kachel „Videos & Musik“ – vor VLC, falls es die Kachel gibt (VLC bleibt, wo es ist)
+if not any(t.get("id") == "media" for t in tiles):
+    media = {"id": "media", "label": "Videos & Musik", "sub": "Eigene Medien", "size": "medium", "color": "#74461f",
+             "icon": "film", "cmd": ["~/.local/share/voidstation/qt/voidstation-player.py", "--media"]}
+    g = next((g for g in c["groups"] if any(t.get("id") == "vlc" for t in g["tiles"])), None)
+    if g is not None:
+        g["tiles"].insert(next(i for i, t in enumerate(g["tiles"]) if t.get("id") == "vlc"), media)
+        vlc = next(t for t in g["tiles"] if t.get("id") == "vlc")
+        if vlc.get("color") == "#74461f":
+            vlc["color"] = "#5a3a1f"                   # zwei gleichfarbige Kacheln nebeneinander vermeiden
+    else:
+        group("Unterhaltung")["tiles"].insert(3, media)
+    print("Kachel hinzugefuegt: Videos & Musik")
 for t in [t for g in c["groups"] for t in g["tiles"]]:
     if t.get("type") == "apps" and t.get("sub") == "Apps & Updates":   # Updates gibt es seit 0.9.0 nur noch in den Einstellungen
         t["sub"] = "Programme"
@@ -254,7 +267,7 @@ VoidStation Freigabe
 =================
 ROMs/<system>   Spiele fuer die Emulatoren (gba, gbc, nes, snes, psx, psp, nds …)
 BIOS            BIOS-Dateien (z. B. PlayStation fuer DuckStation)
-Musik, Videos   eigene Medien fuer VLC oder Kodi
+Musik, Videos   eigene Medien (Kachel "Videos & Musik")
 Bilder          fuer den Bildbetrachter
 EOF
 chown -R "$VSUSER:$VSUSER" "$SHARE"

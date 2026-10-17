@@ -881,6 +881,26 @@
       }
     },
     {
+      "id": "vlc",
+      "name": "VLC",
+      "cat": "Medien",
+      "desc": "Der bekannte Allesspieler für Filme, Musik, DVDs und Netzwerk-Streams – für Sonderfälle neben der Kachel „Videos & Musik“ (DVD-Menüs, Umwandeln, exotische Formate).",
+      "source": {
+        "type": "xbps",
+        "pkg": "vlc"
+      },
+      "cmd": [
+        "vlc"
+      ],
+      "tile": {
+        "group": "Unterhaltung",
+        "size": "medium",
+        "color": "#5a3a1f",
+        "icon": "film",
+        "sub": "Filme & Musik"
+      }
+    },
+    {
       "id": "gpicview",
       "name": "Bildbetrachter",
       "cat": "Medien",

@@ -31,6 +31,7 @@ Window {
         property var running: []
         property var radioState: ({ station: null, title: null })
         property var tvNow: null
+        property real tvFailedT: 0
         property var updInfo: null
         property string updToasted: ""
         property var sett: null
@@ -333,6 +334,10 @@ Window {
                 running = s.running || []
                 setRadio(s.radio || {})
                 setTvNow(s.tv)
+                if (s.tvFailed && s.tvFailed.t !== tvFailedT) {        // Rueckfall ohne Player: Sender scheiterte
+                    if (tvFailedT) toast(Ui.t("tv.failed", { name: s.tvFailed.name }), true)
+                    tvFailedT = s.tvFailed.t
+                } else if (!s.tvFailed && !tvFailedT) tvFailedT = -1
                 showUpdBadge(s.update)
                 if (splashTile) splashCheck(s)
             })

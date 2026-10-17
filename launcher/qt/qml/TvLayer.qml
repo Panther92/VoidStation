@@ -114,9 +114,11 @@ Layer {
         return true
     }
     function secondary() { if (Nav.current && Nav.current.ch) fav(Nav.current.ch) }
-    function play(ch) {
+    // fromFavs: aus den Favoriten gestartet -> im Player schalten ▲▼ durch die Favoriten, sonst durch diese Liste
+    function play(ch, fromFavs) {
         app.toast(Ui.t("tv.switching", { name: ch.name }))
-        Api.post("/api/tv/play", { key: ch.key }, function (s) { app.setTvNow(s.now) }, function () { app.toast(Ui.t("tv.cantStart"), true) })
+        var ctx = fromFavs ? { favs: true } : { q: query, country: country === "*" ? "" : country, cat: cat }
+        Api.post("/api/tv/play", { key: ch.key, ctx: ctx }, function (s) { app.setTvNow(s.now) }, function () { app.toast(Ui.t("tv.cantStart"), true) })
     }
     function stopTv() { Api.post("/api/tv/stop", null, function () { app.setTvNow(null) }) }
     function fav(ch) {
@@ -325,7 +327,8 @@ Layer {
             accent: Ui.c.accentTv
             fav: tvl.isFav(modelData.key)
             playing: !!tvl.now && tvl.now.key === modelData.key
-            onTriggered: tvl.play(modelData)
+            broken: !!modelData.broken
+            onTriggered: tvl.play(modelData, tvl.favs.indexOf(modelData) >= 0)
         }
     }
 }
