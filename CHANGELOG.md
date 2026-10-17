@@ -8,7 +8,7 @@ Hotfixes dazu `## 2026.11.1 – …`. Neues kommt zuerst unter `## Testing – <
 ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freigeben (siehe `RELEASING.md`).
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
-## Testing – 2026-10-17
+## Testing – 2026-10-18
 - Eigener Player für Fernsehen: Umschalten mit ▲▼ direkt im Bild, ohne Umweg über die Startseite. Beim Umschalten erscheinen Logo, Sendername, Platz in der Liste sowie laufende und nächste Sendung (EPG). X öffnet die Senderliste am Bildrand (Liste, Favoriten, Zuletzt), Y merkt den Sender als Favorit, Start öffnet „Ton & Bild“ (Tonspur, Untertitel, Bildformat, Qualität), ◀▶ ändern die Lautstärke, LB/RB springen zum vorigen Sender. Zweimal B beendet das Fernsehen. Bedienbar mit Controller, Tastatur, Fernbedienung oder Maus – im VoidStation-Look und in allen Sprachen
 - Fernsehen: Ein Sender, der nicht erreichbar ist, meldet sich jetzt mit Grund (gesperrt, Zeitüberschreitung, Stream gibt es nicht mehr, kein Internet) statt einfach nichts zu tun; ▲ springt gleich zum nächsten. In der Senderliste ist er danach 24 Stunden lang abgedunkelt und mit ⚠ markiert. Kurze Netzaussetzer überbrückt der Player, statt abzubrechen
 - Fernsehen und Videos dekodiert jetzt die Grafikkarte (VA-API, bei NVIDIA NVDEC) statt des Prozessors – weniger Last, weniger Wärme, leisere Lüfter

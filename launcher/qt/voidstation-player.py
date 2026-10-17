@@ -307,6 +307,51 @@ class Engine(QObject):
 # ---------------------------------------------------------------------------
 GL_DRAW_FRAMEBUFFER_BINDING = 0x8CA6
 GLGETINT = ctypes.CFUNCTYPE(None, ctypes.c_uint, ctypes.POINTER(ctypes.c_int))
+GL1U = ctypes.CFUNCTYPE(None, ctypes.c_uint)
+GL2U = ctypes.CFUNCTYPE(None, ctypes.c_uint, ctypes.c_uint)
+GLUI = ctypes.CFUNCTYPE(None, ctypes.c_uint, ctypes.c_int)
+GL4B = ctypes.CFUNCTYPE(None, ctypes.c_ubyte, ctypes.c_ubyte, ctypes.c_ubyte, ctypes.c_ubyte)
+
+
+class GlReset:
+    """OpenGL-Zustand vor dem mpv-Bild auf Grundwerte setzen. Qt Quick hinterlaesst nach seinem letzten Bild u. a.
+    Tiefentest an (mpv-Bild faellt durch, nur der Hintergrund bleibt) und Sampler-Objekte auf den Textur-Einheiten
+    (mpv-Texturen ohne Mipmaps gelten dann als unvollstaendig -> schwarzes Bild bei laufendem Ton). Qt stellt seinen
+    Zustand nach endExternalCommands() selbst wieder her."""
+    DISABLE = (0x0B71, 0x0C11, 0x0B90, 0x0B44, 0x0BE2, 0x8DB9)   # DEPTH, SCISSOR, STENCIL, CULL, BLEND, FRAMEBUFFER_SRGB
+    PIXEL_STORE = ((0x0CF2, 0), (0x0CF3, 0), (0x0CF4, 0), (0x0CF5, 4), (0x806E, 0), (0x806D, 0))  # UNPACK_*
+
+    def __init__(self, ctx, getint):
+        def fn(name, proto):
+            a = ctx.getProcAddress(name)
+            return proto(int(a)) if a else None
+        self.disable = fn(b"glDisable", GL1U)
+        self.pixel_store = fn(b"glPixelStorei", GLUI)
+        self.bind_buffer = fn(b"glBindBuffer", GL2U)
+        self.bind_sampler = fn(b"glBindSampler", GL2U)      # erst ab GL 3.3 / GLES 3 – sonst gibt es keine Sampler
+        self.active_texture = fn(b"glActiveTexture", GL1U)
+        self.color_mask = fn(b"glColorMask", GL4B)
+        n = ctypes.c_int(0)
+        getint(0x8B4D, ctypes.byref(n))                     # GL_MAX_COMBINED_TEXTURE_IMAGE_UNITS
+        self.units = max(8, min(n.value or 16, 32))
+
+    def __call__(self):
+        if self.disable:
+            for cap in self.DISABLE:
+                self.disable(cap)
+        if self.pixel_store:
+            for name, val in self.PIXEL_STORE:
+                self.pixel_store(name, val)
+        if self.bind_buffer:
+            self.bind_buffer(0x88EC, 0)                     # GL_PIXEL_UNPACK_BUFFER
+            self.bind_buffer(0x88EB, 0)                     # GL_PIXEL_PACK_BUFFER
+        if self.bind_sampler:
+            for unit in range(self.units):
+                self.bind_sampler(unit, 0)
+        if self.active_texture:
+            self.active_texture(0x84C0)                     # GL_TEXTURE0
+        if self.color_mask:
+            self.color_mask(1, 1, 1, 1)
 
 
 class EmbeddedEngine(Engine):
@@ -425,6 +470,7 @@ class Video(QObject):
         self.ctx, self.dead, self._show = None, False, True
         self._gpa = engine.mpvmod.MpvGlGetProcAddressFn(self._proc_address)
         self.getint = None
+        self.gl_reset = None
         self.frame.connect(win.update, Qt.QueuedConnection)
         win.beforeRenderPassRecording.connect(self._render, Qt.DirectConnection)
         win.frameSwapped.connect(self._swapped, Qt.DirectConnection)
@@ -456,6 +502,7 @@ class Video(QObject):
                 if ctx is None:
                     raise RuntimeError("kein OpenGL-Kontext (Qt zeichnet per Software?)")
                 self.getint = GLGETINT(int(ctx.getProcAddress(b"glGetIntegerv")))
+                self.gl_reset = GlReset(ctx, self.getint)
                 self.ctx = self.engine.mpvmod.MpvRenderContext(
                     self.engine.mpv, "opengl", opengl_init_params={"get_proc_address": self._gpa})
                 self.ctx.update_cb = self.frame.emit
@@ -476,6 +523,7 @@ class Video(QObject):
         w, h = int(self.win.width() * r), int(self.win.height() * r)
         self.win.beginExternalCommands()
         try:
+            self.gl_reset()
             self.ctx.render(flip_y=True, block_for_target_time=False, opengl_fbo={"w": w, "h": h, "fbo": fb.value})
         finally:
             self.win.endExternalCommands()

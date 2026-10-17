@@ -8,7 +8,7 @@ hotfixes to it `## 2026.11.1 – …`. New changes go first under `## Testing �
 at the top; `vspub --release` or `vspub --hotfix` assigns the number when releasing (see `RELEASING.md`).
 Older versions (up to 0.15.0) still use the old numbering.
 
-## Testing – 2026-10-17
+## Testing – 2026-10-18
 - Built-in player for TV: switch channels with ▲▼ right in the picture, without going back to the start page. Switching shows the logo, channel name, position in the list and the current and next show (EPG). X opens the channel list at the edge of the screen (list, favorites, recent), Y marks the channel as a favorite, Start opens “Sound & picture” (audio track, subtitles, aspect ratio, quality), ◀▶ change the volume, LB/RB jump to the previous channel. Press B twice to quit TV. Works with controller, keyboard, remote or mouse – in the VoidStation look and in all languages
 - TV: a channel that can't be reached now says why (blocked, timeout, stream no longer exists, no internet) instead of simply doing nothing; ▲ jumps straight to the next one. In the channel list it is dimmed and marked with ⚠ for 24 hours. The player bridges short network dropouts instead of giving up
 - TV and videos are now decoded by the graphics card (VA-API, NVDEC on NVIDIA) instead of the processor – less load, less heat, quieter fans
