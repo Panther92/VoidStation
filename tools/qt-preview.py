@@ -85,7 +85,8 @@ def job():
 def settings():
     return dict(S.SETTINGS, volume=STATE["volume"], version={"version": "0.12.1", "build": "abc123"}, ssh=True, live=LIVE["on"],
                 standby=not LIVE["on"],
-                sysupd_days=90, sysupd_choices=[30, 60, 90], frontend=STATE.get("frontend", "qt"), frontends=["qt", "web"])
+                sysupd_days=90, sysupd_choices=[30, 60, 90], frontend=STATE.get("frontend", "qt"), frontends=["qt", "web"],
+                padmouse=STATE.get("padmouse", True))
 
 
 # Installer (--live): Geraet wie im Web-Installer (DEMO_PROBE), Installation laeuft simuliert in ~20 s durch
@@ -152,7 +153,8 @@ class H(S.H):
             "/tiles.json": lambda: TILES,
             "/api/status": lambda: {"running": st["running"], "starting": [], "radio": st["radio"], "tv": st["tv"],
                                     "update": st["update"] if not LIVE["on"] else {"available": False}, "live": LIVE["on"]},
-            "/api/front": lambda: {"id": st["running"][0] if st["running"] else None},
+            "/api/front": lambda: {"id": st["running"][0] if st["running"] else None, "mouse": True,
+                                   "padmouse": STATE.get("padmouse", True)},
             "/api/volume": lambda: st["volume"],
             "/api/settings": settings,
             "/api/radio/favs": lambda: st["favs"],
@@ -253,6 +255,8 @@ class H(S.H):
             if p.endswith("/lang"):
                 S.SETTINGS["lang"] = body.get("lang")
                 return self.j({"lang": body.get("lang")})
+            if p.endswith("/padmouse"):
+                STATE["padmouse"] = bool(body.get("on"))
             if p.endswith("/frontend"):
                 STATE["frontend"] = body.get("frontend")
             return self.j(settings())

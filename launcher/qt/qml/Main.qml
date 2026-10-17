@@ -269,6 +269,7 @@ Window {
                 else app.move(k)
             }
             function onPadConnected(name) { app.toast(Ui.t("pad.connected", { name: name })) }
+            function onPadMouse(on) { mouseHint.show(on) }
         }
 
         // ------------------------------------------------------------ Start
@@ -596,6 +597,7 @@ Window {
             onGoHome: Api.post("/api/home", null, function (r) { app.running = r.running || [] })
             onCloseFront: function (t) { app.closeApp(t) }
         }
+        MouseHint { id: mouseHint }
         Osk { id: osk; anchors.fill: parent }
         Splash { id: splash; anchors.fill: parent; tile: app.splashTile }
         Toast { id: toastBox }

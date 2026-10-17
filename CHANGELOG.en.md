@@ -9,6 +9,7 @@ at the top; `vspub --release` or `vspub --hotfix` assigns the number when releas
 Older versions (up to 0.15.0) still use the old numbering.
 
 ## Testing – 2026-10-17
+- Controller as mouse: in apps like Firefox/YouTube, FreeTube, Discord, VLC or mGBA the right stick moves the mouse pointer (the further, the faster), R2 clicks (hold to drag), L2 right-clicks, the left stick scrolls. In games and emulators it is off by default because the right stick and shoulder buttons belong to the game – R3 (press the right stick) toggles it in any app, a short note in the bottom right shows the state. Turn it off completely: Settings → System → Controller as mouse. No extra program: the start page creates a virtual mouse for this
 - Bluetooth: paired devices can be renamed – “Rename” next to “Unpair”, e.g. “PS4 controller” instead of “Wireless Controller”. The name is kept until the device is unpaired; “Original name” (or an empty field) brings back the name the device reports itself
 - Game Boy Color: new share folder `share/ROMs/gbc`. The mGBA tile lists the games from `gba` and `gbc` together (Game Boy `.gb` games work in either folder)
 - DOSBox Staging starts ready to use: fullscreen, as a 386 with 4000 cycles (Ctrl+F11/F12 change the speed), drive C is the share `share/ROMs/dos`, language and keyboard as set in VoidStation. The base settings (`~/.config/dosbox/dosbox-staging.conf`) are only created if there are none yet – your own settings are kept

@@ -335,6 +335,13 @@ Layer {
         if (sett.frontend === fe) return
         Api.post("/api/settings/frontend", { frontend: fe }, function (j) { update(function () { sett = j }); app.toast(Ui.t("settings.frontendToast")) }, fail)
     }
+    function setPadMouse(on) {
+        if (!!sett.padmouse === on) return
+        Api.post("/api/settings/padmouse", { on: on }, function (j) {
+            update(function () { sett = j })
+            app.toast(Ui.t(on ? "settings.padMouseOnToast" : "settings.padMouseOffToast"))
+        }, fail)
+    }
     function setSsh(on) {
         if (!!sett.ssh === on) return
         app.toast(Ui.t(on ? "settings.sshTurningOn" : "settings.sshTurningOff"))
@@ -650,6 +657,17 @@ Layer {
                 Pill { property string key: "off"; text: Ui.t("settings.poweroff"); onTriggered: app.power("poweroff") }
                 Pill { property string key: "standby"; visible: !!(app.sett && app.sett.standby); text: Ui.t("power.standby"); onTriggered: app.power("suspend") }
             }
+        }
+        // Controller als Maus in Programmen (Startseite: PadMouse in voidstation-home.py)
+        SetGroup {
+            visible: s.cat === "system" && !!s.sett && s.sett.padmouse !== undefined; availH: s.colH; title: Ui.t("settings.padMouse")
+            SetRow {
+                Repeater {
+                    model: [true, false]
+                    Pill { property string key: "pm" + modelData; text: Ui.t(modelData ? "common.on" : "common.off"); on: !!s.sett && !!s.sett.padmouse === modelData; onTriggered: s.setPadMouse(modelData) }
+                }
+            }
+            Info { html: Ui.esc(Ui.t("settings.padMouseHint")) }
         }
         SetGroup {
             visible: s.cat === "system" && !!s.sett && (s.sett.frontends || []).length > 1; availH: s.colH; title: Ui.t("settings.frontend")

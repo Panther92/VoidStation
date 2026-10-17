@@ -476,7 +476,7 @@ def volume_set(action):
 # ---------------------------------------------------------------------------
 SETTINGS = BASE / "settings.json"
 DEFAULTS = {"scale": 1.75, "resolution": None, "cursor_theme": "Bibata-Modern-Ice", "cursor_size": 48, "lang": None, "theme": "default-dark",
-            "sysupd_days": 90}
+            "sysupd_days": 90, "padmouse": True}
 SYSUPD_DAYS = (30, 60, 90)                  # Erinnerung an Systemupdates (ohne VoidStation-Update) nach … Tagen
 # Sprachen der Oberflaeche: Texte in web/i18n/<id>.json, fehlende Texte kommen aus en.json, dann aus de.json.
 # Anzeige immer in der eigenen Sprache. Je Sprache auch das Locale fuer gestartete Programme (LANG/LANGUAGE) und
@@ -1521,6 +1521,26 @@ def catalog():
 
 def catalog_app(app_id):
     return next((a for a in catalog()["apps"] if a["id"] == app_id), None)
+
+
+def pad_mouse_default(tile_id):
+    """Controller als Maus (Startseite: rechter Stick, R2/L2) im Programm dieser Kachel von selbst an?
+    Vorrang: "mouse" an der Kachel (tiles.json), dann im Katalog; Spiele und Emulatoren (Gruppe "Spiele") aus,
+    weil dort rechter Stick und Schultertasten zum Spiel gehoeren – R3 schaltet trotzdem um. Sonst an."""
+    if not tile_id:
+        return True
+    t = find_tile(tile_id) or {}
+    if isinstance(t.get("mouse"), bool):
+        return t["mouse"]
+    try:
+        a = catalog_app(tile_id)
+    except (OSError, ValueError):
+        a = None
+    if a:
+        if isinstance(a.get("mouse"), bool):
+            return a["mouse"]
+        return (a.get("tile") or {}).get("group") != "Spiele"
+    return True
 
 
 def tile_ids():
@@ -2582,7 +2602,7 @@ def settings_payload():
                        "sizes": CURSOR_SIZES}, "displays": xrandr_info(),
             "audio": audio_info(), "volume": volume_get(), "net": net_info(), "share": share_info(),
             "sysupd_days": sysupd_days(s), "sysupd_choices": SYSUPD_DAYS,
-            "frontend": frontend(), "frontends": frontends()}
+            "frontend": frontend(), "frontends": frontends(), "padmouse": bool(s.get("padmouse", True))}
 
 
 # ---------------------------------------------------------------------------
@@ -3576,8 +3596,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._send(403)
         url = urllib.parse.urlparse(self.path)
         path = url.path
-        if path == "/api/front":
-            return self._json(200, {"id": APPS.front()})
+        if path == "/api/front":                   # heisse Ecke und Controller-Maus der Startseite
+            tid = APPS.front()
+            return self._json(200, {"id": tid, "mouse": pad_mouse_default(tid),
+                                    "padmouse": bool(settings_load().get("padmouse", True))})
         if path == "/api/status":
             running = APPS.running()
             return self._json(200, {"running": running, "starting": APPS.starting(), "radio": RADIO.status(),
@@ -3826,6 +3848,11 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(400, {"error": "unbekanntes Theme"})
                 s = settings_load(); s["theme"] = th; settings_save(s)
                 apply_appearance(s)                    # Programme folgen hell/dunkel
+                return self._json(200, settings_payload())
+            if parts == ["api", "settings", "padmouse"]:
+                on = bool(self._body().get("on"))
+                s = settings_load(); s["padmouse"] = on; settings_save(s)
+                log("Controller-Maus:", "an" if on else "aus")
                 return self._json(200, settings_payload())
             if parts == ["api", "settings", "frontend"]:
                 fe = str(self._body().get("frontend", ""))

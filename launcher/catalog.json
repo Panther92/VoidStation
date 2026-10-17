@@ -307,6 +307,7 @@
       "cmd": [
         "mgba-qt"
       ],
+      "mouse": true,
       "tile": {
         "group": "Spiele",
         "size": "wide",
@@ -718,6 +719,7 @@
       "cmd": [
         "wesnoth"
       ],
+      "mouse": true,
       "tile": {
         "group": "Spiele",
         "size": "medium",
@@ -739,6 +741,7 @@
       "cmd": [
         "openttd"
       ],
+      "mouse": true,
       "tile": {
         "group": "Spiele",
         "size": "medium",
@@ -764,6 +767,7 @@
       "cmd": [
         "kodi"
       ],
+      "mouse": false,
       "tile": {
         "group": "Unterhaltung",
         "size": "medium",
@@ -908,6 +912,7 @@
         "url": "https://www.youtube.com/tv",
         "ua": "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/4.0 Chrome/76.0.3809.146 TV Safari/537.36"
       },
+      "mouse": false,
       "tile": {
         "group": "Unterhaltung",
         "size": "medium",
