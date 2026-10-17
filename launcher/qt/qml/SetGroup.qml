@@ -6,6 +6,7 @@ import VS
 Group {
     id: sg
     property real availH: 400
+    property alias maxW: col.maxW               // breiter als die uebliche Spalte (z. B. Bluetooth-Geraeteliste)
     default property alias rows: col.rows
     Col {
         id: col

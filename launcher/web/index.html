@@ -226,6 +226,7 @@
 
   /* Einstellungen: Spalten mit Zeilen */
   .col { display: flex; flex-direction: column; gap: calc(12px * var(--f)); max-width: 40vw; }
+  .col.wide { max-width: 70vw; }   /* Bluetooth: Geraet + Entkoppeln + Umbenennen in einer Zeile */
   .row { display: flex; flex-wrap: wrap; align-items: center; gap: calc(8px * var(--f)); }
   .lbl { width: 100%; font-size: calc(14px * var(--f)); color: var(--text-faint); margin-top: calc(6px * var(--f)); }
   .info { font-size: calc(16px * var(--f)); color: var(--text-dim); line-height: 1.5; }
@@ -351,9 +352,7 @@
   .romcard .romname { font-size: calc(16px * var(--f)); font-weight: 500; z-index: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .romcard .romsub { font-size: calc(12px * var(--f)); color: var(--text-dim); z-index: 1; margin-top: calc(2px * var(--f)); }
   .btlist { display: flex; flex-direction: column; gap: calc(6px * var(--f)); margin-top: calc(8px * var(--f)); align-items: flex-start; }
-  .btlist > .row { flex-wrap: nowrap; margin: 0; align-items: flex-start; }
-  .btlist .btside { display: flex; flex-direction: column; gap: calc(6px * var(--f)); }   /* Entkoppeln, darunter Umbenennen */
-  .btlist .btside > .pill { width: 100%; }
+  .btlist > .row { flex-wrap: nowrap; margin: 0; }
   /* Globales OSD-Keyboard */
   #osk.dialog { z-index: 45; }
   .osk-band { display: flex; flex-direction: column; gap: calc(14px * var(--f)); max-width: 90vw; margin: 0 auto; width: 100%; }
@@ -1551,6 +1550,7 @@ const SET_PAGES = {
   },
   bt(tr) {
     const bc = col(tr, T('bt.desc'));
+    bc.classList.add('wide');
     if (!btState || !btState.available) {
       const bi = document.createElement('div'); bi.className = 'info';
       bi.textContent = T('bt.unsupported');
@@ -1602,14 +1602,11 @@ const SET_PAGES = {
               const dr = document.createElement('div');
               dr.className = 'row';
               dr.appendChild(b);
-              const side = document.createElement('div');
-              side.className = 'btside';
               const rm = pill(esc(T('bt.remove')), () => btRemove(d.mac));
               rm.dataset.key = 'btrm' + d.mac.replace(/[^A-Za-z0-9]/g, '');
-              const mv = pill(esc(T('bt.rename')), () => btRenameStart(d));
+              const mv = pill(esc(T('bt.rename')), () => btRenameStart(d));   // neben Entkoppeln
               mv.dataset.key = 'btmv' + d.mac.replace(/[^A-Za-z0-9]/g, '');
-              side.append(rm, mv);
-              dr.appendChild(side);
+              dr.append(rm, mv);
               rd.appendChild(dr);
             } else {
               rd.appendChild(b);

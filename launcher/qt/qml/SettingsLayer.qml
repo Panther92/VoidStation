@@ -13,6 +13,7 @@ Layer {
     property var bt: null
     property bool btScanning: false
     property var btRename: null                 // Geraet, das gerade umbenannt wird (Eingabefeld statt Liste)
+    readonly property real btW: Ui.screenW * 0.7  // Bluetooth-Seite hat nur eine Spalte: Geraeteliste darf breiter sein
     property var vsState: null
     property var wifiList: null
     property var wifiPick: null
@@ -534,6 +535,7 @@ Layer {
         // Bluetooth
         SetGroup {
             visible: s.cat === "bt"; availH: s.colH; title: Ui.t("bt.desc")
+            maxW: s.btW                                 // Platz fuer Geraet + Entkoppeln + Umbenennen in einer Zeile
             Info { visible: !s.bt || !s.bt.available; html: Ui.esc(Ui.t("bt.unsupported")) }
             Info { visible: !!s.bt && s.bt.available && !s.bt.service; html: Ui.esc(Ui.t("bt.serviceOff")) }
             SetRow {
@@ -571,16 +573,17 @@ Layer {
             SetRow {
                 visible: !s.btRename && !!s.bt && s.bt.available && s.bt.service && s.bt.powered && (s.bt.devices || []).length > 0
                 label: Ui.t("bt.available")
+                width: s.btW
                 Repeater {
                     model: s.bt && s.bt.devices ? s.bt.devices.slice(0, 10) : []
                     Row {
                         spacing: 8 * Ui.f
                         property var dev: modelData
-                        width: Ui.screenW * 0.4
+                        width: s.btW
                         Pill {
                             property string key: "bt" + s.btKey(modelData.mac)
                             rich: true
-                            maxWidth: Ui.screenW * 0.4 - (side.visible ? side.width + 8 * Ui.f : 0)
+                            maxWidth: s.btW - (rm.visible ? rm.width + mv.width + 16 * Ui.f : 0)
                             on: !!modelData.connected
                             text: Ui.esc(modelData.name || modelData.mac) + "<font color='" + Ui.c.textFaint + "'>" + s.btExtra(modelData) + "</font>"
                             onTriggered: {
@@ -590,26 +593,20 @@ Layer {
                                 else s.btPair(m)
                             }
                         }
-                        // Gekoppelte Geraete: Entkoppeln, darunter Umbenennen
-                        Column {
-                            id: side
+                        // Gekoppelte Geraete: Entkoppeln, daneben Umbenennen
+                        Pill {
+                            id: rm
+                            property string key: "btrm" + s.btKey(modelData.mac)
                             visible: !!modelData.paired
-                            spacing: 8 * Ui.f
-                            readonly property real w: Math.max(rmP.implicitWidth, mvP.implicitWidth)   // beide gleich breit
-                            Pill {
-                                id: rmP
-                                width: side.w
-                                property string key: "btrm" + s.btKey(modelData.mac)
-                                text: Ui.t("bt.remove")
-                                onTriggered: s.btCall("/api/bluetooth/remove", { mac: modelData.mac }, Ui.t("bt.disconnecting"), Ui.t("bt.disconnectedToast"))
-                            }
-                            Pill {
-                                id: mvP
-                                width: side.w
-                                property string key: "btmv" + s.btKey(modelData.mac)
-                                text: Ui.t("bt.rename")
-                                onTriggered: s.btRenameStart(modelData)
-                            }
+                            text: Ui.t("bt.remove")
+                            onTriggered: s.btCall("/api/bluetooth/remove", { mac: modelData.mac }, Ui.t("bt.disconnecting"), Ui.t("bt.disconnectedToast"))
+                        }
+                        Pill {
+                            id: mv
+                            property string key: "btmv" + s.btKey(modelData.mac)
+                            visible: !!modelData.paired
+                            text: Ui.t("bt.rename")
+                            onTriggered: s.btRenameStart(modelData)
                         }
                     }
                 }
