@@ -13,9 +13,11 @@ Rectangle {
     property string quality: "max"
     property string title: Ui.t("player.menu.title")
     property string repeatMode: ""               // Musik: Wiederholen-Abschnitt (leer = keiner)
+    property int shuffleState: -1                // Musik: Zufall (-1 = kein Eintrag, 0 aus, 1 an)
     property string homeSub: ""
     signal qualityChosen(string v)
     signal repeatChosen(string m)
+    signal shuffleToggled()
     signal homeChosen()
     z: 45
     width: Math.min(Ui.screenW * 0.34, 460 * Ui.f)
@@ -55,6 +57,10 @@ Rectangle {
             for (i = 0; i < modes.length; i++)
                 out.push({ label: Ui.t("player.repeat." + modes[i]), sub: Ui.t("player.repeat." + modes[i] + ".sub"), on: repeatMode === modes[i],
                            act: { kind: "repeat", v: modes[i] } })
+        }
+        if (shuffleState >= 0) {
+            out.push({ head: Ui.t("player.menu.order") })
+            out.push({ label: Ui.t("player.shuffle"), sub: Ui.t("player.shuffle.sub"), on: shuffleState === 1, act: { kind: "shuffle" } })
         }
         if (audio.length > 1 || (audio.length && hasVideo)) {
             out.push({ head: Ui.t("player.menu.audio") })
@@ -114,6 +120,8 @@ Rectangle {
         } else if (act.kind === "quality") {
             quality = act.v
             qualityChosen(act.v)
+        } else if (act.kind === "shuffle") {
+            shuffleToggled()
         } else if (act.kind === "repeat") {
             repeatChosen(act.v)
         } else if (act.kind === "home") {

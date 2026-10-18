@@ -69,6 +69,10 @@ def media():
         tmp = Path(tempfile.mkdtemp(prefix="vs-preview-"))
         L.RESUME = tmp / "resume.json"
         L.MediaLib.THUMBS = tmp / "thumbs"
+        L.CoverFetcher.CACHE = tmp / "covers"                   # Cover-Suche: Zwischenspeicher im Wegwerf-Ordner,
+        L.CoverFetcher.MISSES = tmp / "covers" / "misses.json"  # Schalter nur im Speicher (VS_MB_URL/VS_CAA_URL: Testserver)
+        L.CoverFetcher.auto = staticmethod(lambda: PLAYER.get("covers_auto", True))
+        PLAYER["L"] = L
         PLAYER["media"], PLAYER["tmp"] = L.MediaLib(), tmp
     return PLAYER["media"]
 
@@ -209,6 +213,7 @@ class H(S.H):
             "/api/media/roots": lambda: media().roots(),
             "/api/media/list": lambda: media_list(q),
             "/api/media/nextfolder": lambda: media().next_folder(q.get("path", [""])[0]) or {},
+            "/api/media/covers": lambda: (media(), PLAYER["L"].COVERS.status())[1],
         }
         if p == "/api/media/thumb":
             r = media().thumb(q.get("path", [""])[0])
@@ -261,6 +266,15 @@ class H(S.H):
             ch = next((c for c in S.TV if c["key"] == body.get("key")), None)
             st["tvfavs"] = [f for f in st["tvfavs"] if f["key"] != body.get("key")] + ([ch] if ch and p.endswith("/fav") else [])
             return self.j(st["tvfavs"])
+        if p == "/api/media/covers/scan":
+            media()
+            L = PLAYER["L"]
+            L.COVERS.scan(Path(os.environ["HOME"]) / "share" / "Musik")
+            return self.j(L.COVERS.status())
+        if p == "/api/media/covers/auto":
+            media()
+            PLAYER["covers_auto"] = bool(body.get("on"))
+            return self.j(PLAYER["L"].COVERS.status())
         if p == "/api/media/resume":
             media().resume_set(body.get("path", ""), body.get("pos"), body.get("dur"))
             return self.j({"ok": True})

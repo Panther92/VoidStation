@@ -626,5 +626,16 @@
   "player.media.nextFolder": "Συνέχεια με {name}",
   "player.media.allPlayed": "Παίχτηκαν όλοι οι φάκελοι",
   "player.hint.repeat": "<b>Y</b> επανάληψη",
-  "player.hint.playbackMenu": "<b>Start / M</b> αναπαραγωγή"
+  "player.hint.playbackMenu": "<b>Start / M</b> αναπαραγωγή",
+  "player.shuffle": "Τυχαία",
+  "player.shuffle.sub": "Κομμάτια σε τυχαία σειρά",
+  "player.shuffle.on": "Τυχαία σειρά ενεργή",
+  "player.shuffle.off": "Τυχαία σειρά ανενεργή",
+  "player.menu.order": "Σειρά",
+  "player.hint.shuffle": "<b>X</b> τυχαία",
+  "player.covers.auto": "Αυτόματη λήψη εξωφύλλων",
+  "player.covers.scan": "Λήψη όλων των εξωφύλλων",
+  "player.covers.started": "Αναζήτηση εξωφύλλων στο παρασκήνιο",
+  "player.covers.progress": "Εξώφυλλα: {done} από {total} · βρέθηκαν {found}",
+  "player.covers.done": "Η αναζήτηση τελείωσε: βρέθηκαν {found} από {total}"
 }

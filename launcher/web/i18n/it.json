@@ -625,5 +625,16 @@
   "player.media.nextFolder": "Si continua con {name}",
   "player.media.allPlayed": "Tutte le cartelle riprodotte",
   "player.hint.repeat": "<b>Y</b> ripeti",
-  "player.hint.playbackMenu": "<b>Start / M</b> riproduzione"
+  "player.hint.playbackMenu": "<b>Start / M</b> riproduzione",
+  "player.shuffle": "Casuale",
+  "player.shuffle.sub": "Brani in ordine casuale",
+  "player.shuffle.on": "Riproduzione casuale attiva",
+  "player.shuffle.off": "Riproduzione casuale disattivata",
+  "player.menu.order": "Ordine",
+  "player.hint.shuffle": "<b>X</b> casuale",
+  "player.covers.auto": "Scarica copertine automaticamente",
+  "player.covers.scan": "Scarica tutte le copertine",
+  "player.covers.started": "Ricerca copertine in background",
+  "player.covers.progress": "Copertine: {done} di {total} · {found} trovate",
+  "player.covers.done": "Ricerca finita: {found} di {total} trovate"
 }

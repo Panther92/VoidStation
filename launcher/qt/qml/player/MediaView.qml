@@ -4,7 +4,8 @@
 // Angefangene Videos merkt sich der Launcher (Weiterschauen).
 // Tasten Video: A Pause, ◀▶ 10 s, LB/RB 1 min, ▲▼ Lautstaerke, Start Ton & Untertitel, Select Technik, B Stopp
 // Tasten Musik: A Pause, ◀▶ Titel zurueck/vor, LB/RB 10 s, ▲▼ Lautstaerke, Y Wiederholen (wie beim MP3-Player:
-// Titel wiederholen · Ordner, dann Stopp · Ordner wiederholen · weiter mit dem naechsten Ordner), Start Menue, B Stopp.
+// Titel wiederholen · Ordner, dann Stopp · Ordner wiederholen · weiter mit dem naechsten Ordner), X Zufaellig, Start Menue,
+// B Stopp. Cover fuer Ordner ohne Bild laedt der Launcher im Hintergrund (MusicBrainz), die Kacheln aktualisieren sich.
 // Guide/Win (oder Menue -> Zur Startseite): Startseite, Musik laeuft weiter, Videos halten an.
 import QtQuick
 import VS
@@ -34,6 +35,10 @@ Item {
     readonly property var repeatModes: ["next", "folder", "once", "track"]
     property string repeat: vs.prefGet("repeat", "next")
     property bool nextBusy: false
+    property bool shuffle: vs.prefGet("shuffle", "0") === "1"
+    property var origList: []                     // Titel des Ordners in Ordnerreihenfolge (fuer Zufall aus)
+    property var thumbs: ({})                     // nachgeladene Cover: Pfad -> Bild
+    property var coverState: null                 // /api/media/covers
     property bool osdOn: false
     property real seekAcc: 0
     readonly property var audioItems: items.filter(function (i) { return i.kind === "audio" })
@@ -90,6 +95,8 @@ Item {
             folderName = r.name || ""
             items = decorate((r.audio && r.audio > 1 ? [{ kind: "playall", title: Ui.t("player.media.playAll"), sub: Ui.t("player.media.tracks", { n: r.audio }) }] : []).concat(r.items || []))
             if (!r.items || !r.items.length) msg = Ui.t("player.media.folderEmpty")
+            thumbs = ({})
+            if (r.coversPending) coverPoll.restart(); else coverPoll.stop()
             if (fromArg && r.select) {
                 for (var i = 0; i < items.length; i++) if (items[i].path === r.select) { activate(items[i]); break }
             }
@@ -98,6 +105,25 @@ Item {
             msg = Ui.t("player.media.notFound")
             if (!path) openPath("")
         })
+    }
+    // Solange der Launcher Cover sucht: Liste neu holen und nur die Bilder der Kacheln austauschen (Fokus bleibt)
+    Timer {
+        id: coverPoll
+        interval: 3000; repeat: true
+        onTriggered: {
+            if (!mv.path || mv.phase !== "browse") return stop()
+            var p = mv.path
+            Api.get("/api/media/list?path=" + encodeURIComponent(p), function (r) {
+                if (!r || mv.path !== p) return
+                var t = {}, changed = false
+                for (var i = 0; i < (r.items || []).length; i++) {
+                    var it = r.items[i]
+                    if (it.thumb) { t[it.path] = it.thumb; changed = true }
+                }
+                if (changed) mv.thumbs = t
+                if (!r.coversPending) coverPoll.stop()
+            })
+        }
     }
     function focusLater() {
         Qt.callLater(function () {
@@ -143,6 +169,11 @@ Item {
     }
     function playAudio(list, index, folder, folderName) {
         if (!list.length) return
+        origList = list
+        if (shuffle) {                                // gewaehlter Titel zuerst, der Rest gemischt
+            list = [list[index]].concat(shuffled(list.filter(function (x, i) { return i !== index })))
+            index = 0
+        }
         playlist = list
         playing = list[index]
         playFolder = folder || path
@@ -169,6 +200,29 @@ Item {
         player.osdText(Ui.t("player.repeat." + m), "2000")
     }
     function cycleRepeat() { setRepeat(repeatModes[(repeatModes.indexOf(repeat) + 1) % repeatModes.length]) }
+    function shuffled(a) {
+        a = a.slice()
+        for (var i = a.length - 1; i > 0; i--) { var j = Math.floor(Math.random() * (i + 1)); var t = a[i]; a[i] = a[j]; a[j] = t }
+        return a
+    }
+    // Zufall an/aus waehrend der Wiedergabe: der laufende Titel spielt weiter, danach kommt der Rest neu sortiert
+    // (aus: in Ordnerreihenfolge ab dem laufenden Titel, bei "Ordner wiederholen" danach wieder von vorn)
+    function setShuffle(on) {
+        shuffle = on
+        vs.prefSet("shuffle", on ? "1" : "0")
+        var msg = Ui.t(on ? "player.shuffle.on" : "player.shuffle.off")
+        app.toast(msg)
+        player.osdText(msg, "2000")
+        if (phase !== "audio" || !origList.length) return
+        var cur = curTrackItem, ci = -1
+        for (var i = 0; i < origList.length; i++) if (cur && origList[i].path === cur.path) ci = i
+        var rest
+        if (on) rest = shuffled(origList.filter(function (x, i) { return i !== ci }))
+        else rest = origList.slice(ci + 1).concat(repeat === "folder" ? origList.slice(0, Math.max(0, ci)) : [])
+        player.command(["playlist-clear"])           // laesst den laufenden Titel stehen (Position 0)
+        for (i = 0; i < rest.length; i++) player.command(["loadfile", rest[i].path, "append"])
+        playlist = (cur ? [cur] : []).concat(rest)
+    }
     // Ende der Liste: Stopp oder (Modus "next") naechster Ordner mit Musik – Reihenfolge wie in der Mediathek,
     // auch ueber Interpreten hinweg (Interpret A/Album 2 -> Interpret B/Album 1)
     function audioEnded() {
@@ -306,6 +360,7 @@ Item {
             if (k === "lb" || k === "chdown") return player.seek(-10)
             if (k === "rb" || k === "chup") return player.seek(10)
             if (k === "y") return cycleRepeat()
+            if (k === "x") return setShuffle(!shuffle)
         }
     }
     function prevTrack() {
@@ -328,8 +383,16 @@ Item {
         anchors.fill: parent
         headRight: NowLine {
             main: mv.path ? Ui.t("player.media.items", { n: Ui.num(mv.items.filter(function (i) { return i.kind !== "playall" }).length, 0) }) : ""
-            sub: ""
+            sub: !mv.path && mv.coverState && mv.coverState.running
+                 ? Ui.t("player.covers.progress", { done: mv.coverState.done, total: mv.coverState.total, found: mv.coverState.found }) : ""
         }
+        showBar: !mv.path
+        bar: [
+            Pill { iconName: "image"; text: Ui.t("player.covers.auto"); on: !!(mv.coverState && mv.coverState.auto)
+                   onTriggered: Api.post("/api/media/covers/auto", { on: !(mv.coverState && mv.coverState.auto) }, function (s) { mv.coverState = s }) },
+            Pill { iconName: "update"; text: Ui.t("player.covers.scan"); enabled: !(mv.coverState && mv.coverState.running)
+                   onTriggered: Api.post("/api/media/covers/scan", {}, function (s) { mv.coverState = s; app.toast(Ui.t("player.covers.started")) }) }
+        ]
         Track {
             id: trk
             anchors.fill: parent
@@ -361,10 +424,21 @@ Item {
             }
         }
     }
+    // Stand der Cover-Suche (Startseite der Mediathek)
+    Timer {
+        interval: 2000; repeat: true; triggeredOnStart: true
+        running: mv.phase === "browse" && !mv.path && vsMode === "media"
+        onTriggered: Api.get("/api/media/covers", function (s) {
+            var was = mv.coverState && mv.coverState.running
+            mv.coverState = s
+            if (was && s && !s.running) app.toast(Ui.t("player.covers.done", { found: s.found, total: s.total }))
+        })
+    }
     Component {
         id: tileDelegate
         MediaTile {
             it: modelData
+            coverOverride: mv.thumbs[modelData.path] || ""
             onTriggered: mv.activate(modelData)
         }
     }
@@ -540,6 +614,21 @@ Item {
                     }
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: mv.cycleRepeat() }
                 }
+                Rectangle {
+                    color: mv.shuffle ? Ui.c.surfaceActive : Ui.alpha(Ui.c.surfaceCard, 0.9)
+                    border.width: 1; border.color: Ui.c.borderSubtle
+                    width: shRow.width + 20 * Ui.f; height: shRow.height + 8 * Ui.f
+                    anchors.verticalCenter: parent.verticalCenter
+                    opacity: mv.shuffle ? 1 : 0.55
+                    Row {
+                        id: shRow
+                        anchors.centerIn: parent
+                        spacing: 7 * Ui.f
+                        Glyph { name: "shuffle"; width: 15 * Ui.f; height: width; anchors.verticalCenter: parent.verticalCenter }
+                        Txt { text: Ui.t("player.shuffle"); font.pixelSize: 14 * Ui.f; anchors.verticalCenter: parent.verticalCenter }
+                    }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: mv.setShuffle(!mv.shuffle) }
+                }
             }
             Item { width: 1; height: 8 * Ui.f }
             Repeater {                                  // die naechsten Titel
@@ -557,7 +646,7 @@ Item {
             width: parent.width - 2 * Ui.padX
             anchors.bottom: parent.bottom; anchors.bottomMargin: 14 * Ui.f
             list: [Ui.t("player.hint.pause"), Ui.t("player.hint.tracks"), Ui.t("player.hint.seekSmall"), Ui.t("player.hint.volumeUD"),
-                   Ui.t("player.hint.repeat"), Ui.t("player.hint.playbackMenu"), Ui.t("hint.homeShort"), Ui.t("player.hint.stop")]
+                   Ui.t("player.hint.repeat"), Ui.t("player.hint.shuffle"), Ui.t("player.hint.playbackMenu"), Ui.t("hint.homeShort"), Ui.t("player.hint.stop")]
         }
     }
 
@@ -625,6 +714,8 @@ Item {
         id: menu
         title: mv.phase === "audio" ? Ui.t("player.menu.playback") : Ui.t("player.menu.title")
         repeatMode: mv.phase === "audio" ? mv.repeat : ""
+        shuffleState: mv.phase === "audio" ? (mv.shuffle ? 1 : 0) : -1
+        onShuffleToggled: mv.setShuffle(!mv.shuffle)
         homeSub: mv.phase === "video" ? Ui.t("player.menu.homeVideo") : Ui.t("player.menu.homeMusic")
         onRepeatChosen: function (m) { mv.setRepeat(m) }
         onHomeChosen: mv.goHome()

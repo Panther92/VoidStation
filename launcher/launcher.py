@@ -572,7 +572,7 @@ def volume_set(action):
 # ---------------------------------------------------------------------------
 SETTINGS = BASE / "settings.json"
 DEFAULTS = {"scale": 1.75, "resolution": None, "cursor_theme": "Bibata-Modern-Ice", "cursor_size": 48, "lang": None, "theme": "default-dark",
-            "sysupd_days": 90, "padmouse": True}
+            "sysupd_days": 90, "padmouse": True, "covers_auto": True}
 SYSUPD_DAYS = (30, 60, 90)                  # Erinnerung an Systemupdates (ohne VoidStation-Update) nach … Tagen
 # Sprachen der Oberflaeche: Texte in web/i18n/<id>.json, fehlende Texte kommen aus en.json, dann aus de.json.
 # Anzeige immer in der eigenen Sprache. Je Sprache auch das Locale fuer gestartete Programme (LANG/LANGUAGE) und
@@ -1782,16 +1782,42 @@ class MediaLib:
                 return p
         return None
 
+    @staticmethod
+    def own_cover(folder):
+        """Cover eines Ordners: Bilddatei im Ordner (cover.jpg & Co.) oder heruntergeladenes im Zwischenspeicher."""
+        for n in COVER_NAMES:
+            c = folder / n
+            if c.is_file():
+                return c
+        c = COVERS.cache_file(folder)
+        return c if c.is_file() else None
+
+    def cover_url(self, folder, depth=1):
+        """Bild fuer einen Ordner; ohne eigenes das des ersten Unterordners mit Cover (Interpret -> erstes Album)."""
+        c = self.own_cover(folder)
+        if c is None and depth > 0:
+            for sub in self._subdirs(folder)[:40]:
+                c = self.own_cover(sub)
+                if c is not None:
+                    break
+        if c is None:
+            return ""
+        try:
+            m = int(c.stat().st_mtime)
+        except OSError:
+            m = 0
+        if c.parent == COVERS.CACHE:
+            return "/api/media/thumb?cover=" + urllib.parse.quote(str(c.name)) + f"&m={m}"
+        return "/api/media/thumb?path=" + urllib.parse.quote(str(c)) + f"&m={m}"
+
     def thumb_url(self, p, kind, st=None):
         if kind == "video" and self.thumbnailer:
             m = int(st.st_mtime) if st else 0
             return "/api/media/thumb?path=" + urllib.parse.quote(str(p)) + f"&m={m}"
-        if kind in ("dir", "audio"):
-            folder = p if kind == "dir" else p.parent
-            for n in COVER_NAMES:
-                c = folder / n
-                if c.is_file():
-                    return "/api/media/thumb?path=" + urllib.parse.quote(str(c))
+        if kind == "dir":
+            return self.cover_url(p)
+        if kind == "audio":
+            return self.cover_url(p.parent, depth=0)
         return ""
 
     @staticmethod
@@ -1896,8 +1922,16 @@ class MediaLib:
         parent = "" if p in roots or p.parent in (Path("/run/media"), Path("/media")) else str(p.parent)
         if p.parent == self.share().resolve():
             parent = ""                              # ~/share/Videos und ~/share/Musik: zurueck zur Startseite
+        audio = sum(1 for f in files if f["kind"] == "audio")
+        # Cover automatisch laden: dieser Ordner (hat er Musik) und die Unterordner ohne Bild
+        pending = 0
+        if COVERS.auto():
+            if audio and not any(f.get("thumb") for f in files if f["kind"] == "audio"):
+                pending += COVERS.add(p)
+            for d in dirs[:60]:                    # auch Interpreten-Ordner, die schon das Bild eines Albums zeigen
+                pending += COVERS.add(Path(d["path"]), deep=True)
         return {"path": str(p), "name": p.name, "parent": parent, "items": dirs + files, "select": select,
-                "audio": sum(1 for f in files if f["kind"] == "audio")}
+                "audio": audio, "coversPending": pending or COVERS.busy_for(p)}
 
     def _subdirs(self, d):
         try:
@@ -1981,6 +2015,261 @@ class MediaLib:
 
 
 MEDIA = MediaLib()
+
+
+# ---------------------------------------------------------------------------
+#  Album-Cover automatisch laden (wie der Scraper in Batocera)
+# ---------------------------------------------------------------------------
+class CoverFetcher:
+    """Fuer Musik-Ordner ohne Bild ein Cover besorgen, im Hintergrund, nacheinander:
+    1. eingebettetes Bild der ersten Datei (ffmpeg) – ohne Internet
+    2. Interpret + Album aus den Tags (ffprobe), sonst aus den Ordnernamen ("Interpret/Album" oder "Interpret - Album")
+    3. MusicBrainz-Suche (Release-Group) -> Cover Art Archive (front-500)
+    Gespeichert als cover.jpg im Ordner (sehen auch andere Player); ist der Ordner schreibgeschuetzt (USB-Stick,
+    Freigabe), im Zwischenspeicher ~/.cache/voidstation/covers. Nichts gefunden: 30 Tage lang nicht erneut fragen.
+    MusicBrainz erlaubt eine Anfrage pro Sekunde und verlangt einen erkennbaren User-Agent."""
+    CACHE = Path.home() / ".cache" / "voidstation" / "covers"
+    MISSES = CACHE / "misses.json"
+    MB = os.environ.get("VS_MB_URL", "https://musicbrainz.org/ws/2/")
+    CAA = os.environ.get("VS_CAA_URL", "https://coverartarchive.org/")
+    UA = {"User-Agent": "VoidStation/2026 ( https://voidstation.de )", "Accept": "application/json"}
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.queue, self.queued = [], set()
+        self.current = None
+        self.stats = {"done": 0, "found": 0, "total": 0}
+        self.last_mb = 0.0
+        self.misses = None
+        self.worker = None
+
+    # ---- Einstellungen / Zustand ----
+    @staticmethod
+    def auto():
+        return bool(settings_load().get("covers_auto", True))
+
+    def cache_file(self, folder):
+        return self.CACHE / (hashlib.sha1(str(folder).encode()).hexdigest()[:16] + ".jpg")
+
+    def _miss_load(self):
+        if self.misses is None:
+            try:
+                self.misses = json.loads(self.MISSES.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                self.misses = {}
+        return self.misses
+
+    def _miss(self, folder):
+        d = self._miss_load()
+        d[str(folder)] = int(time.time())
+        try:
+            self.CACHE.mkdir(parents=True, exist_ok=True)
+            tmp = self.MISSES.with_suffix(".tmp")
+            tmp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(self.MISSES)
+        except OSError:
+            pass
+
+    def _recent_miss(self, folder):
+        t = self._miss_load().get(str(folder))
+        return bool(t and time.time() - t < 30 * 86400)
+
+    def status(self):
+        with self.lock:
+            return dict(self.stats, queue=len(self.queue), running=self.current is not None or bool(self.queue),
+                        current=Path(self.current).name if self.current else "", auto=self.auto())
+
+    def busy_for(self, folder):
+        """Wird fuer diesen Ordner oder einen direkten Unterordner gerade ein Cover gesucht?"""
+        with self.lock:
+            items = list(self.queue) + ([self.current] if self.current else [])
+        f = str(folder)
+        return sum(1 for q in items if q == f or os.path.dirname(q) == f)
+
+    # ---- Warteschlange ----
+    def add(self, folder, deep=False, force=False):
+        """Ordner vormerken (deep: Ordner ohne eigene Musik -> seine Unterordner eine Ebene tiefer). Rueckgabe: neu."""
+        folder = Path(folder)
+        if MediaLib.own_cover(folder) is not None or (not force and self._recent_miss(folder)):
+            return 0
+        if not self._has_audio(folder):
+            if not deep:
+                return 0
+            return sum(self.add(sub, deep=False, force=force) for sub in MEDIA._subdirs(folder)[:40])
+        with self.lock:
+            if str(folder) in self.queued:
+                return 0
+            self.queued.add(str(folder))
+            self.queue.append(str(folder))
+            self.stats["total"] += 1
+            if not self.worker or not self.worker.is_alive():
+                self.worker = threading.Thread(target=self._run, daemon=True)
+                self.worker.start()
+        return 1
+
+    def scan(self, root):
+        """Ganze Sammlung (z. B. share/Musik) durchgehen – auch Ordner, fuer die es zuletzt nichts gab."""
+        with self.lock:
+            self.stats = {"done": 0, "found": 0, "total": len(self.queue)}
+        n = 0
+        for d in MEDIA._preorder(Path(root)):
+            n += self.add(d, force=True)
+        log(f"Cover: {n} Ordner ohne Bild vorgemerkt")
+        return n
+
+    @staticmethod
+    def _audio_files(folder):
+        try:
+            names = sorted(os.listdir(folder), key=natural_key)
+        except OSError:
+            return []
+        return [Path(folder) / n for n in names if not n.startswith(".") and Path(n).suffix.lower() in AUDIO_EXT]
+
+    def _has_audio(self, folder):
+        return bool(self._audio_files(folder))
+
+    def _run(self):
+        while True:
+            with self.lock:
+                if not self.queue:
+                    self.current = None
+                    return
+                self.current = self.queue.pop(0)
+            folder = Path(self.current)
+            try:
+                ok = self.fetch(folder)
+            except Exception as e:  # noqa: BLE001
+                log("Cover:", folder.name, e)
+                ok = False
+            with self.lock:
+                self.queued.discard(str(folder))
+                self.stats["done"] += 1
+                self.stats["found"] += 1 if ok else 0
+
+    # ---- Suche ----
+    def fetch(self, folder):
+        if MediaLib.own_cover(folder) is not None:
+            return True
+        files = self._audio_files(folder)
+        if not files:
+            return False
+        img = self._embedded(files[0])
+        source = "eingebettet"
+        if not img:
+            artist, album = self._names(folder, files[0])
+            img = self._online(artist, album) if album else None
+            source = f"MusicBrainz ({artist} – {album})"
+        if not img:
+            self._miss(folder)
+            log("Cover: nichts gefunden fuer", folder.name)
+            return False
+        where = self._save(folder, img)
+        log("Cover:", folder.name, "<-", source, "->", where)
+        return True
+
+    @staticmethod
+    def _embedded(f):
+        ff = shutil.which("ffmpeg")
+        if not ff:
+            return None
+        out = Path(tempfile_name("cover", ".jpg"))
+        r = run([ff, "-v", "error", "-y", "-i", str(f), "-map", "0:v:0", "-frames:v", "1", "-an", "-vf", "scale='min(800,iw)':-2",
+                 str(out)], timeout=20)
+        try:
+            data = out.read_bytes() if r and r.returncode == 0 and out.exists() and out.stat().st_size > 1000 else None
+        finally:
+            try:
+                out.unlink()
+            except OSError:
+                pass
+        return data
+
+    @staticmethod
+    def _tags(f):
+        fp = shutil.which("ffprobe")
+        if not fp:
+            return {}
+        r = run([fp, "-v", "error", "-show_entries", "format_tags", "-of", "json", str(f)], timeout=15)
+        try:
+            tags = json.loads(r.stdout).get("format", {}).get("tags", {}) if r and r.returncode == 0 else {}
+        except ValueError:
+            tags = {}
+        return {str(k).lower(): str(v).strip() for k, v in tags.items()}
+
+    def _names(self, folder, first):
+        t = self._tags(first)
+        artist = t.get("album_artist") or t.get("albumartist") or t.get("artist") or ""
+        album = t.get("album") or ""
+        if not album:                                  # Ordnernamen: "Interpret - Album" oder Interpret/Album
+            name = re.sub(r"\s*[\[(]\d{4}[)\]]\s*", " ", folder.name).strip()
+            if " - " in name:
+                a, b = name.split(" - ", 1)
+                artist, album = artist or a.strip(), b.strip()
+            else:
+                album = name
+                parent = folder.parent
+                if not artist and parent.resolve() not in MEDIA.allowed_roots() and parent.name not in ("Musik", "Music"):
+                    artist = parent.name
+        return artist, album
+
+    def _mb_get(self, path):
+        wait = 1.1 - (time.time() - self.last_mb)
+        if wait > 0:
+            time.sleep(wait)
+        self.last_mb = time.time()
+        req = urllib.request.Request(self.MB + path, headers=self.UA)
+        with urllib.request.urlopen(req, timeout=15) as r:
+            return json.loads(r.read().decode("utf-8"))
+
+    @staticmethod
+    def _q(s):
+        return '"' + re.sub(r'([+\-!(){}\[\]^"~*?:\\/]|&&|\|\|)', r"\\\1", s) + '"'
+
+    def _online(self, artist, album):
+        q = "releasegroup:" + self._q(album) + (" AND artist:" + self._q(artist) if artist else "")
+        try:
+            d = self._mb_get("release-group/?fmt=json&limit=5&query=" + urllib.parse.quote(q))
+        except Exception as e:  # noqa: BLE001
+            log("Cover: MusicBrainz nicht erreichbar:", e)
+            return None
+        for g in (d.get("release-groups") or [])[:5]:
+            if int(g.get("score") or 0) < (90 if artist else 98):
+                continue
+            try:
+                req = urllib.request.Request(self.CAA + f"release-group/{g['id']}/front-500", headers={"User-Agent": self.UA["User-Agent"]})
+                with urllib.request.urlopen(req, timeout=20) as r:
+                    data = r.read()
+                if len(data) > 1000:
+                    return data
+            except urllib.error.HTTPError as e:
+                if e.code != 404:
+                    log("Cover Art Archive:", e)
+            except Exception as e:  # noqa: BLE001
+                log("Cover Art Archive:", e)
+        return None
+
+    def _save(self, folder, data):
+        target = folder / "cover.jpg"
+        try:
+            tmp = folder / ".cover.jpg.part"
+            tmp.write_bytes(data)
+            tmp.replace(target)
+            return "cover.jpg"
+        except OSError:
+            self.CACHE.mkdir(parents=True, exist_ok=True)
+            c = self.cache_file(folder)
+            c.write_bytes(data)
+            return "Zwischenspeicher"
+
+
+def tempfile_name(prefix, suffix):
+    import tempfile
+    fd, name = tempfile.mkstemp(prefix=prefix, suffix=suffix)
+    os.close(fd)
+    return name
+
+
+COVERS = CoverFetcher()
 
 
 # ---------------------------------------------------------------------------
@@ -4117,8 +4406,16 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, MEDIA.next_folder(urllib.parse.parse_qs(url.query).get("path", [""])[0]) or {})
             except (ValueError, OSError) as e:
                 return self._json(404, {"error": str(e)})
+        if path == "/api/media/covers":
+            return self._json(200, COVERS.status())
         if path == "/api/media/thumb":
-            r = MEDIA.thumb(urllib.parse.parse_qs(url.query).get("path", [""])[0])
+            qs = urllib.parse.parse_qs(url.query)
+            cname = qs.get("cover", [""])[0]
+            if cname:                                    # heruntergeladenes Cover aus dem Zwischenspeicher
+                if not re.fullmatch(r"[0-9a-f]{16}\.jpg", cname) or not (COVERS.CACHE / cname).is_file():
+                    return self._send(404)
+                return self._send(200, (COVERS.CACHE / cname).read_bytes(), "image/jpeg")
+            r = MEDIA.thumb(qs.get("path", [""])[0])
             if not r:
                 return self._send(404)
             return self._send(200, r[0], r[1])
@@ -4253,6 +4550,15 @@ class Handler(BaseHTTPRequestHandler):
                 b = self._body()
                 TV.mark_broken(str(b.get("key", "")), str(b.get("reason", ""))[:40])
                 return self._json(200, {"ok": True})
+            if parts == ["api", "media", "covers", "scan"]:     # alle Ordner ohne Bild (Standard: share/Musik)
+                root = MEDIA.resolve(str(self._body().get("path") or MEDIA.share() / "Musik"))
+                if not root or not root.is_dir():
+                    return self._json(404, {"error": "Ordner nicht gefunden"})
+                COVERS.scan(root)
+                return self._json(200, COVERS.status())
+            if parts == ["api", "media", "covers", "auto"]:
+                s = settings_load(); s["covers_auto"] = bool(self._body().get("on")); settings_save(s)
+                return self._json(200, COVERS.status())
             if parts == ["api", "media", "now"]:
                 b = self._body()
                 MEDIA_NOW.clear()

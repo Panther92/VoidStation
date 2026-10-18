@@ -626,5 +626,16 @@
   "player.media.nextFolder": "Folytatás: {name}",
   "player.media.allPlayed": "Minden mappa lejátszva",
   "player.hint.repeat": "<b>Y</b> ismétlés",
-  "player.hint.playbackMenu": "<b>Start / M</b> lejátszás"
+  "player.hint.playbackMenu": "<b>Start / M</b> lejátszás",
+  "player.shuffle": "Véletlenszerű",
+  "player.shuffle.sub": "Számok véletlen sorrendben",
+  "player.shuffle.on": "Véletlen sorrend be",
+  "player.shuffle.off": "Véletlen sorrend ki",
+  "player.menu.order": "Sorrend",
+  "player.hint.shuffle": "<b>X</b> véletlen",
+  "player.covers.auto": "Borítók automatikus letöltése",
+  "player.covers.scan": "Összes borító letöltése",
+  "player.covers.started": "Borítókeresés a háttérben",
+  "player.covers.progress": "Borítók: {done} / {total} · {found} találat",
+  "player.covers.done": "Borítókeresés kész: {found} / {total} találat"
 }

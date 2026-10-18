@@ -759,5 +759,16 @@
   "player.media.nextFolder": "Weiter mit {name}",
   "player.media.allPlayed": "Alle Ordner gespielt",
   "player.hint.repeat": "<b>Y</b> Wiederholen",
-  "player.hint.playbackMenu": "<b>Start / M</b> Wiedergabe"
+  "player.hint.playbackMenu": "<b>Start / M</b> Wiedergabe",
+  "player.shuffle": "Zufällig",
+  "player.shuffle.sub": "Titel in zufälliger Reihenfolge",
+  "player.shuffle.on": "Zufällige Reihenfolge an",
+  "player.shuffle.off": "Zufällige Reihenfolge aus",
+  "player.menu.order": "Reihenfolge",
+  "player.hint.shuffle": "<b>X</b> Zufällig",
+  "player.covers.auto": "Cover automatisch laden",
+  "player.covers.scan": "Alle Cover laden",
+  "player.covers.started": "Cover-Suche läuft im Hintergrund",
+  "player.covers.progress": "Cover: {done} von {total} · {found} gefunden",
+  "player.covers.done": "Cover-Suche fertig: {found} von {total} gefunden"
 }

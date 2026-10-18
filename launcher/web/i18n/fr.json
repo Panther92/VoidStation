@@ -624,5 +624,16 @@
   "player.media.nextFolder": "On continue avec {name}",
   "player.media.allPlayed": "Tous les dossiers ont été lus",
   "player.hint.repeat": "<b>Y</b> répéter",
-  "player.hint.playbackMenu": "<b>Start / M</b> lecture"
+  "player.hint.playbackMenu": "<b>Start / M</b> lecture",
+  "player.shuffle": "Aléatoire",
+  "player.shuffle.sub": "Pistes dans un ordre aléatoire",
+  "player.shuffle.on": "Lecture aléatoire activée",
+  "player.shuffle.off": "Lecture aléatoire désactivée",
+  "player.menu.order": "Ordre",
+  "player.hint.shuffle": "<b>X</b> aléatoire",
+  "player.covers.auto": "Charger les pochettes automatiquement",
+  "player.covers.scan": "Charger toutes les pochettes",
+  "player.covers.started": "Recherche de pochettes en arrière-plan",
+  "player.covers.progress": "Pochettes : {done} sur {total} · {found} trouvées",
+  "player.covers.done": "Recherche terminée : {found} sur {total} trouvées"
 }

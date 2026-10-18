@@ -452,6 +452,10 @@ class EmbeddedEngine(Engine):
     def playlistGo(self, i):
         self._cmd("set", "playlist-pos", str(i))
 
+    @Slot("QVariantList")
+    def command(self, args):
+        self._cmd(*[str(a) for a in args])
+
     def shutdown(self):
         try:
             self.mpv.terminate()
@@ -686,6 +690,10 @@ class IpcEngine(Engine):
     @Slot(int)
     def playlistGo(self, i):
         self._send(["set_property", "playlist-pos", i])
+
+    @Slot("QVariantList")
+    def command(self, args):
+        self._send([str(a) for a in args])
 
     @Slot(str, str)
     def osdText(self, text, ms):

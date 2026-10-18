@@ -891,5 +891,16 @@
   "player.media.nextFolder": "Continuing with {name}",
   "player.media.allPlayed": "All folders played",
   "player.hint.repeat": "<b>Y</b> repeat",
-  "player.hint.playbackMenu": "<b>Start / M</b> playback"
+  "player.hint.playbackMenu": "<b>Start / M</b> playback",
+  "player.shuffle": "Shuffle",
+  "player.shuffle.sub": "Tracks in random order",
+  "player.shuffle.on": "Shuffle on",
+  "player.shuffle.off": "Shuffle off",
+  "player.menu.order": "Order",
+  "player.hint.shuffle": "<b>X</b> shuffle",
+  "player.covers.auto": "Load covers automatically",
+  "player.covers.scan": "Load all covers",
+  "player.covers.started": "Cover search running in the background",
+  "player.covers.progress": "Covers: {done} of {total} · {found} found",
+  "player.covers.done": "Cover search done: {found} of {total} found"
 }

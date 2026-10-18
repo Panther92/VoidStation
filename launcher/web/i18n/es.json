@@ -624,5 +624,16 @@
   "player.media.nextFolder": "Seguimos con {name}",
   "player.media.allPlayed": "Todas las carpetas reproducidas",
   "player.hint.repeat": "<b>Y</b> repetir",
-  "player.hint.playbackMenu": "<b>Start / M</b> reproducción"
+  "player.hint.playbackMenu": "<b>Start / M</b> reproducción",
+  "player.shuffle": "Aleatorio",
+  "player.shuffle.sub": "Pistas en orden aleatorio",
+  "player.shuffle.on": "Orden aleatorio activado",
+  "player.shuffle.off": "Orden aleatorio desactivado",
+  "player.menu.order": "Orden",
+  "player.hint.shuffle": "<b>X</b> aleatorio",
+  "player.covers.auto": "Cargar carátulas automáticamente",
+  "player.covers.scan": "Cargar todas las carátulas",
+  "player.covers.started": "Buscando carátulas en segundo plano",
+  "player.covers.progress": "Carátulas: {done} de {total} · {found} encontradas",
+  "player.covers.done": "Búsqueda terminada: {found} de {total} encontradas"
 }

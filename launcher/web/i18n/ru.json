@@ -626,5 +626,16 @@
   "player.media.nextFolder": "Дальше: {name}",
   "player.media.allPlayed": "Все папки воспроизведены",
   "player.hint.repeat": "<b>Y</b> повтор",
-  "player.hint.playbackMenu": "<b>Start / M</b> воспроизведение"
+  "player.hint.playbackMenu": "<b>Start / M</b> воспроизведение",
+  "player.shuffle": "Перемешать",
+  "player.shuffle.sub": "Треки в случайном порядке",
+  "player.shuffle.on": "Случайный порядок включён",
+  "player.shuffle.off": "Случайный порядок выключен",
+  "player.menu.order": "Порядок",
+  "player.hint.shuffle": "<b>X</b> перемешать",
+  "player.covers.auto": "Загружать обложки автоматически",
+  "player.covers.scan": "Загрузить все обложки",
+  "player.covers.started": "Поиск обложек идёт в фоне",
+  "player.covers.progress": "Обложки: {done} из {total} · найдено {found}",
+  "player.covers.done": "Поиск завершён: найдено {found} из {total}"
 }

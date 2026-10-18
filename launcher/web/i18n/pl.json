@@ -624,5 +624,16 @@
   "player.media.nextFolder": "Dalej: {name}",
   "player.media.allPlayed": "Odtworzono wszystkie foldery",
   "player.hint.repeat": "<b>Y</b> powtarzanie",
-  "player.hint.playbackMenu": "<b>Start / M</b> odtwarzanie"
+  "player.hint.playbackMenu": "<b>Start / M</b> odtwarzanie",
+  "player.shuffle": "Losowo",
+  "player.shuffle.sub": "Utwory w losowej kolejności",
+  "player.shuffle.on": "Losowa kolejność włączona",
+  "player.shuffle.off": "Losowa kolejność wyłączona",
+  "player.menu.order": "Kolejność",
+  "player.hint.shuffle": "<b>X</b> losowo",
+  "player.covers.auto": "Pobieraj okładki automatycznie",
+  "player.covers.scan": "Pobierz wszystkie okładki",
+  "player.covers.started": "Wyszukiwanie okładek w tle",
+  "player.covers.progress": "Okładki: {done} z {total} · znaleziono {found}",
+  "player.covers.done": "Wyszukiwanie zakończone: znaleziono {found} z {total}"
 }

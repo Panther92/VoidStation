@@ -625,5 +625,16 @@
   "player.media.nextFolder": "Turpinām ar {name}",
   "player.media.allPlayed": "Visas mapes atskaņotas",
   "player.hint.repeat": "<b>Y</b> atkārtot",
-  "player.hint.playbackMenu": "<b>Start / M</b> atskaņošana"
+  "player.hint.playbackMenu": "<b>Start / M</b> atskaņošana",
+  "player.shuffle": "Jaukti",
+  "player.shuffle.sub": "Dziesmas nejaušā secībā",
+  "player.shuffle.on": "Jaukšana ieslēgta",
+  "player.shuffle.off": "Jaukšana izslēgta",
+  "player.menu.order": "Secība",
+  "player.hint.shuffle": "<b>X</b> jaukti",
+  "player.covers.auto": "Ielādēt vākus automātiski",
+  "player.covers.scan": "Ielādēt visus vākus",
+  "player.covers.started": "Vāku meklēšana notiek fonā",
+  "player.covers.progress": "Vāki: {done} no {total} · atrasti {found}",
+  "player.covers.done": "Meklēšana pabeigta: atrasti {found} no {total}"
 }

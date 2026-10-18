@@ -626,5 +626,16 @@
   "player.media.nextFolder": "Далі: {name}",
   "player.media.allPlayed": "Усі теки відтворено",
   "player.hint.repeat": "<b>Y</b> повтор",
-  "player.hint.playbackMenu": "<b>Start / M</b> відтворення"
+  "player.hint.playbackMenu": "<b>Start / M</b> відтворення",
+  "player.shuffle": "Перемішати",
+  "player.shuffle.sub": "Треки у випадковому порядку",
+  "player.shuffle.on": "Випадковий порядок увімкнено",
+  "player.shuffle.off": "Випадковий порядок вимкнено",
+  "player.menu.order": "Порядок",
+  "player.hint.shuffle": "<b>X</b> перемішати",
+  "player.covers.auto": "Завантажувати обкладинки автоматично",
+  "player.covers.scan": "Завантажити всі обкладинки",
+  "player.covers.started": "Пошук обкладинок триває у фоні",
+  "player.covers.progress": "Обкладинки: {done} з {total} · знайдено {found}",
+  "player.covers.done": "Пошук завершено: знайдено {found} з {total}"
 }

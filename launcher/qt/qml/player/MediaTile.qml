@@ -7,8 +7,9 @@ import VS
 Tile {
     id: mt
     property var it: ({})
+    property string coverOverride: ""                 // nachgeladenes Cover (Cover-Suche im Hintergrund)
     readonly property string kind: it.kind || "dir"
-    readonly property string thumb: it.thumb ? Ui.url(it.thumb) : ""
+    readonly property string thumb: coverOverride ? Ui.url(coverOverride) : it.thumb ? Ui.url(it.thumb) : ""
     readonly property real progress: it.resume && it.resume.dur > 0 ? Math.min(1, it.resume.pos / it.resume.dur) : 0
     tileColor: kind === "videos" ? "#2c3f57" : kind === "music" ? "#4a2f45" : kind === "resume" ? Ui.c.accentTv
              : kind === "drive" ? "#33433a" : kind === "playall" ? Ui.c.surfaceActive : Ui.c.surfaceCard

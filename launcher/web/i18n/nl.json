@@ -624,5 +624,16 @@
   "player.media.nextFolder": "Verder met {name}",
   "player.media.allPlayed": "Alle mappen afgespeeld",
   "player.hint.repeat": "<b>Y</b> herhalen",
-  "player.hint.playbackMenu": "<b>Start / M</b> afspelen"
+  "player.hint.playbackMenu": "<b>Start / M</b> afspelen",
+  "player.shuffle": "Willekeurig",
+  "player.shuffle.sub": "Nummers in willekeurige volgorde",
+  "player.shuffle.on": "Willekeurig aan",
+  "player.shuffle.off": "Willekeurig uit",
+  "player.menu.order": "Volgorde",
+  "player.hint.shuffle": "<b>X</b> willekeurig",
+  "player.covers.auto": "Hoezen automatisch laden",
+  "player.covers.scan": "Alle hoezen laden",
+  "player.covers.started": "Hoezen zoeken op de achtergrond",
+  "player.covers.progress": "Hoezen: {done} van {total} · {found} gevonden",
+  "player.covers.done": "Zoeken klaar: {found} van {total} gevonden"
 }
