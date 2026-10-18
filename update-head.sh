@@ -113,7 +113,7 @@ def add(tile, gname, pos):
 add({"id": "tv", "label": "Fernsehen", "sub": "Sender aus aller Welt", "size": "wide", "color": "#24414a", "icon": "tv", "type": "tv"}, "Unterhaltung", 1)
 add({"id": "settings", "label": "Einstellungen", "size": "medium", "color": "#3a3f46", "icon": "gear", "type": "settings"}, "System", 1)
 add({"id": "appcenter", "label": "AppCenter", "sub": "Programme", "size": "medium", "color": "#39414d", "icon": "store", "type": "apps"}, "System", 2)
-# Eigener Player: Kachel „Videos & Musik“ – vor VLC, falls es die Kachel gibt (VLC bleibt, wo es ist)
+# Eigener Player: Kachel „Videos & Musik“ – an die Stelle von VLC, falls es die Kachel gibt (VLC fliegt weiter unten raus)
 if not any(t.get("id") == "media" for t in tiles):
     media = {"id": "media", "label": "Videos & Musik", "sub": "Eigene Medien", "size": "medium", "color": "#74461f",
              "icon": "film", "cmd": ["~/.local/share/voidstation/qt/voidstation-player.py", "--media"]}
@@ -136,6 +136,49 @@ for t in [t for g in c["groups"] for t in g["tiles"]]:
 json.dump(c, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PYEOF
 xbps-query vba-m >/dev/null 2>&1 && xbps-remove -Ry vba-m >/dev/null 2>&1 && echo "defektes vba-m entfernt"
+
+# VLC raus – „Videos & Musik“ uebernimmt. Einmalig je Geraet (Merker), damit ein spaeter selbst
+# installiertes VLC nicht bei jedem Update wieder verschwindet. Wer VLC ueber das AppCenter geholt hat
+# (Kachel mit "app"), behaelt es. Zurueck jederzeit ueber AppCenter → Medien → VLC.
+VLCDONE=/usr/local/share/voidstation/vlc-removed
+if [ ! -e "$VLCDONE" ]; then
+  VLCMODE="$(python3 - "$TV/tiles.json" <<'PYEOF'
+import json, sys
+c = json.load(open(sys.argv[1], encoding="utf-8"))
+print("keep" if any(t.get("id") == "vlc" and t.get("app") for g in c["groups"] for t in g["tiles"]) else "remove")
+PYEOF
+)"
+  VLCOK=1
+  if [ "$VLCMODE" = remove ] && xbps-query vlc >/dev/null 2>&1; then
+    say "VLC entfernen (ersetzt durch „Videos & Musik“, zurueck ueber das AppCenter)"
+    if xbps-remove -Ry vlc; then
+      echo "VLC entfernt"
+    else
+      VLCOK=0; warn "VLC konnte nicht entfernt werden (haengt etwas davon ab?) – naechstes Update versucht es erneut"
+    fi
+  fi
+  if [ "$VLCOK" = 1 ]; then
+    if [ "$VLCMODE" = remove ]; then
+      python3 - "$TV/tiles.json" <<'PYEOF'
+import json, sys
+p = sys.argv[1]
+c = json.load(open(p, encoding="utf-8"))
+n = 0
+for g in c["groups"]:
+    keep = [t for t in g["tiles"] if t.get("id") != "vlc"]
+    n += len(g["tiles"]) - len(keep)
+    g["tiles"] = keep
+c["groups"] = [g for g in c["groups"] if g["tiles"]]
+json.dump(c, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+if n:
+    print("Kachel entfernt: VLC")
+PYEOF
+    else
+      echo "VLC bleibt (selbst ueber das AppCenter installiert)"
+    fi
+    install -d -m 755 /usr/local/share/voidstation && date -I > "$VLCDONE" && chmod 644 "$VLCDONE"
+  fi
+fi
 
 # Bluetooth: bluetoothctl braucht die Gruppe bluetooth (wirkt nach dem naechsten Neustart)
 getent group bluetooth >/dev/null && usermod -aG bluetooth "$VSUSER" || true
