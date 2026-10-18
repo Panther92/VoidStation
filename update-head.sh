@@ -150,7 +150,7 @@ PYEOF
 )"
   VLCOK=1
   if [ "$VLCMODE" = remove ] && xbps-query vlc >/dev/null 2>&1; then
-    say "VLC entfernen (ersetzt durch „Videos & Musik“, zurueck ueber das AppCenter)"
+    say 'VLC entfernen (ersetzt durch "Videos & Musik", zurueck ueber das AppCenter)'
     if xbps-remove -Ry vlc; then
       echo "VLC entfernt"
     else
