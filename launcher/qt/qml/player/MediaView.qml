@@ -12,7 +12,7 @@ import VS
 
 Item {
     id: mv
-    readonly property Item navRoot: dlg.open ? dlg : browser
+    readonly property Item navRoot: dlView.open ? dlView.navRoot : dlg.open ? dlg : browser
     readonly property bool wantVideo: phase === "video"
     readonly property var track: phase === "browse" ? trk : null
     readonly property var player: app.player
@@ -144,6 +144,7 @@ Item {
     function activate(it) {
         if (!it) return
         if (it.kind === "dir" || it.kind === "videos" || it.kind === "music" || it.kind === "drive") return openPath(it.path)
+        if (it.kind === "dl") return dlView.show()
         if (it.kind === "playall") return playAudio(audioItems, 0, path, folderName)
         if (it.kind === "audio") return playAudio(audioItems, Math.max(0, audioItems.indexOf(it)), path, folderName)
         if (it.kind === "video" || it.kind === "resume") {
@@ -331,6 +332,7 @@ Item {
     Timer { id: seekT; interval: 1200; onTriggered: mv.seekAcc = 0 }
 
     function key(k) {
+        if (dlView.open) return dlView.key(k)
         if (dlg.open) return dlg.key(k)
         if (menu.open) return menu.key(k)
         if (phase === "browse") {
@@ -407,6 +409,12 @@ Item {
                 TileGrid { items: mv.path ? [] : mv.roots; rows: mv.fit.n; cellW: mv.cell; cellH: mv.cell; delegate: tileDelegate }
             }
             Group {
+                visible: !mv.path
+                title: Ui.t("dl.group")
+                TileGrid { items: mv.path ? [] : [{ kind: "dl", title: Ui.t("dl.title"), sub: Ui.t("dl.tile.sub"), path: "" }]
+                           rows: mv.fit.n; cellW: mv.cell; cellH: mv.cell; delegate: tileDelegate }
+            }
+            Group {
                 visible: !!mv.path
                 title: mv.folderName
                 showTitle: false
@@ -443,7 +451,7 @@ Item {
         }
     }
     Hints {
-        visible: mv.phase === "browse"
+        visible: mv.phase === "browse" && !dlView.open
         x: Ui.padX
         width: parent.width - 2 * Ui.padX
         anchors.bottom: parent.bottom; anchors.bottomMargin: 14 * Ui.f
@@ -708,6 +716,13 @@ Item {
             { icon: "plus", tip: Ui.t("player.volume"), act: function () { app.volume("up") } },
             { icon: "stop", tip: Ui.t("player.btn.stop"), act: function () { mv.stopPlayback() } }
         ]
+    }
+    DownloadView {
+        id: dlView
+        onClosed: {
+            if (!mv.path) mv.openPath("")                  // neue Musik: Weiterschauen/Bibliothek neu laden
+            Qt.callLater(function () { var it = Nav.collect(browser); for (var i = 0; i < it.length; i++) if (it[i].it && it[i].it.kind === "dl") return app.setFocus(it[i], true) })
+        }
     }
     TechInfo { id: tech }
     TrackMenu {

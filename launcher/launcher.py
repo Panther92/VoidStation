@@ -2273,6 +2273,382 @@ COVERS = CoverFetcher()
 
 
 # ---------------------------------------------------------------------------
+#  Musik suchen und herunterladen (Videos & Musik -> "Musik suchen"), aehnlich wie ytmdl
+# ---------------------------------------------------------------------------
+DL_SOURCES = ("archive", "youtube", "soundcloud")          # Reihenfolge der Einstellungsseite
+DL_DEFAULT = {"archive": True, "youtube": False, "soundcloud": False}
+JUNK = re.compile(r"\s*[\(\[](?:official|offizielles|music|lyric|lyrics|audio|video|hd|hq|4k|visuali[sz]er|clip|"
+                  r"videoclip|remaster(?:ed)?(?: \d{4})?|explicit|live)[^\)\]]*[\)\]]", re.I)
+
+
+def safe_name(s, fallback="Unbekannt"):
+    """Datei-/Ordnername: keine Pfadtrenner und Steuerzeichen, hoechstens 120 Zeichen."""
+    s = re.sub(r'[\x00-\x1f/\\:*?"<>|]+', " ", str(s or "")).strip().strip(".")
+    s = re.sub(r"\s{2,}", " ", s)
+    return s[:120] or fallback
+
+
+class MusicDL:
+    """Suche in mehreren Quellen und Download nach share/Musik:
+      archive     Internet Archive (Netlabels, Live-Mitschnitte, Creative Commons/gemeinfrei) – ganze Alben, direkt
+      youtube     YouTube ueber yt-dlp (+ Node.js fuer die Signatur-Pruefung von YouTube)
+      soundcloud  SoundCloud ueber yt-dlp
+    Einzelne Titel (YouTube/SoundCloud) werden zu MP3 (bestes VBR) und bekommen Tags + Cover wie bei ytmdl:
+    Interpret/Titel aus den Angaben der Plattform bzw. dem Titel ("Interpret - Titel (Official Video)"), Album,
+    Genre, Jahr, Titelnummer und Cover (600 px) aus der iTunes-Suche. Ablage: Musik/<Interpret>/<Album>/NN - Titel.mp3,
+    ohne Album: Musik/<Interpret>/Singles/. Welche Quellen genutzt werden, waehlt man vorher selbst (Einstellungsseite)."""
+    IA = os.environ.get("VS_IA_URL", "https://archive.org/")
+    ITUNES = os.environ.get("VS_ITUNES_URL", "https://itunes.apple.com/search")
+    UA = {"User-Agent": "VoidStation/2026 ( https://voidstation.de )"}
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.results = {}                  # key -> Treffer der letzten Suchen (Download nur ueber den Schluessel)
+        self.jobs = []                     # Downloads: {key, title, artist, src, state, pct, msg, path}
+        self.worker = None
+
+    # ---- Einstellungen ----
+    @staticmethod
+    def settings():
+        d = settings_load().get("dl") or {}
+        src = dict(DL_DEFAULT)
+        src.update({k: bool(v) for k, v in (d.get("sources") or {}).items() if k in DL_SOURCES})
+        return {"sources": src, "configured": bool(d.get("configured"))}
+
+    @staticmethod
+    def ytdlp():
+        exe = os.environ.get("VS_YTDLP") or shutil.which("yt-dlp")
+        return exe
+
+    def tools(self):
+        exe = self.ytdlp()
+        ver = ""
+        if exe:
+            r = run([exe, "--version"], timeout=20)
+            ver = r.stdout.strip() if r and r.returncode == 0 else ""
+        return {"ytdlp": ver, "node": bool(shutil.which("node")), "ffmpeg": bool(shutil.which("ffmpeg"))}
+
+    def save_settings(self, sources):
+        s = settings_load()
+        src = {k: bool((sources or {}).get(k, DL_DEFAULT[k])) for k in DL_SOURCES}
+        s["dl"] = {"sources": src, "configured": True}
+        settings_save(s)
+        log("Musik suchen: Quellen", ", ".join(k for k, v in src.items() if v) or "keine")
+        return self.payload()
+
+    def payload(self):
+        return dict(self.settings(), tools=self.tools(), sources_list=list(DL_SOURCES))
+
+    # ---- Suche ----
+    def _get_json(self, url, timeout=15):
+        req = urllib.request.Request(url, headers=self.UA)
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.loads(r.read().decode("utf-8"))
+
+    def _remember(self, items):
+        with self.lock:
+            for it in items:
+                self.results[it["key"]] = it
+            if len(self.results) > 600:
+                for k in list(self.results)[:len(self.results) - 600]:
+                    del self.results[k]
+        return [{k: v for k, v in it.items() if k not in ("url",)} for it in items]
+
+    def search(self, q):
+        q = " ".join(str(q or "").split())[:120]
+        if not q:
+            return {"items": [], "errors": {}}
+        src = self.settings()["sources"]
+        out, errors, threads = {}, {}, []
+
+        def one(name, fn):
+            try:
+                out[name] = fn(q)
+            except Exception as e:  # noqa: BLE001
+                log("Musik suchen:", name, e)
+                errors[name] = str(e)[:200]
+        for name, fn in (("archive", self._s_archive), ("youtube", self._s_youtube), ("soundcloud", self._s_soundcloud)):
+            if src.get(name):
+                t = threading.Thread(target=one, args=(name, fn), daemon=True)
+                t.start()
+                threads.append(t)
+        for t in threads:
+            t.join(timeout=40)
+        items = []
+        for name in DL_SOURCES:                          # Quellen nacheinander, je Quelle in Trefferreihenfolge
+            items += out.get(name, [])
+        return {"items": self._remember(items), "errors": errors}
+
+    def _s_archive(self, q):
+        term = re.sub(r'[()":\\\[\]{}^~*?]', " ", q)
+        query = (f'({term}) AND mediatype:(audio) AND (licenseurl:(*creativecommons*) OR licenseurl:(*publicdomain*) '
+                 f'OR collection:(etree) OR collection:(netlabels))')
+        params = urllib.parse.urlencode([("q", query), ("fl[]", "identifier"), ("fl[]", "title"), ("fl[]", "creator"),
+                                         ("fl[]", "year"), ("fl[]", "licenseurl"), ("rows", "15"), ("output", "json"),
+                                         ("sort[]", "downloads desc")])
+        d = self._get_json(self.IA + "advancedsearch.php?" + params)
+        items = []
+        for doc in (d.get("response") or {}).get("docs") or []:
+            ident = str(doc.get("identifier") or "")
+            if not re.fullmatch(r"[A-Za-z0-9._-]{1,100}", ident):
+                continue
+            creator = doc.get("creator")
+            creator = creator[0] if isinstance(creator, list) and creator else creator or ""
+            lic = str(doc.get("licenseurl") or "")
+            items.append({"key": "ia:" + ident, "src": "archive", "kind": "album", "id": ident,
+                          "title": str(doc.get("title") or ident)[:150], "artist": str(creator)[:100],
+                          "year": str(doc.get("year") or "")[:4], "duration": 0,
+                          "license": "CC" if "creativecommons" in lic else "PD" if "publicdomain" in lic else "",
+                          "thumb": self.IA + "services/img/" + ident})
+        return items
+
+    def _ytdlp_search(self, prefix, src, q):
+        exe = self.ytdlp()
+        if not exe:
+            raise RuntimeError("yt-dlp fehlt")
+        r = run([exe, "--flat-playlist", "-J", "--no-warnings", "--ignore-config", f"{prefix}12:{q}"], timeout=40)
+        if not r or r.returncode != 0:
+            raise RuntimeError((r.stderr.strip().splitlines() or ["yt-dlp-Fehler"])[-1] if r else "yt-dlp antwortet nicht")
+        d = json.loads(r.stdout or "{}")
+        items = []
+        for e in d.get("entries") or []:
+            url = str(e.get("url") or e.get("webpage_url") or "")
+            vid = str(e.get("id") or "")
+            if src == "youtube":
+                if not re.fullmatch(r"[A-Za-z0-9_-]{6,20}", vid):
+                    continue
+                url = "https://www.youtube.com/watch?v=" + vid
+            elif not url.startswith("https://soundcloud.com/") and not url.startswith("https://api.soundcloud.com/"):
+                continue
+            thumbs = e.get("thumbnails") or []
+            thumb = e.get("thumbnail") or (thumbs[-1].get("url") if thumbs and isinstance(thumbs[-1], dict) else "")
+            items.append({"key": f"{src}:{vid or hashlib.sha1(url.encode()).hexdigest()[:12]}", "src": src, "kind": "track",
+                          "id": vid, "url": url, "title": str(e.get("title") or "")[:150],
+                          "artist": str(e.get("artist") or e.get("uploader") or e.get("channel") or "")[:100],
+                          "duration": int(e.get("duration") or 0), "year": "", "license": "", "thumb": str(thumb or "")})
+        return items
+
+    def _s_youtube(self, q):
+        return self._ytdlp_search("ytsearch", "youtube", q)
+
+    def _s_soundcloud(self, q):
+        return self._ytdlp_search("scsearch", "soundcloud", q)
+
+    # ---- Downloads ----
+    def status(self):
+        with self.lock:
+            return {"jobs": [dict(j) for j in self.jobs[-40:]],
+                    "active": any(j["state"] in ("queued", "running") for j in self.jobs)}
+
+    def get(self, key):
+        with self.lock:
+            it = self.results.get(str(key))
+            if not it:
+                raise ValueError("Treffer unbekannt – bitte neu suchen")
+            if any(j["key"] == it["key"] and j["state"] in ("queued", "running") for j in self.jobs):
+                return self.status()
+            self.jobs.append({"key": it["key"], "title": it["title"], "artist": it["artist"], "src": it["src"],
+                              "state": "queued", "pct": 0, "msg": "", "path": ""})
+            if not self.worker or not self.worker.is_alive():
+                self.worker = threading.Thread(target=self._run, daemon=True)
+                self.worker.start()
+        return self.status()
+
+    def _job(self, key, **kw):
+        with self.lock:
+            for j in reversed(self.jobs):
+                if j["key"] == key:
+                    j.update(kw)
+                    return
+
+    def _run(self):
+        while True:
+            with self.lock:
+                job = next((j for j in self.jobs if j["state"] == "queued"), None)
+                if not job:
+                    return
+                job["state"] = "running"
+                it = self.results.get(job["key"])
+            try:
+                path = self._album(it) if it["kind"] == "album" else self._track(it)
+                rel = str(Path(path).relative_to(MEDIA.share())) if str(path).startswith(str(MEDIA.share())) else str(path)
+                self._job(it["key"], state="done", pct=100, path=str(path), msg=rel)
+                log("Musik gespeichert:", rel)
+            except Exception as e:  # noqa: BLE001
+                log("Musik laden fehlgeschlagen:", it.get("title"), e)
+                self._job(it["key"], state="error", msg=str(e)[:200])
+
+    def _download(self, url, dest, key=None, part=(0, 1)):
+        req = urllib.request.Request(url, headers=self.UA)
+        tmp = dest.with_name("." + dest.name + ".part")
+        with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as fh:
+            total = int(r.headers.get("Content-Length") or 0)
+            got = 0
+            while True:
+                chunk = r.read(65536)
+                if not chunk:
+                    break
+                fh.write(chunk)
+                got += len(chunk)
+                if key and total:
+                    i, n = part
+                    self._job(key, pct=int((i + got / total) / n * 100))
+        tmp.replace(dest)
+
+    def _album(self, it):
+        """Internet Archive: alle MP3-Titel eines Eintrags nach Musik/<Interpret>/<Titel>/ (Tags bringt das Archiv mit)."""
+        meta = self._get_json(self.IA + "metadata/" + it["id"], timeout=30)
+        files = meta.get("files") or []
+        def pick(fmt):
+            return [f for f in files if f.get("format") == fmt and f.get("name") and not f.get("name", "").startswith(("_", "."))]
+        tracks = pick("VBR MP3") or pick("MP3") or pick("128Kbps MP3") or pick("Ogg Vorbis") or pick("Flac")
+        if not tracks:
+            raise RuntimeError("keine Musikdateien in diesem Eintrag")
+        tracks.sort(key=lambda f: (int(re.match(r"\d+", str(f.get("track") or "999")).group(0)) if re.match(r"\d+", str(f.get("track") or "")) else 999,
+                                   natural_key(f["name"])))
+        md = meta.get("metadata") or {}
+        artist = md.get("creator") or it["artist"]
+        artist = artist[0] if isinstance(artist, list) and artist else artist
+        folder = MEDIA.share() / "Musik" / safe_name(artist) / safe_name(md.get("title") or it["title"])
+        folder.mkdir(parents=True, exist_ok=True)
+        for i, f in enumerate(tracks[:200]):
+            name = safe_name(Path(f["name"]).name)
+            dest = folder / name
+            if dest.exists():
+                continue
+            self._job(it["key"], msg=f"{i + 1}/{len(tracks)}")
+            self._download(self.IA + "download/" + urllib.parse.quote(it["id"]) + "/" + urllib.parse.quote(f["name"]), dest,
+                           it["key"], (i, len(tracks)))
+        if MediaLib.own_cover(folder) is None:
+            try:
+                self._download(self.IA + "services/img/" + it["id"], folder / "cover.jpg")
+            except Exception:  # noqa: BLE001
+                pass
+        return folder
+
+    @staticmethod
+    def _split(title, artist):
+        """"Interpret - Titel (Official Video)" -> (Interpret, Titel); sonst Kanal als Interpret."""
+        t = JUNK.sub("", title or "").strip()
+        t = re.sub(r"\s*\|.*$", "", t).strip()
+        m = re.match(r"^(.+?)\s+[-–—]\s+(.+)$", t)
+        if m:
+            return m.group(1).strip(), m.group(2).strip().strip('"“”')
+        artist = re.sub(r"\s*-\s*Topic$|VEVO$", "", artist or "").strip()
+        return artist, t
+
+    def _itunes(self, artist, title):
+        term = urllib.parse.urlencode({"term": f"{artist} {title}".strip(), "entity": "song", "limit": "8", "media": "music"})
+        try:
+            d = self._get_json(self.ITUNES + "?" + term)
+        except Exception as e:  # noqa: BLE001
+            log("iTunes-Suche:", e)
+            return None
+        def norm(x):
+            return re.sub(r"[^a-z0-9]+", " ", tv_fold(JUNK.sub("", x or ""))).strip()
+        nt, na = norm(title), norm(artist)
+        best, best_score = None, 0.0
+        import difflib
+        for r in d.get("results") or []:
+            st = difflib.SequenceMatcher(None, nt, norm(r.get("trackName"))).ratio()
+            sa = difflib.SequenceMatcher(None, na, norm(r.get("artistName"))).ratio() if na else 0.6
+            score = st * 0.65 + sa * 0.35
+            if score > best_score:
+                best, best_score = r, score
+        return best if best_score >= 0.72 else None
+
+    def _track(self, it):
+        exe = self.ytdlp()
+        if not exe:
+            raise RuntimeError("yt-dlp fehlt")
+        ff = shutil.which("ffmpeg")
+        if not ff:
+            raise RuntimeError("ffmpeg fehlt")
+        import tempfile
+        tmp = Path(tempfile.mkdtemp(prefix="vs-dl-"))
+        try:
+            args = [exe, "--ignore-config", "--no-playlist", "--newline", "--no-warnings", "-f", "bestaudio/best",
+                    "-x", "--audio-format", "mp3", "--audio-quality", "0", "--write-info-json",
+                    "-o", str(tmp / "a.%(ext)s"), it["url"]]
+            if it["src"] == "youtube" and shutil.which("node"):
+                args[1:1] = ["--js-runtimes", "node"]
+            p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace",
+                                 stdin=subprocess.DEVNULL)
+            last = ""
+            for line in p.stdout:
+                m = re.search(r"\[download\]\s+([\d.]+)%", line)
+                if m:
+                    self._job(it["key"], pct=int(float(m.group(1)) * 0.9))
+                elif line.strip():
+                    last = line.strip()
+            if p.wait() != 0:
+                raise RuntimeError(last or "Download fehlgeschlagen")
+            audio = tmp / "a.mp3"
+            if not audio.exists():
+                raise RuntimeError("keine Audiodatei erhalten")
+            try:
+                info = json.loads((tmp / "a.info.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                info = {}
+            self._job(it["key"], msg="Tags & Cover", pct=92)
+            artist, title = (info.get("artist") or "").split(",")[0].strip(), info.get("track") or ""
+            if not (artist and title):
+                artist, title = self._split(info.get("title") or it["title"], info.get("uploader") or it["artist"])
+            album, genre, year, num = info.get("album") or "", info.get("genre") or "", str(info.get("release_year") or ""), ""
+            cover = None
+            hit = self._itunes(artist, title)
+            if hit:
+                artist, title = hit.get("artistName") or artist, hit.get("trackName") or title
+                album = hit.get("collectionName") or album
+                genre = hit.get("primaryGenreName") or genre
+                year = (hit.get("releaseDate") or "")[:4] or year
+                num = str(hit.get("trackNumber") or "")
+                art = hit.get("artworkUrl100") or ""
+                if art:
+                    try:
+                        self._download(art.replace("100x100bb", "600x600bb"), tmp / "cover.jpg")
+                        cover = tmp / "cover.jpg"
+                    except Exception:  # noqa: BLE001
+                        cover = None
+            if cover is None and it.get("thumb", "").startswith("https://"):
+                try:                                      # Vorschaubild der Plattform, quadratisch zugeschnitten
+                    self._download(it["thumb"], tmp / "thumb.img")
+                    r = run([ff, "-v", "error", "-y", "-i", str(tmp / "thumb.img"), "-vf",
+                             "crop='min(iw,ih)':'min(iw,ih)',scale=600:600", str(tmp / "cover.jpg")], timeout=30)
+                    cover = tmp / "cover.jpg" if r and r.returncode == 0 else None
+                except Exception:  # noqa: BLE001
+                    cover = None
+            artist = artist or "Unbekannt"
+            folder = MEDIA.share() / "Musik" / safe_name(artist) / (safe_name(album) if album else "Singles")
+            folder.mkdir(parents=True, exist_ok=True)
+            name = (f"{int(num):02d} - " if num.isdigit() and album else "") + safe_name(title, "Titel") + ".mp3"
+            dest = folder / name
+            meta = ["-metadata", f"title={title}", "-metadata", f"artist={artist}", "-metadata", f"album_artist={artist}"]
+            for k, v in (("album", album), ("genre", genre), ("date", year), ("track", num)):
+                if v:
+                    meta += ["-metadata", f"{k}={v}"]
+            out = tmp / "tagged.mp3"
+            cmd = [ff, "-v", "error", "-y", "-i", str(audio)]
+            if cover:
+                cmd += ["-i", str(cover), "-map", "0:a", "-map", "1:v", "-c", "copy", "-id3v2_version", "3",
+                        "-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)", "-disposition:v", "attached_pic"]
+            else:
+                cmd += ["-map", "0:a", "-c", "copy", "-id3v2_version", "3"]
+            r = run(cmd + ["-map_metadata", "-1"] + meta + [str(out)], timeout=120)
+            if not r or r.returncode != 0:
+                raise RuntimeError("Tags konnten nicht geschrieben werden")
+            shutil.move(str(out), str(dest))
+            if cover and MediaLib.own_cover(folder) is None and album:
+                shutil.copyfile(cover, folder / "cover.jpg")
+            return dest
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
+MUSICDL = MusicDL()
+
+
+# ---------------------------------------------------------------------------
 #  AppCenter: kuratierte optionale Programme
 # ---------------------------------------------------------------------------
 CATALOG = BASE / "catalog.json"
@@ -4406,6 +4782,10 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, MEDIA.next_folder(urllib.parse.parse_qs(url.query).get("path", [""])[0]) or {})
             except (ValueError, OSError) as e:
                 return self._json(404, {"error": str(e)})
+        if path == "/api/dl/settings":
+            return self._json(200, MUSICDL.payload())
+        if path == "/api/dl/status":
+            return self._json(200, MUSICDL.status())
         if path == "/api/media/covers":
             return self._json(200, COVERS.status())
         if path == "/api/media/thumb":
@@ -4550,6 +4930,12 @@ class Handler(BaseHTTPRequestHandler):
                 b = self._body()
                 TV.mark_broken(str(b.get("key", "")), str(b.get("reason", ""))[:40])
                 return self._json(200, {"ok": True})
+            if parts == ["api", "dl", "settings"]:
+                return self._json(200, MUSICDL.save_settings(self._body().get("sources")))
+            if parts == ["api", "dl", "search"]:
+                return self._json(200, MUSICDL.search(self._body().get("q")))
+            if parts == ["api", "dl", "get"]:
+                return self._json(200, MUSICDL.get(self._body().get("key")))
             if parts == ["api", "media", "covers", "scan"]:     # alle Ordner ohne Bild (Standard: share/Musik)
                 root = MEDIA.resolve(str(self._body().get("path") or MEDIA.share() / "Musik"))
                 if not root or not root.is_dir():

@@ -960,8 +960,30 @@ class PlayerApp:
             return
         gap = int(os.environ.get("VS_KEYS_GAP", "450"))
         t = int(os.environ.get("VS_SCREENSHOT_DELAY", "2500"))
+        from PySide6.QtCore import QEvent
+        from PySide6.QtGui import QKeyEvent
+
+        def target():                                     # ohne Fenstermanager (Xvfb) ist das Fenster nie aktiv
+            self.win.requestActivate()
+            fi = self.win.activeFocusItem()
+            kids = self.win.contentItem().childItems()
+            return fi or (kids[0] if kids else self.win.contentItem())
+
+        def typed(text):                                  # t:Text – echte Tastatur (z. B. in die Bildschirmtastatur)
+            for ch in text:
+                for typ in (QEvent.KeyPress, QEvent.KeyRelease):
+                    QGuiApplication.sendEvent(target(), QKeyEvent(typ, 0, Qt.NoModifier, ch))
+
+        def keyed(name):                                  # k:Return, k:Escape …
+            key = getattr(Qt, "Key_" + name)
+            for typ in (QEvent.KeyPress, QEvent.KeyRelease):
+                QGuiApplication.sendEvent(target(), QKeyEvent(typ, key, Qt.NoModifier))
         for k in steps:
-            if k.startswith("shot:"):
+            if k.startswith("t:"):
+                QTimer.singleShot(t, lambda x=k[2:]: typed(x))
+            elif k.startswith("k:"):
+                QTimer.singleShot(t, lambda x=k[2:]: keyed(x))
+            elif k.startswith("shot:"):
                 QTimer.singleShot(t, lambda f=k[5:]: self.win.grabWindow().save(f))
             elif k.startswith("remote:"):
                 QTimer.singleShot(t, lambda m=k[7:]: self.vs.remote.emit(json.loads(m)))

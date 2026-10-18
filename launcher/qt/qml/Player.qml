@@ -32,7 +32,7 @@ Window {
         readonly property Item view: vsMode === "tv" ? tvView : mediaView
         // fuer VS-Bausteine (Focusable, Layer, Track): wie die Startseite
         property string layerName: "player"
-        readonly property Item layerRoot: view.navRoot || view
+        readonly property Item layerRoot: osk.open ? osk : (view.navRoot || view)
         property real mouseGX: NaN
         property real mouseGY: NaN
 
@@ -71,7 +71,11 @@ Window {
         Binding { target: win.videoItem; property: "show"; value: app.view.wantVideo; when: win.videoItem !== null }
 
         // ------------------------------------------------------------ Eingaben
-        function key(k) { if (started) view.key(k) }
+        function key(k) {
+            if (!started) return
+            if (osk.open) return osk.pad(k)
+            view.key(k)
+        }
         function keyName(e) {
             var k = e.key
             if (k === Qt.Key_Return || k === Qt.Key_Enter) return "a"
@@ -96,6 +100,7 @@ Window {
             return ""
         }
         Keys.onPressed: function (e) {
+            if (osk.open && osk.key(e)) { e.accepted = true; return }
             var k = keyName(e)
             if (!k) return
             e.accepted = true
@@ -136,6 +141,14 @@ Window {
         function mousePress(item) { if (item.pressFlash) item.pressedNow = true }
         function mouseRelease(item) { item.pressedNow = false }
         function back() { key("b") }
+        // Bildschirmtastatur (Osk.qml der Startseite): braucht updateLayer/activate/openOsk wie dort
+        function updateLayer() {}
+        function openOsk(field) { osk.openFor(field) }
+        function activate(el) {
+            el = el || Nav.current
+            if (!el || !Nav.alive(el, layerRoot)) return
+            el.activate()
+        }
         function curTrack() { return view.track || null }
 
         // ------------------------------------------------------------ Gemeinsames
@@ -160,6 +173,7 @@ Window {
         MediaView { id: mediaView; anchors.fill: parent; visible: vsMode === "media"; enabled: visible }
 
         VolumeOsd { id: volOsd }
+        Osk { id: osk; anchors.fill: parent }
         Toast { id: toastBox }
     }
 }

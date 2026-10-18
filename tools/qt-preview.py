@@ -72,6 +72,7 @@ def media():
         L.CoverFetcher.CACHE = tmp / "covers"                   # Cover-Suche: Zwischenspeicher im Wegwerf-Ordner,
         L.CoverFetcher.MISSES = tmp / "covers" / "misses.json"  # Schalter nur im Speicher (VS_MB_URL/VS_CAA_URL: Testserver)
         L.CoverFetcher.auto = staticmethod(lambda: PLAYER.get("covers_auto", True))
+        L.SETTINGS = tmp / "settings.json"                     # Einstellungen (Musik suchen) nicht ins Repo schreiben
         PLAYER["L"] = L
         PLAYER["media"], PLAYER["tmp"] = L.MediaLib(), tmp
     return PLAYER["media"]
@@ -214,6 +215,8 @@ class H(S.H):
             "/api/media/list": lambda: media_list(q),
             "/api/media/nextfolder": lambda: media().next_folder(q.get("path", [""])[0]) or {},
             "/api/media/covers": lambda: (media(), PLAYER["L"].COVERS.status())[1],
+            "/api/dl/settings": lambda: (media(), PLAYER["L"].MUSICDL.payload())[1],
+            "/api/dl/status": lambda: (media(), PLAYER["L"].MUSICDL.status())[1],
         }
         if p == "/api/media/thumb":
             r = media().thumb(q.get("path", [""])[0])
@@ -266,6 +269,18 @@ class H(S.H):
             ch = next((c for c in S.TV if c["key"] == body.get("key")), None)
             st["tvfavs"] = [f for f in st["tvfavs"] if f["key"] != body.get("key")] + ([ch] if ch and p.endswith("/fav") else [])
             return self.j(st["tvfavs"])
+        if p.startswith("/api/dl/"):                # Musik suchen: echter Launcher-Code (VS_IA_URL/VS_ITUNES_URL/VS_YTDLP: Testserver)
+            media()
+            D = PLAYER["L"].MUSICDL
+            try:
+                if p == "/api/dl/settings":
+                    return self.j(D.save_settings(body.get("sources")))
+                if p == "/api/dl/search":
+                    return self.j(D.search(body.get("q")))
+                if p == "/api/dl/get":
+                    return self.j(D.get(body.get("key")))
+            except ValueError as e:
+                self.send_response(404); self.end_headers(); self.wfile.write(json.dumps({"error": str(e)}).encode()); return
         if p == "/api/media/covers/scan":
             media()
             L = PLAYER["L"]
