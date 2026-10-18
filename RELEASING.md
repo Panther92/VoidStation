@@ -42,6 +42,24 @@ build if the English section is missing, if `Testing` is not at the top or if ve
 | `main` | *Testing* | everything merged – new features land here first |
 | `stable` | *Stable* (default) | released versions only; written by `vspub --release` / `--hotfix`, never by hand |
 
+## Who writes what
+
+Only `vspub` on the publisher's machine builds and signs `dist/` – so code reaches `main` only through `vspub`.
+
+| Change | Way in |
+|---|---|
+| Code, device files (`launcher/`, `iso/`, install/update scripts, changelog), `tools/`, `.github/` | bundle → `~/share/Updates` → `vspub` (or a pull request, merged and then published with `vspub`) |
+| Pure documentation and website (`README*.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `RELEASING.md`, `site/`, `docs/screenshots/`) | may also be pushed to `main` directly; `site/` goes live on voidstation.de right away |
+| `stable`, `dist/`, `keys/`, releases, hotfixes, ISO | `vspub --release` / `--hotfix` / `--iso` only, run by the publisher |
+
+`vspub` pulls in anything pushed directly to `main` before applying a bundle, so direct documentation pushes
+don't get in its way.
+
+**Building a bundle:** `tools/mkbundle.sh <folder>` – always cumulative (everything since the current GitHub
+state, `origin/main..main`), always with the ref `refs/heads/main`, test-applied before it is written. Only the
+newest bundle is needed; older ones in `~/share/Updates` can be deleted. Never build one by hand with `HEAD` or a
+commit hash as the end point – `vspub` then fails with "Konnte Remote-Referenz main nicht finden".
+
 ## Release train (monthly)
 
 Once a month – usually on the first weekend – *Stable* is updated:

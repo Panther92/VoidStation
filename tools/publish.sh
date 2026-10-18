@@ -127,9 +127,24 @@ build_sign() {             # <verzeichnis> – dist/ bauen und signieren (Signat
   echo "signiert und geprueft"
 }
 
+catch_up() {               # Stand von GitHub nachziehen, z. B. direkt gepushte Doku-/Webseiten-Commits
+  git rev-parse -q --verify origin/main >/dev/null || return 0
+  git merge-base --is-ancestor origin/main HEAD && return 0                    # nichts Neues auf GitHub
+  git diff --quiet && git diff --cached --quiet || die "Ungesicherte Aenderungen im Repo – erst committen oder verwerfen."
+  if git merge-base --is-ancestor HEAD origin/main; then
+    git merge -q --ff-only origin/main || die "GitHub-Stand liess sich nicht uebernehmen."
+  elif ! git merge -q --no-edit -m "GitHub-Stand uebernommen" origin/main; then
+    git merge --abort 2>/dev/null || true
+    die "GitHub-Stand liess sich nicht zusammenfuehren (Konflikt) – nichts veraendert."
+  fi
+  echo "GitHub-Stand uebernommen:"
+  git log --oneline --no-merges -n 5 "HEAD@{1}..HEAD" 2>/dev/null | sed 's/^/  /' || true
+}
+
 require_synced() {         # lokales main = GitHub, nichts Ungesichertes
   git fetch -q origin || die "GitHub nicht erreichbar."
   [ "$(git rev-parse --abbrev-ref HEAD)" = main ] || die "Bitte erst auf den Zweig main wechseln:  git checkout main"
+  if git merge-base --is-ancestor HEAD origin/main; then catch_up; fi          # nur vorspulen, nie Eigenes verwerfen
   [ "$(git rev-parse HEAD)" = "$(git rev-parse origin/main)" ] || die "Lokaler Stand weicht von GitHub ab – erst  vspub"
   git diff --quiet && git diff --cached --quiet || die "Ungesicherte Aenderungen im Repo – erst committen oder verwerfen."
   git rev-parse -q --verify origin/stable >/dev/null || die "Zweig stable fehlt auf GitHub."
@@ -608,11 +623,14 @@ esac
 [ -e "$KEY" ] || die "Kein Signaturschluessel ($KEY) – einmalig:  vspub --init-key"
 mkdir -p "$INBOX/erledigt"
 git fetch -q origin || true
+[ "$(git rev-parse --abbrev-ref HEAD)" = main ] || die "Bitte erst auf den Zweig main wechseln:  git checkout main"
+catch_up
 
 b="$(ls -t "$INBOX"/*.bundle 2>/dev/null | head -n1 || true)"
 if [ -n "$b" ]; then
   say "Bundle: $(basename "$b")"
   git bundle verify -q "$b" >/dev/null 2>&1 || die "Bundle passt nicht zu diesem Repo (fehlende Vorgaenger-Commits)."
+  git bundle list-heads "$b" | grep -q ' refs/heads/main$' || die "Bundle enthaelt keinen Zweig main (gebaut mit HEAD statt main?) – neu bauen mit  tools/mkbundle.sh"
   before="$(git rev-parse HEAD)"
   if ! { git fetch -q "$b" main && git merge -q --no-edit -m "Bundle $(basename "$b") uebernommen" FETCH_HEAD; }; then
     git merge --abort 2>/dev/null || true
