@@ -552,10 +552,19 @@ Item {
             anchors.verticalCenterOffset: -20 * Ui.f
             width: Math.min(parent.height * 0.5, parent.width * 0.32); height: width
             color: Ui.c.surfaceCard
+            // Bild des Titels; fehlt es noch, sucht der Launcher im Netz – dann ein paar Mal nachfragen
+            property string base: mv.curTrackItem && mv.curTrackItem.thumb ? Ui.url(mv.curTrackItem.thumb) : ""
+            property int tries: 0
+            onBaseChanged: tries = 0
+            Timer {
+                interval: 4000; repeat: true
+                running: coverImg.status === Image.Error && cover.tries < 10 && mv.phase === "audio"
+                onTriggered: cover.tries++
+            }
             Image {
                 id: coverImg
                 anchors.fill: parent
-                source: mv.curTrackItem && mv.curTrackItem.thumb ? Ui.url(mv.curTrackItem.thumb) : ""
+                source: cover.base ? cover.base + (cover.tries ? "&try=" + cover.tries : "") : ""
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true
                 sourceSize: Qt.size(Math.ceil(width), Math.ceil(height))

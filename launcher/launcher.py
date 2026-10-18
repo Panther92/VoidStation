@@ -1749,6 +1749,8 @@ class MediaLib:
         self.sem = threading.Semaphore(2)          # hoechstens zwei Vorschaubilder gleichzeitig (schwache Geraete)
         self.thumbnailer = shutil.which("ffmpegthumbnailer")
         self.mixed_cache = {}                      # Ordner -> (mtime, gemischt?)
+        self.tags_cache = {}                       # Datei -> (mtime, Tags)
+        self.art_done = {}                         # Datei -> (mtime, Kennung des Bildes) – Bild steht fest
 
     @staticmethod
     def share():
@@ -1824,7 +1826,9 @@ class MediaLib:
             except OSError:
                 cm = 0
             m = int(st.st_mtime) if st else 0
-            return "/api/media/thumb?art=" + urllib.parse.quote(str(p)) + f"&m={m}&c={cm}"
+            done = self.art_done.get(str(p))
+            r = done[1] if done and st and done[0] == st.st_mtime else 0
+            return "/api/media/thumb?art=" + urllib.parse.quote(str(p)) + f"&m={m}&c={cm}&r={r}"
         return ""
 
     def mixed(self, folder):
@@ -1881,12 +1885,22 @@ class MediaLib:
             except OSError:
                 pass
 
-    def art(self, path):
-        """Bild zu einem Musiktitel: eingebettetes Cover (zwischengespeichert), sonst das Cover des Ordners –
-        ausser der Ordner mischt verschiedene Alben."""
-        p = self.resolve(path)
-        if not p or not p.is_file() or p.suffix.lower() not in AUDIO_EXT:
-            return None
+    def track_tags(self, p, st=None):
+        st = st or p.stat()
+        hit = self.tags_cache.get(str(p))
+        if hit and hit[0] == st.st_mtime:
+            return hit[1]
+        t = COVERS._tags(p)
+        self.tags_cache[str(p)] = (st.st_mtime, t)
+        return t
+
+    def art_file(self, p, online=False):
+        """Bild zu einem Musiktitel, der Reihe nach:
+        1. in die Datei eingebettetes Cover (einmal herausgeholt, zwischengespeichert)
+        2. Cover des Ordners – ausser der Ordner mischt verschiedene Alben
+        3. online gefundenes Cover zu Interpret + Album bzw. Interpret + Titel (Zwischenspeicher, gilt fuer alle
+           Titel desselben Albums) – nur mit online=True wird gesucht (Hintergrund, CoverFetcher)
+        Rueckgabe (Pfad oder None, fertig): fertig=False heisst, eine Suche im Netz koennte noch etwas bringen."""
         st = p.stat()
         key = hashlib.sha1(f"art:{p}:{int(st.st_mtime)}:{st.st_size}".encode()).hexdigest()
         out, none = self.THUMBS / f"{key}.jpg", self.THUMBS / f"{key}.none"
@@ -1905,17 +1919,55 @@ class MediaLib:
                     except OSError:
                         pass
         if out.exists():
-            try:
-                return out.read_bytes(), "image/jpeg"
-            except OSError:
-                pass
-        if self.mixed(p.parent):
+            return self._art_found(p, st, out)
+        if not self.mixed(p.parent):
+            c = self.own_cover(p.parent)
+            if c is not None:
+                return self._art_found(p, st, c)
+        ac = COVERS.track_cache(p, self.track_tags(p, st))
+        if ac is None:                                 # weder Tags noch brauchbarer Dateiname
+            return self._art_found(p, st, None)
+        if ac.is_file():
+            return self._art_found(p, st, ac)
+        if COVERS.track_missed(ac):
+            return self._art_found(p, st, None)
+        if online:
+            ok = COVERS.fetch_track(p, self.track_tags(p, st), ac)
+            if ok is None:                             # kein Netz – offen lassen
+                return None, False
+            return self._art_found(p, st, ac if ok else None)
+        return None, False
+
+    def _art_found(self, p, st, f):
+        try:
+            tag = int(f.stat().st_mtime) % 100000 + 1 if f is not None else 0
+        except OSError:
+            tag = 0
+        self.art_done[str(p)] = (st.st_mtime, tag)
+        return f, True
+
+    def art_pending(self, p):
+        """Ist fuer diesen Titel noch offen, welches Bild er bekommt? (billig, ohne ffmpeg/ffprobe)"""
+        try:
+            st = p.stat()
+        except OSError:
+            return False
+        done = self.art_done.get(str(p))
+        return not (done and done[0] == st.st_mtime)
+
+    def art(self, path):
+        """Bild zu einem Musiktitel fuer /api/media/thumb?art= (siehe art_file). Fehlt eins und koennte es online
+        eins geben, sucht der CoverFetcher im Hintergrund danach – die Kachel bzw. der Player fragen spaeter nochmal."""
+        p = self.resolve(path)
+        if not p or not p.is_file() or p.suffix.lower() not in AUDIO_EXT:
             return None
-        c = self.own_cover(p.parent)
-        if c is None:
+        f, final = self.art_file(p)
+        if f is None:
+            if not final:
+                COVERS.add_track(p)
             return None
         try:
-            return c.read_bytes(), MIME.get(c.suffix.lower(), "image/jpeg")
+            return f.read_bytes(), MIME.get(f.suffix.lower(), "image/jpeg")
         except OSError:
             return None
 
@@ -2029,6 +2081,9 @@ class MediaLib:
                 pending += COVERS.add(p)
             for d in dirs[:60]:                    # auch Interpreten-Ordner, die schon das Bild eines Albums zeigen
                 pending += COVERS.add(Path(d["path"]), deep=True)
+            for f in files[:400]:                  # Titel ohne festes Bild (lose Sammlungen, Ordner ohne Cover)
+                if f["kind"] == "audio" and MEDIA.art_pending(Path(f["path"])):
+                    pending += COVERS.add_track(Path(f["path"]))
         return {"path": str(p), "name": p.name, "parent": parent, "items": dirs + files, "select": select,
                 "audio": audio, "coversPending": pending or COVERS.busy_for(p)}
 
@@ -2136,9 +2191,11 @@ class CoverFetcher:
     def __init__(self):
         self.lock = threading.Lock()
         self.queue, self.queued = [], set()
+        self.tqueue, self.tqueued = [], set()          # einzelne Titel (Bild je Titel)
         self.current = None
         self.stats = {"done": 0, "found": 0, "total": 0}
         self.last_mb = 0.0
+        self.offline = False                           # letzte Suche scheiterte am Netz (dann nicht als "nichts da" merken)
         self.misses = None
         self.worker = None
 
@@ -2175,13 +2232,14 @@ class CoverFetcher:
 
     def status(self):
         with self.lock:
-            return dict(self.stats, queue=len(self.queue), running=self.current is not None or bool(self.queue),
+            return dict(self.stats, queue=len(self.queue), tracks=len(self.tqueue),
+                        running=self.current is not None or bool(self.queue) or bool(self.tqueue),
                         current=Path(self.current).name if self.current else "", auto=self.auto())
 
     def busy_for(self, folder):
         """Wird fuer diesen Ordner oder einen direkten Unterordner gerade ein Cover gesucht?"""
         with self.lock:
-            items = list(self.queue) + ([self.current] if self.current else [])
+            items = list(self.queue) + list(self.tqueue) + ([self.current] if self.current else [])
         f = str(folder)
         return sum(1 for q in items if q == f or os.path.dirname(q) == f)
 
@@ -2201,10 +2259,26 @@ class CoverFetcher:
             self.queued.add(str(folder))
             self.queue.append(str(folder))
             self.stats["total"] += 1
-            if not self.worker or not self.worker.is_alive():
-                self.worker = threading.Thread(target=self._run, daemon=True)
-                self.worker.start()
+            self._start()
         return 1
+
+    def add_track(self, path, force=False):
+        """Titel vormerken: eingebettetes Bild pruefen, sonst Cover zu Interpret + Album (oder Titel) im Netz suchen."""
+        if not force and not self.auto():
+            return 0
+        path = str(path)
+        with self.lock:
+            if path in self.tqueued:
+                return 0
+            self.tqueued.add(path)
+            self.tqueue.append(path)
+            self._start()
+        return 1
+
+    def _start(self):                                  # unter self.lock aufrufen
+        if not self.worker or not self.worker.is_alive():
+            self.worker = threading.Thread(target=self._run, daemon=True)
+            self.worker.start()
 
     def scan(self, root):
         """Ganze Sammlung (z. B. share/Musik) durchgehen – auch Ordner, fuer die es zuletzt nichts gab."""
@@ -2230,10 +2304,21 @@ class CoverFetcher:
     def _run(self):
         while True:
             with self.lock:
-                if not self.queue:
+                if not self.queue and not self.tqueue:
                     self.current = None
                     return
-                self.current = self.queue.pop(0)
+                track = not self.queue                 # Ordner zuerst: deren Cover gilt oft schon fuer die Titel
+                self.current = (self.tqueue if track else self.queue).pop(0)
+            if track:
+                p = Path(self.current)
+                try:
+                    if p.is_file():
+                        MEDIA.art_file(p, online=True)
+                except Exception as e:  # noqa: BLE001
+                    log("Cover:", p.name, e)
+                with self.lock:
+                    self.tqueued.discard(str(p))
+                continue
             folder = Path(self.current)
             try:
                 ok = self.fetch(folder)
@@ -2254,15 +2339,19 @@ class CoverFetcher:
             return False
         if MEDIA.mixed(folder):                        # verschiedene Alben: jeder Titel zeigt sein eigenes Bild
             self._miss(folder)
-            log("Cover: gemischter Ordner, kein gemeinsames Cover –", folder.name)
+            n = sum(self.add_track(f, force=True) for f in files[:400] if MEDIA.art_pending(f))
+            log(f"Cover: gemischter Ordner, kein gemeinsames Cover – {folder.name} ({n} Titel einzeln)")
             return False
         img = self._embedded(files[0])
         source = "eingebettet"
+        self.offline = False
         if not img:
             artist, album = self._names(folder, files[0])
             img = self._online(artist, album) if album else None
             source = f"MusicBrainz ({artist} – {album})"
         if not img:
+            if self.offline:                           # kein Netz: beim naechsten Oeffnen nochmal versuchen
+                return False
             self._miss(folder)
             log("Cover: nichts gefunden fuer", folder.name)
             return False
@@ -2334,6 +2423,7 @@ class CoverFetcher:
             d = self._mb_get("release-group/?fmt=json&limit=5&query=" + urllib.parse.quote(q))
         except Exception as e:  # noqa: BLE001
             log("Cover: MusicBrainz nicht erreichbar:", e)
+            self.offline = True
             return None
         for g in (d.get("release-groups") or [])[:5]:
             if int(g.get("score") or 0) < (90 if artist else 98):
@@ -2349,6 +2439,104 @@ class CoverFetcher:
                     log("Cover Art Archive:", e)
             except Exception as e:  # noqa: BLE001
                 log("Cover Art Archive:", e)
+        return None
+
+    # ---- Cover je Titel (lose Sammlungen, gemischte Ordner) ----
+    @staticmethod
+    def _norm(x):
+        return re.sub(r"\s+", " ", JUNK.sub("", x or "")).strip().casefold()
+
+    def _track_names(self, p, tags):
+        """Interpret, Album, Titel aus den Tags; fehlen sie, aus dem Dateinamen ("01 - Interpret - Titel")."""
+        artist = tags.get("album_artist") or tags.get("albumartist") or tags.get("artist") or ""
+        album, title = tags.get("album") or "", tags.get("title") or ""
+        if not artist or not title:
+            stem = re.sub(r"^\d{1,3}[\s._-]+", "", p.stem).strip()
+            if " - " in stem:
+                a, t = stem.split(" - ", 1)
+                artist, title = artist or a.strip(), title or t.strip()
+        # "feat." und Zusaetze helfen der Suche nicht
+        artist = re.split(r"\s+(?:feat\.?|ft\.?|featuring)\s+", artist, maxsplit=1, flags=re.I)[0].strip()
+        return artist, JUNK.sub("", album).strip(), JUNK.sub("", title).strip()
+
+    def track_cache(self, p, tags):
+        """Datei im Zwischenspeicher fuer das Cover dieses Titels – gemeinsam fuer alle Titel eines Albums."""
+        artist, album, title = self._track_names(p, tags)
+        if not artist or not (album or title):
+            return None
+        key = f"album|{self._norm(artist)}|{self._norm(album)}" if album else f"title|{self._norm(artist)}|{self._norm(title)}"
+        return self.CACHE / ("t-" + hashlib.sha1(key.encode()).hexdigest()[:16] + ".jpg")
+
+    def track_missed(self, cache):
+        return self._recent_miss(cache.name)
+
+    def fetch_track(self, p, tags, cache):
+        if cache.is_file():                            # inzwischen von einem anderen Titel desselben Albums geholt
+            return True
+        artist, album, title = self._track_names(p, tags)
+        img, via = None, ""
+        self.offline = False
+        if album:
+            img, via = self._online(artist, album), f"{artist} – {album}"
+        if not img and title:
+            img, via = self._online_recording(artist, title), f"{artist} – {title}"
+        if not img:
+            if self.offline:                           # kein Netz: None = spaeter nochmal
+                return None
+            self._miss(cache.name)
+            log("Cover: nichts gefunden fuer", p.name)
+            return False
+        try:
+            self.CACHE.mkdir(parents=True, exist_ok=True)
+            tmp = cache.with_suffix(".part")
+            tmp.write_bytes(img)
+            tmp.replace(cache)
+        except OSError as e:
+            log("Cover: Zwischenspeicher nicht beschreibbar:", e)
+            return False
+        log("Cover:", p.name, "<- MusicBrainz (" + via + ")")
+        return True
+
+    def _caa(self, gid):
+        try:
+            req = urllib.request.Request(self.CAA + f"release-group/{gid}/front-500", headers={"User-Agent": self.UA["User-Agent"]})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                data = r.read()
+            return data if len(data) > 1000 else None
+        except urllib.error.HTTPError as e:
+            if e.code != 404:
+                log("Cover Art Archive:", e)
+        except Exception as e:  # noqa: BLE001
+            log("Cover Art Archive:", e)
+        return None
+
+    def _online_recording(self, artist, title):
+        """Titel ohne Album-Tag: Aufnahme suchen, deren Album (offiziell, Studioalbum vor Single, keine
+        Zusammenstellung) nehmen."""
+        q = "recording:" + self._q(title) + " AND artist:" + self._q(artist)
+        try:
+            d = self._mb_get("recording/?fmt=json&limit=8&query=" + urllib.parse.quote(q))
+        except Exception as e:  # noqa: BLE001
+            log("Cover: MusicBrainz nicht erreichbar:", e)
+            self.offline = True
+            return None
+
+        def rank(r):
+            rg = r.get("release-group") or {}
+            return (0 if r.get("status") == "Official" else 1, {"Album": 0, "Single": 1, "EP": 2}.get(rg.get("primary-type"), 3),
+                    1 if rg.get("secondary-types") else 0, r.get("date") or "9999")
+        groups = []
+        for rec in (d.get("recordings") or [])[:8]:
+            if int(rec.get("score") or 0) < 90:
+                continue
+            for r in sorted(rec.get("releases") or [], key=rank):
+                gid = (r.get("release-group") or {}).get("id")
+                if gid and gid not in groups:
+                    groups.append(gid)
+        for gid in groups[:4]:
+            img = self._caa(gid)
+            if img:
+                return img
         return None
 
     def _save(self, folder, data):
