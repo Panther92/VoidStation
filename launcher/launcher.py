@@ -1849,7 +1849,7 @@ class MediaLib:
             res = False
         else:
             step = max(1, len(files) // 8)
-            albums, artists = set(), set()
+            albums, artists, bare = set(), set(), 0
             for f in files[::step][:8]:
                 t = COVERS._tags(f)
                 if t.get("album"):
@@ -1857,7 +1857,10 @@ class MediaLib:
                 a = t.get("album_artist") or t.get("albumartist") or t.get("artist") or ""
                 if a:
                     artists.add(a.casefold())
-            res = len(albums) > 1 or (not albums and len(artists) > 1)
+                if not t.get("album") and not a:
+                    bare += 1
+            # Titel mit Tags neben solchen ganz ohne: eher eine lose Sammlung als ein Album
+            res = len(albums) > 1 or (not albums and len(artists) > 1) or (bare > 0 and bool(albums or artists))
         if res:
             self._drop_wrong_cover(folder, files)
         try:
@@ -2545,10 +2548,24 @@ class CoverFetcher:
         artist = re.split(r"\s+(?:feat\.?|ft\.?|featuring)\s+", artist, maxsplit=1, flags=re.I)[0].strip()
         return artist, JUNK.sub("", album).strip(), JUNK.sub("", title).strip()
 
+    @staticmethod
+    def _guess_text(p, tags):
+        """Ohne Interpret: der Dateiname (ohne Titelnummer, Zusaetze) als Ganzes, z. B. "Beck loser"."""
+        stem = re.sub(r"^\d{1,3}[\s._-]+", "", p.stem).replace("_", " ")
+        stem = re.sub(r"\s+", " ", JUNK.sub("", stem)).strip()
+        if len(stem.split()) >= 2:
+            return stem
+        return JUNK.sub("", tags.get("title") or "").strip()
+
     def track_cache(self, p, tags):
         """Datei im Zwischenspeicher fuer das Cover dieses Titels – gemeinsam fuer alle Titel eines Albums."""
         artist, album, title = self._track_names(p, tags)
-        if not artist or not (album or title):
+        if not artist:                                 # nur ein Dateiname wie "Beck loser": raten (fetch_track)
+            text = self._guess_text(p, tags)
+            if len(text.split()) < 2:
+                return None
+            return self.CACHE / ("t-" + hashlib.sha1(f"guess|{self._norm(text)}".encode()).hexdigest()[:16] + ".jpg")
+        if not (album or title):
             return None
         key = f"album|{self._norm(artist)}|{self._norm(album)}" if album else f"title|{self._norm(artist)}|{self._norm(title)}"
         return self.CACHE / ("t-" + hashlib.sha1(key.encode()).hexdigest()[:16] + ".jpg")
@@ -2562,10 +2579,14 @@ class CoverFetcher:
         artist, album, title = self._track_names(p, tags)
         img, via = None, ""
         self.offline = False
-        if album:
-            img, via = self._online(artist, album), f"{artist} – {album}"
         meta = None
-        if not img and title:
+        if not artist:
+            text = self._guess_text(p, tags)
+            img, via = self._online_guess(text), text
+            meta = self.last_meta if img else None
+        elif album:
+            img, via = self._online(artist, album), f"{artist} – {album}"
+        if not img and artist and title:
             img, via = self._online_recording(artist, title), f"{artist} – {title}"
             meta = self.last_meta if img else None
         if not img:
@@ -2600,9 +2621,41 @@ class CoverFetcher:
             log("Cover Art Archive:", e)
         return None
 
-    def _online_recording(self, artist, title):
+    @staticmethod
+    def _similar(a, b):
+        import difflib
+        f = lambda x: re.sub(r"[^a-z0-9]+", " ", tv_fold(x or "")).strip()    # noqa: E731
+        return difflib.SequenceMatcher(None, f(a), f(b)).ratio()
+
+    @classmethod
+    def _artist_fits(cls, credit, guess):
+        """"Jade" passt zu "Jade LeMac", "beck" zu "Beck" – Woerter des geratenen Namens stecken im echten."""
+        if cls._similar(credit, guess) >= 0.85:
+            return True
+        w = lambda x: set(re.sub(r"[^a-z0-9]+", " ", tv_fold(x or "")).split())    # noqa: E731
+        g = w(guess)
+        return bool(g) and g <= w(credit)
+
+    def _online_guess(self, text):
+        """Nur "Beck loser" oder "Midnight Cowboy Jade": alle Aufteilungen in Interpret + Titel durchprobieren (beide
+        Richtungen, hoechstens 8 Anfragen) und nur nehmen, was bei MusicBrainz in Interpret UND Titel passt."""
+        words = text.split()
+        if not 2 <= len(words) <= 12:
+            return None
+        cands = []
+        for i in range(1, len(words)):
+            a, t = " ".join(words[:i]), " ".join(words[i:])
+            cands += [(a, t), (t, a)]
+        cands.sort(key=lambda c: abs(len(c[0].split()) - 1))   # meist ist der Interpret ein Wort ("Beck", "Jade")
+        for a, t in cands[:8]:
+            img = self._online_recording(a, t, strict=True)
+            if img or self.offline:
+                return img
+        return None
+
+    def _online_recording(self, artist, title, strict=False):
         """Titel ohne Album-Tag: Aufnahme suchen, deren Album (offiziell, Studioalbum vor Single, keine
-        Zusammenstellung) nehmen."""
+        Zusammenstellung) nehmen. strict: Interpret und Titel muessen fast genau passen (geratene Aufteilung)."""
         q = "recording:" + self._q(title) + " AND artist:" + self._q(artist)
         try:
             d = self._mb_get("recording/?fmt=json&limit=8&query=" + urllib.parse.quote(q))
@@ -2620,6 +2673,8 @@ class CoverFetcher:
             if int(rec.get("score") or 0) < 90:
                 continue
             credit = "".join((a.get("name") or "") + (a.get("joinphrase") or "") for a in rec.get("artist-credit") or []).strip()
+            if strict and (self._similar(rec.get("title"), title) < 0.85 or not self._artist_fits(credit, artist)):
+                continue
             for r in sorted(rec.get("releases") or [], key=rank):
                 gid = (r.get("release-group") or {}).get("id")
                 if gid and gid not in groups:

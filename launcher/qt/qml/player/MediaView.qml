@@ -146,7 +146,11 @@ Item {
         if (it.kind === "dir" || it.kind === "videos" || it.kind === "music" || it.kind === "drive") return openPath(it.path)
         if (it.kind === "dl") return dlView.show()
         if (it.kind === "playall") return playAudio(audioItems, 0, path, folderName)
-        if (it.kind === "audio") return playAudio(audioItems, Math.max(0, audioItems.indexOf(it)), path, folderName)
+        if (it.kind === "audio") {                    // nach Pfad suchen: die Kachel haelt eine Kopie des Eintrags
+            var at = 0
+            for (var i = 0; i < audioItems.length; i++) if (audioItems[i].path === it.path) { at = i; break }
+            return playAudio(audioItems, at, path, folderName)
+        }
         if (it.kind === "video" || it.kind === "resume") {
             if (it.resume && it.resume.pos > 30) return dlg.ask(it)
             return playVideo(it, 0)
