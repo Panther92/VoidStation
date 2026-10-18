@@ -669,6 +669,7 @@ const ICONS = {
   chart:    '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"><path d="M6 40h36M10 34l8-10 7 6 12-15"/></svg>',
   monitor:  '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"><rect x="5" y="8" width="38" height="25" rx="3"/><path d="M17 41h14M24 33v8"/></svg>',
   palette:  '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"><path d="M24 6C13 6 5 14 5 23.5S12 41 21 41c3 0 4-2 3-4.5s0-4.5 3-4.5h5c6 0 11-4 11-10C43 13 34.5 6 24 6z"/><circle cx="14.5" cy="22" r="2.6" fill="currentColor"/><circle cx="20.5" cy="14" r="2.6" fill="currentColor"/><circle cx="30.5" cy="14" r="2.6" fill="currentColor"/><circle cx="36" cy="21.5" r="2.6" fill="currentColor"/></svg>',
+  headphones: '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"><path d="M8 31v-7a16 16 0 0 1 32 0v7"/><rect x="6" y="29" width="9" height="13" rx="2"/><rect x="33" y="29" width="9" height="13" rx="2"/></svg>',
   speaker:  '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"><path d="M7 18h7l10-8v28l-10-8H7z"/><path d="M30.5 18c2 1.8 3 3.8 3 6s-1 4.2-3 6M35.5 12.5c3.6 3 5.5 7 5.5 11.5s-1.9 8.5-5.5 11.5"/></svg>',
   wifi:     '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M5 18c11-10 27-10 38 0M11 24.5c7.5-6.5 18.5-6.5 26 0M17 31c4-3.3 10-3.3 14 0"/><circle cx="24" cy="37.5" r="2.4" fill="currentColor"/></svg>',
   bluetooth:'<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"><path d="M14 15l20 18-10 8V7l10 8-20 18"/></svg>',
@@ -1344,7 +1345,7 @@ function showVol(v) {
 
 /* ============================================================ Einstellungen */
 const DEMO_SETT = { scale: 1.75, scales: [1, 1.25, 1.5, 1.75, 2, 2.25], theme: 'default-dark', themes: ['default-dark', 'default-light', 'high-contrast', 'nord'], cursor: { theme: 'Bibata-Modern-Ice', size: 48, themes: [{ id: 'Bibata-Modern-Ice', label: 'Hell' }, { id: 'Bibata-Modern-Classic', label: 'Dunkel' }], sizes: [32, 48, 64, 80, 96] }, displays: [{ name: 'HDMI-2', current: '1360x768', modes: ['1920x1080', '1360x768', '1280x720', '1024x768'] }],
-  audio: { ok: true, outputs: [{ card: 'c', profile: 'output:hdmi-stereo', label: 'Digital Stereo (HDMI)', active: true }, { card: 'c', profile: 'output:analog-stereo', label: 'Analog Stereo', active: false }] },
+  audio: { ok: true, auto: true, devices: [{ key: 'pci#hdmi0', kind: 'hdmi', name: '', num: 0, active: true, formats: [{ id: 'stereo', key: 'audio.fmt.stereo', label: '' }, { id: 'surround-51', key: 'audio.fmt.surround', label: '5.1' }], format: 'stereo', mic: null, micAvail: false }, { key: 'usb', kind: 'usb', name: 'USB-Headset', num: 0, active: false, formats: [{ id: 'stereo', key: 'audio.fmt.stereo', label: '' }], format: 'stereo', mic: true, micAvail: true }] },
   volume: { level: 45, muted: false }, net: { hostname: 'void', addresses: [{ iface: 'enp1s0', ip: '192.168.178.49' }] } };
 
 let btState = null, btScanning = false, btRename = null;   // btRename: Geraet, das gerade umbenannt wird
@@ -1400,8 +1401,8 @@ function catSub(id) {
     }
     case 'design': return esc(T('theme.' + currentTheme, null, currentTheme));
     case 'audio': {
-      const o = sett.audio?.ok && sett.audio.outputs.find(x => x.active);
-      return (o ? esc(o.label) + ' · ' : '') + '<span class="voltxt"></span>';
+      const d = audioDev();
+      return (d ? esc(devLabel(d)) + ' · ' : '') + '<span class="voltxt"></span>';
     }
     case 'net': return esc(sett.net.addresses.length ? sett.net.addresses[0].ip : T('settings.offline'));
     case 'bt': {
@@ -1498,11 +1499,28 @@ const SET_PAGES = {
     }
   },
   audio(tr) {
-    const ro = row(col(tr, T('settings.audioOut')));
-    if (!sett.audio?.ok) {
-      const e = document.createElement('div'); e.className = 'info'; e.textContent = T('settings.noAudio'); ro.appendChild(e);
-    } else for (const o of sett.audio.outputs) {
-      const b = pill(esc(o.label), () => setOutput(o), o.active); b.dataset.key = 'out' + o.profile; ro.appendChild(b);
+    // Erst das Geraet (Fernseher, USB-/Bluetooth-Kopfhoerer …), darunter Format und Mikrofon des aktiven Geraets
+    const oc = col(tr, T('settings.audioOut'));
+    const note = (txt) => { const e = document.createElement('div'); e.className = 'info'; e.textContent = txt; oc.appendChild(e); };
+    const ro = row(oc);
+    const devs = sett.audio?.ok ? (sett.audio.devices || []) : [];
+    if (!sett.audio?.ok) note(T('settings.noAudio'));
+    else if (!devs.length) note(T('audio.none'));
+    for (const d of devs) {
+      const tag = devTag(d);
+      const b = pill(esc(devLabel(d)) + (tag ? ` <span style="opacity:.6">· ${tag}</span>` : ''), () => setDevice(d), d.active);
+      b.dataset.key = 'dev' + d.key; ro.appendChild(b);
+    }
+    const d = audioDev();
+    if (d && d.formats.length > 1) {
+      const rf = row(oc, T('audio.format'));
+      for (const f of d.formats) { const b = pill(esc(fmtLabel(f)), () => setFormat(d, f), d.format === f.id); b.dataset.key = 'fmt' + f.id; rf.appendChild(b); }
+      if (d.kind === 'hdmi') note(T('audio.fmtHintTv'));
+    }
+    if (d && d.micAvail) {
+      const rm = row(oc, T(['hdmi', 'analog', 'spdif', 'other'].includes(d.kind) ? 'audio.micJack' : 'audio.mic'));
+      for (const on of [true, false]) { const b = pill(esc(T(on ? 'common.on' : 'common.off')), () => setMic(d, on), d.mic === on); b.dataset.key = 'mic' + on; rm.appendChild(b); }
+      if (d.kind === 'bt') note(T('audio.micBt'));
     }
     const rv = row(col(tr, T('settings.volume')));
     const v = document.createElement('div'); v.className = 'vol';
@@ -1512,6 +1530,12 @@ const SET_PAGES = {
     const meter = document.createElement('div'); meter.className = 'meter'; meter.innerHTML = '<b class="volbar"></b>';
     const txt = document.createElement('span'); txt.className = 'voltxt';
     v.append(dn, meter, up, txt); rv.append(v, mu);
+    if (sett.audio?.ok) {
+      const ac = rv.parentNode;
+      const ra = row(ac, T('audio.auto'));
+      for (const on of [true, false]) { const b = pill(esc(T(on ? 'common.on' : 'common.off')), () => setAudioAuto(on), !!sett.audio.auto === on); b.dataset.key = 'aa' + on; ra.appendChild(b); }
+      const e = document.createElement('div'); e.className = 'info'; e.textContent = T('audio.autoHint'); ac.appendChild(e);
+    }
   },
   net(tr) {
     const n = col(tr, T('settings.connection'));
@@ -1826,9 +1850,22 @@ async function setResolution(m) {
   try { sett = await api('/api/settings/resolution', { mode: m }); toast(T('settings.resToast', { mode: m.replace('x', '×') })); } catch (e) { return toast(T('common.failedMsg', { msg: e.message }), true); }
   setTimeout(() => { layout(); renderSettings(); }, 800);
 }
-async function setOutput(o) {
-  try { sett = await api('/api/audio/output', { card: o.card, profile: o.profile }); toast(T('settings.outToast', { name: o.label })); renderSettings(); } catch (e) { toast(T('common.failedMsg', { msg: e.message }), true); }
+function audioDev() { return sett?.audio?.ok ? (sett.audio.devices || []).find(d => d.active) || null : null; }
+function devLabel(d) {
+  if (d.kind === 'hdmi') return (d.name || T('audio.tv')) + (d.num ? ' ' + d.num : '');
+  if (d.kind === 'analog') return T('audio.analog');
+  if (d.kind === 'spdif') return T('audio.spdif');
+  return d.name;
 }
+function devTag(d) { return { hdmi: 'HDMI', usb: 'USB', bt: 'Bluetooth' }[d.kind] || ''; }
+function fmtLabel(f) { return f.key ? T(f.key, { ch: f.label }) : f.label; }
+async function audioPost(path, body, msg) {
+  try { sett = await api(path, body); if (msg) toast(msg); renderSettings(); } catch (e) { toast(T('common.failedMsg', { msg: e.message }), true); }
+}
+function setDevice(d) { audioPost('/api/audio/device', { key: d.key }, T('settings.outToast', { name: devLabel(d) })); }
+function setFormat(d, f) { if (d.format !== f.id) audioPost('/api/audio/format', { key: d.key, format: f.id }, T('audio.fmtToast', { name: fmtLabel(f) })); }
+function setMic(d, on) { if (d.mic !== on) audioPost('/api/audio/mic', { key: d.key, on }, T(on ? 'audio.micOn' : 'audio.micOff')); }
+function setAudioAuto(on) { audioPost('/api/audio/auto', { on }, ''); }
 async function wifiScan() {
   toast(T('wifi.scanning'));
   try { wifiList = offline ? [{ ssid: 'FRITZ!Box 7530', signal: 72, secure: true, active: false }] : await getJSON('/api/wifi/scan'); $('#toast').classList.remove('show'); }

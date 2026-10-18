@@ -572,7 +572,7 @@ def volume_set(action):
 # ---------------------------------------------------------------------------
 SETTINGS = BASE / "settings.json"
 DEFAULTS = {"scale": 1.75, "resolution": None, "cursor_theme": "Bibata-Modern-Ice", "cursor_size": 48, "lang": None, "theme": "default-dark",
-            "sysupd_days": 90, "padmouse": True, "covers_auto": True, "covers_embed": False}
+            "sysupd_days": 90, "padmouse": True, "covers_auto": True, "covers_embed": False, "audio_auto": True}
 SYSUPD_DAYS = (30, 60, 90)                  # Erinnerung an Systemupdates (ohne VoidStation-Update) nach … Tagen
 # Sprachen der Oberflaeche: Texte in web/i18n/<id>.json, fehlende Texte kommen aus en.json, dann aus de.json.
 # Anzeige immer in der eigenen Sprache. Je Sprache auch das Locale fuer gestartete Programme (LANG/LANGUAGE) und
@@ -1018,33 +1018,355 @@ def pactl_json(*args):
         return None
 
 
-def audio_info():
+# ---------------------------------------------------------------------------
+#  Ton: Geraete statt Rohprofile (PipeWire ueber pactl)
+#    Ein "Geraet" ist das, was man als Ausgang kennt: Fernseher (HDMI, je Anschluss), Klinke, S/PDIF,
+#    USB-Headset, Bluetooth-Kopfhoerer. Je Geraet ein Format (Stereo, 5.1 …; Bluetooth: Codec) und
+#    das Mikrofon an/aus – daraus ergibt sich das Profil der Karte. PipeWire-Profilnamen sieht niemand mehr.
+#    Gemerkt je Geraet in settings.json: audio_prefs = {schluessel: {"format": …, "mic": bool}}
+#    Schluessel: Kartenname (USB, Bluetooth) bzw. Kartenname#familie+anschluss (eingebaute Karten: hdmi0, analog0 …)
+# ---------------------------------------------------------------------------
+AUDIO_LOCK = threading.RLock()
+AUDIO_LAYOUTS = ["mono", "stereo", "surround-21", "surround-40", "surround-41", "surround-50", "surround-51", "surround-71"]
+AUDIO_CODECS = {"sbc": "SBC", "sbc_xq": "SBC-XQ", "aac": "AAC", "aac_eld": "AAC-ELD", "aptx": "aptX", "aptx_hd": "aptX HD",
+                "aptx_ll": "aptX LL", "aptx_ll_duplex": "aptX LL", "ldac": "LDAC", "lc3plus_h3": "LC3plus", "lc3": "LC3",
+                "opus_05": "Opus", "opus_g": "Opus", "faststream": "FastStream", "faststream_duplex": "FastStream"}
+# Geraete, auf die der Ton beim Einstecken nicht von selbst wechseln soll (Controller mit Kopfhoerer-Buchse, Webcams)
+AUDIO_NOAUTO = re.compile(r"controller|gamepad|dualsense|dualshock|joy-?con|webcam|camera|\bcam\b", re.I)
+
+
+def _audio_profile(name):
+    """Profilname -> (familie, anschluss, layout, mit_eingang) oder None (kein Ausgang, Durchreichen, aus).
+    output:hdmi-surround71-extra1+input:analog-stereo -> ("hdmi", 1, "surround-71", True)
+    a2dp-sink-aac -> ("bt", 0, "a2dp:aac", False) · headset-head-unit-msbc -> ("bt", 0, "hfp:msbc", True)"""
+    if name.startswith("output:"):
+        out, _, inp = name[7:].partition("+input:")
+        m = re.match(r"^(analog|hdmi|iec958)-(.+?)(?:-extra(\d+))?$", out)
+        fam, lay, port = (m.group(1), m.group(2), int(m.group(3) or 0)) if m else ("other", out, 0)
+        if re.search(r"(^|-)(ac3|dts|eac3|truehd)(-|$)", lay):     # Bitstream an einen AV-Receiver: nicht anbieten
+            return None
+        lay = {"surround": "surround-51", "surround71": "surround-71"}.get(lay, lay)   # HDMI schreibt es anders
+        if lay.endswith("-fallback"):
+            lay = lay[:-9]
+        return fam, port, lay, bool(inp)
+    if name.startswith("a2dp-sink"):
+        return "bt", 0, "a2dp:" + (name[10:] or "auto"), False
+    if name.startswith("headset-head-unit"):
+        return "bt", 0, "hfp:" + (name[18:] or "auto"), True
+    return None
+
+
+def _audio_card_kind(c):
+    p = c.get("properties") or {}
+    name = c.get("name", "")
+    if name.startswith("bluez_card.") or p.get("device.bus") == "bluetooth":
+        return "bt"
+    if p.get("device.bus") == "usb" or ".usb-" in name:
+        return "usb"
+    return "pci"
+
+
+def _audio_ports(c):
+    ports = c.get("ports") or {}
+    return list(ports.values()) if isinstance(ports, dict) else list(ports)
+
+
+def _audio_fmt(lay):
+    """Format fuer die Oberflaeche: key = Sprachschluessel (Text mit {ch}), label = sprachneutral."""
+    if lay.startswith("a2dp:"):
+        codec = lay[5:]
+        if codec == "auto":
+            return {"id": lay, "key": "audio.fmt.auto", "label": ""}
+        return {"id": lay, "key": "", "label": AUDIO_CODECS.get(codec, codec.upper())}
+    if lay in ("mono", "stereo"):
+        return {"id": lay, "key": "audio.fmt." + lay, "label": ""}
+    if lay.startswith("surround-") and lay[9:].isdigit() and len(lay) == 11:
+        return {"id": lay, "key": "audio.fmt.surround", "label": lay[9] + "." + lay[10]}
+    return {"id": lay, "key": "", "label": lay}
+
+
+def _audio_sink_of(card, sinks):
+    """Name des Ausgangs (Sink), den diese Karte gerade stellt, sonst None."""
+    prefix = card.replace("_card.", "_output.")          # alsa_card.… -> alsa_output.…, bluez_card.… -> bluez_output.…
+    for s in sinks or []:
+        props = s.get("properties") or {}
+        if props.get("device.name") == card or s.get("name", "").startswith(prefix + "."):
+            return s.get("name")
+    return None
+
+
+def audio_devices(cards, sinks, default_sink):
+    """Geraeteliste aus pactl (list cards / list sinks / get-default-sink). Rein rechnend – testbar ohne PipeWire."""
+    devs = {}
+    for c in cards or []:
+        card, kind = c.get("name", ""), _audio_card_kind(c)
+        props = c.get("properties") or {}
+        active = c.get("active_profile") or ""
+        for pname, prof in (c.get("profiles") or {}).items():
+            parsed = _audio_profile(pname)
+            if not parsed:
+                continue
+            fam, port, lay, inp = parsed
+            if kind == "pci":
+                key, dkind = f"{card}#{fam}{port}", {"iec958": "spdif"}.get(fam, fam)
+            else:
+                key, dkind = card, kind
+            d = devs.setdefault(key, {"key": key, "card": card, "kind": dkind, "cardKind": kind, "port": port,
+                                      "name": "", "profiles": [], "activeProfile": None})
+            d["profiles"].append({"name": pname, "fam": fam, "lay": lay, "inp": inp,
+                                  "prio": prof.get("priority", 0) or 0, "avail": prof.get("available") is not False})
+            if pname == active:
+                d["activeProfile"] = pname
+        # Namen: Bluetooth/USB/sonstige wie vom Geraet gemeldet, HDMI nach dem Bildschirm (EDID/ELD), wenn bekannt
+        desc = props.get("device.description") or props.get("alsa.card_name") or card
+        for d in devs.values():
+            if d["card"] != card:
+                continue
+            if d["kind"] == "hdmi":
+                names = {p["name"] for p in d["profiles"]}
+                for port in _audio_ports(c):
+                    pn = (port.get("properties") or {}).get("device.product.name")
+                    if pn and names & set(port.get("profiles") or []):
+                        d["name"] = pn
+                        break
+            elif d["kind"] not in ("analog", "spdif"):
+                d["name"] = desc
+    dsink_card = None
+    for c in cards or []:
+        if default_sink and _audio_sink_of(c.get("name", ""), sinks) == default_sink:
+            dsink_card = c.get("name")
+    out = []
+    for d in devs.values():
+        usable = [p for p in d["profiles"] if p["avail"]]
+        if not usable and not d["activeProfile"]:
+            continue                                     # z. B. HDMI-Anschluss ohne Bildschirm, Klinke ohne Stecker
+        lays = {p["lay"] for p in usable if not p["lay"].startswith("hfp:")}
+        def order(l):
+            if l in AUDIO_LAYOUTS:
+                return (0, AUDIO_LAYOUTS.index(l), "")
+            if l == "a2dp:auto":
+                return (1, 0, "")
+            best = max((p["prio"] for p in usable if p["lay"] == l), default=0)
+            return (2, -best, l)
+        fmts = [_audio_fmt(l) for l in sorted(lays, key=order)]
+        ap = next((p for p in d["profiles"] if p["name"] == d["activeProfile"]), None)
+        cur_fmt = ap["lay"] if ap and not ap["lay"].startswith("hfp:") else None
+        if d["cardKind"] == "bt":
+            mic_avail = any(p["inp"] for p in usable)
+        else:
+            mic_avail = any(p["inp"] and p["lay"] == (cur_fmt or "stereo") for p in usable)
+        out.append({"key": d["key"], "card": d["card"], "kind": d["kind"], "name": d["name"], "num": 0,
+                    "active": bool(ap) and d["card"] == dsink_card, "formats": fmts, "format": cur_fmt,
+                    "mic": (bool(ap and ap["inp"]) if mic_avail else None), "micAvail": mic_avail,
+                    "profiles": d["profiles"], "activeProfile": d["activeProfile"]})
+    # Mehrere HDMI-Ausgaenge mit gleichem Namen: durchnummerieren (Fernseher 1, Fernseher 2)
+    hd = [d for d in out if d["kind"] == "hdmi"]
+    for n in {d["name"] for d in hd}:
+        same = sorted((d for d in hd if d["name"] == n), key=lambda d: (d["card"], d["key"]))
+        if len(same) > 1:
+            for i, d in enumerate(same):
+                d["num"] = i + 1
+    rank = {"hdmi": 0, "usb": 1, "bt": 2, "analog": 3, "spdif": 4, "other": 5}
+    out.sort(key=lambda d: (rank.get(d["kind"], 9), d["name"].lower(), d["key"]))
+    return out
+
+
+def audio_default_format(dev):
+    ids = [f["id"] for f in dev["formats"]]
+    for want in ("stereo", "a2dp:auto"):
+        if want in ids:
+            return want
+    return ids[0] if ids else None
+
+
+def audio_default_mic(dev):
+    return dev["kind"] == "usb"                         # USB-Headset: Mikro bereit; Bluetooth: sonst nur Sprachqualitaet
+
+
+def audio_choose(dev, fmt, mic):
+    """Profil fuer Format + Mikrofon. Bluetooth: Mikrofon an = Headset-Profil (HFP), sonst A2DP im gewuenschten Codec.
+    Eingebaute/USB-Karten: analog vor S/PDIF (bei USB derselbe Ausgang), dann hoechste Prioritaet."""
+    usable = [p for p in dev["profiles"] if p["avail"]] or dev["profiles"]
+    def best(cands):
+        return min(cands, key=lambda p: ({"analog": 0, "hdmi": 0, "iec958": 1}.get(p["fam"], 2), -p["prio"]))["name"] if cands else None
+    if dev["kind"] == "bt" and mic:
+        return best([p for p in usable if p["lay"].startswith("hfp:")]) or audio_choose(dev, fmt, False)
+    same = [p for p in usable if p["lay"] == fmt] or [p for p in usable if p["lay"] == audio_default_format(dev)]
+    if not same:
+        same = [p for p in usable if not p["lay"].startswith("hfp:")]
+    return best([p for p in same if p["inp"] == bool(mic)]) or best(same)
+
+
+def audio_snapshot():
     cards = pactl_json("list", "cards")
     if cards is None:
-        return {"ok": False, "outputs": []}
-    outs = []
-    for c in cards:
-        active = c.get("active_profile")
-        for name, prof in (c.get("profiles") or {}).items():
-            if not name.startswith("output:") or prof.get("available") is False:
+        return None
+    sinks = pactl_json("list", "sinks") or []
+    r = run(["pactl", "get-default-sink"])
+    default = r.stdout.strip() if r and r.returncode == 0 else ""
+    return {"cards": cards, "sinks": sinks, "default": default, "devices": audio_devices(cards, sinks, default)}
+
+
+def audio_info():
+    snap = audio_snapshot()
+    auto = bool(settings_load().get("audio_auto", True))
+    if snap is None:
+        return {"ok": False, "devices": [], "auto": auto}
+    pub = ("key", "kind", "name", "num", "active", "formats", "format", "mic", "micAvail")
+    return {"ok": True, "auto": auto, "devices": [{k: d[k] for k in pub} for d in snap["devices"]]}
+
+
+def audio_select(key, fmt=None, mic=None, make_default=True):
+    """Geraet waehlen (Format/Mikro aus den gemerkten Einstellungen, sonst Stereo; Mikro bei USB an) bzw. Format oder
+    Mikro aendern. Setzt das Profil der Karte und – make_default – den Ausgang als Standard. Gibt False zurueck,
+    wenn es das Geraet nicht (mehr) gibt."""
+    with AUDIO_LOCK:
+        snap = audio_snapshot()
+        dev = next((d for d in (snap or {}).get("devices", []) if d["key"] == key), None)
+        if not dev:
+            return False
+        s = settings_load()
+        prefs = dict((s.get("audio_prefs") or {}).get(key) or {})
+        ids = [f["id"] for f in dev["formats"]]
+        picked = fmt is not None
+        if not picked:                                   # Mikro umschalten: Format bleibt; Geraet waehlen: gemerktes
+            fmt = dev["format"] if mic is not None and dev["format"] else prefs.get("format")
+        if fmt not in ids:
+            fmt = prefs.get("format") if prefs.get("format") in ids else audio_default_format(dev)
+        if mic is None:
+            if picked and dev["kind"] == "bt":
+                mic = False                              # Codec gewaehlt = A2DP, das Headset-Profil kennt keine Codecs
+            elif picked and dev["mic"] is not None:
+                mic = dev["mic"]
+            else:
+                mic = prefs.get("mic", audio_default_mic(dev))
+        prof = audio_choose(dev, fmt, mic)
+        if prof and prof != dev["activeProfile"]:
+            run(["pactl", "set-card-profile", dev["card"], prof])
+        if make_default:
+            sink = None
+            for _ in range(20):                          # neuer Ausgang braucht nach dem Profilwechsel einen Moment
+                sink = _audio_sink_of(dev["card"], pactl_json("list", "sinks") or [])
+                if sink:
+                    break
+                time.sleep(0.2)
+            if sink:
+                run(["pactl", "set-default-sink", sink])
+                run(["pactl", "set-sink-mute", sink, "0"])
+        prefs.update({"format": fmt, "mic": bool(mic)})
+        s = settings_load()
+        s.setdefault("audio_prefs", {})[key] = prefs
+        settings_save(s)
+        log("Ton:", key, prof or "-", "(Standard)" if make_default else "")
+        return True
+
+
+def audio_tidy(snap=None):
+    """Eingebaute Karten, die VoidStation zum ersten Mal sieht: HDMI von Surround auf Stereo stellen, solange niemand
+    ein Format gewaehlt hat. Fernseher haben zwei Lautsprecher; bei 7.1 mischt mancher den Center-Kanal (Dialoge)
+    schlecht herunter. Wer einen AV-Receiver hat, stellt Surround unter Einstellungen → Ton → Format wieder ein."""
+    with AUDIO_LOCK:
+        snap = snap or audio_snapshot()
+        if not snap:
+            return
+        s = settings_load()
+        seen, prefs = list(s.get("audio_seen") or []), s.get("audio_prefs") or {}
+        changed = False
+        for c in snap["cards"]:
+            card = c.get("name", "")
+            if _audio_card_kind(c) != "pci" or card in seen:
                 continue
-            desc = prof.get("description") or name
-            outs.append({"card": c.get("name"), "profile": name,
-                         "label": desc.replace(" Output", "").replace(" Duplex", ""),
-                         "active": name == active})
-    outs.sort(key=lambda o: (0 if "hdmi" in o["profile"] else 1, o["profile"]))
-    return {"ok": True, "outputs": outs}
+            seen.append(card)
+            changed = True
+            for d in snap["devices"]:
+                ap = next((p for p in d["profiles"] if p["name"] == d["activeProfile"]), None)
+                if d["card"] == card and d["kind"] == "hdmi" and ap and ap["lay"].startswith("surround") and d["key"] not in prefs \
+                        and any(f["id"] == "stereo" for f in d["formats"]):
+                    prof = audio_choose(d, "stereo", ap["inp"])
+                    if prof:
+                        was_default = d["active"]        # neuer Ausgangsname nach dem Wechsel: Standard mitnehmen
+                        run(["pactl", "set-card-profile", card, prof])
+                        log("Ton:", d["key"], "von", ap["lay"], "auf Stereo (Fernseher)")
+                        for _ in range(20 if was_default else 0):
+                            sink = _audio_sink_of(card, pactl_json("list", "sinks") or [])
+                            if sink:
+                                run(["pactl", "set-default-sink", sink])
+                                break
+                            time.sleep(0.2)
+        if changed:
+            s = settings_load()
+            s["audio_seen"] = seen
+            settings_save(s)
 
 
-def audio_set(card, profile):
-    run(["pactl", "set-card-profile", card, profile])
-    time.sleep(0.6)
-    prefix = card.replace("alsa_card.", "alsa_output.")   # alsa_card.pci-... -> alsa_output.pci-...
-    for s in pactl_json("list", "sinks") or []:
-        if s.get("name", "").startswith(prefix):
-            run(["pactl", "set-default-sink", s["name"]])
-            run(["pactl", "set-sink-mute", s["name"], "0"])
-            break
+class AudioWatch:
+    """Neu eingesteckte USB- bzw. eingeschaltete Bluetooth-Kopfhoerer uebernehmen den Ton (abschaltbar: audio_auto).
+    Nicht beim Hochfahren und nicht direkt nach dem Standby – dann melden sich vorhandene Geraete nur neu an."""
+    QUIET = 30
+
+    def __init__(self):
+        self.quiet_until = 0.0
+        self.gap = self._gap()
+
+    @staticmethod
+    def _gap():
+        return time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
+
+    def run(self):
+        for _ in range(90):                              # PipeWire startet mit der Sitzung, evtl. nach dem Launcher
+            if pactl_json("info") is not None:
+                break
+            time.sleep(1)
+        else:
+            log("Ton: PipeWire nicht erreichbar, keine Geraete-Ueberwachung")
+            return
+        time.sleep(8)                                    # Geraete beim Hochfahren in Ruhe ankommen lassen
+        try:
+            audio_tidy()
+        except Exception as e:  # noqa: BLE001
+            log("Ton (Vorgaben):", e)
+        while True:
+            try:
+                p = subprocess.Popen(["pactl", "subscribe"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+            except OSError:
+                return
+            for line in p.stdout:
+                m = re.match(r"Event 'new' on card #(\d+)", line.strip())
+                if m:
+                    threading.Thread(target=self.new_card, args=(int(m.group(1)),), daemon=True).start()
+            p.wait()
+            time.sleep(5)                                # PipeWire neu gestartet: wieder anmelden
+
+    def new_card(self, index):
+        g = self._gap()
+        if g - self.gap > 10:                            # dazwischen lag ein Standby
+            self.quiet_until = time.monotonic() + self.QUIET
+        self.gap = g
+        time.sleep(1.5)                                  # Profile und Ausgaenge erst fertig anlegen lassen
+        try:
+            snap = audio_snapshot()
+            c = next((x for x in (snap or {}).get("cards", []) if x.get("index") == index), None)
+            if not c:
+                return
+            audio_tidy(snap)
+            kind = _audio_card_kind(c)
+            props = c.get("properties") or {}
+            label = " ".join(str(props.get(k, "")) for k in ("device.description", "device.product.name", "alsa.card_name"))
+            if kind not in ("usb", "bt") or time.monotonic() < self.quiet_until or not settings_load().get("audio_auto", True):
+                return
+            if AUDIO_NOAUTO.search(label) or props.get("device.form_factor") in ("webcam", "microphone") \
+                    or (kind == "usb" and props.get("device.vendor.id") == "0x054c"):   # Sony: DualShock/DualSense per USB
+                log("Ton: neues Geraet ohne automatischen Wechsel:", c.get("name"))
+                return
+            dev = next((d for d in snap["devices"] if d["card"] == c.get("name")), None)
+            if dev:
+                audio_select(dev["key"])
+                log("Ton: neues Geraet uebernimmt:", dev["key"])
+        except Exception as e:  # noqa: BLE001
+            log("Ton (neues Geraet):", e)
+
+
+AUDIO_WATCH = AudioWatch()
 
 
 def net_info():
@@ -5235,6 +5557,9 @@ def bt_audio_follow(mac, wait=10):
             name = s.get("name", "")
             props = s.get("properties") or {}
             if key in name.upper() or str(props.get("api.bluez5.address", "")).upper() == mac.upper():
+                if audio_select("bluez_card." + key):    # gemerktes Format/Mikro, sonst A2DP (volle Qualitaet)
+                    log("Ton auf Bluetooth:", name)
+                    return True
                 run(["pactl", "set-default-sink", name])
                 run(["pactl", "set-sink-mute", name, "0"])
                 log("Ton auf Bluetooth:", name)
@@ -5648,12 +5973,18 @@ class Handler(BaseHTTPRequestHandler):
                 apply_resolution(res)
                 s = settings_load(); s["resolution"] = res; settings_save(s)
                 return self._json(200, settings_payload())
-            if parts == ["api", "audio", "output"]:
+            if parts[:2] == ["api", "audio"] and len(parts) == 3 and parts[2] in ("device", "format", "mic"):
                 b = self._body()
-                valid = {(o["card"], o["profile"]) for o in audio_info()["outputs"]}
-                if (b.get("card"), b.get("profile")) not in valid:
+                key = str(b.get("key") or "")
+                fmt = str(b["format"]) if parts[2] == "format" and b.get("format") is not None else None
+                mic = bool(b.get("on")) if parts[2] == "mic" else None
+                if parts[2] == "format" and fmt is None:
+                    return self._json(400, {"error": "kein Format gewaehlt"})
+                if not audio_select(key, fmt=fmt, mic=mic):
                     return self._json(400, {"error": "unbekannter Ausgang"})
-                audio_set(b["card"], b["profile"])
+                return self._json(200, settings_payload())
+            if parts == ["api", "audio", "auto"]:
+                s = settings_load(); s["audio_auto"] = bool(self._body().get("on")); settings_save(s)
                 return self._json(200, settings_payload())
             if parts == ["api", "wifi", "connect"]:
                 b = self._body()
@@ -5816,6 +6147,7 @@ def main():
     threading.Thread(target=gamepad_watcher, daemon=True).start()
     threading.Thread(target=resume_watcher, daemon=True).start()
     BLUETOOTH.start()                               # Kopplungs-Agent (BlueZ ueber D-Bus)
+    threading.Thread(target=AUDIO_WATCH.run, daemon=True).start()   # neue Kopfhoerer, HDMI-Vorgabe Stereo
     if not LIVE:                                    # im Live-System gibt es keine Updates
         threading.Thread(target=updates_background_check, daemon=True).start()
         threading.Thread(target=kernel_autopurge, daemon=True).start()

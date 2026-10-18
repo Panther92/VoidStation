@@ -17,6 +17,9 @@ Layer {
     property var vsState: null
     property var wifiList: null
     property var wifiPick: null
+    // Ton: Geraete (Fernseher, USB-/Bluetooth-Kopfhoerer …) statt PipeWire-Profilen; aktives Geraet zeigt Format + Mikro
+    readonly property var audioDevs: sett && sett.audio && sett.audio.ok ? (sett.audio.devices || []) : []
+    readonly property var audioDev: { for (var i = 0; i < audioDevs.length; i++) if (audioDevs[i].active) return audioDevs[i]; return null }
     readonly property var catDefs: [
         { id: "lang", icon: "globe", color: "#2d4a6b", title: "settings.language" },
         { id: "display", icon: "monitor", color: "#2b5b66", title: "settings.catDisplay" },
@@ -96,9 +99,7 @@ Layer {
             var d = (sett.displays || [])[0]
             return (d && d.current ? d.current.replace("x", "\u00d7") + " · " : "") + Ui.num(Ui.scale) + "\u00d7"
         case "design": return Ui.t("theme." + vs.themeName, null, vs.themeName)
-        case "audio":
-            var o = sett.audio && sett.audio.ok ? sett.audio.outputs.filter(function (x) { return x.active })[0] : null
-            return (o ? o.label + " · " : "") + app.volText
+        case "audio": return (audioDev ? devLabel(audioDev) + " · " : "") + app.volText
         case "net": return sett.net.addresses.length ? sett.net.addresses[0].ip : Ui.t("settings.offline")
         case "bt":
             if (!bt || !bt.available) return Ui.t("settings.btNone")
@@ -228,12 +229,30 @@ Layer {
             app.toast(Ui.t("settings.resToast", { mode: m.replace("x", "\u00d7") }))
         }, fail)
     }
-    function setOutput(o) {
-        Api.post("/api/audio/output", { card: o.card, profile: o.profile }, function (j) {
-            update(function () { sett = j })
-            app.toast(Ui.t("settings.outToast", { name: o.label }))
-        }, fail)
+    function devLabel(d) {
+        switch (d.kind) {
+        case "hdmi": return (d.name || Ui.t("audio.tv")) + (d.num ? " " + d.num : "")
+        case "analog": return Ui.t("audio.analog")
+        case "spdif": return Ui.t("audio.spdif")
+        }
+        return d.name
     }
+    function devTag(d) { return { hdmi: "HDMI", usb: "USB", bt: "Bluetooth" }[d.kind] || "" }
+    function devIcon(d) { return { hdmi: "tv", usb: "headphones", bt: "bluetooth" }[d.kind] || "speaker" }
+    function fmtLabel(f) { return f.key ? Ui.t(f.key, { ch: f.label }) : f.label }
+    function audioPost(path, body, toast) {
+        Api.post(path, body, function (j) { update(function () { sett = j }); if (toast) app.toast(toast) }, fail)
+    }
+    function setDevice(d) { audioPost("/api/audio/device", { key: d.key }, Ui.t("settings.outToast", { name: devLabel(d) })) }
+    function setFormat(d, f) {
+        if (d.format === f.id) return
+        audioPost("/api/audio/format", { key: d.key, format: f.id }, Ui.t("audio.fmtToast", { name: fmtLabel(f) }))
+    }
+    function setMic(d, on) {
+        if (d.mic === on) return
+        audioPost("/api/audio/mic", { key: d.key, on: on }, Ui.t(on ? "audio.micOn" : "audio.micOff"))
+    }
+    function setAudioAuto(on) { audioPost("/api/audio/auto", { on: on }, "") }
     function modes(d) {
         return d.modes.filter(function (m) { var p = m.split("x"); return parseInt(p[0]) >= 1024 && parseInt(p[1]) >= 576 }).slice(0, 6)
     }
@@ -465,20 +484,56 @@ Layer {
                 }
             }
         }
-        // Ton
+        // Ton: erst das Geraet, darunter Format und Mikrofon des aktiven Geraets
         SetGroup {
             visible: s.cat === "audio"; availH: s.colH; title: Ui.t("settings.audioOut")
             Info { visible: !!s.sett && !(s.sett.audio && s.sett.audio.ok); html: Ui.esc(Ui.t("settings.noAudio")) }
+            Info { visible: !!s.sett && !!s.sett.audio && s.sett.audio.ok && !s.audioDevs.length; html: Ui.esc(Ui.t("audio.none")) }
             SetRow {
                 Repeater {
-                    model: s.sett && s.sett.audio && s.sett.audio.ok ? s.sett.audio.outputs : []
-                    Pill { property string key: "out" + modelData.profile; text: modelData.label; on: modelData.active; maxWidth: Ui.screenW * 0.4; onTriggered: s.setOutput(modelData) }
+                    model: s.audioDevs
+                    Pill {
+                        property string key: "dev" + modelData.key
+                        iconName: s.devIcon(modelData)
+                        rich: true
+                        maxWidth: Ui.screenW * 0.4
+                        text: Ui.esc(s.devLabel(modelData)) + (s.devTag(modelData) ? "<font color='" + Ui.c.textFaint + "'> · " + s.devTag(modelData) + "</font>" : "")
+                        on: modelData.active
+                        onTriggered: s.setDevice(modelData)
+                    }
                 }
             }
+            SetRow {
+                visible: !!s.audioDev && s.audioDev.formats.length > 1
+                label: Ui.t("audio.format")
+                Repeater {
+                    model: s.audioDev ? s.audioDev.formats : []
+                    Pill { property string key: "fmt" + modelData.id; text: s.fmtLabel(modelData); on: s.audioDev.format === modelData.id; onTriggered: s.setFormat(s.audioDev, modelData) }
+                }
+            }
+            Info { visible: !!s.audioDev && s.audioDev.kind === "hdmi" && s.audioDev.formats.length > 1; html: Ui.esc(Ui.t("audio.fmtHintTv")) }
+            SetRow {
+                visible: !!s.audioDev && s.audioDev.micAvail
+                label: Ui.t(s.audioDev && ["hdmi", "analog", "spdif", "other"].indexOf(s.audioDev.kind) >= 0 ? "audio.micJack" : "audio.mic")
+                Repeater {
+                    model: [true, false]
+                    Pill { property string key: "mic" + modelData; text: Ui.t(modelData ? "common.on" : "common.off"); on: !!s.audioDev && s.audioDev.mic === modelData; onTriggered: s.setMic(s.audioDev, modelData) }
+                }
+            }
+            Info { visible: !!s.audioDev && s.audioDev.kind === "bt" && s.audioDev.micAvail; html: Ui.esc(Ui.t("audio.micBt")) }
         }
         SetGroup {
             visible: s.cat === "audio"; availH: s.colH; title: Ui.t("settings.volume")
             Flow { width: Ui.screenW * 0.4; spacing: 8 * Ui.f; VolBar { showMute: true } }
+            SetRow {
+                visible: !!s.sett && !!s.sett.audio && s.sett.audio.ok
+                label: Ui.t("audio.auto")
+                Repeater {
+                    model: [true, false]
+                    Pill { property string key: "aa" + modelData; text: Ui.t(modelData ? "common.on" : "common.off"); on: !!s.sett && !!s.sett.audio && !!s.sett.audio.auto === modelData; onTriggered: s.setAudioAuto(modelData) }
+                }
+            }
+            Info { visible: !!s.sett && !!s.sett.audio && s.sett.audio.ok; html: Ui.esc(Ui.t("audio.autoHint")) }
         }
         // Netzwerk
         SetGroup {

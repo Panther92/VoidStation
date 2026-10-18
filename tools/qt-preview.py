@@ -343,7 +343,24 @@ class H(S.H):
             tid = p.rsplit("/", 1)[1]
             st["running"] = [t for t in st["running"] if t != tid]
             return self.j({"running": st["running"]})
-        if p.startswith("/api/settings/") or p in ("/api/audio/output", "/api/wifi/connect"):
+        if p.startswith("/api/audio/"):          # Ton: Beispielgeraete aus screenshots.py umschalten
+            a = S.SETTINGS["audio"]
+            d = next((x for x in a["devices"] if x["key"] == body.get("key")), None)
+            if p.endswith("/device") and d:
+                for x in a["devices"]:
+                    x["active"] = x is d
+            elif p.endswith("/format") and d:
+                d["format"] = body.get("format")
+                if d["kind"] == "bt":
+                    d["mic"] = False
+            elif p.endswith("/mic") and d:
+                d["mic"] = bool(body.get("on"))
+                if d["kind"] == "bt":
+                    d["format"] = None if d["mic"] else "a2dp:auto"
+            elif p.endswith("/auto"):
+                a["auto"] = bool(body.get("on"))
+            return self.j(settings())
+        if p.startswith("/api/settings/") or p == "/api/wifi/connect":
             if p.endswith("/theme"):
                 S.SETTINGS["theme"] = body.get("theme")
             if p.endswith("/scale"):
