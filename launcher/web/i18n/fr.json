@@ -674,5 +674,8 @@
   "dl.hint.save": "<b>Start</b> enregistrer",
   "dl.hint.get": "<b>A</b> télécharger",
   "dl.hint.searchField": "<b>Y</b> recherche",
-  "dl.hint.sources": "<b>X</b> sources"
+  "dl.hint.sources": "<b>X</b> sources",
+  "player.covers.embed": "Enregistrer les pochettes dans les fichiers",
+  "player.covers.embedOn": "Les pochettes trouvées et les tags manquants sont désormais écrits dans les fichiers (MP3, M4A, FLAC) – « Charger toutes les pochettes » parcourt toute la collection",
+  "player.covers.embedOff": "Pochettes et tags restent dans le cache, les fichiers ne sont plus modifiés"
 }

@@ -674,5 +674,8 @@
   "dl.hint.save": "<b>Start</b> guardar",
   "dl.hint.get": "<b>A</b> descargar",
   "dl.hint.searchField": "<b>Y</b> búsqueda",
-  "dl.hint.sources": "<b>X</b> fuentes"
+  "dl.hint.sources": "<b>X</b> fuentes",
+  "player.covers.embed": "Guardar carátulas en los archivos",
+  "player.covers.embedOn": "Las carátulas encontradas y las etiquetas que faltan se guardan ahora en los archivos (MP3, M4A, FLAC) – «Cargar todas las carátulas» recorre toda la colección",
+  "player.covers.embedOff": "Carátulas y etiquetas se quedan en la caché, los archivos ya no se modifican"
 }

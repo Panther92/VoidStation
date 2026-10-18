@@ -941,5 +941,8 @@
   "dl.hint.save": "<b>Start</b> save",
   "dl.hint.get": "<b>A</b> download",
   "dl.hint.searchField": "<b>Y</b> search field",
-  "dl.hint.sources": "<b>X</b> sources"
+  "dl.hint.sources": "<b>X</b> sources",
+  "player.covers.embed": "Save covers in files",
+  "player.covers.embedOn": "Found covers and missing tags now go into the music files (MP3, M4A, FLAC) – “Load all covers” goes through the whole collection",
+  "player.covers.embedOff": "Covers and tags stay in the cache, files are no longer changed"
 }

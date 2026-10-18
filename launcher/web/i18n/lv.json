@@ -675,5 +675,8 @@
   "dl.hint.save": "<b>Start</b> saglabāt",
   "dl.hint.get": "<b>A</b> lejupielādēt",
   "dl.hint.searchField": "<b>Y</b> meklēšana",
-  "dl.hint.sources": "<b>X</b> avoti"
+  "dl.hint.sources": "<b>X</b> avoti",
+  "player.covers.embed": "Saglabāt vākus failos",
+  "player.covers.embedOn": "Atrastie vāki un trūkstošie tagi tagad tiek ierakstīti mūzikas failos (MP3, M4A, FLAC) – “Ielādēt visus vākus” apstrādā visu kolekciju",
+  "player.covers.embedOff": "Vāki un tagi paliek kešatmiņā, faili vairs netiek mainīti"
 }

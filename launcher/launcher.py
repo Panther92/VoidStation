@@ -572,7 +572,7 @@ def volume_set(action):
 # ---------------------------------------------------------------------------
 SETTINGS = BASE / "settings.json"
 DEFAULTS = {"scale": 1.75, "resolution": None, "cursor_theme": "Bibata-Modern-Ice", "cursor_size": 48, "lang": None, "theme": "default-dark",
-            "sysupd_days": 90, "padmouse": True, "covers_auto": True}
+            "sysupd_days": 90, "padmouse": True, "covers_auto": True, "covers_embed": False}
 SYSUPD_DAYS = (30, 60, 90)                  # Erinnerung an Systemupdates (ohne VoidStation-Update) nach … Tagen
 # Sprachen der Oberflaeche: Texte in web/i18n/<id>.json, fehlende Texte kommen aus en.json, dann aus de.json.
 # Anzeige immer in der eigenen Sprache. Je Sprache auch das Locale fuer gestartete Programme (LANG/LANGUAGE) und
@@ -1729,6 +1729,7 @@ EPG = EPGManager()
 # ---------------------------------------------------------------------------
 VIDEO_EXT = {".mp4", ".mkv", ".avi", ".mov", ".m4v", ".webm", ".ts", ".m2ts", ".mts", ".mpg", ".mpeg", ".wmv",
              ".flv", ".ogv", ".3gp", ".vob", ".divx"}
+EMBED_EXT = {".mp3", ".m4a", ".flac"}             # Cover/Tags in die Datei schreiben (ffmpeg, ohne Neukodierung)
 AUDIO_EXT = {".mp3", ".flac", ".ogg", ".oga", ".opus", ".m4a", ".aac", ".wav", ".wma", ".ape", ".mka", ".wv", ".aiff", ".alac"}
 COVER_NAMES = ("cover.jpg", "cover.png", "folder.jpg", "folder.png", "front.jpg", "front.png", "albumart.jpg", "album.jpg")
 RESUME = BASE / "resume.json"
@@ -1945,6 +1946,81 @@ class MediaLib:
             tag = 0
         self.art_done[str(p)] = (st.st_mtime, tag)
         return f, True
+
+    def write_art(self, p, cover):
+        """Cover und fehlende Tags in die Datei schreiben (MP3, M4A, FLAC) – nur wenn etwas fehlt, vorhandene Tags
+        bleiben unangetastet. Ueber eine Kopie im selben Ordner, die vor dem Ersetzen geprueft wird; Aenderungszeit
+        und Rechte bleiben. Schreibgeschuetzte Ordner (USB-Stick, fremde Freigaben) werden still uebersprungen."""
+        if p.suffix.lower() not in EMBED_EXT or not os.access(p.parent, os.W_OK) or not os.access(p, os.W_OK):
+            return False
+        ff, fp = shutil.which("ffmpeg"), shutil.which("ffprobe")
+        if not ff or not fp:
+            return False
+        st = p.stat()
+        if cover is not None and cover.parent == self.THUMBS:  # Bild steckt schon in der Datei
+            cover = None
+        tags = self.track_tags(p, st)
+        have = {k for k, v in tags.items() if v}
+        if "album_artist" in have or "albumartist" in have:
+            have.add("artist")
+        # Quelle fuer fehlende Tags: gefundene Aufnahme (MusicBrainz), sonst der Dateiname "Interpret - Titel"
+        meta = {}
+        ac = COVERS.track_cache(p, tags)
+        if ac is not None and ac.with_suffix(".json").is_file():
+            try:
+                meta = json.loads(ac.with_suffix(".json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                meta = {}
+        artist, _album, title = COVERS._track_names(p, tags)
+        meta["artist"] = meta.get("artist") or artist
+        meta["title"] = meta.get("title") or title
+        add = {k: str(meta.get(k) or "").strip() for k in ("artist", "title", "album", "date", "track")}
+        add = {k: v for k, v in add.items() if v and k not in have}
+        if cover is None and not add:
+            return False
+        tmp = p.with_name(f".{p.stem}.vs-tmp{p.suffix}")
+        cmd = [ff, "-v", "error", "-y", "-i", str(p)]
+        if cover is not None:
+            cmd += ["-i", str(cover), "-map", "0:a", "-map", "1:0", "-disposition:v:0", "attached_pic",
+                    "-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)"]
+        else:
+            cmd += ["-map", "0"]
+        cmd += ["-c", "copy", "-map_metadata", "0"]
+        if p.suffix.lower() == ".mp3":
+            cmd += ["-id3v2_version", "3", "-write_id3v1", "1"]
+        for k, v in add.items():
+            cmd += ["-metadata", f"{k}={v}"]
+        cmd.append(str(tmp))
+        try:
+            r = run(cmd, timeout=120)
+            ok = bool(r and r.returncode == 0 and tmp.is_file() and tmp.stat().st_size > 1000)
+            if ok:                                     # Probe: Ton noch da, Laenge unveraendert
+                def dur(f):
+                    q = run([fp, "-v", "error", "-select_streams", "a:0", "-show_entries", "format=duration:stream=codec_type",
+                             "-of", "json", str(f)], timeout=30)
+                    d = json.loads(q.stdout) if q and q.returncode == 0 else {}
+                    return float((d.get("format") or {}).get("duration") or 0), bool(d.get("streams"))
+                d0, _ = dur(p)
+                d1, audio = dur(tmp)
+                ok = audio and d1 > 0 and abs(d1 - d0) < 1.5
+            if not ok:
+                log("Cover/Tags: Datei nicht geaendert (Pruefung fehlgeschlagen):", p.name)
+                return False
+            shutil.copymode(p, tmp)
+            os.utime(tmp, (st.st_atime, st.st_mtime))
+            os.replace(tmp, p)
+        except Exception as e:  # noqa: BLE001
+            log("Cover/Tags: Datei nicht geaendert:", p.name, e)
+            return False
+        finally:
+            try:
+                tmp.unlink()
+            except OSError:
+                pass
+        self.tags_cache.pop(str(p), None)
+        parts = (["Cover"] if cover is not None else []) + ([", ".join(add)] if add else [])
+        log("In Datei geschrieben:", p.name, "–", " + ".join(parts))
+        return True
 
     def art_pending(self, p):
         """Ist fuer diesen Titel noch offen, welches Bild er bekommt? (billig, ohne ffmpeg/ffprobe)"""
@@ -2196,6 +2272,7 @@ class CoverFetcher:
         self.stats = {"done": 0, "found": 0, "total": 0}
         self.last_mb = 0.0
         self.offline = False                           # letzte Suche scheiterte am Netz (dann nicht als "nichts da" merken)
+        self.last_meta = None                          # Angaben zur zuletzt gefundenen Aufnahme
         self.misses = None
         self.worker = None
 
@@ -2203,6 +2280,11 @@ class CoverFetcher:
     @staticmethod
     def auto():
         return bool(settings_load().get("covers_auto", True))
+
+    @staticmethod
+    def embed():
+        """Gefundene Cover und fehlende Tags in die Musikdateien schreiben (Standard aus: aendert eigene Dateien)."""
+        return bool(settings_load().get("covers_embed", False))
 
     def cache_file(self, folder):
         return self.CACHE / (hashlib.sha1(str(folder).encode()).hexdigest()[:16] + ".jpg")
@@ -2232,7 +2314,7 @@ class CoverFetcher:
 
     def status(self):
         with self.lock:
-            return dict(self.stats, queue=len(self.queue), tracks=len(self.tqueue),
+            return dict(self.stats, queue=len(self.queue), tracks=len(self.tqueue), embed=self.embed(),
                         running=self.current is not None or bool(self.queue) or bool(self.tqueue),
                         current=Path(self.current).name if self.current else "", auto=self.auto())
 
@@ -2284,10 +2366,12 @@ class CoverFetcher:
         """Ganze Sammlung (z. B. share/Musik) durchgehen – auch Ordner, fuer die es zuletzt nichts gab."""
         with self.lock:
             self.stats = {"done": 0, "found": 0, "total": len(self.queue)}
-        n = 0
+        n, t = 0, 0
         for d in MEDIA._preorder(Path(root)):
             n += self.add(d, force=True)
-        log(f"Cover: {n} Ordner ohne Bild vorgemerkt")
+            if self.embed():                           # Cover/Tags auch in Dateien von Ordnern, die schon ein Bild haben
+                t += sum(self.add_track(f, force=True) for f in self._audio_files(d) if f.suffix.lower() in EMBED_EXT)
+        log(f"Cover: {n} Ordner ohne Bild vorgemerkt" + (f", {t} Titel fuer Cover/Tags in den Dateien" if t else ""))
         return n
 
     @staticmethod
@@ -2313,7 +2397,9 @@ class CoverFetcher:
                 p = Path(self.current)
                 try:
                     if p.is_file():
-                        MEDIA.art_file(p, online=True)
+                        f, _ = MEDIA.art_file(p, online=True)
+                        if self.embed():
+                            MEDIA.write_art(p, f)
                 except Exception as e:  # noqa: BLE001
                     log("Cover:", p.name, e)
                 with self.lock:
@@ -2478,8 +2564,10 @@ class CoverFetcher:
         self.offline = False
         if album:
             img, via = self._online(artist, album), f"{artist} – {album}"
+        meta = None
         if not img and title:
             img, via = self._online_recording(artist, title), f"{artist} – {title}"
+            meta = self.last_meta if img else None
         if not img:
             if self.offline:                           # kein Netz: None = spaeter nochmal
                 return None
@@ -2491,6 +2579,8 @@ class CoverFetcher:
             tmp = cache.with_suffix(".part")
             tmp.write_bytes(img)
             tmp.replace(cache)
+            if meta:                                   # Angaben zur gefundenen Aufnahme (fuer fehlende Tags)
+                cache.with_suffix(".json").write_text(json.dumps(meta, ensure_ascii=False), encoding="utf-8")
         except OSError as e:
             log("Cover: Zwischenspeicher nicht beschreibbar:", e)
             return False
@@ -2525,17 +2615,23 @@ class CoverFetcher:
             rg = r.get("release-group") or {}
             return (0 if r.get("status") == "Official" else 1, {"Album": 0, "Single": 1, "EP": 2}.get(rg.get("primary-type"), 3),
                     1 if rg.get("secondary-types") else 0, r.get("date") or "9999")
-        groups = []
+        groups, metas = [], {}
         for rec in (d.get("recordings") or [])[:8]:
             if int(rec.get("score") or 0) < 90:
                 continue
+            credit = "".join((a.get("name") or "") + (a.get("joinphrase") or "") for a in rec.get("artist-credit") or []).strip()
             for r in sorted(rec.get("releases") or [], key=rank):
                 gid = (r.get("release-group") or {}).get("id")
                 if gid and gid not in groups:
                     groups.append(gid)
+                    tracks = [t for m in r.get("media") or [] for t in m.get("track") or []]
+                    metas[gid] = {"title": rec.get("title") or "", "artist": credit, "album": r.get("title") or "",
+                                  "date": (r.get("date") or "")[:4], "track": str(tracks[0].get("number") or "") if tracks else ""}
+        self.last_meta = None
         for gid in groups[:4]:
             img = self._caa(gid)
             if img:
+                self.last_meta = metas.get(gid)
                 return img
         return None
 
@@ -5236,6 +5332,11 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, COVERS.status())
             if parts == ["api", "media", "covers", "auto"]:
                 s = settings_load(); s["covers_auto"] = bool(self._body().get("on")); settings_save(s)
+                return self._json(200, COVERS.status())
+            if parts == ["api", "media", "covers", "embed"]:   # Cover + fehlende Tags in die Dateien schreiben
+                s = settings_load(); s["covers_embed"] = bool(self._body().get("on")); settings_save(s)
+                if s["covers_embed"]:
+                    MEDIA.art_done.clear()               # beim naechsten Oeffnen der Ordner alle Titel einmal pruefen
                 return self._json(200, COVERS.status())
             if parts == ["api", "media", "now"]:
                 b = self._body()

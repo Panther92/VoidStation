@@ -674,5 +674,8 @@
   "dl.hint.save": "<b>Start</b> zapisz",
   "dl.hint.get": "<b>A</b> pobierz",
   "dl.hint.searchField": "<b>Y</b> wyszukiwanie",
-  "dl.hint.sources": "<b>X</b> źródła"
+  "dl.hint.sources": "<b>X</b> źródła",
+  "player.covers.embed": "Zapisuj okładki w plikach",
+  "player.covers.embedOn": "Znalezione okładki i brakujące tagi trafiają teraz do plików muzycznych (MP3, M4A, FLAC) – „Pobierz wszystkie okładki” przetwarza całą kolekcję",
+  "player.covers.embedOff": "Okładki i tagi zostają w pamięci podręcznej, pliki nie są już zmieniane"
 }

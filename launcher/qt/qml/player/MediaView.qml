@@ -392,6 +392,11 @@ Item {
         bar: [
             Pill { iconName: "image"; text: Ui.t("player.covers.auto"); on: !!(mv.coverState && mv.coverState.auto)
                    onTriggered: Api.post("/api/media/covers/auto", { on: !(mv.coverState && mv.coverState.auto) }, function (s) { mv.coverState = s }) },
+            Pill { iconName: "download"; text: Ui.t("player.covers.embed"); on: !!(mv.coverState && mv.coverState.embed)
+                   onTriggered: Api.post("/api/media/covers/embed", { on: !(mv.coverState && mv.coverState.embed) }, function (s) {
+                       mv.coverState = s
+                       app.toast(Ui.t(s && s.embed ? "player.covers.embedOn" : "player.covers.embedOff"))
+                   }) },
             Pill { iconName: "update"; text: Ui.t("player.covers.scan"); enabled: !(mv.coverState && mv.coverState.running)
                    onTriggered: Api.post("/api/media/covers/scan", {}, function (s) { mv.coverState = s; app.toast(Ui.t("player.covers.started")) }) }
         ]

@@ -72,6 +72,7 @@ def media():
         L.CoverFetcher.CACHE = tmp / "covers"                   # Cover-Suche: Zwischenspeicher im Wegwerf-Ordner,
         L.CoverFetcher.MISSES = tmp / "covers" / "misses.json"  # Schalter nur im Speicher (VS_MB_URL/VS_CAA_URL: Testserver)
         L.CoverFetcher.auto = staticmethod(lambda: PLAYER.get("covers_auto", True))
+        L.CoverFetcher.embed = staticmethod(lambda: PLAYER.get("covers_embed", False))
         L.SETTINGS = tmp / "settings.json"                     # Einstellungen (Musik suchen) nicht ins Repo schreiben
         PLAYER["L"] = L
         PLAYER["media"], PLAYER["tmp"] = L.MediaLib(), tmp
@@ -287,6 +288,11 @@ class H(S.H):
             L = PLAYER["L"]
             L.COVERS.scan(Path(os.environ["HOME"]) / "share" / "Musik")
             return self.j(L.COVERS.status())
+        if p == "/api/media/covers/embed":
+            media()
+            PLAYER["covers_embed"] = bool(body.get("on"))
+            PLAYER["L"].MEDIA.art_done.clear()
+            return self.j(PLAYER["L"].COVERS.status())
         if p == "/api/media/covers/auto":
             media()
             PLAYER["covers_auto"] = bool(body.get("on"))

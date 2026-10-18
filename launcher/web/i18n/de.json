@@ -809,5 +809,8 @@
   "dl.hint.save": "<b>Start</b> speichern",
   "dl.hint.get": "<b>A</b> herunterladen",
   "dl.hint.searchField": "<b>Y</b> Suchfeld",
-  "dl.hint.sources": "<b>X</b> Quellen"
+  "dl.hint.sources": "<b>X</b> Quellen",
+  "player.covers.embed": "Cover in Dateien speichern",
+  "player.covers.embedOn": "Gefundene Cover und fehlende Tags kommen jetzt in die Musikdateien (MP3, M4A, FLAC) – „Alle Cover laden“ geht die ganze Sammlung durch",
+  "player.covers.embedOff": "Cover und Tags bleiben im Zwischenspeicher, Dateien werden nicht mehr geändert"
 }

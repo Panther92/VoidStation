@@ -675,5 +675,8 @@
   "dl.hint.save": "<b>Start</b> salva",
   "dl.hint.get": "<b>A</b> scarica",
   "dl.hint.searchField": "<b>Y</b> ricerca",
-  "dl.hint.sources": "<b>X</b> fonti"
+  "dl.hint.sources": "<b>X</b> fonti",
+  "player.covers.embed": "Salva copertine nei file",
+  "player.covers.embedOn": "Le copertine trovate e i tag mancanti vengono ora scritti nei file (MP3, M4A, FLAC) – «Scarica tutte le copertine» elabora tutta la raccolta",
+  "player.covers.embedOff": "Copertine e tag restano nella cache, i file non vengono più modificati"
 }
