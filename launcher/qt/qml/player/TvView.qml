@@ -153,6 +153,12 @@ Item {
         }, function () { app.toast(Ui.t("common.saveFailed"), true) })
     }
 
+    // Zur Startseite (Menue-Eintrag, fuer Controller ohne Guide-Taste): Fernsehen laeuft weiter
+    function goHome() {
+        menu.hide()
+        chan.hide()
+        Api.post("/api/home", null)
+    }
     function armExit() {
         if (exitArmed) { exitT.stop(); exitArmed = false; return app.leave() }
         exitArmed = true
@@ -179,6 +185,7 @@ Item {
         if (k === "x") { chan.curKey = cur ? cur.key : ""; infoOn = false; return chan.show() }
         if (k === "y") return fav()
         if (k === "start") { infoOn = false; return menu.show() }
+        if (k === "home") return goHome()
         if (k === "select") { tech.open = !tech.open; return }
         if ((k === "lb" || k === "rb" || k === "prev") && prevKey) return tune(prevKey)
         if (k === "next") return zap(1)
@@ -360,7 +367,7 @@ Item {
                 width: parent.width
                 anchors.bottom: parent.bottom
                 list: [Ui.t("player.hint.channels"), Ui.t("player.hint.volumeLR"), Ui.t("player.hint.list"), Ui.t("player.hint.fav"),
-                       Ui.t("player.hint.menu"), Ui.t("player.hint.exit")]
+                       Ui.t("player.hint.menu"), Ui.t("hint.homeShort"), Ui.t("player.hint.exit")]
             }
         }
     }
@@ -395,6 +402,7 @@ Item {
             { icon: "list", tip: Ui.t("player.tv.tab.list"), act: function () { tv.key("x") } },
             { icon: "star", tip: Ui.t("common.favorites"), act: function () { tv.fav() } },
             { icon: "subs", tip: Ui.t("player.menu.title"), act: function () { tv.key("start") } },
+            { icon: "home", tip: Ui.t("player.menu.home"), act: function () { tv.goHome() } },
             { icon: "minus", tip: Ui.t("player.volume"), act: function () { app.volume("down") } },
             { icon: "plus", tip: Ui.t("player.volume"), act: function () { app.volume("up") } },
             { icon: "close", tip: Ui.t("player.btn.exit"), act: function () { app.leave() } }
@@ -415,5 +423,7 @@ Item {
         withQuality: true
         quality: tv.quality
         onQualityChosen: function (v) { tv.quality = v; if (tv.cur) tv.player.reload({ "hls-bitrate": v }) }
+        homeSub: Ui.t("player.menu.homeTv")
+        onHomeChosen: tv.goHome()
     }
 }

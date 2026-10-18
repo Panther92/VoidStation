@@ -208,6 +208,7 @@ class H(S.H):
             "/api/tv/zap": lambda: {"items": S.TV, "favs": st["tvfavs"], "recent": PLAYER["recent"], "key": (st["tv"] or {}).get("key")},
             "/api/media/roots": lambda: media().roots(),
             "/api/media/list": lambda: media_list(q),
+            "/api/media/nextfolder": lambda: media().next_folder(q.get("path", [""])[0]) or {},
         }
         if p == "/api/media/thumb":
             r = media().thumb(q.get("path", [""])[0])

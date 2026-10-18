@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Kachel der Startseite: Symbol oder Bild, Name, Zusatz, laeuft-Balken, ✕ zum Schliessen;
-// Sonderformen Uhr und Radio/Fernsehen (zeigt, was laeuft)
+// Sonderformen Uhr und Radio/Fernsehen/Videos & Musik (zeigt, was laeuft)
 import QtQuick
 
 Tile {
     id: ht
     property var t: ({})
-    property string kind: t.type === "clock" ? "clock" : (t.type === "radio" || t.type === "tv") ? "media" : "app"
+    property string kind: t.type === "clock" ? "clock" : (t.type === "radio" || t.type === "tv" || t.id === "media") ? "media" : "app"
     property bool running: false
     property bool playing: false
     property string nowMain: ""

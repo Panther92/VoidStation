@@ -207,7 +207,8 @@ class Engine(QObject):
         if key == "tracks":
             val = [{"id": t.get("id"), "type": t.get("type"), "lang": t.get("lang") or "", "title": t.get("title") or "",
                     "codec": t.get("codec") or "", "selected": bool(t.get("selected")), "default": bool(t.get("default")),
-                    "external": bool(t.get("external"))} for t in (val or []) if isinstance(t, dict)]
+                    "external": bool(t.get("external")), "albumart": bool(t.get("albumart"))}
+                   for t in (val or []) if isinstance(t, dict)]
         if key == "meta":
             val = {str(k).lower(): v for k, v in (val or {}).items()} if isinstance(val, dict) else {}
         self._set(key, val)
@@ -741,6 +742,31 @@ class Bridge(VsBase):
             return "0:00"
         h, m, s = s // 3600, s % 3600 // 60, s % 60
         return f"{h}:{m:02d}:{s:02d}" if h else f"{m}:{s:02d}"
+
+    PREFS = BASE / "player.json"
+
+    def _prefs(self):
+        try:
+            d = json.loads(self.PREFS.read_text(encoding="utf-8"))
+            return d if isinstance(d, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    @Slot(str, str, result=str)
+    def prefGet(self, key, default):
+        v = self._prefs().get(key)
+        return str(v) if v is not None else default
+
+    @Slot(str, str)
+    def prefSet(self, key, value):
+        d = self._prefs()
+        d[key] = value
+        try:
+            tmp = self.PREFS.with_suffix(".tmp")
+            tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+            tmp.replace(self.PREFS)
+        except OSError as e:
+            log("player.json:", e)
 
     @Slot(str, result=str)
     def fileUrl(self, path):

@@ -11,7 +11,12 @@ Rectangle {
     property int sel: 0
     property bool withQuality: false
     property string quality: "max"
+    property string title: Ui.t("player.menu.title")
+    property string repeatMode: ""               // Musik: Wiederholen-Abschnitt (leer = keiner)
+    property string homeSub: ""
     signal qualityChosen(string v)
+    signal repeatChosen(string m)
+    signal homeChosen()
     z: 45
     width: Math.min(Ui.screenW * 0.34, 460 * Ui.f)
     height: parent.height
@@ -43,8 +48,15 @@ Rectangle {
         var st = app.st || {}, out = [], tracks = st.tracks || [], i, t
         var audio = tracks.filter(function (t) { return t.type === "audio" })
         var subs = tracks.filter(function (t) { return t.type === "sub" })
-        var hasVideo = tracks.some(function (t) { return t.type === "video" })
-        if (audio.length) {
+        var hasVideo = tracks.some(function (t) { return t.type === "video" && !t.albumart })
+        if (repeatMode) {
+            out.push({ head: Ui.t("player.menu.repeat") })
+            var modes = ["next", "folder", "once", "track"]
+            for (i = 0; i < modes.length; i++)
+                out.push({ label: Ui.t("player.repeat." + modes[i]), sub: Ui.t("player.repeat." + modes[i] + ".sub"), on: repeatMode === modes[i],
+                           act: { kind: "repeat", v: modes[i] } })
+        }
+        if (audio.length > 1 || (audio.length && hasVideo)) {
             out.push({ head: Ui.t("player.menu.audio") })
             for (i = 0; i < audio.length; i++) { t = audio[i]; out.push({ label: trackLabel(t), sub: trackSub(t), on: t.selected, act: { kind: "aid", id: t.id } }) }
         }
@@ -66,7 +78,8 @@ Rectangle {
             out.push({ label: Ui.t("player.quality.best"), sub: "", on: quality === "max", act: { kind: "quality", v: "max" } })
             out.push({ label: Ui.t("player.quality.low"), sub: "", on: quality === "min", act: { kind: "quality", v: "min" } })
         }
-        if (!out.length) out.push({ head: Ui.t("player.menu.none") })
+        out.push({ head: Ui.t("player.menu.more") })
+        out.push({ label: Ui.t("player.menu.home"), sub: homeSub, on: false, act: { kind: "home" } })
         return out
     }
     function show() {
@@ -101,6 +114,10 @@ Rectangle {
         } else if (act.kind === "quality") {
             quality = act.v
             qualityChosen(act.v)
+        } else if (act.kind === "repeat") {
+            repeatChosen(act.v)
+        } else if (act.kind === "home") {
+            return homeChosen()
         }
         Qt.callLater(refresh)
     }
@@ -114,7 +131,7 @@ Rectangle {
     Txt {
         id: title
         x: 28 * Ui.f; y: 34 * Ui.f
-        text: Ui.t("player.menu.title")
+        text: m.title
         font.pixelSize: 26 * Ui.f
         font.weight: Font.Light
     }

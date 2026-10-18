@@ -31,6 +31,7 @@ Window {
         property var running: []
         property var radioState: ({ station: null, title: null })
         property var tvNow: null
+        property var mediaNow: null
         property real tvFailedT: 0
         property var updInfo: null
         property string updToasted: ""
@@ -334,6 +335,7 @@ Window {
                 running = s.running || []
                 setRadio(s.radio || {})
                 setTvNow(s.tv)
+                mediaNow = s.media || null
                 if (s.tvFailed && s.tvFailed.t !== tvFailedT) {        // Rueckfall ohne Player: Sender scheiterte
                     if (tvFailedT) toast(Ui.t("tv.failed", { name: s.tvFailed.name }), true)
                     tvFailedT = s.tvFailed.t
@@ -568,11 +570,14 @@ Window {
                                     t: tile
                                     enterDelay: (grp.base + index) * 45
                                     running: app.running.indexOf(tile.id) >= 0
-                                    playing: tile.type === "radio" ? !!app.radioState.station : tile.type === "tv" ? !!app.tvNow : false
+                                    playing: tile.type === "radio" ? !!app.radioState.station : tile.type === "tv" ? !!app.tvNow
+                                           : tile.id === "media" ? !!app.mediaNow : false
                                     nowMain: tile.type === "radio" ? (app.radioState.station ? app.radioState.station.name : "")
-                                           : tile.type === "tv" && app.tvNow ? app.tvNow.name : ""
+                                           : tile.type === "tv" && app.tvNow ? app.tvNow.name
+                                           : tile.id === "media" && app.mediaNow ? (app.mediaNow.title || "") : ""
                                     nowSub: tile.type === "radio" ? (app.radioState.station ? (app.radioState.title || Ui.t("common.live")) : "")
-                                          : tile.type === "tv" && app.tvNow ? (app.tvNow.country ? Ui.regionName(app.tvNow.country) : Ui.t("common.live")) : ""
+                                          : tile.type === "tv" && app.tvNow ? (app.tvNow.country ? Ui.regionName(app.tvNow.country) : Ui.t("common.live"))
+                                          : tile.id === "media" && app.mediaNow ? (app.mediaNow.sub || "") : ""
                                     clockMain: app.clockMain
                                     clockAp: app.clockAp
                                     clockDate: app.clockDate

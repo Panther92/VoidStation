@@ -123,7 +123,18 @@ def active_window():
     return wid or None
 
 
+def media_notify(cmd):
+    """Laufendem Player "Videos & Musik" Bescheid geben (ohne zu warten): "background" = Startseite oder anderes
+    Programm kommt nach vorn (Videos halten an, Musik laeuft weiter), "pause" = Radio startet."""
+    try:
+        if APPS._get("media"):
+            threading.Thread(target=PLAYERS.send, args=("media", {"cmd": cmd}), daemon=True).start()
+    except NameError:                                   # beim Start, bevor es APPS/PLAYERS gibt
+        pass
+
+
 def raise_home():
+    media_notify("background")
     for wid, _pid, title in windows():
         if HOME_TITLE in title:
             run(["wmctrl", "-i", "-a", wid])
@@ -217,6 +228,7 @@ class AppManager:
         args = expand(cmd if isinstance(cmd, list) else ["sh", "-c", cmd])
         if Path(args[0]).name == PLAYER_BIN.name:          # Videos & Musik: eigener Player (Stufe, Absturzzaehler)
             return PLAYERS.start(tid, args[2] if len(args) > 2 else "", mode="media")
+        media_notify("background")                         # anderes Programm: laufendes Video anhalten
         return self.start(tid, args)
 
     def start(self, tid, args, env=None):
@@ -414,6 +426,7 @@ class PlayerManager:
 
 
 PLAYERS = PlayerManager()
+MEDIA_NOW = {}                                         # was "Videos & Musik" gerade spielt (Kachel der Startseite)
 
 
 # ---------------------------------------------------------------------------
@@ -449,6 +462,7 @@ class Radio:
         url = station.get("url")
         if not url or not url.startswith(("http://", "https://")):
             raise ValueError("ungueltige Stream-Adresse")
+        media_notify("pause")                              # Musik/Video im Player anhalten
         self.stop()
         log("Radio:", station.get("name"), url)
         proc = subprocess.Popen(
@@ -1884,6 +1898,55 @@ class MediaLib:
             parent = ""                              # ~/share/Videos und ~/share/Musik: zurueck zur Startseite
         return {"path": str(p), "name": p.name, "parent": parent, "items": dirs + files, "select": select,
                 "audio": sum(1 for f in files if f["kind"] == "audio")}
+
+    def _subdirs(self, d):
+        try:
+            with os.scandir(d) as it:
+                ds = [e for e in it if not e.name.startswith(".") and e.is_dir(follow_symlinks=False)]
+        except OSError:
+            return []
+        return [Path(e.path) for e in sorted(ds, key=lambda e: natural_key(e.name))]
+
+    def _preorder(self, root, limit=20000):
+        """Alle Ordner unter root in der Reihenfolge der Mediathek (Ordner vor ihren Unterordnern, natuerlich sortiert)."""
+        stack, n = [root], 0
+        while stack and n < limit:
+            d = stack.pop()
+            n += 1
+            yield d
+            stack.extend(reversed(self._subdirs(d)))
+
+    def next_folder(self, path):
+        """Naechster Ordner mit Musik nach path – wie "weiter mit dem naechsten Ordner" beim MP3-Player: zuerst die
+        Unterordner, dann die Nachbarn, dann weiter oben (Interpret A/Album 2 -> Interpret B/Album 1). Bleibt in
+        share/Musik bzw. share/Videos oder auf dem Laufwerk. None am Ende."""
+        p = self.resolve(path)
+        if not p or not p.is_dir():
+            raise ValueError("Ordner nicht erlaubt")
+        root = next((r for r in self.allowed_roots() if p == r or r in p.parents), None)
+        share = self.share().resolve()
+        if root == share and p != share:
+            root = share / p.relative_to(share).parts[0]
+        found = False
+        for d in self._preorder(root):
+            if not found:
+                found = d == p
+                continue
+            res = self.resume_load()
+            files = []
+            try:
+                names = sorted(os.listdir(d), key=natural_key)
+            except OSError:
+                continue
+            for n in names:
+                if n.startswith(".") or Path(n).suffix.lower() not in AUDIO_EXT:
+                    continue
+                e = self.entry(d / n, res)
+                if e and e["kind"] == "audio":
+                    files.append(e)
+            if files:
+                return {"path": str(d), "name": d.name, "items": files}
+        return None
 
     def thumb(self, path):
         """Vorschaubild als (Bytes, MIME): Cover-Bilder direkt, Videos ueber ffmpegthumbnailer (Cache)."""
@@ -3990,7 +4053,10 @@ class Handler(BaseHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        try:
+            self.wfile.write(body)
+        except (BrokenPipeError, ConnectionResetError):     # Oberflaeche hat abgebrochen (z. B. Vorschaubild weggeblaettert)
+            pass
 
     def _json(self, code, obj):
         self._send(code, json.dumps(obj, ensure_ascii=False).encode())
@@ -4021,6 +4087,7 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"running": running, "starting": APPS.starting(), "radio": RADIO.status(),
                                     "update": updates_badge() if not LIVE else {"available": False},
                                     "tv": TV.now if "tv" in running else None, "tvFailed": TV.failed, "live": LIVE,
+                                    "media": (MEDIA_NOW or None) if "media" in running else None,
                                     "install": INSTALL.state.get("state") if INSTALL.state else None})
         if path == "/api/tv/status":
             TV.ensure()
@@ -4044,6 +4111,11 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 return self._json(200, MEDIA.listdir(urllib.parse.parse_qs(url.query).get("path", [""])[0]))
             except (ValueError, FileNotFoundError, OSError) as e:
+                return self._json(404, {"error": str(e)})
+        if path == "/api/media/nextfolder":
+            try:
+                return self._json(200, MEDIA.next_folder(urllib.parse.parse_qs(url.query).get("path", [""])[0]) or {})
+            except (ValueError, OSError) as e:
                 return self._json(404, {"error": str(e)})
         if path == "/api/media/thumb":
             r = MEDIA.thumb(urllib.parse.parse_qs(url.query).get("path", [""])[0])
@@ -4180,6 +4252,12 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "tv", "broken"]:
                 b = self._body()
                 TV.mark_broken(str(b.get("key", "")), str(b.get("reason", ""))[:40])
+                return self._json(200, {"ok": True})
+            if parts == ["api", "media", "now"]:
+                b = self._body()
+                MEDIA_NOW.clear()
+                if b.get("title"):
+                    MEDIA_NOW.update({k: str(b.get(k) or "")[:120] for k in ("title", "sub", "kind")})
                 return self._json(200, {"ok": True})
             if parts == ["api", "media", "resume"]:
                 b = self._body()

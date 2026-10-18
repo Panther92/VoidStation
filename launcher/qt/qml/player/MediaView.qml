@@ -3,7 +3,9 @@
 // und die Wiedergabe – Videos vollflaechig mit Leiste unten, Musik mit Cover und Titelliste.
 // Angefangene Videos merkt sich der Launcher (Weiterschauen).
 // Tasten Video: A Pause, ◀▶ 10 s, LB/RB 1 min, ▲▼ Lautstaerke, Start Ton & Untertitel, Select Technik, B Stopp
-// Tasten Musik: A Pause, ◀▶ Titel zurueck/vor, LB/RB 10 s, ▲▼ Lautstaerke, B Stopp
+// Tasten Musik: A Pause, ◀▶ Titel zurueck/vor, LB/RB 10 s, ▲▼ Lautstaerke, Y Wiederholen (wie beim MP3-Player:
+// Titel wiederholen · Ordner, dann Stopp · Ordner wiederholen · weiter mit dem naechsten Ordner), Start Menue, B Stopp.
+// Guide/Win (oder Menue -> Zur Startseite): Startseite, Musik laeuft weiter, Videos halten an.
 import QtQuick
 import VS
 
@@ -26,6 +28,12 @@ Item {
     property string selectAfter: ""               // nach dem Laden diesen Eintrag fokussieren (zurueck aus einem Ordner)
     property var playing: null                    // laufender Eintrag (Video) bzw. Liste (Musik)
     property var playlist: []
+    property string playFolder: ""                // Ordner, aus dem die Musik gerade spielt
+    property string playFolderName: ""
+    // Wiederholen (Musik), gemerkt in player.json: track | once | folder | next
+    readonly property var repeatModes: ["next", "folder", "once", "track"]
+    property string repeat: vs.prefGet("repeat", "next")
+    property bool nextBusy: false
     property bool osdOn: false
     property real seekAcc: 0
     readonly property var audioItems: items.filter(function (i) { return i.kind === "audio" })
@@ -38,8 +46,12 @@ Item {
         if (arg) openArg(arg); else openPath("")
     }
     function remote(m) {
-        if (m.cmd !== "open") return
-        if (m.path) openArg(m.path)
+        if (m.cmd === "open" && m.path) return openArg(m.path)
+        if (m.cmd === "pause" && phase !== "browse") return player.setPause(true)          // Radio startet
+        if (m.cmd === "background" && phase === "video" && !st.paused) {                    // Startseite / anderes Programm
+            player.setPause(true)
+            osdOn = true
+        }
     }
     function openArg(p) {
         if (phase !== "browse") stopPlayback(true)
@@ -106,8 +118,8 @@ Item {
     function activate(it) {
         if (!it) return
         if (it.kind === "dir" || it.kind === "videos" || it.kind === "music" || it.kind === "drive") return openPath(it.path)
-        if (it.kind === "playall") return playAudio(audioItems, 0)
-        if (it.kind === "audio") return playAudio(audioItems, Math.max(0, audioItems.indexOf(it)))
+        if (it.kind === "playall") return playAudio(audioItems, 0, path, folderName)
+        if (it.kind === "audio") return playAudio(audioItems, Math.max(0, audioItems.indexOf(it)), path, folderName)
         if (it.kind === "video" || it.kind === "resume") {
             if (it.resume && it.resume.pos > 30) return dlg.ask(it)
             return playVideo(it, 0)
@@ -122,20 +134,66 @@ Item {
         if (app.embedded) browser.hide()
         var o = {}
         if (from > 0) o.start = String(Math.floor(from))
+        player.setProp("loop-file", "no")
+        player.setProp("loop-playlist", "no")
         vs.setTitle(it.title || it.name || "")
         player.play(it.path, o)
         Api.post("/api/radio/stop", null)
         showOsd()
     }
-    function playAudio(list, index) {
+    function playAudio(list, index, folder, folderName) {
         if (!list.length) return
         playlist = list
         playing = list[index]
+        playFolder = folder || path
+        playFolderName = folderName !== undefined ? folderName : mv.folderName
         phase = "audio"
         browser.hide()
+        applyRepeat()
         player.playList(list.map(function (i) { return i.path }), index, {})
         vs.setTitle(Ui.t("player.media.music"))
         Api.post("/api/radio/stop", null)
+    }
+    // Wiederholen an mpv weitergeben: Titel = loop-file, Ordner = loop-playlist; "once" und "next" spielen die Liste
+    // einmal, "next" holt danach den naechsten Ordner (audioEnded)
+    function applyRepeat() {
+        player.setProp("loop-file", phase === "audio" && repeat === "track" ? "inf" : "no")
+        player.setProp("loop-playlist", phase === "audio" && repeat === "folder" ? "inf" : "no")
+    }
+    function setRepeat(m) {
+        if (repeatModes.indexOf(m) < 0) return
+        repeat = m
+        vs.prefSet("repeat", m)
+        applyRepeat()
+        app.toast(Ui.t("player.repeat." + m))
+        player.osdText(Ui.t("player.repeat." + m), "2000")
+    }
+    function cycleRepeat() { setRepeat(repeatModes[(repeatModes.indexOf(repeat) + 1) % repeatModes.length]) }
+    // Ende der Liste: Stopp oder (Modus "next") naechster Ordner mit Musik – Reihenfolge wie in der Mediathek,
+    // auch ueber Interpreten hinweg (Interpret A/Album 2 -> Interpret B/Album 1)
+    function audioEnded() {
+        if (phase !== "audio") return true
+        if (!st.idle) return false                    // naechster Titel laeuft schon an (oder mpv meldet idle noch nicht)
+        if (repeat !== "next" || !playFolder) backToBrowser()
+        else nextFolder(false)
+        return true
+    }
+    // byKey: mit ▶ am letzten Titel – gibt es keinen Ordner mehr, laeuft der aktuelle Titel einfach weiter
+    function nextFolder(byKey) {
+        if (nextBusy) return
+        nextBusy = true
+        Api.get("/api/media/nextfolder?path=" + encodeURIComponent(playFolder), function (r) {
+            nextBusy = false
+            if (phase !== "audio") return
+            if (!r || !r.path || !r.items || !r.items.length) {
+                app.toast(Ui.t("player.media.allPlayed"))
+                if (!byKey) backToBrowser()
+                return
+            }
+            playAudio(decorate(r.items), 0, r.path, r.name)
+            app.toast(Ui.t("player.media.nextFolder", { name: r.name }))
+            player.osdText(Ui.t("player.media.nextFolder", { name: r.name }), "3000")
+        }, function () { nextBusy = false; backToBrowser() })
     }
     function saveResume(finished) {
         if (phase !== "video" || !playing || !playing.path) return
@@ -150,7 +208,8 @@ Item {
         backToBrowser(silent)
     }
     function backToBrowser(silent) {
-        var was = playing
+        var was = phase === "audio" ? curTrackItem : playing
+        var wasAudio = phase === "audio"
         phase = "browse"
         osdOn = false
         menu.hide()
@@ -159,6 +218,8 @@ Item {
         vs.setTitle(Ui.t("player.media.title"))
         browser.show()
         if (was && was.path) selectAfter = was.path
+        if (wasAudio && playFolder && playFolder !== path && !silent) path = playFolder    // nach "naechster Ordner"
+        Api.post("/api/media/now", {})
         if (!silent) openPath(path)                 // Fortschritt (Weiterschauen) neu laden
     }
     Connections {
@@ -177,7 +238,32 @@ Item {
             }
         }
     }
-    Timer { id: endCheck; interval: 400; onTriggered: if (mv.phase === "audio" && mv.st.idle) mv.backToBrowser() }
+    // Nach jedem Titelende kurz nachsehen, ob die Liste zu Ende ist (mpv meldet "idle" etwas spaeter als das Ende)
+    Timer {
+        id: endCheck
+        property int left: 0
+        interval: 300; repeat: true
+        onRunningChanged: if (running) left = 8
+        onTriggered: if (mv.audioEnded() || --left <= 0) stop()
+    }
+
+    // Zur Startseite (Menue-Eintrag, fuer Controller ohne Guide-Taste): Musik laeuft weiter, Video haelt an
+    function goHome() {
+        menu.hide()
+        if (phase === "video" && !st.paused) player.setPause(true)
+        Api.post("/api/home", null)
+    }
+    // Was laeuft, fuer die Kachel auf der Startseite
+    function reportNow() {
+        if (phase === "browse") return
+        var it = curTrackItem, meta = st.meta || {}
+        var title = phase === "audio" ? (meta.title || (it ? (it.title || it.name) : "")) : (playing ? (playing.title || playing.name) : "")
+        var sub = phase === "audio" ? (meta.artist || meta.album_artist || playFolderName || "") : (st.paused ? Ui.t("player.paused") : "")
+        Api.post("/api/media/now", { title: title, sub: sub, kind: phase })
+    }
+    property string nowKey: phase + "|" + (curTrackItem ? curTrackItem.path : "") + "|" + ((st.meta || {}).title || "") + "|" + (phase === "video" ? !!st.paused : "")
+    onNowKeyChanged: nowT.restart()
+    Timer { id: nowT; interval: 300; onTriggered: mv.reportNow() }
 
     function showOsd() { osdOn = true; osdT.restart() }
     Timer { id: osdT; interval: 3500; onTriggered: if (!mv.st.paused) mv.osdOn = false }
@@ -207,6 +293,7 @@ Item {
         if (k === "down" || k === "voldown") return app.volume("down")
         if (k === "select") { tech.open = !tech.open; return }
         if (k === "start") return menu.show()
+        if (k === "home") return goHome()
         if (phase === "video") {
             if (k === "left") return seek(-10)
             if (k === "right") return seek(10)
@@ -218,13 +305,18 @@ Item {
             if (k === "right" || k === "next") return nextTrack()
             if (k === "lb" || k === "chdown") return player.seek(-10)
             if (k === "rb" || k === "chup") return player.seek(10)
+            if (k === "y") return cycleRepeat()
         }
     }
     function prevTrack() {
         if ((st.position || 0) > 4 || (st.plpos || 0) <= 0) return player.seekTo(0)
         player.playlistGo(st.plpos - 1)
     }
-    function nextTrack() { if ((st.plpos || 0) < (st.plcount || 0) - 1) player.playlistGo(st.plpos + 1) }
+    function nextTrack() {
+        if ((st.plpos || 0) < (st.plcount || 0) - 1) return player.playlistGo(st.plpos + 1)
+        if (repeat === "folder") return player.playlistGo(0)
+        if (repeat === "next") return nextFolder(true)                          // gleich zum naechsten Ordner
+    }
     readonly property var curTrackItem: phase === "audio" && st.plpos >= 0 && playlist[st.plpos] ? playlist[st.plpos] : playing
 
     // ------------------------------------------------------------ Mediathek-Seite
@@ -353,7 +445,7 @@ Item {
             Hints {
                 width: parent.width
                 list: [Ui.t("player.hint.pause"), Ui.t("player.hint.seek"), Ui.t("player.hint.seekBig"), Ui.t("player.hint.volumeUD"),
-                       Ui.t("player.hint.menu"), Ui.t("player.hint.stop")]
+                       Ui.t("player.hint.menu"), Ui.t("hint.homeShort"), Ui.t("player.hint.stop")]
             }
         }
     }
@@ -428,6 +520,27 @@ Item {
                 color: Ui.c.textDim
                 font.pixelSize: 15 * Ui.f
             }
+            Row {                                       // Ordner und Wiederholen
+                spacing: 10 * Ui.f
+                Glyph { name: "folder"; width: 17 * Ui.f; height: width; opacity: 0.7; anchors.verticalCenter: parent.verticalCenter }
+                Txt { text: mv.playFolderName; color: Ui.c.textDim; font.pixelSize: 15 * Ui.f; anchors.verticalCenter: parent.verticalCenter
+                      width: Math.min(implicitWidth, Ui.screenW * 0.25) }
+                Rectangle {
+                    color: Ui.alpha(Ui.c.surfaceCard, 0.9)
+                    border.width: 1; border.color: Ui.c.borderSubtle
+                    width: repRow.width + 20 * Ui.f; height: repRow.height + 8 * Ui.f
+                    anchors.verticalCenter: parent.verticalCenter
+                    Row {
+                        id: repRow
+                        anchors.centerIn: parent
+                        spacing: 7 * Ui.f
+                        Glyph { name: mv.repeat === "track" ? "repeat1" : mv.repeat === "once" ? "stop" : mv.repeat === "next" ? "next" : "repeat"
+                                width: 15 * Ui.f; height: width; anchors.verticalCenter: parent.verticalCenter }
+                        Txt { text: Ui.t("player.repeat." + mv.repeat); font.pixelSize: 14 * Ui.f; anchors.verticalCenter: parent.verticalCenter }
+                    }
+                    MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: mv.cycleRepeat() }
+                }
+            }
             Item { width: 1; height: 8 * Ui.f }
             Repeater {                                  // die naechsten Titel
                 model: mv.playlist.slice((mv.st.plpos || 0) + 1, (mv.st.plpos || 0) + 6)
@@ -443,7 +556,8 @@ Item {
             x: Ui.padX
             width: parent.width - 2 * Ui.padX
             anchors.bottom: parent.bottom; anchors.bottomMargin: 14 * Ui.f
-            list: [Ui.t("player.hint.pause"), Ui.t("player.hint.tracks"), Ui.t("player.hint.seekSmall"), Ui.t("player.hint.volumeUD"), Ui.t("player.hint.stop")]
+            list: [Ui.t("player.hint.pause"), Ui.t("player.hint.tracks"), Ui.t("player.hint.seekSmall"), Ui.t("player.hint.volumeUD"),
+                   Ui.t("player.hint.repeat"), Ui.t("player.hint.playbackMenu"), Ui.t("hint.homeShort"), Ui.t("player.hint.stop")]
         }
     }
 
@@ -500,11 +614,19 @@ Item {
         buttons: [
             { icon: "pause", tip: Ui.t("player.paused"), act: function () { mv.player.togglePause(); mv.showOsd() } },
             { icon: "subs", tip: Ui.t("player.menu.title"), act: function () { menu.show() } },
+            { icon: "home", tip: Ui.t("player.menu.home"), act: function () { mv.goHome() } },
             { icon: "minus", tip: Ui.t("player.volume"), act: function () { app.volume("down") } },
             { icon: "plus", tip: Ui.t("player.volume"), act: function () { app.volume("up") } },
             { icon: "stop", tip: Ui.t("player.btn.stop"), act: function () { mv.stopPlayback() } }
         ]
     }
     TechInfo { id: tech }
-    TrackMenu { id: menu }
+    TrackMenu {
+        id: menu
+        title: mv.phase === "audio" ? Ui.t("player.menu.playback") : Ui.t("player.menu.title")
+        repeatMode: mv.phase === "audio" ? mv.repeat : ""
+        homeSub: mv.phase === "video" ? Ui.t("player.menu.homeVideo") : Ui.t("player.menu.homeMusic")
+        onRepeatChosen: function (m) { mv.setRepeat(m) }
+        onHomeChosen: mv.goHome()
+    }
 }
