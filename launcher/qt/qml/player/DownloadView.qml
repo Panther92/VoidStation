@@ -49,6 +49,9 @@ Item {
     }
     function toggle(name) { var d = {}; for (var k in draft) d[k] = draft[k]; d[name] = !d[name]; draft = d }
     function saveSettings() {
+        var any = false
+        for (var k in draft) if (draft[k]) any = true
+        if (!any) return app.toast(Ui.t("dl.sources.none"))       // keine Vorauswahl: der Nutzer entscheidet selbst
         Api.post("/api/dl/settings", { sources: draft }, function (s) {
             sett = s
             firstRun = false

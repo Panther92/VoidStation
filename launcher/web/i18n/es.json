@@ -658,7 +658,7 @@
   "dl.title": "Buscar música",
   "dl.tile.sub": "Descargar con etiquetas y carátula",
   "dl.sources.title": "Fuentes",
-  "dl.sources.first": "Antes de empezar: ¿dónde debe buscar música VoidStation? La música libre ya está seleccionada; puedes añadir más fuentes y cambiarlo cuando quieras (X o «Fuentes»).",
+  "dl.sources.first": "Antes de empezar: ¿dónde debe buscar música VoidStation? Marca las fuentes que quieras usar; puedes cambiarlo cuando quieras (X o «Fuentes»).",
   "dl.sources.intro": "Elige dónde busca música VoidStation. Todo se guarda en la carpeta compartida, en Musik, con etiquetas y carátula.",
   "dl.sources.save": "Guardar y continuar",
   "dl.src.archive": "Música libre (Internet Archive)",
@@ -698,5 +698,12 @@
   "player.covers.embedOff": "Carátulas y etiquetas se quedan en la caché, los archivos ya no se modifican",
   "player.menu.recover": "Buscar carátula de nuevo",
   "player.menu.recover.sub": "¿Imagen incorrecta? Busca de nuevo y sustituye lo que añadió VoidStation",
-  "player.cover.refreshing": "Buscando la carátula de nuevo …"
+  "player.cover.refreshing": "Buscando la carátula de nuevo …",
+  "player.info.audio": "Audio",
+  "player.info.samplerate": "Frecuencia de muestreo",
+  "player.info.output": "Salida",
+  "player.info.mono": "Mono",
+  "player.info.stereo": "Estéreo",
+  "player.info.channels": "{n} canales",
+  "dl.sources.none": "Elige al menos una fuente"
 }

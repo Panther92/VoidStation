@@ -3141,7 +3141,7 @@ COVERS = CoverFetcher()
 #  Musik suchen und herunterladen (Videos & Musik -> "Musik suchen"), aehnlich wie ytmdl
 # ---------------------------------------------------------------------------
 DL_SOURCES = ("archive", "youtube", "soundcloud")          # Reihenfolge der Einstellungsseite
-DL_DEFAULT = {"archive": True, "youtube": False, "soundcloud": False}
+DL_DEFAULT = {"archive": False, "youtube": False, "soundcloud": False}   # keine Vorauswahl – der Nutzer kreuzt selbst an
 JUNK = re.compile(r"\s*[\(\[](?:official|offizielles|music|lyric|lyrics|audio|video|hd|hq|4k|visuali[sz]er|clip|"
                   r"videoclip|remaster(?:ed)?(?: \d{4})?|explicit|live)[^\)\]]*[\)\]]", re.I)
 

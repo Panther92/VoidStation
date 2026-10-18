@@ -659,7 +659,7 @@
   "dl.title": "Meklēt mūziku",
   "dl.tile.sub": "Lejupielāde ar tagiem un vāku",
   "dl.sources.title": "Avoti",
-  "dl.sources.first": "Pirms sākam: kur VoidStation meklēt mūziku? Brīvā mūzika jau ir atzīmēta; vari pievienot citus avotus un jebkurā laikā to mainīt (X vai “Avoti”).",
+  "dl.sources.first": "Pirms sākt: kur VoidStation meklēt mūziku? Atzīmē avotus, kurus vēlies izmantot – to vēlāk var mainīt jebkurā laikā (X vai “Avoti”).",
   "dl.sources.intro": "Izvēlies, kur VoidStation meklē mūziku. Viss tiek saglabāts koplietotajā mapē zem Musik, ar tagiem un vāku.",
   "dl.sources.save": "Saglabāt un turpināt",
   "dl.src.archive": "Brīvā mūzika (Internet Archive)",
@@ -699,5 +699,12 @@
   "player.covers.embedOff": "Vāki un tagi paliek kešatmiņā, faili vairs netiek mainīti",
   "player.menu.recover": "Meklēt vāku vēlreiz",
   "player.menu.recover.sub": "Nepareizs attēls? Meklē vēlreiz un aizstāj to, ko pievienoja VoidStation",
-  "player.cover.refreshing": "Vāks tiek meklēts vēlreiz …"
+  "player.cover.refreshing": "Vāks tiek meklēts vēlreiz …",
+  "player.info.audio": "Skaņa",
+  "player.info.samplerate": "Iztveršanas frekvence",
+  "player.info.output": "Izvade",
+  "player.info.mono": "Mono",
+  "player.info.stereo": "Stereo",
+  "player.info.channels": "{n} kanāli",
+  "dl.sources.none": "Izvēlies vismaz vienu avotu"
 }

@@ -116,7 +116,8 @@ PROPS = {"pause": "paused", "paused-for-cache": "buffering", "playback-time": "p
          "track-list": "tracks", "aid": "aid", "sid": "sid", "vid": "vid", "video-params": "vparams",
          "estimated-vf-fps": "fps", "video-codec": "codec", "hwdec-current": "hwdec", "frame-drop-count": "dropped",
          "playlist-pos": "plpos", "playlist-count": "plcount", "metadata": "meta", "video-aspect-override": "aspect",
-         "panscan": "panscan"}
+         "panscan": "panscan", "audio-codec-name": "acodec", "audio-bitrate": "abitrate", "audio-params": "aparams",
+         "current-ao": "ao"}
 
 
 def mpv_options(ui_lang="de"):
@@ -174,7 +175,8 @@ class Engine(QObject):
         self._st = {"position": 0, "duration": 0, "paused": False, "buffering": False, "idle": True, "coreIdle": True,
                     "title": "", "cache": 0, "tracks": [], "aid": None, "sid": None, "vid": None, "vw": 0, "vh": 0,
                     "fps": 0, "codec": "", "hwdec": "", "dropped": 0, "plpos": -1, "plcount": 0, "meta": {},
-                    "aspect": "", "panscan": 0, "level": LEVEL, "embedded": self.embeddedVideo, "active": False}
+                    "aspect": "", "panscan": 0, "level": LEVEL, "embedded": self.embeddedVideo, "active": False,
+                    "acodec": "", "abitrate": 0, "asr": 0, "ach": 0, "ao": ""}
         self.last_err = ""
         self.is_started = False
         self.cur = None               # (url, opts) der laufenden Datei – fuer reload()
@@ -204,6 +206,13 @@ class Engine(QObject):
             self._set("vw", d.get("dw") or d.get("w") or 0)
             self._set("vh", d.get("dh") or d.get("h") or 0)
             return
+        if key == "aparams":                          # Abtastrate und Kanaele der dekodierten Tonspur
+            d = val if isinstance(val, dict) else {}
+            self._set("asr", d.get("samplerate") or 0)
+            self._set("ach", d.get("channel-count") or 0)
+            return
+        if key == "abitrate":                         # schwankt bei VBR staendig – auf 8 kbit/s runden
+            val = int(round((val or 0) / 8000.0)) * 8000
         if key == "tracks":
             val = [{"id": t.get("id"), "type": t.get("type"), "lang": t.get("lang") or "", "title": t.get("title") or "",
                     "codec": t.get("codec") or "", "selected": bool(t.get("selected")), "default": bool(t.get("default")),
@@ -268,7 +277,8 @@ class Engine(QObject):
         self.last_err = ""
         self.is_started = False
         for k, v in (("position", 0), ("duration", 0), ("buffering", False), ("title", ""), ("tracks", []),
-                     ("dropped", 0), ("active", True), ("meta", {}), ("vw", 0), ("vh", 0)):
+                     ("dropped", 0), ("active", True), ("meta", {}), ("vw", 0), ("vh", 0), ("acodec", ""),
+                     ("abitrate", 0), ("asr", 0), ("ach", 0)):
             self._st[k] = v
         self.stChanged.emit()
 

@@ -793,7 +793,7 @@
   "dl.title": "Musik suchen",
   "dl.tile.sub": "Laden mit Tags & Cover",
   "dl.sources.title": "Quellen",
-  "dl.sources.first": "Bevor es losgeht: Wo soll VoidStation nach Musik suchen? Freie Musik ist schon ausgewählt, weitere Quellen kannst du dazunehmen und später jederzeit ändern (X oder „Quellen“).",
+  "dl.sources.first": "Bevor es losgeht: Wo soll VoidStation nach Musik suchen? Kreuze die Quellen an, die du nutzen möchtest – das lässt sich später jederzeit ändern (X oder „Quellen“).",
   "dl.sources.intro": "Wähle, wo VoidStation nach Musik sucht. Gespeichert wird alles in der Freigabe unter Musik, mit Tags und Cover.",
   "dl.sources.save": "Speichern und weiter",
   "dl.src.archive": "Freie Musik (Internet Archive)",
@@ -833,5 +833,12 @@
   "player.covers.embedOff": "Cover und Tags bleiben im Zwischenspeicher, Dateien werden nicht mehr geändert",
   "player.menu.recover": "Cover neu suchen",
   "player.menu.recover.sub": "Falsches Bild? Sucht neu und ersetzt, was VoidStation selbst eingetragen hat",
-  "player.cover.refreshing": "Cover wird neu gesucht …"
+  "player.cover.refreshing": "Cover wird neu gesucht …",
+  "player.info.audio": "Ton",
+  "player.info.samplerate": "Abtastrate",
+  "player.info.output": "Ausgabe",
+  "player.info.mono": "Mono",
+  "player.info.stereo": "Stereo",
+  "player.info.channels": "{n} Kanäle",
+  "dl.sources.none": "Wähle mindestens eine Quelle aus"
 }

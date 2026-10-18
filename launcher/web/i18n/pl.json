@@ -658,7 +658,7 @@
   "dl.title": "Szukaj muzyki",
   "dl.tile.sub": "Pobieranie z tagami i okładką",
   "dl.sources.title": "Źródła",
-  "dl.sources.first": "Zanim zaczniesz: gdzie VoidStation ma szukać muzyki? Wolna muzyka jest już zaznaczona; możesz dodać inne źródła i zmienić to w każdej chwili (X lub „Źródła”).",
+  "dl.sources.first": "Zanim zaczniesz: gdzie VoidStation ma szukać muzyki? Zaznacz źródła, z których chcesz korzystać – możesz to zmienić w każdej chwili (X lub „Źródła”).",
   "dl.sources.intro": "Wybierz, gdzie VoidStation szuka muzyki. Wszystko trafia do folderu udostępnionego, do Musik, z tagami i okładką.",
   "dl.sources.save": "Zapisz i dalej",
   "dl.src.archive": "Wolna muzyka (Internet Archive)",
@@ -698,5 +698,12 @@
   "player.covers.embedOff": "Okładki i tagi zostają w pamięci podręcznej, pliki nie są już zmieniane",
   "player.menu.recover": "Szukaj okładki ponownie",
   "player.menu.recover.sub": "Zły obrazek? Szuka ponownie i zastępuje to, co dodał VoidStation",
-  "player.cover.refreshing": "Ponowne wyszukiwanie okładki …"
+  "player.cover.refreshing": "Ponowne wyszukiwanie okładki …",
+  "player.info.audio": "Dźwięk",
+  "player.info.samplerate": "Częstotliwość próbkowania",
+  "player.info.output": "Wyjście",
+  "player.info.mono": "Mono",
+  "player.info.stereo": "Stereo",
+  "player.info.channels": "{n} kanałów",
+  "dl.sources.none": "Wybierz co najmniej jedno źródło"
 }

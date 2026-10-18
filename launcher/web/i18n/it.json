@@ -659,7 +659,7 @@
   "dl.title": "Cerca musica",
   "dl.tile.sub": "Scarica con tag e copertina",
   "dl.sources.title": "Fonti",
-  "dl.sources.first": "Prima di iniziare: dove deve cercare musica VoidStation? La musica libera è già selezionata; puoi aggiungere altre fonti e cambiare in qualsiasi momento (X o «Fonti»).",
+  "dl.sources.first": "Prima di iniziare: dove deve cercare musica VoidStation? Spunta le fonti che vuoi usare – puoi cambiarle in qualsiasi momento (X o «Fonti»).",
   "dl.sources.intro": "Scegli dove VoidStation cerca la musica. Tutto viene salvato nella cartella condivisa, in Musik, con tag e copertina.",
   "dl.sources.save": "Salva e continua",
   "dl.src.archive": "Musica libera (Internet Archive)",
@@ -699,5 +699,12 @@
   "player.covers.embedOff": "Copertine e tag restano nella cache, i file non vengono più modificati",
   "player.menu.recover": "Cerca di nuovo la copertina",
   "player.menu.recover.sub": "Immagine sbagliata? Cerca di nuovo e sostituisce ciò che VoidStation ha aggiunto",
-  "player.cover.refreshing": "Nuova ricerca della copertina …"
+  "player.cover.refreshing": "Nuova ricerca della copertina …",
+  "player.info.audio": "Audio",
+  "player.info.samplerate": "Frequenza di campionamento",
+  "player.info.output": "Uscita",
+  "player.info.mono": "Mono",
+  "player.info.stereo": "Stereo",
+  "player.info.channels": "{n} canali",
+  "dl.sources.none": "Scegli almeno una fonte"
 }

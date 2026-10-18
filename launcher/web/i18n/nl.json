@@ -658,7 +658,7 @@
   "dl.title": "Muziek zoeken",
   "dl.tile.sub": "Downloaden met tags en hoes",
   "dl.sources.title": "Bronnen",
-  "dl.sources.first": "Voordat je begint: waar moet VoidStation naar muziek zoeken? Vrije muziek is al aangevinkt; je kunt meer bronnen toevoegen en dit altijd wijzigen (X of ‘Bronnen’).",
+  "dl.sources.first": "Voordat je begint: waar moet VoidStation naar muziek zoeken? Vink de bronnen aan die je wilt gebruiken – dit kun je later altijd wijzigen (X of ‘Bronnen’).",
   "dl.sources.intro": "Kies waar VoidStation naar muziek zoekt. Alles wordt opgeslagen in de gedeelde map onder Musik, met tags en hoes.",
   "dl.sources.save": "Opslaan en verder",
   "dl.src.archive": "Vrije muziek (Internet Archive)",
@@ -698,5 +698,12 @@
   "player.covers.embedOff": "Hoezen en tags blijven in de cache, bestanden worden niet meer gewijzigd",
   "player.menu.recover": "Hoes opnieuw zoeken",
   "player.menu.recover.sub": "Verkeerde afbeelding? Zoekt opnieuw en vervangt wat VoidStation zelf heeft toegevoegd",
-  "player.cover.refreshing": "Hoes wordt opnieuw gezocht …"
+  "player.cover.refreshing": "Hoes wordt opnieuw gezocht …",
+  "player.info.audio": "Geluid",
+  "player.info.samplerate": "Samplefrequentie",
+  "player.info.output": "Uitvoer",
+  "player.info.mono": "Mono",
+  "player.info.stereo": "Stereo",
+  "player.info.channels": "{n} kanalen",
+  "dl.sources.none": "Kies minstens één bron"
 }

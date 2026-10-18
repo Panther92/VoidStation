@@ -925,7 +925,7 @@
   "dl.title": "Find music",
   "dl.tile.sub": "Download with tags & cover",
   "dl.sources.title": "Sources",
-  "dl.sources.first": "Before you start: where should VoidStation look for music? Free music is already selected; you can add more sources and change this any time (X or “Sources”).",
+  "dl.sources.first": "Before you start: where should VoidStation look for music? Tick the sources you want to use – you can change this any time later (X or “Sources”).",
   "dl.sources.intro": "Choose where VoidStation looks for music. Everything is saved in the shared folder under Musik, with tags and cover.",
   "dl.sources.save": "Save and continue",
   "dl.src.archive": "Free music (Internet Archive)",
@@ -965,5 +965,12 @@
   "player.covers.embedOff": "Covers and tags stay in the cache, files are no longer changed",
   "player.menu.recover": "Search cover again",
   "player.menu.recover.sub": "Wrong picture? Searches again and replaces what VoidStation added itself",
-  "player.cover.refreshing": "Searching for the cover again …"
+  "player.cover.refreshing": "Searching for the cover again …",
+  "player.info.audio": "Audio",
+  "player.info.samplerate": "Sample rate",
+  "player.info.output": "Output",
+  "player.info.mono": "Mono",
+  "player.info.stereo": "Stereo",
+  "player.info.channels": "{n} channels",
+  "dl.sources.none": "Select at least one source"
 }

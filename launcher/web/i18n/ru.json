@@ -660,7 +660,7 @@
   "dl.title": "Поиск музыки",
   "dl.tile.sub": "Загрузка с тегами и обложкой",
   "dl.sources.title": "Источники",
-  "dl.sources.first": "Перед началом: где VoidStation искать музыку? Свободная музыка уже отмечена; можно добавить другие источники и изменить это в любой момент (X или «Источники»).",
+  "dl.sources.first": "Прежде чем начать: где VoidStation искать музыку? Отметь источники, которые хочешь использовать, – это можно изменить в любой момент (X или «Источники»).",
   "dl.sources.intro": "Выберите, где VoidStation ищет музыку. Всё сохраняется в общую папку, в Musik, с тегами и обложкой.",
   "dl.sources.save": "Сохранить и продолжить",
   "dl.src.archive": "Свободная музыка (Internet Archive)",
@@ -700,5 +700,12 @@
   "player.covers.embedOff": "Обложки и теги остаются в кэше, файлы больше не изменяются",
   "player.menu.recover": "Найти обложку заново",
   "player.menu.recover.sub": "Неверная картинка? Ищет заново и заменяет то, что добавил VoidStation",
-  "player.cover.refreshing": "Обложка ищется заново …"
+  "player.cover.refreshing": "Обложка ищется заново …",
+  "player.info.audio": "Звук",
+  "player.info.samplerate": "Частота дискретизации",
+  "player.info.output": "Вывод",
+  "player.info.mono": "Моно",
+  "player.info.stereo": "Стерео",
+  "player.info.channels": "{n} каналов",
+  "dl.sources.none": "Выбери хотя бы один источник"
 }

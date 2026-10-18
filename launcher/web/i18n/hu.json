@@ -660,7 +660,7 @@
   "dl.title": "Zene keresése",
   "dl.tile.sub": "Letöltés címkékkel és borítóval",
   "dl.sources.title": "Források",
-  "dl.sources.first": "Mielőtt elkezded: hol keressen zenét a VoidStation? A szabad zene már be van jelölve; további forrásokat is hozzáadhatsz, és bármikor módosíthatod (X vagy „Források”).",
+  "dl.sources.first": "Mielőtt elkezded: hol keressen zenét a VoidStation? Jelöld be a használni kívánt forrásokat – ez később bármikor módosítható (X vagy „Források”).",
   "dl.sources.intro": "Válaszd ki, hol keressen zenét a VoidStation. Minden a megosztott mappába kerül, a Musik alá, címkékkel és borítóval.",
   "dl.sources.save": "Mentés és tovább",
   "dl.src.archive": "Szabad zene (Internet Archive)",
@@ -700,5 +700,12 @@
   "player.covers.embedOff": "A borítók és címkék a gyorsítótárban maradnak, a fájlok nem változnak",
   "player.menu.recover": "Borító újrakeresése",
   "player.menu.recover.sub": "Rossz kép? Újra keres, és lecseréli, amit a VoidStation adott hozzá",
-  "player.cover.refreshing": "Borító újrakeresése …"
+  "player.cover.refreshing": "Borító újrakeresése …",
+  "player.info.audio": "Hang",
+  "player.info.samplerate": "Mintavételezés",
+  "player.info.output": "Kimenet",
+  "player.info.mono": "Monó",
+  "player.info.stereo": "Sztereó",
+  "player.info.channels": "{n} csatorna",
+  "dl.sources.none": "Válassz legalább egy forrást"
 }
