@@ -677,5 +677,8 @@
   "dl.hint.sources": "<b>X</b> źródła",
   "player.covers.embed": "Zapisuj okładki w plikach",
   "player.covers.embedOn": "Znalezione okładki i brakujące tagi trafiają teraz do plików muzycznych (MP3, M4A, FLAC) – „Pobierz wszystkie okładki” przetwarza całą kolekcję",
-  "player.covers.embedOff": "Okładki i tagi zostają w pamięci podręcznej, pliki nie są już zmieniane"
+  "player.covers.embedOff": "Okładki i tagi zostają w pamięci podręcznej, pliki nie są już zmieniane",
+  "player.menu.recover": "Szukaj okładki ponownie",
+  "player.menu.recover.sub": "Zły obrazek? Szuka ponownie i zastępuje to, co dodał VoidStation",
+  "player.cover.refreshing": "Ponowne wyszukiwanie okładki …"
 }

@@ -677,5 +677,8 @@
   "dl.hint.sources": "<b>X</b> sources",
   "player.covers.embed": "Enregistrer les pochettes dans les fichiers",
   "player.covers.embedOn": "Les pochettes trouvées et les tags manquants sont désormais écrits dans les fichiers (MP3, M4A, FLAC) – « Charger toutes les pochettes » parcourt toute la collection",
-  "player.covers.embedOff": "Pochettes et tags restent dans le cache, les fichiers ne sont plus modifiés"
+  "player.covers.embedOff": "Pochettes et tags restent dans le cache, les fichiers ne sont plus modifiés",
+  "player.menu.recover": "Rechercher la pochette à nouveau",
+  "player.menu.recover.sub": "Mauvaise image ? Relance la recherche et remplace ce que VoidStation a ajouté",
+  "player.cover.refreshing": "Nouvelle recherche de la pochette …"
 }

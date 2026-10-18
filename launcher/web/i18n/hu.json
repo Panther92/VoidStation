@@ -679,5 +679,8 @@
   "dl.hint.sources": "<b>X</b> források",
   "player.covers.embed": "Borítók mentése a fájlokba",
   "player.covers.embedOn": "A talált borítók és a hiányzó címkék mostantól a zenefájlokba kerülnek (MP3, M4A, FLAC) – az „Összes borító letöltése” a teljes gyűjteményt feldolgozza",
-  "player.covers.embedOff": "A borítók és címkék a gyorsítótárban maradnak, a fájlok nem változnak"
+  "player.covers.embedOff": "A borítók és címkék a gyorsítótárban maradnak, a fájlok nem változnak",
+  "player.menu.recover": "Borító újrakeresése",
+  "player.menu.recover.sub": "Rossz kép? Újra keres, és lecseréli, amit a VoidStation adott hozzá",
+  "player.cover.refreshing": "Borító újrakeresése …"
 }

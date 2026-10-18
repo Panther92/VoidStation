@@ -678,5 +678,8 @@
   "dl.hint.sources": "<b>X</b> fontes",
   "player.covers.embed": "Salvar capas nos arquivos",
   "player.covers.embedOn": "Capas encontradas e tags que faltam agora vão para os arquivos de música (MP3, M4A, FLAC) – “Baixar todas as capas” percorre toda a coleção",
-  "player.covers.embedOff": "Capas e tags ficam no cache, os arquivos não são mais alterados"
+  "player.covers.embedOff": "Capas e tags ficam no cache, os arquivos não são mais alterados",
+  "player.menu.recover": "Buscar capa novamente",
+  "player.menu.recover.sub": "Imagem errada? Busca de novo e substitui o que o VoidStation adicionou",
+  "player.cover.refreshing": "Buscando a capa novamente …"
 }

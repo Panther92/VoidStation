@@ -1981,18 +1981,35 @@ class MediaLib:
         add = {k: v for k, v in add.items() if v and k not in have}
         if cover is None and not add:
             return False
-        tmp = p.with_name(f".{p.stem}.vs-tmp{p.suffix}")
-        cmd = [ff, "-v", "error", "-y", "-i", str(p)]
+        ours = set(filter(None, (tags.get("voidstation") or "").split(","))) | set(add) | ({"cover"} if cover is not None else set())
+        args = []
         if cover is not None:
-            cmd += ["-i", str(cover), "-map", "0:a", "-map", "1:0", "-disposition:v:0", "attached_pic",
-                    "-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)"]
+            args += ["-i", str(cover), "-map", "0:a", "-map", "1:0", "-disposition:v:0", "attached_pic",
+                     "-metadata:s:v", "title=Album cover", "-metadata:s:v", "comment=Cover (front)"]
         else:
-            cmd += ["-map", "0"]
-        cmd += ["-c", "copy", "-map_metadata", "0"]
+            args += ["-map", "0"]
+        for k, v in add.items():
+            args += ["-metadata", f"{k}={v}"]
+        args += ["-metadata", "VOIDSTATION=" + ",".join(sorted(ours))]   # was von VoidStation stammt (Cover neu suchen)
+        if not self._rewrite(p, args):
+            return False
+        parts = (["Cover"] if cover is not None else []) + ([", ".join(add)] if add else [])
+        log("In Datei geschrieben:", p.name, "–", " + ".join(parts))
+        return True
+
+    def _rewrite(self, p, args):
+        """Datei mit ffmpeg neu schreiben (ohne Neukodierung): Kopie im selben Ordner, Pruefung (Ton da, Laenge
+        gleich), dann ersetzen; Aenderungszeit und Rechte bleiben. args: weitere Eingaben, -map und -metadata."""
+        ff, fp = shutil.which("ffmpeg"), shutil.which("ffprobe")
+        if not ff or not fp:
+            return False
+        st = p.stat()
+        tmp = p.with_name(f".{p.stem}.vs-tmp{p.suffix}")
+        cmd = [ff, "-v", "error", "-y", "-i", str(p)] + args + ["-c", "copy", "-map_metadata", "0"]
         if p.suffix.lower() == ".mp3":
             cmd += ["-id3v2_version", "3", "-write_id3v1", "1"]
-        for k, v in add.items():
-            cmd += ["-metadata", f"{k}={v}"]
+        if p.suffix.lower() == ".m4a":
+            cmd += ["-movflags", "use_metadata_tags"]
         cmd.append(str(tmp))
         try:
             r = run(cmd, timeout=120)
@@ -2021,9 +2038,40 @@ class MediaLib:
             except OSError:
                 pass
         self.tags_cache.pop(str(p), None)
-        parts = (["Cover"] if cover is not None else []) + ([", ".join(add)] if add else [])
-        log("In Datei geschrieben:", p.name, "–", " + ".join(parts))
         return True
+
+    def reset_art(self, p):
+        """Cover neu suchen: Was VoidStation selbst in die Datei geschrieben hat (Kennzeichen VOIDSTATION; bei
+        Dateien aus der ersten Fassung ohne Kennzeichen: Tags, die genau der damals gefundenen Aufnahme entsprechen),
+        wieder herausnehmen und Zwischenspeicher wie "nichts gefunden" fuer diesen Titel vergessen."""
+        tags = COVERS._tags(p)
+        ours = set(filter(None, (tags.get("voidstation") or "").split(",")))
+        if not ours and COVERS._embedded(p):           # erste Fassung schrieb immer Cover + Tags zusammen
+            for c in COVERS.track_caches(p, tags):
+                try:
+                    meta = json.loads(c.with_suffix(".json").read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    continue
+                same = {k for k in ("artist", "title", "album", "date", "track") if meta.get(k) and tags.get(k) == str(meta[k])}
+                if not {"artist", "title"} <= same:
+                    continue
+                # Woher die Suche kam, sagt, was schon vorher in der Datei stand: geraten (nur Dateiname) -> alle Tags
+                # von uns; ueber Interpret + Titel bzw. + Album -> diese Tags sind die eigenen der Datei
+                native = {"guess": set(), "title": {"artist", "title"}, "album": {"artist", "album"}}[COVERS.cache_kind(p, tags, c)]
+                ours = (same - native) | {"cover"}
+                break
+        orig = {k: v for k, v in tags.items() if k not in ours}
+        for c in set(COVERS.track_caches(p, tags)) | set(COVERS.track_caches(p, orig)):
+            COVERS.forget(c)
+        if ours and p.suffix.lower() in EMBED_EXT and os.access(p.parent, os.W_OK):
+            args = ["-map", "0:a" if "cover" in ours else "0"]
+            for k in sorted(ours - {"cover"}):
+                args += ["-metadata", f"{k}="]
+            args += ["-metadata", "VOIDSTATION="]
+            if self._rewrite(p, args):
+                log("Cover neu suchen:", p.name, "– entfernt:", ", ".join(sorted(ours)))
+        self.tags_cache.pop(str(p), None)
+        self.art_done.pop(str(p), None)
 
     def art_pending(self, p):
         """Ist fuer diesen Titel noch offen, welches Bild er bekommt? (billig, ohne ffmpeg/ffprobe)"""
@@ -2271,6 +2319,7 @@ class CoverFetcher:
         self.lock = threading.Lock()
         self.queue, self.queued = [], set()
         self.tqueue, self.tqueued = [], set()          # einzelne Titel (Bild je Titel)
+        self.refresh = set()                           # Titel, deren Cover neu gesucht werden soll
         self.current = None
         self.stats = {"done": 0, "found": 0, "total": 0}
         self.last_mb = 0.0
@@ -2361,7 +2410,7 @@ class CoverFetcher:
         return 1
 
     def _start(self):                                  # unter self.lock aufrufen
-        if not self.worker or not self.worker.is_alive():
+        if self.worker is None:                        # der Arbeiter meldet sich unter dem Lock ab (kein Wettlauf)
             self.worker = threading.Thread(target=self._run, daemon=True)
             self.worker.start()
 
@@ -2393,12 +2442,18 @@ class CoverFetcher:
             with self.lock:
                 if not self.queue and not self.tqueue:
                     self.current = None
+                    self.worker = None
                     return
                 track = not self.queue                 # Ordner zuerst: deren Cover gilt oft schon fuer die Titel
                 self.current = (self.tqueue if track else self.queue).pop(0)
             if track:
                 p = Path(self.current)
                 try:
+                    with self.lock:
+                        fresh = str(p) in self.refresh
+                        self.refresh.discard(str(p))
+                    if fresh and p.is_file():
+                        MEDIA.reset_art(p)
                     if p.is_file():
                         f, _ = MEDIA.art_file(p, online=True)
                         if self.embed():
@@ -2570,6 +2625,44 @@ class CoverFetcher:
         key = f"album|{self._norm(artist)}|{self._norm(album)}" if album else f"title|{self._norm(artist)}|{self._norm(title)}"
         return self.CACHE / ("t-" + hashlib.sha1(key.encode()).hexdigest()[:16] + ".jpg")
 
+    def cache_kind(self, p, tags, cache):
+        if cache.name == self._guess_cache(p, tags).name:
+            return "guess"
+        _artist, album, _title = self._track_names(p, tags)
+        return "album" if album else "title"
+
+    def _guess_cache(self, p, tags):
+        return self.CACHE / ("t-" + hashlib.sha1(f"guess|{self._norm(self._guess_text(p, tags))}".encode()).hexdigest()[:16] + ".jpg")
+
+    def track_caches(self, p, tags):
+        """Alle Zwischenspeicher-Dateien, die fuer diesen Titel in Frage kommen (Album, Titel, geraten)."""
+        out = []                                       # geraten zuerst: dessen Angaben stammen sicher von uns
+        if len(self._guess_text(p, tags).split()) >= 2:
+            out.append(self._guess_cache(p, tags))
+        c = self.track_cache(p, tags)
+        if c is not None and c not in out:
+            out.append(c)
+        return out
+
+    def forget(self, cache):
+        for f in (cache, cache.with_suffix(".json")):
+            try:
+                f.unlink()
+            except OSError:
+                pass
+        d = self._miss_load()
+        if d.pop(cache.name, None) is not None:
+            try:
+                self.MISSES.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+            except OSError:
+                pass
+
+    def refresh_track(self, path):
+        """Cover dieses Titels neu suchen (Menue im Player)."""
+        with self.lock:
+            self.refresh.add(str(path))
+        self.add_track(path, force=True)
+
     def track_missed(self, cache):
         return self._recent_miss(cache.name)
 
@@ -2664,29 +2757,37 @@ class CoverFetcher:
             self.offline = True
             return None
 
-        def rank(r):
+        def rank(r, score):
+            """Original vor Sampler: offiziell, keine Zusammenstellung/Live/Soundtrack (secondary-types, "Various
+            Artists"), Studioalbum vor Single vor EP, dann der frueheste Termin – ueber alle Aufnahmen hinweg."""
             rg = r.get("release-group") or {}
-            return (0 if r.get("status") == "Official" else 1, {"Album": 0, "Single": 1, "EP": 2}.get(rg.get("primary-type"), 3),
-                    1 if rg.get("secondary-types") else 0, r.get("date") or "9999")
-        groups, metas = [], {}
+            va = any((a.get("name") or "").casefold() in ("various artists", "verschiedene interpreten")
+                     for a in r.get("artist-credit") or [])
+            return (0 if r.get("status") == "Official" else 1, 1 if (rg.get("secondary-types") or va) else 0,
+                    {"Album": 0, "Single": 1, "EP": 2}.get(rg.get("primary-type"), 3), r.get("date") or "9999", -score)
+        best = {}
         for rec in (d.get("recordings") or [])[:8]:
-            if int(rec.get("score") or 0) < 90:
+            score = int(rec.get("score") or 0)
+            if score < 90:
                 continue
             credit = "".join((a.get("name") or "") + (a.get("joinphrase") or "") for a in rec.get("artist-credit") or []).strip()
             if strict and (self._similar(rec.get("title"), title) < 0.85 or not self._artist_fits(credit, artist)):
                 continue
-            for r in sorted(rec.get("releases") or [], key=rank):
+            for r in rec.get("releases") or []:
                 gid = (r.get("release-group") or {}).get("id")
-                if gid and gid not in groups:
-                    groups.append(gid)
-                    tracks = [t for m in r.get("media") or [] for t in m.get("track") or []]
-                    metas[gid] = {"title": rec.get("title") or "", "artist": credit, "album": r.get("title") or "",
-                                  "date": (r.get("date") or "")[:4], "track": str(tracks[0].get("number") or "") if tracks else ""}
+                if not gid:
+                    continue
+                k = rank(r, score)
+                if gid in best and best[gid][0] <= k:
+                    continue
+                tracks = [t for m in r.get("media") or [] for t in m.get("track") or []]
+                best[gid] = (k, {"title": rec.get("title") or "", "artist": credit, "album": r.get("title") or "",
+                                 "date": (r.get("date") or "")[:4], "track": str(tracks[0].get("number") or "") if tracks else ""})
         self.last_meta = None
-        for gid in groups[:4]:
+        for gid, (_k, meta) in sorted(best.items(), key=lambda x: x[1][0])[:4]:
             img = self._caa(gid)
             if img:
-                self.last_meta = metas.get(gid)
+                self.last_meta = meta
                 return img
         return None
 
@@ -2891,7 +2992,7 @@ class MusicDL:
                 return self.status()
             self.jobs.append({"key": it["key"], "title": it["title"], "artist": it["artist"], "src": it["src"],
                               "state": "queued", "pct": 0, "msg": "", "path": ""})
-            if not self.worker or not self.worker.is_alive():
+            if self.worker is None:                    # der Arbeiter meldet sich unter dem Lock ab (kein Wettlauf)
                 self.worker = threading.Thread(target=self._run, daemon=True)
                 self.worker.start()
         return self.status()
@@ -2908,6 +3009,7 @@ class MusicDL:
             with self.lock:
                 job = next((j for j in self.jobs if j["state"] == "queued"), None)
                 if not job:
+                    self.worker = None
                     return
                 job["state"] = "running"
                 it = self.results.get(job["key"])
@@ -5388,6 +5490,12 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "media", "covers", "auto"]:
                 s = settings_load(); s["covers_auto"] = bool(self._body().get("on")); settings_save(s)
                 return self._json(200, COVERS.status())
+            if parts == ["api", "media", "covers", "refresh"]:  # Cover eines Titels neu suchen
+                p = MEDIA.resolve(str(self._body().get("path") or ""))
+                if not p or not p.is_file():
+                    return self._json(404, {"error": "Datei nicht gefunden"})
+                COVERS.refresh_track(p)
+                return self._json(200, {"ok": True})
             if parts == ["api", "media", "covers", "embed"]:   # Cover + fehlende Tags in die Dateien schreiben
                 s = settings_load(); s["covers_embed"] = bool(self._body().get("on")); settings_save(s)
                 if s["covers_embed"]:

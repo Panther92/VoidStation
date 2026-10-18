@@ -677,5 +677,8 @@
   "dl.hint.sources": "<b>X</b> fuentes",
   "player.covers.embed": "Guardar carátulas en los archivos",
   "player.covers.embedOn": "Las carátulas encontradas y las etiquetas que faltan se guardan ahora en los archivos (MP3, M4A, FLAC) – «Cargar todas las carátulas» recorre toda la colección",
-  "player.covers.embedOff": "Carátulas y etiquetas se quedan en la caché, los archivos ya no se modifican"
+  "player.covers.embedOff": "Carátulas y etiquetas se quedan en la caché, los archivos ya no se modifican",
+  "player.menu.recover": "Buscar carátula de nuevo",
+  "player.menu.recover.sub": "¿Imagen incorrecta? Busca de nuevo y sustituye lo que añadió VoidStation",
+  "player.cover.refreshing": "Buscando la carátula de nuevo …"
 }

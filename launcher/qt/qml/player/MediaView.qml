@@ -172,6 +172,23 @@ Item {
         Api.post("/api/radio/stop", null)
         showOsd()
     }
+    // Cover des laufenden Titels neu suchen lassen; das Bild ein paar Mal neu laden, bis das neue da ist
+    property int coverNonce: 0
+    function refreshCover() {
+        var it = mv.curTrackItem
+        if (!it || !it.path) return
+        Api.post("/api/media/covers/refresh", { path: it.path }, function () {
+            app.toast(Ui.t("player.cover.refreshing"))
+            coverReload.left = 10
+            coverReload.restart()
+        })
+    }
+    Timer {
+        id: coverReload
+        property int left: 0
+        interval: 3000; repeat: true
+        onTriggered: { mv.coverNonce++; if (--left <= 0) stop() }
+    }
     function playAudio(list, index, folder, folderName) {
         if (!list.length) return
         origList = list
@@ -573,7 +590,7 @@ Item {
             Image {
                 id: coverImg
                 anchors.fill: parent
-                source: cover.base ? cover.base + (cover.tries ? "&try=" + cover.tries : "") : ""
+                source: cover.base ? cover.base + (cover.tries ? "&try=" + cover.tries : "") + (mv.coverNonce ? "&n=" + mv.coverNonce : "") : ""
                 fillMode: Image.PreserveAspectCrop
                 asynchronous: true
                 sourceSize: Qt.size(Math.ceil(width), Math.ceil(height))
@@ -763,5 +780,6 @@ Item {
         homeSub: mv.phase === "video" ? Ui.t("player.menu.homeVideo") : Ui.t("player.menu.homeMusic")
         onRepeatChosen: function (m) { mv.setRepeat(m) }
         onHomeChosen: mv.goHome()
+        onCoverRefresh: mv.refreshCover()
     }
 }

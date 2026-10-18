@@ -19,6 +19,7 @@ Rectangle {
     signal repeatChosen(string m)
     signal shuffleToggled()
     signal homeChosen()
+    signal coverRefresh()
     z: 45
     width: Math.min(Ui.screenW * 0.34, 460 * Ui.f)
     height: parent.height
@@ -85,6 +86,8 @@ Rectangle {
             out.push({ label: Ui.t("player.quality.low"), sub: "", on: quality === "min", act: { kind: "quality", v: "min" } })
         }
         out.push({ head: Ui.t("player.menu.more") })
+        if (repeatMode)                              // Musik: falsches oder fehlendes Cover
+            out.push({ label: Ui.t("player.menu.recover"), sub: Ui.t("player.menu.recover.sub"), on: false, act: { kind: "recover" } })
         out.push({ label: Ui.t("player.menu.home"), sub: homeSub, on: false, act: { kind: "home" } })
         return out
     }
@@ -126,6 +129,9 @@ Rectangle {
             repeatChosen(act.v)
         } else if (act.kind === "home") {
             return homeChosen()
+        } else if (act.kind === "recover") {
+            hide()
+            return coverRefresh()
         }
         Qt.callLater(refresh)
     }

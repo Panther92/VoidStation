@@ -288,6 +288,13 @@ class H(S.H):
             L = PLAYER["L"]
             L.COVERS.scan(Path(os.environ["HOME"]) / "share" / "Musik")
             return self.j(L.COVERS.status())
+        if p == "/api/media/covers/refresh":
+            media()
+            L = PLAYER["L"]
+            f = L.MEDIA.resolve(body.get("path", ""))
+            if f:
+                L.COVERS.refresh_track(f)
+            return self.j({"ok": bool(f)})
         if p == "/api/media/covers/embed":
             media()
             PLAYER["covers_embed"] = bool(body.get("on"))

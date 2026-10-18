@@ -678,5 +678,8 @@
   "dl.hint.sources": "<b>X</b> fonti",
   "player.covers.embed": "Salva copertine nei file",
   "player.covers.embedOn": "Le copertine trovate e i tag mancanti vengono ora scritti nei file (MP3, M4A, FLAC) – «Scarica tutte le copertine» elabora tutta la raccolta",
-  "player.covers.embedOff": "Copertine e tag restano nella cache, i file non vengono più modificati"
+  "player.covers.embedOff": "Copertine e tag restano nella cache, i file non vengono più modificati",
+  "player.menu.recover": "Cerca di nuovo la copertina",
+  "player.menu.recover.sub": "Immagine sbagliata? Cerca di nuovo e sostituisce ciò che VoidStation ha aggiunto",
+  "player.cover.refreshing": "Nuova ricerca della copertina …"
 }

@@ -678,5 +678,8 @@
   "dl.hint.sources": "<b>X</b> avoti",
   "player.covers.embed": "Saglabāt vākus failos",
   "player.covers.embedOn": "Atrastie vāki un trūkstošie tagi tagad tiek ierakstīti mūzikas failos (MP3, M4A, FLAC) – “Ielādēt visus vākus” apstrādā visu kolekciju",
-  "player.covers.embedOff": "Vāki un tagi paliek kešatmiņā, faili vairs netiek mainīti"
+  "player.covers.embedOff": "Vāki un tagi paliek kešatmiņā, faili vairs netiek mainīti",
+  "player.menu.recover": "Meklēt vāku vēlreiz",
+  "player.menu.recover.sub": "Nepareizs attēls? Meklē vēlreiz un aizstāj to, ko pievienoja VoidStation",
+  "player.cover.refreshing": "Vāks tiek meklēts vēlreiz …"
 }

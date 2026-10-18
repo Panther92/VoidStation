@@ -677,5 +677,8 @@
   "dl.hint.sources": "<b>X</b> bronnen",
   "player.covers.embed": "Hoezen in bestanden opslaan",
   "player.covers.embedOn": "Gevonden hoezen en ontbrekende tags gaan nu in de muziekbestanden (MP3, M4A, FLAC) – ‘Alle hoezen laden’ loopt de hele collectie door",
-  "player.covers.embedOff": "Hoezen en tags blijven in de cache, bestanden worden niet meer gewijzigd"
+  "player.covers.embedOff": "Hoezen en tags blijven in de cache, bestanden worden niet meer gewijzigd",
+  "player.menu.recover": "Hoes opnieuw zoeken",
+  "player.menu.recover.sub": "Verkeerde afbeelding? Zoekt opnieuw en vervangt wat VoidStation zelf heeft toegevoegd",
+  "player.cover.refreshing": "Hoes wordt opnieuw gezocht …"
 }
