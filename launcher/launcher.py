@@ -1748,6 +1748,7 @@ class MediaLib:
         self.lock = threading.Lock()
         self.sem = threading.Semaphore(2)          # hoechstens zwei Vorschaubilder gleichzeitig (schwache Geraete)
         self.thumbnailer = shutil.which("ffmpegthumbnailer")
+        self.mixed_cache = {}                      # Ordner -> (mtime, gemischt?)
 
     @staticmethod
     def share():
@@ -1816,9 +1817,107 @@ class MediaLib:
             return "/api/media/thumb?path=" + urllib.parse.quote(str(p)) + f"&m={m}"
         if kind == "dir":
             return self.cover_url(p)
-        if kind == "audio":
-            return self.cover_url(p.parent, depth=0)
+        if kind == "audio":                        # eigenes Bild des Titels, sonst das des Albums (art())
+            c = self.own_cover(p.parent)
+            try:
+                cm = int(c.stat().st_mtime) if c is not None else 0
+            except OSError:
+                cm = 0
+            m = int(st.st_mtime) if st else 0
+            return "/api/media/thumb?art=" + urllib.parse.quote(str(p)) + f"&m={m}&c={cm}"
         return ""
+
+    def mixed(self, folder):
+        """Liegen in diesem Ordner Titel aus verschiedenen Alben (z. B. alles lose in share/Musik)? Dann gibt es kein
+        gemeinsames Cover – jeder Titel zeigt sein eigenes. Stichprobe ueber bis zu 8 Dateien, gemerkt bis sich der
+        Ordner aendert. Ohne Album-Tags zaehlen verschiedene Interpreten."""
+        folder = Path(folder)
+        try:
+            mt = folder.stat().st_mtime
+        except OSError:
+            return False
+        hit = self.mixed_cache.get(str(folder))
+        if hit and hit[0] == mt:
+            return hit[1]
+        files = COVERS._audio_files(folder)
+        if len(files) < 2:
+            res = False
+        else:
+            step = max(1, len(files) // 8)
+            albums, artists = set(), set()
+            for f in files[::step][:8]:
+                t = COVERS._tags(f)
+                if t.get("album"):
+                    albums.add(t["album"].casefold())
+                a = t.get("album_artist") or t.get("albumartist") or t.get("artist") or ""
+                if a:
+                    artists.add(a.casefold())
+            res = len(albums) > 1 or (not albums and len(artists) > 1)
+        if res:
+            self._drop_wrong_cover(folder, files)
+        try:
+            mt = folder.stat().st_mtime                # _drop_wrong_cover kann den Ordner geaendert haben
+        except OSError:
+            pass
+        self.mixed_cache[str(folder)] = (mt, res)
+        return res
+
+    @staticmethod
+    def _drop_wrong_cover(folder, files):
+        """Fruehere Fassung der Cover-Suche hat in gemischten Ordnern das Bild des ersten Titels als cover.jpg
+        abgelegt. Geloescht wird nur, was Byte fuer Byte genau dieses Bild ist – eigene Cover bleiben."""
+        cands = [folder / "cover.jpg", COVERS.cache_file(folder)]
+        cands = [c for c in cands if c.is_file()]
+        if not cands or not files:
+            return
+        img = COVERS._embedded(files[0])
+        if not img:
+            return
+        for c in cands:
+            try:
+                if c.stat().st_size == len(img) and c.read_bytes() == img:
+                    c.unlink()
+                    log("Cover: falsches Ordner-Cover entfernt (gemischter Ordner):", c)
+            except OSError:
+                pass
+
+    def art(self, path):
+        """Bild zu einem Musiktitel: eingebettetes Cover (zwischengespeichert), sonst das Cover des Ordners –
+        ausser der Ordner mischt verschiedene Alben."""
+        p = self.resolve(path)
+        if not p or not p.is_file() or p.suffix.lower() not in AUDIO_EXT:
+            return None
+        st = p.stat()
+        key = hashlib.sha1(f"art:{p}:{int(st.st_mtime)}:{st.st_size}".encode()).hexdigest()
+        out, none = self.THUMBS / f"{key}.jpg", self.THUMBS / f"{key}.none"
+        if not out.exists() and not none.exists():
+            self.THUMBS.mkdir(parents=True, exist_ok=True)
+            with self.sem:
+                if not out.exists() and not none.exists():
+                    img = COVERS._embedded(p)
+                    try:
+                        if img:
+                            tmp = out.with_name(f"{key}.{threading.get_ident()}.tmp.jpg")
+                            tmp.write_bytes(img)
+                            tmp.replace(out)
+                        else:
+                            none.touch()
+                    except OSError:
+                        pass
+        if out.exists():
+            try:
+                return out.read_bytes(), "image/jpeg"
+            except OSError:
+                pass
+        if self.mixed(p.parent):
+            return None
+        c = self.own_cover(p.parent)
+        if c is None:
+            return None
+        try:
+            return c.read_bytes(), MIME.get(c.suffix.lower(), "image/jpeg")
+        except OSError:
+            return None
 
     @staticmethod
     def title(name):
@@ -1926,7 +2025,7 @@ class MediaLib:
         # Cover automatisch laden: dieser Ordner (hat er Musik) und die Unterordner ohne Bild
         pending = 0
         if COVERS.auto():
-            if audio and not any(f.get("thumb") for f in files if f["kind"] == "audio"):
+            if audio and MediaLib.own_cover(p) is None:
                 pending += COVERS.add(p)
             for d in dirs[:60]:                    # auch Interpreten-Ordner, die schon das Bild eines Albums zeigen
                 pending += COVERS.add(Path(d["path"]), deep=True)
@@ -2152,6 +2251,10 @@ class CoverFetcher:
             return True
         files = self._audio_files(folder)
         if not files:
+            return False
+        if MEDIA.mixed(folder):                        # verschiedene Alben: jeder Titel zeigt sein eigenes Bild
+            self._miss(folder)
+            log("Cover: gemischter Ordner, kein gemeinsames Cover –", folder.name)
             return False
         img = self._embedded(files[0])
         source = "eingebettet"
@@ -4795,7 +4898,8 @@ class Handler(BaseHTTPRequestHandler):
                 if not re.fullmatch(r"[0-9a-f]{16}\.jpg", cname) or not (COVERS.CACHE / cname).is_file():
                     return self._send(404)
                 return self._send(200, (COVERS.CACHE / cname).read_bytes(), "image/jpeg")
-            r = MEDIA.thumb(qs.get("path", [""])[0])
+            art = qs.get("art", [""])[0]
+            r = MEDIA.art(art) if art else MEDIA.thumb(qs.get("path", [""])[0])
             if not r:
                 return self._send(404)
             return self._send(200, r[0], r[1])

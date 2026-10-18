@@ -564,6 +564,7 @@ Item {
             Glyph { anchors.centerIn: parent; visible: coverImg.status !== Image.Ready; name: "music"; width: parent.width * 0.36; height: width; opacity: 0.6 }
         }
         Column {
+            id: musicInfo
             anchors.left: cover.right; anchors.leftMargin: 48 * Ui.f
             anchors.right: parent.right; anchors.rightMargin: Ui.padX
             anchors.top: cover.top
@@ -638,18 +639,28 @@ Item {
                     MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: mv.setShuffle(!mv.shuffle) }
                 }
             }
-            Item { width: 1; height: 8 * Ui.f }
-            Repeater {                                  // die naechsten Titel
-                model: mv.playlist.slice((mv.st.plpos || 0) + 1, (mv.st.plpos || 0) + 6)
+        }
+        Column {                                        // die naechsten Titel – so viele, wie bis zur Hinweiszeile passen
+            id: upNext
+            readonly property real rowH: 27 * Ui.f
+            readonly property int fit: Math.max(0, Math.floor((musicHints.y - 18 * Ui.f - y) / rowH))
+            anchors.left: musicInfo.left; anchors.right: musicInfo.right
+            y: musicInfo.y + musicInfo.height + 16 * Ui.f
+            Repeater {
+                model: mv.playlist.slice((mv.st.plpos || 0) + 1, (mv.st.plpos || 0) + 1 + Math.min(upNext.fit, 5))
                 Txt {
-                    width: parent.width
+                    width: upNext.width
+                    height: upNext.rowH
+                    verticalAlignment: Text.AlignVCenter
                     text: (index === 0 ? Ui.t("player.media.upNext") + "  " : "") + (modelData.title || modelData.name)
                     color: index === 0 ? Ui.c.textSecondary : Ui.c.textFaint
                     font.pixelSize: 16 * Ui.f
+                    elide: Text.ElideRight
                 }
             }
         }
         Hints {
+            id: musicHints
             x: Ui.padX
             width: parent.width - 2 * Ui.padX
             anchors.bottom: parent.bottom; anchors.bottomMargin: 14 * Ui.f

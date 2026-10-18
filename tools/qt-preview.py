@@ -219,7 +219,8 @@ class H(S.H):
             "/api/dl/status": lambda: (media(), PLAYER["L"].MUSICDL.status())[1],
         }
         if p == "/api/media/thumb":
-            r = media().thumb(q.get("path", [""])[0])
+            art = q.get("art", [""])[0]
+            r = media().art(art) if art else media().thumb(q.get("path", [""])[0])
             if not r:
                 self.send_response(404)
                 self.end_headers()
