@@ -1,6 +1,6 @@
 {
   "de": {
-    "meta.desc": "VoidStation macht aus einem kleinen PC eine TV-Station: Void Linux mit Kacheloberfläche für YouTube, Fernsehen, Radio, Spiele und Apps – bedienbar mit Gamepad, Fernbedienung, Maus und Tastatur.",
+    "meta.desc": "VoidStation macht aus einem kleinen PC eine TV-Station: Void Linux mit Kacheloberfläche für YouTube, Fernsehen, Radio, Videos & Musik, Spiele und Apps – bedienbar mit Gamepad, Fernbedienung, Maus und Tastatur.",
     "lang.name": "Deutsch",
     "skip": "Zum Inhalt",
     "copy": "Kopieren",
@@ -16,7 +16,7 @@
 
     "home.title": "VoidStation – Void Linux als TV-Station",
     "home.h1": "Void Linux als TV-Station",
-    "home.lead": "Eine schlanke Kacheloberfläche für den Fernseher: YouTube, Fernsehen, Radio, Spiele und Apps – bedienbar mit Gamepad, Fernbedienung, Maus und Tastatur. Frei, ohne Konto, ohne Tracking.",
+    "home.lead": "Eine schlanke Kacheloberfläche für den Fernseher: YouTube, Fernsehen, Radio, Videos & Musik, Spiele und Apps – bedienbar mit Gamepad, Fernbedienung, Maus und Tastatur. Frei, ohne Konto, ohne Tracking.",
     "g.start": "Loslegen",
     "g.explore": "Entdecken",
     "g.project": "Projekt",
@@ -91,7 +91,7 @@
     "wip.github": "Quellcode und Anleitung auf GitHub"
   },
   "en": {
-    "meta.desc": "VoidStation turns a small PC into a TV station: Void Linux with a tile interface for YouTube, TV, radio, games and apps – controlled with a gamepad, remote, mouse or keyboard.",
+    "meta.desc": "VoidStation turns a small PC into a TV station: Void Linux with a tile interface for YouTube, TV, radio, videos & music, games and apps – controlled with a gamepad, remote, mouse or keyboard.",
     "lang.name": "English",
     "skip": "Skip to content",
     "copy": "Copy",
@@ -107,7 +107,7 @@
 
     "home.title": "VoidStation – Void Linux as a TV station",
     "home.h1": "Void Linux as a TV station",
-    "home.lead": "A lean tile interface for your TV: YouTube, live TV, radio, games and apps – controlled with a gamepad, remote, mouse or keyboard. Free, no account, no tracking.",
+    "home.lead": "A lean tile interface for your TV: YouTube, live TV, radio, videos & music, games and apps – controlled with a gamepad, remote, mouse or keyboard. Free, no account, no tracking.",
     "g.start": "Get started",
     "g.explore": "Explore",
     "g.project": "Project",
