@@ -267,15 +267,37 @@ class Vs(VsBase):
 
     @Slot(result="QVariantList")
     def cornerHit(self):
-        """Heisse Ecke: Steht der Mauszeiger ganz unten rechts auf einem Bildschirm? Dann [rechte Kante, untere
+        """Heisse Ecke: Steht der Mauszeiger unten rechts auf einem Bildschirm? Dann [rechte Kante, untere
         Kante] dieses Bildschirms, sonst []. Fragt die Position beim X-Server ab, geht also auch, wenn ein
-        anderes Programm vorn ist."""
+        anderes Programm vorn ist.
+
+        Getroffen ist die Ecke, wenn der Zeiger
+          - am unteren Rand liegt und nicht weiter als `reach` von der rechten Kante weg ist, oder
+          - am rechten Rand liegt und nicht weiter als `reach` von der unteren Kante weg ist, oder
+          - in einem kleinen Quadrat (`core`) direkt in der Ecke steht.
+        Am Rand bleibt der Zeiger von selbst haengen – man muss also nur grob nach unten rechts schieben, nicht
+        genau das letzte Pixel treffen. Die Streifen liegen nur auf der aeussersten Pixelreihe (`edge`), dort
+        liegen keine Player-Knoepfe (Vollbild & Co. sitzen ein Stueck vom Rand weg); das Quadrat bleibt
+        deshalb klein. Alle Masse haengen an der kurzen Bildschirmseite (720p, 1080p und 4K gleich gross
+        empfunden). VS_CORNER=<Prozent> aendert `reach` (Standard 12 % der kurzen Seite, 0 = nur das Quadrat)."""
         pos = QCursor.pos()
         scr = QGuiApplication.screenAt(pos)
         if scr is None:
             return []
         g = scr.geometry()
-        if pos.x() >= g.right() - 1 and pos.y() >= g.bottom() - 1:
+        short = max(1, min(g.width(), g.height()))
+        try:
+            pct = float(os.environ.get("VS_CORNER", "12"))
+        except ValueError:
+            pct = 12.0
+        reach = short * max(0.0, min(pct, 50.0)) / 100      # 720p: 86 px · 1080p: 130 px · 2160p: 259 px
+        edge = max(2, round(short * 0.004))                  # 720p: 3 px · 1080p: 4 px · 2160p: 9 px
+        core = max(edge, round(short * 0.015))               # 720p: 11 px · 1080p: 16 px · 2160p: 32 px
+        dx = g.right() - pos.x()                             # Abstand zur rechten Kante (0 = letztes Pixel)
+        dy = g.bottom() - pos.y()                            # Abstand zur unteren Kante
+        if dx < 0 or dy < 0:
+            return []
+        if (dx < core and dy < core) or (dy < edge and dx <= reach) or (dx < edge and dy <= reach):
             return [g.right(), g.bottom()]
         return []
 

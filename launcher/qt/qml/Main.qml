@@ -399,6 +399,7 @@ Window {
         }
 
         // ------------------------------------------------------------ Heisse Ecke (Maus unten rechts)
+        // Was als Ecke zaehlt (Randstreifen + kleines Quadrat), entscheidet vs.cornerHit() in voidstation-home.py.
         // Zeiger alle 150 ms abfragen (eine kurze X-Anfrage), unabhaengig davon, ob der Launcher das Programm kennt
         // („Startseite“ geht immer). Das Feld kommt erst, wenn die Maus rund 0,3 s in der Ecke bleibt – dort liegen
         // oft Player-Knoepfe (Vollbild & Co.). Ob die Startseite selbst vorn ist, entscheidet nicht win.active
