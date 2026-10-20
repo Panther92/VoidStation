@@ -24,7 +24,7 @@ Reading needs no account; posting needs a free GitHub account.
 | Back to the start screen (from any program) | <kbd>Guide</kbd> / Home | <kbd>Win</kbd> | Bottom right corner, then **Start screen** |
 | Close a program (from inside it) | | | Bottom right corner, then **Close app** |
 
-**Sleep** (⏻ → Sleep, or Settings → System): programs stay open, the radio stops. Wake it with a USB keyboard, mouse or a remote with a USB receiver (air mouse) – a Bluetooth keyboard works too if the adapter supports it. Controllers usually can't wake a PC. If waking doesn't work, look for “Wake on USB” or similar in the BIOS/UEFI.
+**Sleep** (⏻ → Sleep, or Settings → System): programs stay open, the radio stops. Wake it with a USB keyboard, mouse or a remote with a USB receiver (air mouse). Bluetooth deliberately doesn't wake it – a controller drops its connection when the device goes to sleep, and the adapter took that as a wake-up call. After waking, the controller reconnects on its own. If waking doesn't work, look for “Wake on USB” or similar in the BIOS/UEFI; what woke the device, or why sleep was cancelled, is logged in `~/.local/share/voidstation/launcher.log`.
 
 The arrows at the top right appear as soon as a page is wider than the screen; the bright dot marks the current group. Pair Bluetooth gamepads under **Settings → Bluetooth**.
 

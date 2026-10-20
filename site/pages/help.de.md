@@ -24,7 +24,7 @@ Zum Lesen brauchst du kein Konto, zum Schreiben ein kostenloses GitHub-Konto.
 | Zurück zur Startseite (aus jedem Programm) | <kbd>Guide</kbd> / Home | <kbd>Win</kbd> | Ecke unten rechts, dann **Startseite** |
 | Programm schließen (aus dem Programm heraus) | | | Ecke unten rechts, dann **App schließen** |
 
-**Standby** (⏻ → Standby, oder Einstellungen → System): Programme bleiben offen, das Radio geht aus. Aufwecken mit einer USB-Tastatur, -Maus oder einer Fernbedienung mit USB-Empfänger (Air-Mouse) – auch per Bluetooth-Tastatur, wenn der Adapter das kann. Controller wecken einen PC meist nicht. Klappt das Wecken nicht, im BIOS/UEFI nach „Wake on USB“ o. Ä. schauen.
+**Standby** (⏻ → Standby, oder Einstellungen → System): Programme bleiben offen, das Radio geht aus. Aufwecken mit einer USB-Tastatur, -Maus oder einer Fernbedienung mit USB-Empfänger (Air-Mouse). Bluetooth weckt bewusst nicht – ein Controller verliert beim Einschlafen die Verbindung, und der Adapter hielt das für einen Weckruf. Nach dem Aufwachen verbindet sich der Controller von selbst wieder. Klappt das Wecken nicht, im BIOS/UEFI nach „Wake on USB“ o. Ä. schauen; wodurch das Gerät aufgewacht ist oder warum ein Standby abgebrochen wurde, steht in `~/.local/share/voidstation/launcher.log`.
 
 Die Pfeile oben rechts erscheinen, sobald eine Seite breiter als der Bildschirm ist; der helle Punkt zeigt die aktuelle Gruppe. Gamepads per Bluetooth koppelst du unter **Einstellungen → Bluetooth**.
 
