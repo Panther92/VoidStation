@@ -4581,24 +4581,99 @@ def can_suspend():
     return "mem" in states or "freeze" in states
 
 
+def _sysread(p):
+    try:
+        return Path(p).read_text().strip()
+    except OSError:
+        return ""
+
+
+def _suspend_counts():
+    """(geglueckt, abgebrochen) aus /sys/power/suspend_stats – None, wenn nicht lesbar."""
+    s, f = _sysread("/sys/power/suspend_stats/success"), _sysread("/sys/power/suspend_stats/fail")
+    return (int(s), int(f)) if s.isdigit() and f.isdigit() else None
+
+
+def _wakeup_counts():
+    """Ereigniszaehler aller Weckquellen (/sys/class/wakeup/wakeupN/event_count)."""
+    out = {}
+    for w in Path("/sys/class/wakeup").glob("wakeup*"):
+        n = _sysread(w / "event_count")
+        if n.isdigit():
+            out[w.name] = int(n)
+    return out
+
+
+def wake_sources(before, after, irq=True):
+    """Lesbarer Weckgrund aus den gestiegenen Weckzaehlern. USB-Geraete mit Produktnamen zuerst –
+    Einschaltknopf (PNP0C0C) und PCI-Bruecken zaehlen bei S3 meist mit und sagen allein wenig."""
+    usb, other = [], []
+    for k, n in sorted(after.items()):
+        if n <= before.get(k, 0):
+            continue
+        w = Path("/sys/class/wakeup") / k
+        name = _sysread(w / "name")
+        try:
+            dev = (w / "device").resolve(strict=True)
+        except OSError:
+            dev = None
+        prod = _sysread(dev / "product") if dev else ""
+        if prod:
+            usb.append(f"USB {name} ({' '.join(x for x in (_sysread(dev / 'manufacturer'), prod) if x)})")
+        elif name and not name.startswith("device:"):
+            other.append(name)
+    parts = usb or other
+    if irq:
+        n = _sysread("/sys/power/pm_wakeup_irq")
+        if n.isdigit():
+            desc = ""
+            try:
+                for line in Path("/proc/interrupts").read_text().splitlines():
+                    if line.strip().startswith(n + ":"):
+                        desc = " ".join(re.sub(r"^\s*\d+:\s+(\d+\s+)*", "", line).split())
+                        break
+            except OSError:
+                pass
+            parts = parts + [f"IRQ {n}" + (f" {desc}" if desc else "")]
+    return ", ".join(parts) or "unbekannt"
+
+
 def resume_watcher():
     """Nach dem Standby: Aufloesung erneut setzen (manche HDMI-Ausgaenge kommen sonst mit anderem Modus zurueck –
-    apply_resolution aendert nur, was abweicht) und ins Protokoll schreiben. Erkennt das Aufwachen daran, dass
-    CLOCK_BOOTTIME die Schlafzeit mitzaehlt, CLOCK_MONOTONIC nicht."""
+    apply_resolution aendert nur, was abweicht) und Weckgrund bzw. Abbruch ins Protokoll schreiben.
+    Erkennt das Aufwachen an /sys/power/suspend_stats (Rueckfall: CLOCK_BOOTTIME zaehlt die Schlafzeit mit,
+    CLOCK_MONOTONIC nicht). Abbruch = Standby kam gar nicht zustande, z. B. Weckereignis beim Einschlafen."""
     def gap():
         return time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
-    last = gap()
+
+    def dur(sec):
+        return f"{sec:.0f} s" if sec < 120 else f"{sec / 60:.1f} min"
+
+    last_gap, last_cnt, last_wake = gap(), _suspend_counts(), _wakeup_counts()
     while True:
         time.sleep(5)
-        g = gap()
-        if g - last > 10:
-            log(f"aus dem Standby zurueck (nach {(g - last) / 60:.1f} min)")
+        g, cnt, wake = gap(), _suspend_counts(), _wakeup_counts()
+        slept = g - last_gap
+        if cnt is not None and last_cnt is not None:
+            woke, failed = cnt[0] > last_cnt[0], cnt[1] > last_cnt[1]
+        else:
+            woke, failed = slept > 10, False
+        if failed:
+            st = "/sys/power/suspend_stats/"
+            step, dev, err = (_sysread(st + x) for x in ("last_failed_step", "last_failed_dev", "last_failed_errno"))
+            detail = ", ".join(x for x in (f"Schritt {step}" if step else "", f"Geraet {dev}" if dev else "",
+                                           f"Fehler {err}" if err else "") if x)
+            log(f"Standby abgebrochen ({detail or 'ohne Angabe'}) – ausgeloest von: "
+                f"{wake_sources(last_wake, wake, irq=False)}")
+        if woke:
+            log(f"aus dem Standby zurueck (nach {dur(max(slept, 0))}) – geweckt von: {wake_sources(last_wake, wake)}")
             time.sleep(3)                               # Bildschirm und Treiber erst aufwachen lassen
             try:
                 apply_resolution(settings_load().get("resolution"))
             except Exception as e:  # noqa: BLE001
                 log("Aufloesung nach dem Standby:", e)
-        last = g
+            g, cnt, wake = gap(), _suspend_counts(), _wakeup_counts()
+        last_gap, last_cnt, last_wake = g, cnt, wake
 
 
 def settings_payload():

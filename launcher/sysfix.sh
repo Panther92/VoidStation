@@ -170,22 +170,40 @@ say "Flatpak: Dateidialog ueber xdg-desktop-portal (GTK)"
 
 # ---------------------------------------------------------------------
 # 6. Standby: Weckquellen
+#    Wecken duerfen USB-Tastaturen, -Maeuse und Fernbedienungen mit USB-Empfaenger (HID, Klasse 03).
+#    Der Bluetooth-Adapter (Klasse e0, Unterklasse 01, Protokoll 01) ausdruecklich NICHT: Ein verbundener
+#    BT-Controller verliert beim Einschlafen die Verbindung, der Adapter meldet das und bricht den Standby
+#    sofort ab (NiPoGi, 20.10.2026). Wecken per Controller-Home-Taste klappt ohnehin nicht.
 mkdir -p /etc/udev/rules.d
 cat > /etc/udev/rules.d/71-voidstation-wakeup.rules <<'EOF'
 # VoidStation: aus dem Standby wecken per USB-Tastatur, -Maus und Fernbedienung mit USB-Empfaenger (HID, Klasse 03)
-# sowie ueber den Bluetooth-Adapter (Klasse e0: gekoppelte Tastaturen; Controller koennen PCs meist nicht wecken)
-ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_interface", ATTR{bInterfaceClass}=="03|e0", RUN+="/bin/sh -c 'echo enabled > /sys%p/../power/wakeup'"
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_interface", ATTR{bInterfaceClass}=="03", RUN+="/bin/sh -c 'echo enabled > /sys%p/../power/wakeup'"
+# Bluetooth-Adapter weckt nicht (ein verbundener Controller wuerde den Standby sonst sofort abbrechen)
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_interface", ATTR{bInterfaceClass}=="e0", ATTR{bInterfaceSubClass}=="01", ATTR{bInterfaceProtocol}=="01", RUN+="/bin/sh -c 'echo disabled > /sys%p/../power/wakeup'"
 # USB-Controller (xHCI)
 ACTION=="add", SUBSYSTEM=="pci", ATTR{class}=="0x0c0330", ATTR{power/wakeup}="enabled"
 EOF
 chmod 644 /etc/udev/rules.d/71-voidstation-wakeup.rules
-if [ "$CHROOT" != 1 ]; then                       # schon angeschlossene Geraete gleich freischalten
+if [ "$CHROOT" != 1 ]; then                       # schon angeschlossene Geraete gleich umstellen
   for i in /sys/bus/usb/devices/*:*; do
-    case "$(cat "$i/bInterfaceClass" 2>/dev/null)" in 03|e0) echo enabled > "$i/../power/wakeup" 2>/dev/null ;; esac
+    case "$(cat "$i/bInterfaceClass" 2>/dev/null)/$(cat "$i/bInterfaceSubClass" 2>/dev/null)/$(cat "$i/bInterfaceProtocol" 2>/dev/null)" in
+      03/*) echo enabled > "$i/../power/wakeup" 2>/dev/null ;;
+      e0/01/01) echo disabled > "$i/../power/wakeup" 2>/dev/null ;;
+    esac
   done
   for d in /sys/bus/pci/devices/*; do
     [ "$(cat "$d/class" 2>/dev/null)" = 0x0c0330 ] && echo enabled > "$d/power/wakeup" 2>/dev/null
   done
 fi
-say "Standby: wecken per USB-Tastatur/-Maus/Fernbedienung und Bluetooth-Adapter"
+# elogind: nur Suspend-to-RAM ("mem" – nimmt automatisch deep bzw. s2idle laut /sys/power/mem_sleep).
+# Standard waere "mem standby freeze": bricht "mem" ab (Weckereignis beim Einschlafen), versucht elogind
+# sofort "freeze" – auf Geraeten ohne s2idle-Unterstuetzung im BIOS scheitert das (amdgpu: -22) nur laut.
+mkdir -p /etc/elogind/sleep.conf.d
+cat > /etc/elogind/sleep.conf.d/voidstation.conf <<'EOF'
+# VoidStation: Standby nur als Suspend-to-RAM, kein Ausweichen auf "freeze" nach einem Abbruch
+[Sleep]
+SuspendState=mem
+EOF
+chmod 644 /etc/elogind/sleep.conf.d/voidstation.conf
+say "Standby: wecken per USB-Tastatur/-Maus/Fernbedienung (nicht per Bluetooth), nur Suspend-to-RAM"
 exit 0
