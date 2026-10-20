@@ -33,7 +33,7 @@ Alles, was man vom Sofa aus braucht – auf einem kleinen PC am Fernseher, ohne 
 - Mediatheken von ARD, ZDF und ARTE sowie Pluto TV im AppCenter
 
 <div class="screens">
-<figure><a href="/assets/screens/7-tv-player.webp"><img src="/assets/screens/7-tv-player.webp" alt="Fernsehen: umschalten direkt im Bild, mit Programminfo" loading="lazy" width="1600" height="900"></a><figcaption>Fernsehen: umschalten direkt im Bild, mit Programminfo</figcaption></figure>
+<figure><a href="/assets/screens/7-tv-player.webp"><img src="/assets/screens/7-tv-player.webp" alt="Fernseh-Player mit Senderinfo über einer Szene aus Big Buck Bunny" loading="lazy" width="1600" height="900"></a><figcaption>Fernsehen: umschalten direkt im Bild, mit Programminfo. Bild: „Big Buck Bunny“ © Blender Foundation | <a href="https://peach.blender.org">peach.blender.org</a>, <a href="https://creativecommons.org/licenses/by/3.0/deed.de">CC BY 3.0</a></figcaption></figure>
 </div>
 
 ## Radio {#radio}
@@ -51,6 +51,7 @@ Alles, was man vom Sofa aus braucht – auf einem kleinen PC am Fernseher, ohne 
 - **Musik suchen:** freie Musik aus dem Internet Archive, auf Wunsch auch YouTube und SoundCloud – als MP3 mit Interpret, Album, Titelnummer und Cover, sortiert in `share/Musik`
 
 <div class="screens">
+<figure><a href="/assets/screens/12-video.webp"><img src="/assets/screens/12-video.webp" alt="Video-Wiedergabe mit Fortschrittsleiste über einer Szene aus Big Buck Bunny" loading="lazy" width="1600" height="900"></a><figcaption>Videos mit Ton- und Untertitelwahl. Bild: „Big Buck Bunny“ © Blender Foundation | <a href="https://peach.blender.org">peach.blender.org</a>, <a href="https://creativecommons.org/licenses/by/3.0/deed.de">CC BY 3.0</a></figcaption></figure>
 <figure><a href="/assets/screens/8-mediathek.webp"><img src="/assets/screens/8-mediathek.webp" alt="Die Mediathek mit Album-Covern" loading="lazy" width="1600" height="900"></a><figcaption>Die Mediathek mit Album-Covern</figcaption></figure>
 <figure><a href="/assets/screens/9-musik.webp"><img src="/assets/screens/9-musik.webp" alt="Musik mit Cover, Wiederholen und Zufall" loading="lazy" width="1600" height="900"></a><figcaption>Musik mit Cover, Wiederholen und Zufall</figcaption></figure>
 <figure><a href="/assets/screens/10-musik-suchen.webp"><img src="/assets/screens/10-musik-suchen.webp" alt="„Musik suchen“: Quellen wählst du selbst" loading="lazy" width="1600" height="900"></a><figcaption>„Musik suchen“: Quellen wählst du selbst</figcaption></figure>

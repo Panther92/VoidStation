@@ -33,7 +33,7 @@ Everything you need from the couch – on a small PC next to the TV, with no acc
 - Pluto TV and the German public broadcasters' media libraries (ARD, ZDF, ARTE) in the AppCenter
 
 <div class="screens">
-<figure><a href="/assets/screens/en/7-tv-player.webp"><img src="/assets/screens/en/7-tv-player.webp" alt="TV: switch channels right in the picture, with program info" loading="lazy" width="1600" height="900"></a><figcaption>TV: switch channels right in the picture, with program info</figcaption></figure>
+<figure><a href="/assets/screens/en/7-tv-player.webp"><img src="/assets/screens/en/7-tv-player.webp" alt="TV player with channel info over a scene from Big Buck Bunny" loading="lazy" width="1600" height="900"></a><figcaption>TV: switch channels right in the picture, with program info. Picture: “Big Buck Bunny” © Blender Foundation | <a href="https://peach.blender.org">peach.blender.org</a>, <a href="https://creativecommons.org/licenses/by/3.0/">CC BY 3.0</a></figcaption></figure>
 </div>
 
 ## Radio {#radio}
@@ -51,6 +51,7 @@ Everything you need from the couch – on a small PC next to the TV, with no acc
 - **Find music:** free music from the Internet Archive, optionally YouTube and SoundCloud too – as MP3 with artist, album, track number and cover, sorted into `share/Musik`
 
 <div class="screens">
+<figure><a href="/assets/screens/en/12-video.webp"><img src="/assets/screens/en/12-video.webp" alt="Video playback with progress bar over a scene from Big Buck Bunny" loading="lazy" width="1600" height="900"></a><figcaption>Videos with audio and subtitle selection. Picture: “Big Buck Bunny” © Blender Foundation | <a href="https://peach.blender.org">peach.blender.org</a>, <a href="https://creativecommons.org/licenses/by/3.0/">CC BY 3.0</a></figcaption></figure>
 <figure><a href="/assets/screens/en/8-mediathek.webp"><img src="/assets/screens/en/8-mediathek.webp" alt="The library with album covers" loading="lazy" width="1600" height="900"></a><figcaption>The library with album covers</figcaption></figure>
 <figure><a href="/assets/screens/en/9-musik.webp"><img src="/assets/screens/en/9-musik.webp" alt="Music with cover, repeat and shuffle" loading="lazy" width="1600" height="900"></a><figcaption>Music with cover, repeat and shuffle</figcaption></figure>
 <figure><a href="/assets/screens/en/10-musik-suchen.webp"><img src="/assets/screens/en/10-musik-suchen.webp" alt="“Find music”: you choose the sources" loading="lazy" width="1600" height="900"></a><figcaption>“Find music”: you choose the sources</figcaption></figure>

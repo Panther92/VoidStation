@@ -25,13 +25,19 @@ Fernzugriff per SSH lässt sich unter Einstellungen → System ein- und ausschal
 |---|---|---|
 | ![Fernsehen](docs/screenshots/2-fernsehen.webp) | ![AppCenter](docs/screenshots/3-appcenter.webp) | ![Radio](docs/screenshots/4-radio.webp) |
 
-| Fernseh-Player | Videos & Musik | Musik |
+| Fernseh-Player | Videos | Musik |
 |---|---|---|
-| ![Fernseh-Player](docs/screenshots/7-tv-player.webp) | ![Mediathek](docs/screenshots/8-mediathek.webp) | ![Musik](docs/screenshots/9-musik.webp) |
+| ![Fernseh-Player](docs/screenshots/7-tv-player.webp) | ![Video](docs/screenshots/12-video.webp) | ![Musik](docs/screenshots/9-musik.webp) |
 
-| Musik suchen | Ton | Installer |
+| Mediathek | Musik suchen | Ton |
 |---|---|---|
-| ![Musik suchen](docs/screenshots/10-musik-suchen.webp) | ![Ton](docs/screenshots/11-ton.webp) | ![Installer](docs/screenshots/5-installer.webp) |
+| ![Mediathek](docs/screenshots/8-mediathek.webp) | ![Musik suchen](docs/screenshots/10-musik-suchen.webp) | ![Ton](docs/screenshots/11-ton.webp) |
+
+| Installer | Installer: Ziel-SSD |
+|---|---|
+| ![Installer](docs/screenshots/5-installer.webp) | ![Ziel-SSD](docs/screenshots/6-ziel-ssd.webp) |
+
+Bild im Fernseh-Player und in „Videos“: „Big Buck Bunny“ © Blender Foundation | [peach.blender.org](https://peach.blender.org), [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/deed.de). Alle übrigen Inhalte der Screenshots sind Beispieldaten.
 
 ## Installation
 

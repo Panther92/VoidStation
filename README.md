@@ -25,13 +25,19 @@ Remote access via SSH can be switched on and off under Settings → System.
 |---|---|---|
 | ![TV](docs/screenshots/en/2-fernsehen.webp) | ![AppCenter](docs/screenshots/en/3-appcenter.webp) | ![Radio](docs/screenshots/en/4-radio.webp) |
 
-| TV player | Videos & Music | Music |
+| TV player | Videos | Music |
 |---|---|---|
-| ![TV player](docs/screenshots/en/7-tv-player.webp) | ![Library](docs/screenshots/en/8-mediathek.webp) | ![Music](docs/screenshots/en/9-musik.webp) |
+| ![TV player](docs/screenshots/en/7-tv-player.webp) | ![Video](docs/screenshots/en/12-video.webp) | ![Music](docs/screenshots/en/9-musik.webp) |
 
-| Find music | Sound | Installer |
+| Library | Find music | Sound |
 |---|---|---|
-| ![Find music](docs/screenshots/en/10-musik-suchen.webp) | ![Sound](docs/screenshots/en/11-ton.webp) | ![Installer](docs/screenshots/en/5-installer.webp) |
+| ![Library](docs/screenshots/en/8-mediathek.webp) | ![Find music](docs/screenshots/en/10-musik-suchen.webp) | ![Sound](docs/screenshots/en/11-ton.webp) |
+
+| Installer | Installer: target SSD |
+|---|---|
+| ![Installer](docs/screenshots/en/5-installer.webp) | ![Target SSD](docs/screenshots/en/6-ziel-ssd.webp) |
+
+Picture in the TV player and in “Videos”: “Big Buck Bunny” © Blender Foundation | [peach.blender.org](https://peach.blender.org), [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). Everything else in the screenshots is sample data.
 
 ## Installation
 
