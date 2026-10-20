@@ -362,7 +362,8 @@ Window {
             if (t.type === "apps") return openLayer(apps)
             if (t.type === "roms") return roms.openFor(t)
             if (t.type === "install") return inst.openInst()
-            if (emuSystems.indexOf(t.id) >= 0) {
+            // Emulator laeuft schon (auch mit Spiel aus der Liste): zurueck dorthin statt Spieleliste / neuer Instanz
+            if (emuSystems.indexOf(t.id) >= 0 && running.indexOf(t.id) < 0) {
                 return Api.get("/api/roms?system=" + encodeURIComponent(t.id), function (r) {
                     if (r && (r.count > 0 || (r.roms && r.roms.length))) roms.openFor(t); else launch(t)
                 }, function () { launch(t) })

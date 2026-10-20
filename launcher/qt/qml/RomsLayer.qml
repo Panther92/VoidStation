@@ -24,10 +24,15 @@ Layer {
     }
     function focusFirst() { Qt.callLater(function () { var it = Nav.collect(trk); app.setFocus(it.length ? it[0] : startEmu, true) }) }
     function firstFocus() { var it = Nav.collect(trk); return it.length ? it[0] : startEmu }
+    // Spiel starten: Liste zu (zurueck auf der Startseite steht die Kachel als laufend da), Startbild wie bei
+    // jeder Kachel – das Spiel laeuft unter der Kennung der Kachel
     function launchRom(r) {
-        app.toast(Ui.t("common.starting", null, "Starte …") + " " + (r.title || r.name))
-        Api.post("/api/roms/launch", { system: tile.id, file: r.filename, folder: r.folder || r.system || "" }, null,
-                 function () { app.toast(Ui.t("home.launchFailed", { name: r.title || r.name }), true) })
+        var t = tile
+        app.closeLayer(rl)
+        app.showSplash(t)
+        Api.post("/api/roms/launch", { system: t.id, file: r.filename, folder: r.folder || r.system || "" },
+                 function (res) { if (res && res.running) app.running = res.running },
+                 function () { app.hideSplash(); app.toast(Ui.t("home.launchFailed", { name: r.title || r.name }), true) })
     }
 
     headRight: NowLine { main: rl.sysName; sub: Ui.t("roms.count", { count: rl.roms.length }) }

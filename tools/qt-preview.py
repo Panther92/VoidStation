@@ -334,6 +334,11 @@ class H(S.H):
             BT.update(pairing=None, prompt=None)
             ok = not body.get("mac", "").endswith("01")
             return self.j({"ok": ok, "error": None if ok else "bt.err.timeout", "status": {}})
+        if p == "/api/roms/launch":              # wie der Launcher: Spiel laeuft unter der Kennung der Kachel
+            tid = str(body.get("system", ""))
+            if tid not in st["running"]:
+                st["running"].append(tid)
+            return self.j({"result": "started", "running": st["running"]})
         if p.startswith("/api/launch/"):
             tid = p.rsplit("/", 1)[1]
             if tid not in st["running"]:

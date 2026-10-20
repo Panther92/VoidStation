@@ -45,6 +45,7 @@ FAVS = BASE / "radio.json"
 MPV_SOCK = str(BASE / "mpv.sock")
 PLAYER_BIN = BASE / "qt" / "voidstation-player.py"    # eigener Player: Fernsehen, Videos & Musik
 HOME_TITLE = "VoidStation"                      # <title> der Startseite
+PAUSED_FILE = BASE / "paused.json"              # im Hintergrund angehaltene Prozesse (beim Launcher-Start fortsetzen)
 RADIO_SERVERS = ["de1.api.radio-browser.info", "de2.api.radio-browser.info",
                  "fi1.api.radio-browser.info", "at1.api.radio-browser.info"]
 
@@ -135,6 +136,10 @@ def media_notify(cmd):
 
 def raise_home():
     media_notify("background")
+    try:
+        APPS.pause_background()                         # Emulatoren anhalten, solange die Startseite vorn ist
+    except NameError:
+        pass
     for wid, _pid, title in windows():
         if HOME_TITLE in title:
             run(["wmctrl", "-i", "-a", wid])
@@ -152,6 +157,8 @@ class AppManager:
         self.shown = set()                    # tile_ids, deren Programm schon ein Fenster hat
         self.recent = []                      # tile_ids, zuletzt gestartet / nach vorn geholt (neueste hinten)
         self.claimed = {}                     # tile_id -> Fenster-IDs ohne passende Prozess-ID (Flatpak), beim Start zugeordnet
+        self.paused = {}                      # tile_id -> Prozess-IDs, die im Hintergrund angehalten sind (SIGSTOP)
+        self._pwatch = False                  # Waechter fuer angehaltene Programme laeuft
 
     def running(self):
         with self.lock:
@@ -159,7 +166,96 @@ class AppManager:
                 del self.procs[tid]
                 self.shown.discard(tid)
                 self.claimed.pop(tid, None)
+                self.paused.pop(tid, None)
             return list(self.procs)
+
+    # ---- Im Hintergrund anhalten (Emulatoren) -------------------------------------------------------------
+    # Emulatoren lesen den Controller auch ohne Fokus weiter: Ist die Startseite vorn, spielte das Spiel mit
+    # jedem Tastendruck mit. Deshalb halten sie an (SIGSTOP, wie Pause), sobald etwas anderes nach vorn kommt,
+    # und laufen weiter (SIGCONT), wenn ihr Fenster wieder vorn ist – ueber die Kachel, die heisse Ecke oder
+    # sonstwie (Waechter). Die Prozess-IDs stehen in PAUSED_FILE, damit ein neu gestarteter Launcher nichts
+    # angehalten zuruecklaesst.
+    def _persist_paused(self):
+        with self.lock:
+            pids = sorted({p for ps in self.paused.values() for p in ps})
+        try:
+            if pids:
+                PAUSED_FILE.write_text(json.dumps(pids), encoding="utf-8")
+            else:
+                PAUSED_FILE.unlink(missing_ok=True)
+        except OSError as e:
+            log("paused.json:", e)
+
+    @staticmethod
+    def _kill_all(pids, sig):
+        for pid in pids:
+            try:
+                os.kill(pid, sig)
+            except (ProcessLookupError, PermissionError):
+                pass
+
+    def pause_background(self, keep=None):
+        """Laufende Emulatoren anhalten, ausser `keep` (die Kachel, die gerade nach vorn kommt). Nur Programme, die
+        schon ein Fenster zeigen – ein Emulator, der noch startet, bliebe sonst ohne Fenster stehen."""
+        changed = False
+        for tid in self.running():
+            if tid == keep:
+                continue
+            with self.lock:
+                proc = self.procs.get(tid)
+                skip = not proc or tid in self.paused or tid not in self.shown
+            if skip or not app_suspendable(tid):
+                continue
+            pids = session_pids(proc.pid)
+            self._kill_all(pids, signal.SIGSTOP)
+            with self.lock:
+                self.paused[tid] = pids
+            log("angehalten (Hintergrund):", tid, sorted(pids))
+            changed = True
+        if changed:
+            self._persist_paused()
+            with self.lock:
+                start, self._pwatch = not self._pwatch, True
+            if start:
+                threading.Thread(target=self._watch_paused, daemon=True).start()
+
+    def resume(self, tid):
+        with self.lock:
+            pids = self.paused.pop(tid, None)
+            proc = self.procs.get(tid)
+        if pids is None:
+            return
+        if proc and proc.poll() is None:
+            pids = pids | session_pids(proc.pid)        # inzwischen gestartete Kindprozesse auch
+        self._kill_all(pids, signal.SIGCONT)
+        log("laeuft weiter:", tid)
+        self._persist_paused()
+
+    def resume_all(self):
+        with self.lock:
+            tids = list(self.paused)
+        for tid in tids:
+            self.resume(tid)
+
+    def _watch_paused(self):
+        """Kommt das Fenster eines angehaltenen Programms auf anderem Weg nach vorn (Alt+Tab, Dialog), laeuft es
+        weiter – sonst saehe es aus wie abgestuerzt."""
+        while True:
+            time.sleep(1.0)
+            running = set(self.running())                # raeumt beendete Programme aus self.paused
+            with self.lock:
+                paused = {t: self.procs.get(t) for t in self.paused if t in running}
+                if not paused:
+                    self._pwatch = False
+                    break
+            act = active_window()
+            if not act:
+                continue
+            wl = windows()
+            for tid, proc in paused.items():
+                if proc and any(int(w[0], 16) == act for w in self._windows_of(tid, proc, wl)):
+                    self.resume(tid)
+        self._persist_paused()
 
     def starting(self):
         """Laufende Programme, die noch kein Fenster zeigen (z. B. Steam bei der Ersteinrichtung)."""
@@ -202,6 +298,8 @@ class AppManager:
         p = self._get(tile_id)
         if not p:
             return False
+        self.resume(tile_id)
+        self.pause_background(keep=tile_id)
         wins = self._windows_of(tile_id, p)
         for wid, _, _ in wins:
             run(["wmctrl", "-i", "-a", wid])
@@ -243,6 +341,7 @@ class AppManager:
             args = dosbox_prepare(args)
         penv = app_env()
         penv.update(env or {})
+        self.pause_background(keep=tid)                 # anderes Programm kommt nach vorn: Emulatoren anhalten
         proc = subprocess.Popen(args, cwd=str(Path.home()), stdin=subprocess.DEVNULL, env=penv,
                                 stdout=out, stderr=subprocess.STDOUT, start_new_session=True)
         out.close()
@@ -281,6 +380,7 @@ class AppManager:
             self.shown.add(tid)
 
     def close(self, tile_id):
+        self.resume(tile_id)                     # angehalten verarbeitet es kein "Fenster schliessen"
         with self.lock:
             proc = self.procs.pop(tile_id, None)
         if not proc or proc.poll() is not None:
@@ -3553,6 +3653,25 @@ def pad_mouse_default(tile_id):
     return True
 
 
+def app_suspendable(tile_id):
+    """Programm dieser Kachel anhalten, solange etwas anderes vorn ist? Vorrang: "suspend" an der Kachel
+    (tiles.json), dann im Katalog; von selbst bei Emulatoren (Katalog-Kategorie "Emulatoren" bzw. Kacheln, die
+    Spiele aus share/ROMs starten), weil sie den Controller auch im Hintergrund lesen. Spiele mit Mehrspieler
+    uebers Netz (Xonotic, Luanti …) und Steam laufen weiter."""
+    t = find_tile(tile_id) or {}
+    if isinstance(t.get("suspend"), bool):
+        return t["suspend"]
+    try:
+        a = catalog_app(tile_id)
+    except (OSError, ValueError):
+        a = None
+    if a and isinstance(a.get("suspend"), bool):
+        return a["suspend"]
+    if a:
+        return a.get("cat") == "Emulatoren"
+    return tile_id in ROMS.SYSTEM_TO_TILE.values() or tile_id in ROMS.TILE_TO_SYSTEM
+
+
 def tile_ids():
     return {t.get("id") for g in load_config().get("groups", []) for t in g.get("tiles", [])}
 
@@ -4993,7 +5112,15 @@ class ROMManager:
         if not cmd:
             raise ValueError(f"Kein Emulator fuer {canon} konfiguriert")
 
-        return APPS.start(f"rom_{self.TILE_TO_SYSTEM.get(tid, canon)}", cmd)
+        # Unter der Kennung der Kachel starten (frueher "rom_<system>"): Nur so kennt die Startseite das Spiel als
+        # laufend – Kachel holt es zurueck, Y bzw. die heisse Ecke beenden es –, und ein zweites Spiel startet
+        # keine weitere, dann nicht mehr erreichbare Instanz.
+        key = system if find_tile(system) else tid
+        if APPS._get(key):
+            log("Emulator laeuft schon, wird fuer das neue Spiel beendet:", key)
+            APPS.close(key)
+        media_notify("background")
+        return APPS.start(key, cmd)
 
 
 ROMS = ROMManager()
@@ -6212,9 +6339,32 @@ def app_prefs():
         log("gpicview.conf:", e)
 
 
+def resume_leftovers():
+    """Vom vorigen Launcher im Hintergrund angehaltene Programme weiterlaufen lassen (z. B. nach einem Update,
+    das den Launcher neu startet) – sonst hingen sie unsichtbar und unerreichbar herum."""
+    try:
+        pids = json.loads(PAUSED_FILE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return
+    AppManager._kill_all([p for p in pids if isinstance(p, int) and p > 1], signal.SIGCONT)
+    log("vom vorigen Start angehalten, laeuft weiter:", pids)
+    PAUSED_FILE.unlink(missing_ok=True)
+
+
+def on_term(sig, _frame):
+    """SIGTERM: angehaltene Programme fortsetzen, sonst wie bisher sofort beenden (Radio & Co. laufen weiter)."""
+    try:
+        APPS.resume_all()
+    finally:
+        signal.signal(sig, signal.SIG_DFL)
+        os.kill(os.getpid(), sig)
+
+
 def main():
     global BOOT_BUILD
     BOOT_BUILD = vs_version().get("build")
+    resume_leftovers()
+    signal.signal(signal.SIGTERM, on_term)
     app_prefs()
     s = settings_load()
     apply_appearance(s)
@@ -6231,6 +6381,7 @@ def main():
     try:
         httpd.serve_forever()
     finally:
+        APPS.resume_all()
         RADIO.stop()
 
 

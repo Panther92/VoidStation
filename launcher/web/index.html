@@ -1096,7 +1096,8 @@ function activate(el = focusEl) {
   if (el._tile?.type === 'apps') return openLayer('apps');
   if (el._tile?.type === 'roms') return openRoms(el._tile);
   if (el._tile?.type === 'install') return openInstaller();
-  if (el._tile && isEmulator(el._tile.id)) return checkAndLaunchEmulator(el._tile, el);
+  // Emulator laeuft schon (auch mit Spiel aus der Liste): zurueck dorthin statt Spieleliste / neuer Instanz
+  if (el._tile && isEmulator(el._tile.id) && !running.includes(el._tile.id)) return checkAndLaunchEmulator(el._tile, el);
   if (act === 'tvstop') return tvStop();
   if (el._chan) return tvPlay(el._chan);
   if (el._flt) return el._flt();
@@ -3256,12 +3257,19 @@ async function renderRoms() {
   const first = $('#romTrack .romcard') || $('#romStartEmu');
   if (first) setFocus(first, true);
 }
+// Spiel starten: Liste zu (zurueck auf der Startseite steht die Kachel als laufend da), Startbild wie bei
+// jeder Kachel – das Spiel laeuft unter der Kennung der Kachel
 async function launchRom(rom) {
   if (!curRomTile || !rom) return;
-  toast(T('common.starting', null, 'Starte …') + ' ' + (rom.title || rom.name));
+  const t = curRomTile;
+  closeLayer();
+  showSplash(t);
   try {
-    await api('/api/roms/launch', { system: curRomTile.id, file: rom.filename, folder: rom.folder || rom.system || '' });
+    const r = await api('/api/roms/launch', { system: t.id, file: rom.filename, folder: rom.folder || rom.system || '' });
+    if (r && r.running) setRunning(r.running);
+    splashWatch(t);
   } catch {
+    hideSplash();
     toast(T('home.launchFailed', { name: rom.title || rom.name }), true);
   }
 }
