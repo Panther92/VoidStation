@@ -325,12 +325,15 @@ install -d -o root -g root -m 755 /usr/local/share/voidstation
 # Kernel-Start: EFISTUB-Helfer und Initramfs-Vorgabe (nutzt der Installer des Live-Sticks)
 install -o root -g root -m 755 "$TV/voidstation-efistub" /usr/local/sbin/voidstation-efistub
 install -o root -g root -m 644 "$TV/dracut-voidstation.conf" /usr/local/share/voidstation/dracut-voidstation.conf
-python3 - "$TV/catalog.json" > /usr/local/share/voidstation/allowed-packages <<'PYEOF'
+python3 - "$TV/catalog.json" "$(xbps-uhelper arch 2>/dev/null)" > /usr/local/share/voidstation/allowed-packages <<'PYEOF'
 import json, sys
 c = json.load(open(sys.argv[1], encoding="utf-8"))
+arch = sys.argv[2] if len(sys.argv) > 2 else ""
 pk = {"flatpak"}
 for a in c["apps"]:
     s = a["source"]
+    if arch and isinstance(a.get("arch"), list) and arch not in a["arch"]:
+        continue                                  # z. B. Steam (multilib) nicht auf 32 Bit
     if s["type"] == "xbps":
         pk.add(s["pkg"])
     for k in ("repos", "deps", "optional", "host_pkgs"):

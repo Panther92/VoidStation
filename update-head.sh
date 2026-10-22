@@ -285,12 +285,15 @@ say "3/8  AppCenter-Helfer (installiert nur freigegebene Pakete)"
 install -o root -g root -m 755 "$TV/voidstation-pkg" /usr/local/sbin/voidstation-pkg
 ln -sfn "$TV/vsctl" /usr/local/bin/vsctl          # "vsctl update" im Terminal = Einstellungen → Updates
 install -d -o root -g root -m 755 /usr/local/share/voidstation
-python3 - "$TV/catalog.json" > /usr/local/share/voidstation/allowed-packages <<'PYEOF'
+python3 - "$TV/catalog.json" "$(xbps-uhelper arch 2>/dev/null)" > /usr/local/share/voidstation/allowed-packages <<'PYEOF'
 import json, sys
 c = json.load(open(sys.argv[1], encoding="utf-8"))
+arch = sys.argv[2] if len(sys.argv) > 2 else ""
 pk = {"flatpak"}
 for a in c["apps"]:
     s = a["source"]
+    if arch and isinstance(a.get("arch"), list) and arch not in a["arch"]:
+        continue                                  # z. B. Steam (multilib) nicht auf 32 Bit
     if s["type"] == "xbps":
         pk.add(s["pkg"])
     for k in ("repos", "deps", "optional", "host_pkgs"):

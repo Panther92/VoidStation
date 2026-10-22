@@ -3648,6 +3648,27 @@ def catalog_app(app_id):
     return next((a for a in catalog()["apps"] if a["id"] == app_id), None)
 
 
+# Architektur des Geraets ("x86_64" oder "i686" – die 32-Bit-Variante ist experimentell)
+SYS_ARCH = "i686" if os.uname().machine in ("i386", "i486", "i586", "i686") else os.uname().machine
+
+
+def app_archs(a):
+    """Architekturen, fuer die es eine App gibt; None = alle. "arch" im Katalog geht vor, sonst aus der Quelle:
+    Flathub baut kein 32-Bit-x86 mehr, AppImages im Katalog sind 64 Bit, Widevine (Netflix & Co.) gibt es unter
+    Linux nur fuer 64 Bit."""
+    if isinstance(a.get("arch"), list):
+        return a["arch"]
+    s = a.get("source", {})
+    if s.get("type") in ("flatpak", "appimage") or s.get("drm"):
+        return ["x86_64"]
+    return None
+
+
+def app_supported(a):
+    archs = app_archs(a)
+    return not archs or SYS_ARCH in archs
+
+
 def pad_mouse_default(tile_id):
     """Controller als Maus (Startseite: rechter Stick, R2/L2) im Programm dieser Kachel von selbst an?
     Vorrang: "mouse" an der Kachel (tiles.json), dann im Katalog; Spiele und Emulatoren (Gruppe "Spiele") aus,
@@ -4696,6 +4717,8 @@ def apps_payload():
         item = {k: a[k] for k in ("id", "name", "desc", "cat")}
         item["type"] = a["source"]["type"]
         item["installed"] = app_installed_in(a, pkgs, fps, tiles)
+        if not item["installed"] and not app_supported(a):      # gibt es fuer diese Architektur nicht (32 Bit)
+            continue
         item["tile"] = a["id"] in tiles
         item["icon"] = a.get("tile", {}).get("icon", "globe")
         item["color"] = a.get("tile", {}).get("color", "#2f3238")
@@ -6963,6 +6986,8 @@ class Handler(BaseHTTPRequestHandler):
                         a = catalog_app(str(self._body().get("id", "")))
                         if not a:
                             return self._json(404, {"error": "unbekannte App"})
+                        if act == "install" and not app_supported(a):
+                            return self._json(409, {"error": f"{a['name']} gibt es nicht für {SYS_ARCH}"})
                         JOBS.start(act, a)
                     elif act == "update":               # alle Updates (Einstellungen → Updates, vsctl update)
                         if LIVE:
