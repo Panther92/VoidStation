@@ -4,6 +4,8 @@ VoidStation comes as a live ISO: write it to a USB stick, boot from it, try it o
 
 {{iso}}
 
+{{iso32}}
+
 {{latest}}
 
 {{support}}

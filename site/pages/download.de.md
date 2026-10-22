@@ -4,6 +4,8 @@ VoidStation gibt es als Live-ISO: auf einen USB-Stick schreiben, davon starten, 
 
 {{iso}}
 
+{{iso32}}
+
 {{latest}}
 
 {{support}}
