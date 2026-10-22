@@ -126,7 +126,10 @@ def mpv_options(ui_lang="de"):
     langs = ",".join(dict.fromkeys([ui_lang.split("-")[0], "en"]))
     return {
         "hwdec": hw, "cache": "yes", "demuxer-max-bytes": "64MiB", "demuxer-readahead-secs": "10",
-        "network-timeout": "10", "stream-lavf-o": "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
+        # kein stream-lavf-o=reconnect…: das gilt bei HLS fuer jedes einzelne Segment und liess den Puffer leerlaufen
+        # (3sat am 22.10.2026: ohne 8,8 s Puffer bei 350 KiB/s, mit 0,1 s bei 0 B/s). Abbrueche faengt der Player ab
+        # (Stream-Ende -> einmal neu verbinden).
+        "network-timeout": "10",
         "keep-open": "no", "idle": "yes", "ytdl": "no", "sub-auto": "fuzzy", "slang": langs, "alang": langs,
         "audio-display": "no", "volume": "100", "volume-max": "130", "input-default-bindings": "no",
         "osc": "no", "osd-level": "0", "save-position-on-quit": "no", "hls-bitrate": "max",

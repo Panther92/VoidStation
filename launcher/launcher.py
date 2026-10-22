@@ -1871,10 +1871,10 @@ class IPTV:
         return self.status()
 
     def play_raw(self, e):
-        """Stufe 3: nacktes mpv im Vollbild (wie vor dem eigenen Player), mit Hardware-Decoding und Wiederverbinden."""
+        """Stufe 3: nacktes mpv im Vollbild (wie vor dem eigenen Player), mit Hardware-Decoding."""
         args = ["mpv", "--fs", "--force-window=immediate", "--keep-open=no",
                 f"--title=TV · {e['name']}", "--cache=yes", "--demuxer-max-bytes=64MiB", "--hwdec=auto-safe",
-                "--network-timeout=10", "--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
+                "--network-timeout=10",           # ohne stream-lavf-o=reconnect: bremst HLS-Sender aus (s. Player)
                 "--ytdl=no"]
         if e.get("ref"):
             args.append(f"--referrer={e['ref']}")

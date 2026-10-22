@@ -9,6 +9,7 @@ at the top; `vspub --release` or `vspub --hotfix` assigns the number when releas
 Older versions (up to 0.15.0) still use the old numbering.
 
 ## Testing – 2026-10-22
+- TV: many channels (e.g. 3sat, ZDF and other HLS streams) couldn't keep up since the new player – the buffer ran dry, the picture stuttered or didn't appear at all. The cause was an automatic-reconnect setting that applied to every single segment of these streams. It has been removed; the player still handles dropouts itself
 - Updates and the installation now write everything to disk before showing “Done”. If the computer was switched off hard right after an update (power button, power cut), VoidStation files could be left empty – the home screen then no longer came up
 - TV and videos on graphics cards without video acceleration (e.g. old notebooks; the player then shows the picture in a separate mpv window): the picture stayed behind the player and you only heard the sound until you picked the tile a second time. Now the picture comes to the front by itself
 - Sound: on slow computers and in the live system there was sometimes no sound – the radio connected but stayed silent, TV channels reported “not reachable” (timeout) and the volume showed “no audio service”. Cause: WirePlumber, which manages sound, ran twice, and one of them got stuck during startup. Now PipeWire starts it exactly once by itself; the home screen also still connects to the sound system if it only becomes ready later (reported by the community)
