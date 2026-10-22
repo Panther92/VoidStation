@@ -149,7 +149,11 @@ if [ "$ARCH" = x86_64 ]; then
 else
   # Pentium M (Banias, fruehe Dothan) koennen PAE, melden es aber nicht – ohne forcepae startet kein PAE-Kernel.
   # Auf CPUs, die PAE melden, aendert der Parameter nichts.
-  CMDLINE="$CMDLINE forcepae"
+  # rd.live.overlay.overlayfs=1: Schreibschicht per OverlayFS statt Device-Mapper-Snapshot. void-mklive setzt
+  # dafuer rd.overlayfs=1, das kennt dracut aber nicht (dort rd.overlay / rd.live.overlay.overlayfs) – ohne
+  # bleibt der i686-Start beim Anlegen des Snapshots haengen (udev-Timeout fuer loop1/dm-0 nach 180 s,
+  # gefunden in QEMU am 22.10.2026). Spart ausserdem den 32-GB-Overlay-Loop.
+  CMDLINE="$CMDLINE forcepae rd.live.overlay.overlayfs=1"
 fi
 LIVE_PKGS="$(echo $LIVE_PKGS | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
 # Pakete, die es in den Quellen nicht (mehr) gibt, weglassen statt den ganzen Bau abzubrechen
