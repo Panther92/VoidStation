@@ -9,5 +9,12 @@
     "url": "https://sourceforge.net/projects/voidstation/files/0.15.0/voidstation-0.15.0-20261011.iso/download",
     "size_mb": 2503,
     "sha256": "6fbd7b1cb52aa9bd26e9a32c402d560f278441798843ad55a5acb64174bd21f9"
+  },
+  "iso32": {
+    "folder": "https://sourceforge.net/projects/voidstation/files/32-Bit/",
+    "url": "https://sourceforge.net/projects/voidstation/files/32-Bit/voidstation-2026.10%2Btesting.20261022-i686-20261022.iso/download",
+    "version": "2026.10+testing.20261022",
+    "date": "2026-10-22",
+    "sha256": "b70868b90e04b3e688373f5698982ed004fe1f642ea2148107f35d60fe9e4077"
   }
 }
