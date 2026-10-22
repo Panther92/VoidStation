@@ -443,7 +443,12 @@ def probe():
     lsb = json.loads(sh(["lsblk", "-J", "-b", "-o", "NAME,PATH,TYPE,SIZE,MODEL,TRAN,RM,RO,FSTYPE,PARTTYPE,LABEL,UUID"],
                         quiet=True).stdout)
     uefi = firmware() == "uefi"
-    res = {"uefi": uefi, "secureboot": uefi and secure_boot(), "arch": os.uname().machine,
+    arch = os.uname().machine
+    # Mindest-RAM: 4 GB (Pruefung ab 3,5 GiB) fuer x86_64; die 32-Bit-Fassung ist fuer alte Rechner gedacht – dort
+    # reicht 1 GB (Pruefung ab 0,9 GiB, ein T41 mit 1 GB meldet knapp darunter 1 GiB). Swap legt der Installer an.
+    min_gb = 1 if arch == "i686" else 4
+    res = {"uefi": uefi, "secureboot": uefi and secure_boot(), "arch": arch,
+           "min_ram": int((0.9 if arch == "i686" else 3.5) * GiB), "min_ram_gb": min_gb,
            "ram": 0, "cpu": cpu_name(), "gpu": gpu_names(), "net": net_state(), "live_disk": ld,
            "disks": [], "windows": False, "hibernated": False, "bitlocker": False, "min_root": MIN_ROOT, "esp_size": ESP_SIZE,
            "users": sorted({l.split(":", 1)[0] for l in open("/etc/passwd", encoding="utf-8") if ":" in l})}

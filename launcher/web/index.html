@@ -2587,9 +2587,9 @@ function instBack() {
 /* ---- B1 Willkommen / was fehlt */
 function instBlockers(p) {
   const b = [];
-  if (p.arch !== 'x86_64') b.push('arch');
+  if (p.arch !== 'x86_64' && p.arch !== 'i686') b.push('arch');   // i686: 32-Bit-ISO (experimentell)
   if (p.uefi && p.secureboot) b.push('fw');                     // BIOS-Modus geht auch (dann nur ganze SSD)
-  if (p.ram && p.ram < 3.5 * GiB) b.push('ram');
+  if (p.ram && p.ram < (p.min_ram || 3.5 * GiB)) b.push('ram');
   if (!p.disks.some(d => d.size >= MIN_ROOT + 1.5 * GiB)) b.push('disk');
   return b;
 }
@@ -2602,14 +2602,14 @@ function rWelcome() {
   const tiles = [
     infoTile('cpu', T('inst.cpu'), p.cpu),
     infoTile('gpu', T('inst.gpu'), (p.gpu || [])[0]),
-    bl.includes('ram') ? infoTile('ram', T('inst.ram'), `${ramTxt} · ${T('inst.ramLow')}`, 'bad')
+    bl.includes('ram') ? infoTile('ram', T('inst.ram'), `${ramTxt} · ${T('inst.ramLow', { gb: p.min_ram_gb || 4 })}`, 'bad')
       : infoTile('ram', T('inst.ram'), p.ram < 7.8 * GiB ? T('inst.ramSwap', { ram: ramTxt }) : ramTxt),
     !p.uefi ? infoTile(null, T('inst.bootMode'), T('inst.biosMode'), 'ok', 'BIOS')
       : p.secureboot ? infoTile(null, T('inst.bootMode'), T('inst.sbOn'), 'bad', 'UEFI')
       : infoTile(null, T('inst.bootMode'), T('inst.sbOff'), 'ok', 'UEFI'),
     bl.length ? infoTile(null, T('inst.ssd'), T('inst.ssdMin'), bl.includes('disk') ? 'bad' : 'ok', maxDisk ? gb(maxDisk) : '–')
       : infoTile(p.net === 'wifi' ? 'wifi' : 'lan', T('inst.network'), T({ lan: 'inst.netLan', wifi: 'inst.netWifi' }[p.net] || 'inst.netNone'), p.net !== 'none' ? 'ok' : null),
-    bl.length ? infoTile(null, T('inst.arch'), '64 Bit', bl.includes('arch') ? 'bad' : 'ok', p.arch)
+    bl.length ? infoTile(null, T('inst.arch'), p.arch === 'i686' ? '32 Bit' : '64 Bit', bl.includes('arch') ? 'bad' : 'ok', p.arch)
       : infoTile(null, T('inst.screen'), screen, null, p.screen ? p.screen.mode.split('x')[1] + 'p' : '–')
   ];
   section(tr, T('inst.thisDevice'), grid('', tiles));
@@ -2623,7 +2623,7 @@ function rWelcome() {
   if (bl.length) {
     const rows = [];
     if (bl.includes('fw')) rows.push(`<ol>${['inst.fw1', 'inst.fw2', 'inst.fw3'].map((k, i) => `<li><span class="n">${i + 1}</span><span>${T(k)}</span></li>`).join('')}</ol><div class="foot">${esc(T('inst.fwStick'))}</div>`);
-    for (const k of ['ram', 'disk', 'arch']) if (bl.includes(k)) rows.push({ v: T({ ram: 'inst.needRam', disk: 'inst.needDisk', arch: 'inst.needArch' }[k]) });
+    for (const k of ['ram', 'disk', 'arch']) if (bl.includes(k)) rows.push({ v: T({ ram: 'inst.needRam', disk: 'inst.needDisk', arch: 'inst.needArch' }[k], { gb: p.min_ram_gb || 4 }) });
     section(tr, T('inst.howTo'), panel(rows));
   } else {
     section(tr, T('inst.onSsd'), panel([{ k: T('inst.whatUi'), v: T('inst.whatUiText') }, { k: T('inst.whatShare'), v: T('inst.whatShareText') },

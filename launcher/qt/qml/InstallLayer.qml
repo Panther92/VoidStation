@@ -100,9 +100,9 @@ Layer {
     function chName() { return Ui.t("channel." + (channel === "main" ? "main" : "stable")) }
     function blockers(p) {
         var b = []
-        if (p.arch !== "x86_64") b.push("arch")
+        if (p.arch !== "x86_64" && p.arch !== "i686") b.push("arch")      // i686: 32-Bit-ISO (experimentell)
         if (p.uefi && p.secureboot) b.push("fw")
-        if (p.ram && p.ram < 3.5 * gib) b.push("ram")
+        if (p.ram && p.ram < (p.min_ram || 3.5 * gib)) b.push("ram")
         if (!p.disks.some(function (d) { return d.size >= minRoot + 1.5 * gib })) b.push("disk")
         return b
     }
@@ -271,13 +271,13 @@ Layer {
         return [
             info("cpu", T("inst.cpu"), p.cpu),
             info("gpu", T("inst.gpu"), (p.gpu || [])[0]),
-            bl.indexOf("ram") >= 0 ? info("ram", T("inst.ram"), ramTxt + " · " + T("inst.ramLow"), "bad")
+            bl.indexOf("ram") >= 0 ? info("ram", T("inst.ram"), ramTxt + " · " + T("inst.ramLow", { gb: p.min_ram_gb || 4 }), "bad")
                                    : info("ram", T("inst.ram"), p.ram < 7.8 * gib ? T("inst.ramSwap", { ram: ramTxt }) : ramTxt),
             !p.uefi ? info(null, T("inst.bootMode"), T("inst.biosMode"), "ok", "BIOS")
                     : p.secureboot ? info(null, T("inst.bootMode"), T("inst.sbOn"), "bad", "UEFI") : info(null, T("inst.bootMode"), T("inst.sbOff"), "ok", "UEFI"),
             bl.length ? info(null, T("inst.ssd"), T("inst.ssdMin"), bl.indexOf("disk") >= 0 ? "bad" : "ok", maxDisk ? gb(maxDisk) : "\u2013")
                       : info(p.net === "wifi" ? "wifi" : "lan", T("inst.network"), T(({ lan: "inst.netLan", wifi: "inst.netWifi" })[p.net] || "inst.netNone"), p.net !== "none" ? "ok" : ""),
-            bl.length ? info(null, T("inst.arch"), "64 Bit", bl.indexOf("arch") >= 0 ? "bad" : "ok", p.arch)
+            bl.length ? info(null, T("inst.arch"), p.arch === "i686" ? "32 Bit" : "64 Bit", bl.indexOf("arch") >= 0 ? "bad" : "ok", p.arch)
                       : info(null, T("inst.screen"), scr, "", p.screen ? p.screen.mode.split("x")[1] + "p" : "\u2013")
         ]
     }
@@ -299,7 +299,7 @@ Layer {
                                 { k: T("inst.whatUpd"), v: T("inst.whatUpdText") }, { k: T("inst.whatLater"), v: T("inst.whatLaterText") }, { foot: T("inst.minSsd") }]
         var rows = []
         if (bl.indexOf("fw") >= 0) rows.push({ ol: [T("inst.fw1"), T("inst.fw2"), T("inst.fw3")], foot: T("inst.fwStick") })
-        ;["ram", "disk", "arch"].forEach(function (k) { if (bl.indexOf(k) >= 0) rows.push({ v: T(({ ram: "inst.needRam", disk: "inst.needDisk", arch: "inst.needArch" })[k]) }) })
+        ;["ram", "disk", "arch"].forEach(function (k) { if (bl.indexOf(k) >= 0) rows.push({ v: T(({ ram: "inst.needRam", disk: "inst.needDisk", arch: "inst.needArch" })[k], { gb: probe.min_ram_gb || 4 }) }) })
         return rows
     }
     function diskTiles() {
