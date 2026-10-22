@@ -602,6 +602,46 @@ class IpcEngine(Engine):
             self._send(["observe_property", i, name])
         self._send(["request_log_messages", "warn"])
         threading.Thread(target=self._reader, args=(self.sock, self.proc), daemon=True).start()
+        threading.Thread(target=self._raise_window, args=(self.proc,), daemon=True).start()
+
+    def _raise_window(self, proc):
+        """Das mpv-Fenster nach vorn holen, sobald es da ist. Der Launcher holt beim Start nur das erste Fenster
+        des Players nach vorn (das Qt-Fenster); mpv erscheint erst mit dem ersten Sender und landete sonst
+        dahinter – Ton lief, das Bild kam erst nach erneutem Waehlen der Kachel."""
+        def find():
+            try:
+                r = subprocess.run(["wmctrl", "-lp"], capture_output=True, text=True, timeout=1)
+            except (OSError, subprocess.SubprocessError):
+                return None
+            for line in r.stdout.splitlines():
+                p = line.split(None, 3)
+                if len(p) >= 3 and p[2] == str(proc.pid):
+                    return p[0]
+            return None
+
+        def activate(wid):
+            try:
+                subprocess.run(["wmctrl", "-i", "-a", wid], capture_output=True, timeout=2)
+            except (OSError, subprocess.SubprocessError):
+                pass
+
+        wid = None
+        for _ in range(150):                             # hoechstens 15 s auf das Fenster warten
+            if proc.poll() is not None:
+                return
+            wid = find()
+            if wid:
+                break
+            time.sleep(0.1)
+        if not wid:
+            log("mpv-Fenster nicht gefunden – bleibt, wo der Fenstermanager es hinlegt")
+            return
+        activate(wid)
+        time.sleep(1.2)                                  # der Launcher holt das Qt-Fenster evtl. erst jetzt nach vorn
+        self._front_t = 0.0                              # frisch abfragen, nicht aus dem Zwischenspeicher
+        if proc.poll() is None and not self.child_in_front():
+            activate(wid)
+        log("mpv-Fenster vorn:", wid)
 
     def _send(self, cmd):
         with self.lock:
