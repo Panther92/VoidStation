@@ -9,6 +9,8 @@ at the top; `vspub --release` or `vspub --hotfix` assigns the number when releas
 Older versions (up to 0.15.0) still use the old numbering.
 
 ## Testing – 2026-10-22
+- TV and videos on 32-bit computers (experimental): the player shows the picture via Xv there – the graphics card does the scaling itself, even old chips without a 3D driver (e.g. Radeon 7500/9000 in the ThinkPad T41). VoidStation also installs the matching graphics driver on 32-bit (ATI, Intel, NVIDIA or VIA) and decodes with shortcuts that save noticeable CPU time on old processors. TV starts there with the quality set to “Data saver”
+- TV: the chosen quality (Best/Data saver) is now remembered. The technical overlay (Select / I) also names the video output next to the level (e.g. “Level 2 · xv”)
 - TV: many channels (e.g. 3sat, ZDF and other HLS streams) couldn't keep up since the new player – the buffer ran dry, the picture stuttered or didn't appear at all. The cause was an automatic-reconnect setting that applied to every single segment of these streams. It has been removed; the player still handles dropouts itself
 - Updates and the installation now write everything to disk before showing “Done”. If the computer was switched off hard right after an update (power button, power cut), VoidStation files could be left empty – the home screen then no longer came up
 - TV and videos on graphics cards without video acceleration (e.g. old notebooks; the player then shows the picture in a separate mpv window): the picture stayed behind the player and you only heard the sound until you picked the tile a second time. Now the picture comes to the front by itself

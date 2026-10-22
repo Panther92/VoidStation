@@ -154,6 +154,8 @@ else
   # bleibt der i686-Start beim Anlegen des Snapshots haengen (udev-Timeout fuer loop1/dm-0 nach 180 s,
   # gefunden in QEMU am 22.10.2026). Spart ausserdem den 32-GB-Overlay-Loop.
   CMDLINE="$CMDLINE forcepae rd.live.overlay.overlayfs=1"
+  # 2D-Treiber fuer alte Grafik (ATI, Intel, NVIDIA, VIA): Xv fuer den Player ohne 3D-Treiber (s. install.sh)
+  LIVE_PKGS="$LIVE_PKGS xlibre-xf86-video-ati xlibre-xf86-video-intel xlibre-xf86-video-nouveau xlibre-xf86-video-openchrome"
 fi
 LIVE_PKGS="$(echo $LIVE_PKGS | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
 # Pakete, die es in den Quellen nicht (mehr) gibt, weglassen statt den ganzen Bau abzubrechen

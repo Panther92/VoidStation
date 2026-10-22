@@ -18,6 +18,9 @@ Darstellungsstufen (VS_PLAYER_LEVEL setzt der Launcher, sonst 0):
      Steuer-Schnittstelle bedient (Gamepad geht weiter). Von selbst ohne /dev/dri/renderD*, ohne python3-mpv
      oder wenn das Einbetten scheitert (Tests ohne Render-Knoten, z. B. Xvfb: VS_PLAYER_FORCE=1).
 Der Launcher stuft nach Abstuerzen hoch (0 -> 1 -> 2, beim Fernsehen zuletzt das nackte mpv wie frueher).
+Schwache Hardware (32-Bit-Rechner, fest per VS_WEAK=1/0): immer Stufe 2, mpv gibt ueber Xv aus (Skalieren und
+Farbumrechnung macht die Grafikkarte, auch ohne 3D-Treiber), sonst x11 mit schnellem Skalierer; Oberflaeche mit
+Qt-Software-Backend, Fernsehen startet mit Qualitaet "Sparsam".
 
 Steuerung von aussen: lokaler Socket ~/.local/share/voidstation/player-<modus>.sock, je Zeile ein JSON-Befehl:
   {"cmd": "tune", "key": "<sender>"}   {"cmd": "open", "path": "<datei|ordner>"}   {"cmd": "quit"}
@@ -51,12 +54,25 @@ def _early_log(*a):
     print("[player]", *a, file=sys.stderr, flush=True)
 
 
+def weak_hw():
+    """Schwache Hardware? Bisher: 32-Bit-Rechner (i686). Deren Grafik (Radeon 7500/9000, Intel bis i915 …) hat in
+    aktuellem Mesa keinen 3D-Treiber mehr – OpenGL liefe in Software (llvmpipe), das Einbetten des Videos ueber
+    OpenGL waere auf einem Pentium M viel zu langsam. VS_WEAK=1 erzwingt, VS_WEAK=0 schaltet ab."""
+    v = os.environ.get("VS_WEAK", "")
+    if v in ("0", "1"):
+        return v == "1"
+    return os.uname().machine in ("i386", "i486", "i586", "i686")
+
+
+WEAK = weak_hw()
+
+
 def pick_level():
     """Darstellungsstufe vor dem Start von Qt festlegen (siehe oben)."""
     v = os.environ.get("VS_PLAYER_LEVEL", "")
     level = int(v) if v in ("0", "1", "2") else 0
     no_gpu = not glob.glob("/dev/dri/renderD*") and os.environ.get("VS_PLAYER_FORCE") != "1"   # FORCE: nur fuer Tests
-    if no_gpu or os.environ.get("VS_QT_SOFTWARE") == "1":
+    if no_gpu or WEAK or os.environ.get("VS_QT_SOFTWARE") == "1":
         level = 2
     if level < 2:
         try:
@@ -83,7 +99,8 @@ if LEVEL < 2:
                 os.environ["QT_XCB_GL_INTEGRATION"] = "xcb_egl"    # VA-API direkt braucht EGL
         except Exception as e:  # noqa: BLE001
             _early_log("EGL-Pruefung:", e)
-elif (not glob.glob("/dev/dri/renderD*") and os.environ.get("VS_PLAYER_FORCE") != "1") or os.environ.get("VS_QT_SOFTWARE") == "1":
+elif (not glob.glob("/dev/dri/renderD*") and os.environ.get("VS_PLAYER_FORCE") != "1") or WEAK \
+        or os.environ.get("VS_QT_SOFTWARE") == "1":
     os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 sys.path.insert(0, str(HERE))
@@ -117,7 +134,7 @@ PROPS = {"pause": "paused", "paused-for-cache": "buffering", "playback-time": "p
          "estimated-vf-fps": "fps", "video-codec": "codec", "hwdec-current": "hwdec", "frame-drop-count": "dropped",
          "playlist-pos": "plpos", "playlist-count": "plcount", "metadata": "meta", "video-aspect-override": "aspect",
          "panscan": "panscan", "audio-codec-name": "acodec", "audio-bitrate": "abitrate", "audio-params": "aparams",
-         "current-ao": "ao"}
+         "current-ao": "ao", "current-vo": "vo"}
 
 
 def mpv_options(ui_lang="de"):
@@ -133,8 +150,18 @@ def mpv_options(ui_lang="de"):
         "keep-open": "no", "idle": "yes", "ytdl": "no", "sub-auto": "fuzzy", "slang": langs, "alang": langs,
         "audio-display": "no", "volume": "100", "volume-max": "130", "input-default-bindings": "no",
         "osc": "no", "osd-level": "0", "save-position-on-quit": "no", "hls-bitrate": "max",
+        **(WEAK_OPTS if WEAK else {}),
         **({"ao": os.environ["VS_PLAYER_AO"]} if os.environ.get("VS_PLAYER_AO") else {}),   # Tests ohne Tonausgabe: null
     }
+
+
+# Schwache Hardware (siehe weak_hw): Decoding in Software (alte Grafik kann kein H.264), schnellere Decoder-Abkuerzungen
+# (vd-lavc-fast; Deblocking nur bei Bildern, auf die sich keine anderen beziehen – Fehler pflanzen sich nicht fort),
+# fuer den Rueckfall auf vo=x11 der schnelle Skalierer von ffmpeg statt zimg (Lanczos waere auf einem Pentium M zu
+# teuer), kleinerer Puffer fuer 1 GB RAM. Die Ausgabe (vo=xv,x11) setzt nur das mpv-Fenster der Stufe 2.
+WEAK_OPTS = {"hwdec": "no", "vd-lavc-fast": "yes", "vd-lavc-skiploopfilter": "nonref",
+             "sws-scaler": "fast-bilinear", "sws-fast": "yes", "sws-allow-zimg": "no",
+             "demuxer-max-bytes": "32MiB", "demuxer-max-back-bytes": "8MiB"}
 
 
 def opt_list(opts):
@@ -179,7 +206,7 @@ class Engine(QObject):
                     "title": "", "cache": 0, "tracks": [], "aid": None, "sid": None, "vid": None, "vw": 0, "vh": 0,
                     "fps": 0, "codec": "", "hwdec": "", "dropped": 0, "plpos": -1, "plcount": 0, "meta": {},
                     "aspect": "", "panscan": 0, "level": LEVEL, "embedded": self.embeddedVideo, "active": False,
-                    "acodec": "", "abitrate": 0, "asr": 0, "ach": 0, "ao": ""}
+                    "acodec": "", "abitrate": 0, "asr": 0, "ach": 0, "ao": "", "vo": ""}
         self.last_err = ""
         self.is_started = False
         self.cur = None               # (url, opts) der laufenden Datei – fuer reload()
@@ -583,6 +610,8 @@ class IpcEngine(Engine):
             pass
         opts = mpv_options(self.lang)
         opts.update({"input-default-bindings": "yes", "osc": "yes", "osd-level": "1"})   # Maus/Tastatur im mpv-Fenster
+        if WEAK:
+            opts["vo"] = "xv,x11"                        # Xv: Grafikkarte skaliert; fehlt Xv, nimmt mpv x11
         args = ["mpv", "--fs", "--force-window=yes", "--no-terminal", f"--title={self.title}",
                 f"--input-ipc-server={self.path}"] + [f"--{k}={v}" for k, v in opts.items()]
         log("mpv im eigenen Fenster:", " ".join(args[:6]))
@@ -965,6 +994,7 @@ class PlayerApp:
         ctx.setContextProperty("vsApi", vscommon.API)
         ctx.setContextProperty("vsMode", MODE)
         ctx.setContextProperty("vsArg", START_ARG)
+        ctx.setContextProperty("vsWeak", WEAK)
         ctx.setContextProperty("vsLogo", QUrl.fromLocalFile(str(WEB / "logo.png")).toString())
         size = os.environ.get("VS_SIZE", "")
         w, _, h = size.partition("x")
@@ -982,7 +1012,8 @@ class PlayerApp:
             self.win.setProperty("videoItem", self.video)
         self._serve()
         self.qapp.aboutToQuit.connect(self._shutdown)
-        log(f"Player ({MODE}) bereit nach {time.monotonic() - T0:.2f} s, Stufe {LEVEL}")
+        log(f"Player ({MODE}) bereit nach {time.monotonic() - T0:.2f} s, Stufe {LEVEL}"
+            + (" (schwache Hardware: Xv, sparsam)" if WEAK else ""))
         self._test_hooks()
         return self.qapp.exec()
 

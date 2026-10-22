@@ -72,7 +72,8 @@ Rectangle {
         [Ui.t("player.info.audio"), [audioFmt(), sampling()].filter(function (x) { return x !== "–" }).join(" · ") || "–"],
         [Ui.t("player.info.dropped"), String(st.dropped || 0)],
         [Ui.t("player.info.cache"), Ui.t("player.info.secs", { n: Ui.num(Math.round((st.cache || 0) * 10) / 10, 1) })],
-        [Ui.t("player.info.level"), Ui.t("player.info.levelN", { n: st.level === undefined ? "–" : st.level })]
+        [Ui.t("player.info.level"), Ui.t("player.info.levelN", { n: (st.level === undefined ? "–" : st.level)
+                                                            + (st.vo ? " · " + st.vo : "") })]
     ]
     Grid {
         id: grid

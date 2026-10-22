@@ -1876,6 +1876,11 @@ class IPTV:
                 f"--title=TV · {e['name']}", "--cache=yes", "--demuxer-max-bytes=64MiB", "--hwdec=auto-safe",
                 "--network-timeout=10",           # ohne stream-lavf-o=reconnect: bremst HLS-Sender aus (s. Player)
                 "--ytdl=no"]
+        if os.environ.get("VS_WEAK", "1" if os.uname().machine in ("i386", "i486", "i586", "i686") else "0") == "1":
+            # schwache Hardware (32 Bit, wie im Player): Xv statt OpenGL, Software-Decoding, niedrigste Qualitaet
+            args = [a for a in args if not a.startswith("--hwdec=")] + [
+                "--hwdec=no", "--vo=xv,x11", "--hls-bitrate=min", "--vd-lavc-fast=yes",
+                "--vd-lavc-skiploopfilter=nonref", "--sws-scaler=fast-bilinear", "--sws-allow-zimg=no"]
         if e.get("ref"):
             args.append(f"--referrer={e['ref']}")
         if e.get("ua"):

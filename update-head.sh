@@ -57,6 +57,25 @@ for p in curl elogind xrdb pulseaudio-utils mpv python3-mpv ffmpegthumbnailer ff
   xbps-query "$p" >/dev/null 2>&1 || MISSING="$MISSING $p"
 done
 if [ -n "$MISSING" ]; then xbps-install -Sy $MISSING || warn "Paketinstallation fehlgeschlagen"; else echo "alles da"; fi
+# 32-Bit-Rechner (experimentell): 2D-Treiber fuer die alte Grafik nachholen (Xv fuer den Player, s. install.sh)
+if [ "$(xbps-uhelper arch 2>/dev/null)" = i686 ]; then
+  DDX=""
+  for d in /sys/bus/pci/devices/*; do
+    case "$(cat "$d/class" 2>/dev/null)" in 0x03*) ;; *) continue ;; esac
+    case "$(cat "$d/vendor" 2>/dev/null)" in
+      0x1002) ddxp=xlibre-xf86-video-ati ;;
+      0x8086) ddxp=xlibre-xf86-video-intel ;;
+      0x10de) ddxp=xlibre-xf86-video-nouveau ;;
+      0x1106) ddxp=xlibre-xf86-video-openchrome ;;
+      *) continue ;;
+    esac
+    xbps-query "$ddxp" >/dev/null 2>&1 || ! xbps-query -R "$ddxp" >/dev/null 2>&1 || DDX="$DDX $ddxp"
+  done
+  if [ -n "$DDX" ]; then
+    xbps-install -Sy $DDX && echo "Grafiktreiber (2D):$DDX – wirkt nach dem Neustart" \
+      || warn "Grafiktreiber$DDX konnte nicht installiert werden"
+  fi
+fi
 
 # Intel-CPU: aktueller Microcode beim Start (behebt u. a. Haenger aelterer Skylake-CPUs mit altem BIOS)
 if grep -q GenuineIntel /proc/cpuinfo 2>/dev/null && ! xbps-query intel-ucode >/dev/null 2>&1 && [ "${VOIDSTATION_OFFLINE:-0}" != 1 ]; then

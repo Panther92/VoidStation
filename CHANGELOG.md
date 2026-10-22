@@ -9,6 +9,8 @@ ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freig
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
 ## Testing – 2026-10-22
+- Fernsehen und Videos auf 32-Bit-Rechnern (experimentell): Der Player gibt das Bild dort über Xv aus – die Grafikkarte skaliert dann selbst, auch alte Chips ohne 3D-Treiber (z. B. Radeon 7500/9000 im ThinkPad T41). Dazu installiert VoidStation auf 32 Bit den passenden Grafiktreiber (ATI, Intel, NVIDIA oder VIA) und dekodiert mit Abkürzungen, die auf alten Prozessoren spürbar Rechenzeit sparen. Fernsehen startet dort mit der Qualität „Sparsam“
+- Fernsehen: Die gewählte Qualität (Beste/Sparsam) bleibt jetzt gespeichert. Die Technik-Anzeige (Select / I) nennt bei der Stufe auch die Bildausgabe (z. B. „Stufe 2 · xv“)
 - Fernsehen: Viele Sender (z. B. 3sat, ZDF und andere HLS-Streams) kamen seit dem neuen Player nicht hinterher – der Puffer lief leer, das Bild stockte oder kam gar nicht. Schuld war eine Einstellung zum automatischen Wiederverbinden, die bei diesen Streams jedes Teilstück einzeln betraf. Sie ist raus; Abbrüche fängt der Player weiterhin selbst ab
 - Updates und Installation schreiben am Ende alles auf die Platte, bevor „Fertig“ erscheint. Ging der Rechner direkt nach einem Update hart aus (Netzschalter, Stromausfall), konnten Dateien von VoidStation leer zurückbleiben – die Startseite kam dann nicht mehr hoch
 - Fernsehen und Videos auf Grafikkarten ohne Videobeschleunigung (z. B. alte Notebooks; der Player zeigt das Bild dann in einem eigenen mpv-Fenster): Das Bild lag hinter dem Player, man hörte nur den Ton, bis man die Kachel ein zweites Mal wählte. Jetzt kommt das Bild von selbst nach vorn

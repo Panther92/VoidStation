@@ -51,6 +51,20 @@ for d in /sys/bus/pci/devices/*; do
     0x10de) echo "GPU: NVIDIA (nouveau)"; GPU_PKGS="$GPU_PKGS mesa-nouveau-dri" ;;
   esac
 done
+# 32-Bit-Rechner (experimentell): eigener 2D-Treiber fuer die alte Grafik. Aktuelles Mesa hat fuer Radeon 7500/9000
+# und Intel bis i915 keinen 3D-Treiber mehr; X liefe dann mit modesetting, das Xv (Video-Skalierung durch die
+# Grafikkarte) nur ueber OpenGL kann. Der Player gibt auf 32 Bit ueber Xv aus.
+if [ "$(xbps-uhelper arch 2>/dev/null)" = i686 ]; then
+  for d in /sys/bus/pci/devices/*; do
+    case "$(cat "$d/class" 2>/dev/null)" in 0x03*) ;; *) continue ;; esac
+    case "$(cat "$d/vendor" 2>/dev/null)" in
+      0x1002) GPU_PKGS="$GPU_PKGS xlibre-xf86-video-ati" ;;
+      0x8086) GPU_PKGS="$GPU_PKGS xlibre-xf86-video-intel" ;;
+      0x10de) GPU_PKGS="$GPU_PKGS xlibre-xf86-video-nouveau" ;;
+      0x1106) GPU_PKGS="$GPU_PKGS xlibre-xf86-video-openchrome" ;;
+    esac
+  done
+fi
 PKGS="xinit xauth xset xrandr xprop setxkbmap $GPU_PKGS \
   openbox dbus elogind xrdb pulseaudio-utils curl python3 python3-evdev wmctrl unclutter-xfixes \
   firefox mpv python3-mpv ffmpegthumbnailer ffmpeg yt-dlp nodejs samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 pcmanfm gvfs xterm \

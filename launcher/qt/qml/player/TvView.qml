@@ -27,7 +27,8 @@ Item {
     property var epg: null
     property bool infoOn: false
     property bool exitArmed: false
-    property string quality: "max"
+    // Qualitaet (hls-bitrate) wird gemerkt; schwache Hardware (32 Bit) startet mit "Sparsam"
+    property string quality: vs.prefGet("tvQuality", (typeof vsWeak !== "undefined" && vsWeak) ? "min" : "max")
     property string clock: ""
     readonly property var shown: pending >= 0 && list[pending] ? list[pending] : cur
     readonly property int curIdx: indexOf(cur ? cur.key : "")
@@ -422,7 +423,7 @@ Item {
         id: menu
         withQuality: true
         quality: tv.quality
-        onQualityChosen: function (v) { tv.quality = v; if (tv.cur) tv.player.reload({ "hls-bitrate": v }) }
+        onQualityChosen: function (v) { tv.quality = v; vs.prefSet("tvQuality", v); if (tv.cur) tv.player.reload({ "hls-bitrate": v }) }
         homeSub: Ui.t("player.menu.homeTv")
         onHomeChosen: tv.goHome()
     }
