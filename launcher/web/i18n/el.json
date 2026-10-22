@@ -809,5 +809,20 @@
   "yt.err.offline": "Δεν υπάρχει σύνδεση με το YouTube",
   "yt.err.timeout": "Το YouTube δεν αποκρίνεται",
   "yt.err.noytdlp": "Λείπει το yt-dlp",
-  "app.ytlight.desc": "YouTube χωρίς πρόγραμμα περιήγησης και χωρίς λογαριασμό Google: αναζήτηση, εγγραφή σε κανάλια, λίστες, παρακολούθηση αργότερα και συνέχεια – με τη συσκευή αναπαραγωγής του VoidStation, εξ ολοκλήρου με το χειριστήριο. Τρέχει ομαλά και σε παλιούς υπολογιστές. Οι εγγραφές εισάγονται από Google Takeout, NewPipe και FreeTube· όλα μένουν στη συσκευή."
+  "app.ytlight.desc": "YouTube χωρίς πρόγραμμα περιήγησης και χωρίς λογαριασμό Google: αναζήτηση, εγγραφή σε κανάλια, λίστες, παρακολούθηση αργότερα και συνέχεια – με τη συσκευή αναπαραγωγής του VoidStation, εξ ολοκλήρου με το χειριστήριο. Τρέχει ομαλά και σε παλιούς υπολογιστές. Οι εγγραφές εισάγονται από Google Takeout, NewPipe και FreeTube· όλα μένουν στη συσκευή.",
+  "player.dvd": "DVD",
+  "player.dvd.titles": "{n} τίτλοι",
+  "player.dvd.reading": "ανάγνωση …",
+  "player.dvd.title": "Τίτλος {n}",
+  "player.dvd.chapters": "{n} κεφάλαια",
+  "player.dvd.playAll": "Αναπαραγωγή όλων των τίτλων",
+  "player.dvd.eject": "Εξαγωγή",
+  "player.dvd.ejectSub": "Βγάλε το DVD από τη μονάδα",
+  "player.dvd.ejectFailed": "Η εξαγωγή απέτυχε",
+  "player.dvd.deint": "Αποπλέξη",
+  "player.dvd.deintSub": "κατά του φαινομένου «χτένας» (DVD σειρών) – κοστίζει CPU",
+  "player.dvd.deintOn": "Αποπλέξη ενεργή",
+  "player.dvd.deintOff": "Αποπλέξη ανενεργή",
+  "player.dvd.next": "Επόμενος τίτλος",
+  "player.hint.dvdTitles": "<b>X / Y</b> επόμενος / προηγούμενος τίτλος"
 }

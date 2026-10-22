@@ -808,5 +808,20 @@
   "yt.err.offline": "Nav savienojuma ar YouTube",
   "yt.err.timeout": "YouTube neatbild",
   "yt.err.noytdlp": "Trūkst yt-dlp",
-  "app.ytlight.desc": "YouTube bez pārlūka un bez Google konta: meklēšana, kanālu abonēšana, atskaņošanas saraksti, skatīties vēlāk un turpināt – VoidStation atskaņotājā, pilnībā ar kontrolieri. Raiti darbojas arī vecos datoros. Abonementus var pārņemt no Google Takeout, NewPipe un FreeTube; viss paliek ierīcē."
+  "app.ytlight.desc": "YouTube bez pārlūka un bez Google konta: meklēšana, kanālu abonēšana, atskaņošanas saraksti, skatīties vēlāk un turpināt – VoidStation atskaņotājā, pilnībā ar kontrolieri. Raiti darbojas arī vecos datoros. Abonementus var pārņemt no Google Takeout, NewPipe un FreeTube; viss paliek ierīcē.",
+  "player.dvd": "DVD",
+  "player.dvd.titles": "{n} nosaukumi",
+  "player.dvd.reading": "nolasa …",
+  "player.dvd.title": "{n}. nosaukums",
+  "player.dvd.chapters": "{n} nodaļas",
+  "player.dvd.playAll": "Atskaņot visus nosaukumus",
+  "player.dvd.eject": "Izgrūst",
+  "player.dvd.ejectSub": "Izņemt DVD no diskdziņa",
+  "player.dvd.ejectFailed": "Neizdevās izgrūst",
+  "player.dvd.deint": "Novērst rindpārlēces",
+  "player.dvd.deintSub": "pret ķemmes efektu (seriālu DVD) – noslogo CPU",
+  "player.dvd.deintOn": "Rindpārlēces novēršana ieslēgta",
+  "player.dvd.deintOff": "Rindpārlēces novēršana izslēgta",
+  "player.dvd.next": "Nākamais nosaukums",
+  "player.hint.dvdTitles": "<b>X / Y</b> nākamais / iepriekšējais nosaukums"
 }

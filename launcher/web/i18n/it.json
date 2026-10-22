@@ -808,5 +808,20 @@
   "yt.err.offline": "Nessuna connessione a YouTube",
   "yt.err.timeout": "YouTube non risponde",
   "yt.err.noytdlp": "Manca yt-dlp",
-  "app.ytlight.desc": "YouTube senza browser e senza account Google: cerca, iscriviti ai canali, playlist, guarda più tardi e continua a guardare – con il lettore di VoidStation, tutto con il controller. Fluido anche su computer vecchi. Le iscrizioni si importano da Google Takeout, NewPipe e FreeTube; tutto resta sul dispositivo."
+  "app.ytlight.desc": "YouTube senza browser e senza account Google: cerca, iscriviti ai canali, playlist, guarda più tardi e continua a guardare – con il lettore di VoidStation, tutto con il controller. Fluido anche su computer vecchi. Le iscrizioni si importano da Google Takeout, NewPipe e FreeTube; tutto resta sul dispositivo.",
+  "player.dvd": "DVD",
+  "player.dvd.titles": "{n} titoli",
+  "player.dvd.reading": "lettura …",
+  "player.dvd.title": "Titolo {n}",
+  "player.dvd.chapters": "{n} capitoli",
+  "player.dvd.playAll": "Riproduci tutti i titoli",
+  "player.dvd.eject": "Espelli",
+  "player.dvd.ejectSub": "Estrai il DVD dall’unità",
+  "player.dvd.ejectFailed": "Espulsione non riuscita",
+  "player.dvd.deint": "Deinterlacciamento",
+  "player.dvd.deintSub": "contro l’effetto pettine (DVD di serie) – usa la CPU",
+  "player.dvd.deintOn": "Deinterlacciamento attivo",
+  "player.dvd.deintOff": "Deinterlacciamento disattivato",
+  "player.dvd.next": "Titolo successivo",
+  "player.hint.dvdTitles": "<b>X / Y</b> titolo successivo / precedente"
 }

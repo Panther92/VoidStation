@@ -943,5 +943,20 @@
   "yt.err.outdated": "YouTube hat etwas geändert – yt-dlp ist zu alt",
   "yt.err.offline": "Keine Verbindung zu YouTube",
   "yt.err.timeout": "YouTube antwortet nicht",
-  "yt.err.noytdlp": "yt-dlp fehlt"
+  "yt.err.noytdlp": "yt-dlp fehlt",
+  "player.dvd": "DVD",
+  "player.dvd.titles": "{n} Titel",
+  "player.dvd.reading": "wird gelesen …",
+  "player.dvd.title": "Titel {n}",
+  "player.dvd.chapters": "{n} Kapitel",
+  "player.dvd.playAll": "Alle Titel abspielen",
+  "player.dvd.eject": "Auswerfen",
+  "player.dvd.ejectSub": "DVD aus dem Laufwerk",
+  "player.dvd.ejectFailed": "Auswerfen fehlgeschlagen",
+  "player.dvd.deint": "Zeilensprung entfernen",
+  "player.dvd.deintSub": "gegen Kammmuster (Serien-DVDs) – kostet Rechenzeit",
+  "player.dvd.deintOn": "Zeilensprung wird entfernt",
+  "player.dvd.deintOff": "Zeilensprung: aus",
+  "player.dvd.next": "Nächster Titel",
+  "player.hint.dvdTitles": "<b>X / Y</b> nächster / voriger Titel"
 }

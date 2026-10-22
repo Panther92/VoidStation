@@ -3,6 +3,9 @@
 Strichfarbe "currentColor" wird beim Zeichnen durch die Textfarbe ersetzt."""
 
 ICONS = {
+    # DVD: Disc, Auswerfen
+    'disc': '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4"><circle cx="24" cy="24" r="18"/><circle cx="24" cy="24" r="5"/><path d="M24 10a14 14 0 0 1 14 14" stroke-linecap="round" opacity=".6"/></svg>',
+    'eject': '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"><path d="M24 10L9 28h30z"/><path d="M9 37h30"/></svg>',
     # YouTube Light: Spaeter ansehen, Suche, Kanal
     'clock': '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="24" cy="24" r="18"/><path d="M24 13v11l7 5"/></svg>',
     'search': '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><circle cx="21" cy="21" r="13"/><path d="M31 31l11 11"/></svg>',

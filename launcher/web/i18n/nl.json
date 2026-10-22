@@ -807,5 +807,20 @@
   "yt.err.offline": "Geen verbinding met YouTube",
   "yt.err.timeout": "YouTube reageert niet",
   "yt.err.noytdlp": "yt-dlp ontbreekt",
-  "app.ytlight.desc": "YouTube zonder browser en zonder Google-account: zoeken, abonneren op kanalen, afspeellijsten, later bekijken en verder kijken – met de VoidStation-speler, helemaal met de controller. Loopt ook op oude computers soepel. Abonnementen kun je overnemen uit Google Takeout, NewPipe en FreeTube; alles blijft op het apparaat."
+  "app.ytlight.desc": "YouTube zonder browser en zonder Google-account: zoeken, abonneren op kanalen, afspeellijsten, later bekijken en verder kijken – met de VoidStation-speler, helemaal met de controller. Loopt ook op oude computers soepel. Abonnementen kun je overnemen uit Google Takeout, NewPipe en FreeTube; alles blijft op het apparaat.",
+  "player.dvd": "dvd",
+  "player.dvd.titles": "{n} titels",
+  "player.dvd.reading": "wordt gelezen …",
+  "player.dvd.title": "Titel {n}",
+  "player.dvd.chapters": "{n} hoofdstukken",
+  "player.dvd.playAll": "Alle titels afspelen",
+  "player.dvd.eject": "Uitwerpen",
+  "player.dvd.ejectSub": "Dvd uit de speler halen",
+  "player.dvd.ejectFailed": "Uitwerpen mislukt",
+  "player.dvd.deint": "Deïnterlacen",
+  "player.dvd.deintSub": "tegen kameffect (serie-dvd’s) – kost rekentijd",
+  "player.dvd.deintOn": "Deïnterlacen aan",
+  "player.dvd.deintOff": "Deïnterlacen uit",
+  "player.dvd.next": "Volgende titel",
+  "player.hint.dvdTitles": "<b>X / Y</b> volgende / vorige titel"
 }

@@ -807,5 +807,20 @@
   "yt.err.offline": "Brak połączenia z YouTube",
   "yt.err.timeout": "YouTube nie odpowiada",
   "yt.err.noytdlp": "Brak yt-dlp",
-  "app.ytlight.desc": "YouTube bez przeglądarki i bez konta Google: wyszukiwanie, subskrypcje kanałów, playlisty, do obejrzenia i oglądanie dalej – w odtwarzaczu VoidStation, w całości z kontrolerem. Płynnie działa też na starych komputerach. Subskrypcje można przenieść z Google Takeout, NewPipe i FreeTube; wszystko zostaje na urządzeniu."
+  "app.ytlight.desc": "YouTube bez przeglądarki i bez konta Google: wyszukiwanie, subskrypcje kanałów, playlisty, do obejrzenia i oglądanie dalej – w odtwarzaczu VoidStation, w całości z kontrolerem. Płynnie działa też na starych komputerach. Subskrypcje można przenieść z Google Takeout, NewPipe i FreeTube; wszystko zostaje na urządzeniu.",
+  "player.dvd": "DVD",
+  "player.dvd.titles": "Tytuły: {n}",
+  "player.dvd.reading": "odczyt …",
+  "player.dvd.title": "Tytuł {n}",
+  "player.dvd.chapters": "Rozdziały: {n}",
+  "player.dvd.playAll": "Odtwórz wszystkie tytuły",
+  "player.dvd.eject": "Wysuń",
+  "player.dvd.ejectSub": "Wyjmij płytę DVD z napędu",
+  "player.dvd.ejectFailed": "Nie udało się wysunąć",
+  "player.dvd.deint": "Usuń przeplot",
+  "player.dvd.deintSub": "przeciw efektowi grzebienia (DVD z serialami) – obciąża CPU",
+  "player.dvd.deintOn": "Usuwanie przeplotu włączone",
+  "player.dvd.deintOff": "Usuwanie przeplotu wyłączone",
+  "player.dvd.next": "Następny tytuł",
+  "player.hint.dvdTitles": "<b>X / Y</b> następny / poprzedni tytuł"
 }

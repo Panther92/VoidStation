@@ -809,5 +809,20 @@
   "yt.err.offline": "Нет связи с YouTube",
   "yt.err.timeout": "YouTube не отвечает",
   "yt.err.noytdlp": "Нет yt-dlp",
-  "app.ytlight.desc": "YouTube без браузера и без аккаунта Google: поиск, подписка на каналы, плейлисты, «смотреть позже» и продолжение просмотра – в плеере VoidStation, полностью с геймпада. Плавно работает даже на старых компьютерах. Подписки можно перенести из Google Takeout, NewPipe и FreeTube; всё остаётся на устройстве."
+  "app.ytlight.desc": "YouTube без браузера и без аккаунта Google: поиск, подписка на каналы, плейлисты, «смотреть позже» и продолжение просмотра – в плеере VoidStation, полностью с геймпада. Плавно работает даже на старых компьютерах. Подписки можно перенести из Google Takeout, NewPipe и FreeTube; всё остаётся на устройстве.",
+  "player.dvd": "DVD",
+  "player.dvd.titles": "Титулов: {n}",
+  "player.dvd.reading": "чтение …",
+  "player.dvd.title": "Титул {n}",
+  "player.dvd.chapters": "Глав: {n}",
+  "player.dvd.playAll": "Воспроизвести все титулы",
+  "player.dvd.eject": "Извлечь",
+  "player.dvd.ejectSub": "Извлечь DVD из привода",
+  "player.dvd.ejectFailed": "Не удалось извлечь",
+  "player.dvd.deint": "Деинтерлейсинг",
+  "player.dvd.deintSub": "против «гребёнки» (DVD с сериалами) – нагружает процессор",
+  "player.dvd.deintOn": "Деинтерлейсинг включён",
+  "player.dvd.deintOff": "Деинтерлейсинг выключен",
+  "player.dvd.next": "Следующий титул",
+  "player.hint.dvdTitles": "<b>X / Y</b> следующий / предыдущий титул"
 }

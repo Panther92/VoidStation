@@ -51,7 +51,7 @@ done
 
 say "1/8  Pakete"
 MISSING=""
-for p in curl elogind xrdb pulseaudio-utils mpv python3-mpv ffmpegthumbnailer ffmpeg yt-dlp nodejs samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf xprop adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 \
+for p in curl elogind xrdb pulseaudio-utils mpv python3-mpv ffmpegthumbnailer ffmpeg yt-dlp nodejs lsdvd samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf xprop adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 \
          bluez libspa-bluetooth htop nano fastfetch mousepad python3-pyside6-declarative qt6-svg qt6-imageformats qt6-plugin-tls-openssl \
          wireless-regdb; do
   xbps-query "$p" >/dev/null 2>&1 || MISSING="$MISSING $p"
@@ -275,6 +275,8 @@ fi
 
 # Bluetooth: bluetoothctl braucht die Gruppe bluetooth (wirkt nach dem naechsten Neustart)
 getent group bluetooth >/dev/null && usermod -aG bluetooth "$VSUSER" || true
+# DVD-Laufwerk lesen (Videos & Musik: DVDs; wirkt nach dem naechsten Neustart)
+for g in optical cdrom; do getent group "$g" >/dev/null && usermod -aG "$g" "$VSUSER" || true; done
 
 # Bluetooth & Controller (BlueZ-Einstellungen, udev-Regeln, uinput): sysfix.sh
 

@@ -809,5 +809,20 @@
   "yt.err.offline": "Nincs kapcsolat a YouTube-bal",
   "yt.err.timeout": "A YouTube nem válaszol",
   "yt.err.noytdlp": "Hiányzik a yt-dlp",
-  "app.ytlight.desc": "YouTube böngésző és Google-fiók nélkül: keresés, feliratkozás csatornákra, lejátszási listák, megnézés később és folytatás – a VoidStation lejátszójával, teljesen kontrollerrel. Régi gépeken is gördülékeny. A feliratkozások átvehetők a Google Takeoutból, a NewPipe-ból és a FreeTube-ból; minden az eszközön marad."
+  "app.ytlight.desc": "YouTube böngésző és Google-fiók nélkül: keresés, feliratkozás csatornákra, lejátszási listák, megnézés később és folytatás – a VoidStation lejátszójával, teljesen kontrollerrel. Régi gépeken is gördülékeny. A feliratkozások átvehetők a Google Takeoutból, a NewPipe-ból és a FreeTube-ból; minden az eszközön marad.",
+  "player.dvd": "DVD",
+  "player.dvd.titles": "{n} cím",
+  "player.dvd.reading": "beolvasás …",
+  "player.dvd.title": "{n}. cím",
+  "player.dvd.chapters": "{n} fejezet",
+  "player.dvd.playAll": "Összes cím lejátszása",
+  "player.dvd.eject": "Kiadás",
+  "player.dvd.ejectSub": "DVD kivétele a meghajtóból",
+  "player.dvd.ejectFailed": "A kiadás nem sikerült",
+  "player.dvd.deint": "Váltottsoros kép javítása",
+  "player.dvd.deintSub": "fésűs hatás ellen (sorozat-DVD-k) – CPU-t igényel",
+  "player.dvd.deintOn": "Váltottsoros javítás be",
+  "player.dvd.deintOff": "Váltottsoros javítás ki",
+  "player.dvd.next": "Következő cím",
+  "player.hint.dvdTitles": "<b>X / Y</b> következő / előző cím"
 }

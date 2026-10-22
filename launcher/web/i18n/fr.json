@@ -807,5 +807,20 @@
   "yt.err.offline": "Pas de connexion à YouTube",
   "yt.err.timeout": "YouTube ne répond pas",
   "yt.err.noytdlp": "yt-dlp manque",
-  "app.ytlight.desc": "YouTube sans navigateur et sans compte Google : rechercher, s’abonner à des chaînes, playlists, regarder plus tard et reprendre – avec le lecteur VoidStation, entièrement à la manette. Fluide même sur de vieux ordinateurs. Les abonnements s’importent depuis Google Takeout, NewPipe et FreeTube ; tout reste sur l’appareil."
+  "app.ytlight.desc": "YouTube sans navigateur et sans compte Google : rechercher, s’abonner à des chaînes, playlists, regarder plus tard et reprendre – avec le lecteur VoidStation, entièrement à la manette. Fluide même sur de vieux ordinateurs. Les abonnements s’importent depuis Google Takeout, NewPipe et FreeTube ; tout reste sur l’appareil.",
+  "player.dvd": "DVD",
+  "player.dvd.titles": "{n} titres",
+  "player.dvd.reading": "lecture …",
+  "player.dvd.title": "Titre {n}",
+  "player.dvd.chapters": "{n} chapitres",
+  "player.dvd.playAll": "Lire tous les titres",
+  "player.dvd.eject": "Éjecter",
+  "player.dvd.ejectSub": "Sortir le DVD du lecteur",
+  "player.dvd.ejectFailed": "Échec de l’éjection",
+  "player.dvd.deint": "Désentrelacer",
+  "player.dvd.deintSub": "contre l’effet de peigne (DVD de séries) – consomme du CPU",
+  "player.dvd.deintOn": "Désentrelacement activé",
+  "player.dvd.deintOff": "Désentrelacement désactivé",
+  "player.dvd.next": "Titre suivant",
+  "player.hint.dvdTitles": "<b>X / Y</b> titre suivant / précédent"
 }

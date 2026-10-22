@@ -809,5 +809,20 @@
   "yt.err.offline": "Немає зв’язку з YouTube",
   "yt.err.timeout": "YouTube не відповідає",
   "yt.err.noytdlp": "Немає yt-dlp",
-  "app.ytlight.desc": "YouTube без браузера та без облікового запису Google: пошук, підписка на канали, плейлисти, «переглянути пізніше» і продовження перегляду – у плеєрі VoidStation, повністю з геймпада. Плавно працює навіть на старих комп’ютерах. Підписки можна перенести з Google Takeout, NewPipe і FreeTube; усе залишається на пристрої."
+  "app.ytlight.desc": "YouTube без браузера та без облікового запису Google: пошук, підписка на канали, плейлисти, «переглянути пізніше» і продовження перегляду – у плеєрі VoidStation, повністю з геймпада. Плавно працює навіть на старих комп’ютерах. Підписки можна перенести з Google Takeout, NewPipe і FreeTube; усе залишається на пристрої.",
+  "player.dvd": "DVD",
+  "player.dvd.titles": "Титулів: {n}",
+  "player.dvd.reading": "читання …",
+  "player.dvd.title": "Титул {n}",
+  "player.dvd.chapters": "Розділів: {n}",
+  "player.dvd.playAll": "Відтворити всі титули",
+  "player.dvd.eject": "Вийняти",
+  "player.dvd.ejectSub": "Вийняти DVD з приводу",
+  "player.dvd.ejectFailed": "Не вдалося вийняти",
+  "player.dvd.deint": "Деінтерлейсинг",
+  "player.dvd.deintSub": "проти «гребінки» (DVD із серіалами) – навантажує процесор",
+  "player.dvd.deintOn": "Деінтерлейсинг увімкнено",
+  "player.dvd.deintOff": "Деінтерлейсинг вимкнено",
+  "player.dvd.next": "Наступний титул",
+  "player.hint.dvdTitles": "<b>X / Y</b> наступний / попередній титул"
 }

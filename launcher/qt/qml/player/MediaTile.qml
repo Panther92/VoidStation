@@ -12,12 +12,14 @@ Tile {
     readonly property string thumb: coverOverride ? Ui.url(coverOverride) : it.thumb ? Ui.url(it.thumb) : ""
     readonly property real progress: it.resume && it.resume.dur > 0 ? Math.min(1, it.resume.pos / it.resume.dur) : 0
     tileColor: kind === "videos" ? "#2c3f57" : kind === "music" ? "#4a2f45" : kind === "resume" ? Ui.c.accentTv
-             : kind === "drive" ? "#33433a" : kind === "playall" ? Ui.c.surfaceActive : kind === "dl" ? "#3d3566" : Ui.c.surfaceCard
+             : kind === "drive" ? "#33433a" : kind === "playall" || kind === "dvdall" ? Ui.c.surfaceActive : kind === "dl" ? "#3d3566"
+             : kind === "dvd" ? "#4a3a5e" : kind === "dvdtitle" ? (it.main ? "#3a3550" : Ui.c.surfaceCard) : Ui.c.surfaceCard
     enterDelay: Math.min(index * 18, 500)
 
     function glyph() {
         return { dir: "folder", videos: "film", music: "music", drive: "usb", video: "film", audio: "music",
-                 playall: "playfill", resume: "play", dl: "download" }[kind] || "folder"
+                 playall: "playfill", resume: "play", dl: "download", dvd: "disc", dvdtitle: "film", dvdall: "playfill",
+                 eject: "eject" }[kind] || "folder"
     }
     Image {
         id: img

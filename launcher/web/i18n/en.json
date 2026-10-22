@@ -1074,5 +1074,20 @@
   "yt.err.offline": "No connection to YouTube",
   "yt.err.timeout": "YouTube is not responding",
   "yt.err.noytdlp": "yt-dlp is missing",
-  "app.ytlight.desc": "YouTube without a browser and without a Google account: search, subscribe to channels, playlists, watch later and continue watching – played with the VoidStation player, entirely with the controller. Runs smoothly on old computers too. Subscriptions can be imported from Google Takeout, NewPipe and FreeTube; everything stays on the device."
+  "app.ytlight.desc": "YouTube without a browser and without a Google account: search, subscribe to channels, playlists, watch later and continue watching – played with the VoidStation player, entirely with the controller. Runs smoothly on old computers too. Subscriptions can be imported from Google Takeout, NewPipe and FreeTube; everything stays on the device.",
+  "player.dvd": "DVD",
+  "player.dvd.titles": "{n} titles",
+  "player.dvd.reading": "reading …",
+  "player.dvd.title": "Title {n}",
+  "player.dvd.chapters": "{n} chapters",
+  "player.dvd.playAll": "Play all titles",
+  "player.dvd.eject": "Eject",
+  "player.dvd.ejectSub": "Take the DVD out of the drive",
+  "player.dvd.ejectFailed": "Eject failed",
+  "player.dvd.deint": "Deinterlace",
+  "player.dvd.deintSub": "against comb artifacts (series DVDs) – costs CPU time",
+  "player.dvd.deintOn": "Deinterlacing on",
+  "player.dvd.deintOff": "Deinterlacing off",
+  "player.dvd.next": "Next title",
+  "player.hint.dvdTitles": "<b>X / Y</b> next / previous title"
 }

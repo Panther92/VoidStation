@@ -77,6 +77,12 @@ def media():
         L.CoverFetcher.auto = staticmethod(lambda: PLAYER.get("covers_auto", True))
         L.CoverFetcher.embed = staticmethod(lambda: PLAYER.get("covers_embed", False))
         L.SETTINGS = tmp / "settings.json"                     # Einstellungen (Musik suchen) nicht ins Repo schreiben
+        if os.environ.get("VS_DVD"):                           # VS_DVD=<Ordner mit VIDEO_TS>: gilt als eingelegte DVD
+            dvd = str(Path(os.environ["VS_DVD"]).resolve())
+            L.DVD.devices = staticmethod(lambda: [dvd])
+            L.DVD._status = lambda d: L.DvdDrive.CDS_DISC_OK
+            L.DVD._size = staticmethod(lambda d: 1)
+            L.DVD.eject = lambda d: True
         PLAYER["L"] = L
         PLAYER["media"], PLAYER["tmp"] = L.MediaLib(), tmp
     return PLAYER["media"]
@@ -297,6 +303,7 @@ class H(S.H):
             "/api/media/list": lambda: media_list(q),
             "/api/media/nextfolder": lambda: media().next_folder(q.get("path", [""])[0]) or {},
             "/api/media/covers": lambda: (media(), PLAYER["L"].COVERS.status())[1],
+            "/api/media/dvd": lambda: (media(), {"discs": PLAYER["L"].DVD.discs()})[1],
             "/api/dl/settings": lambda: (media(), PLAYER["L"].MUSICDL.payload())[1],
             "/api/dl/status": lambda: (media(), PLAYER["L"].MUSICDL.status())[1],
         }

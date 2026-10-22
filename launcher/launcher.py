@@ -2176,6 +2176,145 @@ def natural_key(name):
     return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", tv_fold(name))]
 
 
+class DvdDrive:
+    """DVD-Laufwerk fuer "Videos & Musik": Disc erkennen (ioctl CDROM_DRIVE_STATUS – laeuft die Disc nicht an),
+    Titel lesen (lsdvd, einmal je Disc, im Hintergrund), auswerfen. Abgespielt wird mit mpv: dvd://<n>/<geraet>,
+    mpv zaehlt Titel ab 0, lsdvd ab 1. DVD-Menues kann mpv nicht – deshalb die Titelliste (Serien: ein Titel je Folge).
+    Kopiergeschuetzte Kauf-DVDs entschluesselt libdvdread ueber libdvdcss (bei Void eine Abhaengigkeit von mpv)."""
+    CDROM_DRIVE_STATUS = 0x5326
+    CDS_DISC_OK = 4
+    MIN_TITLE = 60                                       # kuerzere Titel (Warnhinweise, Logos, Menues) ausblenden
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.cache = {}                                  # geraet -> {"key": (status, groesse), "info": ..., "busy": bool}
+
+    @staticmethod
+    def devices():
+        return sorted(str(p) for p in Path("/dev").glob("sr[0-9]*"))
+
+    def _status(self, dev):
+        import fcntl
+        try:
+            fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            return -1
+        try:
+            return fcntl.ioctl(fd, self.CDROM_DRIVE_STATUS, 0x7fffffff)
+        except OSError:
+            return -1
+        finally:
+            os.close(fd)
+
+    @staticmethod
+    def _size(dev):
+        try:
+            return int(Path(f"/sys/block/{Path(dev).name}/size").read_text().strip() or 0)
+        except (OSError, ValueError):
+            return 0
+
+    @staticmethod
+    def parse(text):
+        """lsdvd -Ox (XML) -> {"label", "titles": [{ix, length, aspect, format, chapters, audio, subs}], "longest"}.
+        Mit regulaeren Ausdruecken statt XML-Parser: lsdvd schreibt Disc-Namen ungefiltert."""
+        def tag(name, block, default=""):
+            m = re.search(rf"<{name}>(.*?)</{name}>", block, re.S)
+            return html_unescape(m.group(1).strip()) if m else default
+        head = text.split("<track>", 1)[0]
+        titles = []
+        for block in re.findall(r"<track>(.*?)</track>", text, re.S):
+            try:
+                ix, length = int(tag("ix", block, "0")), float(tag("length", block, "0"))
+            except ValueError:
+                continue
+            if ix > 0:
+                titles.append({"ix": ix, "length": round(length, 1), "aspect": tag("aspect", block),
+                               "format": tag("format", block), "chapters": block.count("<chapter>"),
+                               "audio": block.count("<audio>"), "subs": block.count("<subp>")})
+        longest = max(titles, key=lambda t: t["length"])["ix"] if titles else 0
+        label = tag("title", head).replace("_", " ").strip()
+        return {"label": "" if label.lower() == "unknown" else label, "titles": titles, "longest": longest}
+
+    def _scan(self, dev, key):
+        info = None
+        exe = shutil.which("lsdvd")
+        if exe:
+            r = run([exe, "-Ox", "-v", "-a", "-c", "-s", dev], timeout=90)
+            if r and r.stdout.strip():
+                info = self.parse(r.stdout)
+            else:
+                log("DVD: lsdvd ohne Ergebnis", dev, (r.stderr.strip().splitlines() or [""])[-1][:200] if r else "")
+        else:
+            log("DVD: lsdvd fehlt")
+        with self.lock:
+            c = self.cache.get(dev)
+            if c and c["key"] == key:
+                c.update(info=info or {"label": "", "titles": [], "longest": 0}, busy=False)
+        if info:
+            log(f"DVD {dev}: „{info['label']}“, {len(info['titles'])} Titel")
+
+    def discs(self):
+        """Eingelegte Discs: [{dev, label, ready, n}]; liest neue Discs im Hintergrund ein."""
+        out = []
+        for dev in self.devices():
+            st = self._status(dev)
+            with self.lock:
+                if st != self.CDS_DISC_OK:
+                    self.cache.pop(dev, None)
+                    continue
+                key = (st, self._size(dev))
+                c = self.cache.get(dev)
+                if not c or c["key"] != key:
+                    c = self.cache[dev] = {"key": key, "info": None, "busy": True}
+                    threading.Thread(target=self._scan, args=(dev, key), daemon=True).start()
+                info = c["info"]
+            out.append({"dev": dev, "label": (info or {}).get("label", ""), "ready": info is not None,
+                        "n": len(self.shown(info)) if info else 0})
+        return out
+
+    def shown(self, info):
+        t = [x for x in (info or {}).get("titles", []) if x["length"] >= self.MIN_TITLE]
+        return t or (info or {}).get("titles", [])
+
+    def listing(self, dev):
+        if dev not in self.devices():
+            raise FileNotFoundError(dev)
+        for _ in range(180):                             # Disc wird gerade gelesen: bis zu 90 s warten
+            self.discs()
+            with self.lock:
+                c = self.cache.get(dev)
+                if not c:
+                    raise FileNotFoundError("keine Disc im Laufwerk")
+                if c["info"] is not None:
+                    info = c["info"]
+                    break
+            time.sleep(0.5)
+        else:
+            raise FileNotFoundError("Disc nicht lesbar")
+        titles = self.shown(info)
+        items = []
+        if len(titles) > 1:
+            items.append({"kind": "dvdall", "path": f"dvd://{titles[0]['ix'] - 1}/{dev}", "title": "", "n": len(titles)})
+        for t in titles:
+            items.append({"kind": "dvdtitle", "path": f"dvd://{t['ix'] - 1}/{dev}", "ix": t["ix"], "dur": t["length"],
+                          "aspect": t["aspect"], "chapters": t["chapters"], "main": t["ix"] == info["longest"],
+                          "title": "", "name": f"{t['ix']}", "thumb": ""})
+        items.append({"kind": "eject", "path": f"dvd:{dev}", "title": ""})
+        return {"path": f"dvd:{dev}", "name": info["label"], "parent": "", "items": items, "select": "",
+                "audio": 0, "coversPending": 0, "dvd": dev}
+
+    def eject(self, dev):
+        if dev not in self.devices():
+            raise ValueError("kein Laufwerk")
+        with self.lock:
+            self.cache.pop(dev, None)
+        r = run(["eject", dev], timeout=20)
+        return bool(r and r.returncode == 0)
+
+
+DVD = DvdDrive()
+
+
 class MediaLib:
     """Ordner auflisten, Vorschaubilder (ffmpegthumbnailer, zwischengespeichert), Weiterschauen (resume.json).
     Nur innerhalb von ~/share und eingehaengten Laufwerken unter /run/media und /media."""
@@ -2594,6 +2733,9 @@ class MediaLib:
                {"kind": "music", "path": str(share / "Musik"), "title": "", "thumb": ""}]
         for d in self.drives():
             out.append({"kind": "drive", "path": d, "title": os.path.basename(d), "thumb": ""})
+        for d in DVD.discs():                          # eingelegte DVD (Titel liest der Launcher im Hintergrund)
+            out.append({"kind": "dvd", "path": "dvd:" + d["dev"], "title": d["label"], "ready": d["ready"], "n": d["n"],
+                        "thumb": ""})
         res = self.resume_load()
         cont = []
         for path, r in sorted(res.items(), key=lambda kv: -kv[1].get("t", 0)):
@@ -2608,6 +2750,8 @@ class MediaLib:
         return {"roots": out, "resume": cont}
 
     def listdir(self, path):
+        if str(path).startswith("dvd:") and not str(path).startswith("dvd://"):
+            return DVD.listing(str(path)[4:])
         p = self.resolve(path)
         if not p:
             raise ValueError("Ordner nicht erlaubt")
@@ -6712,6 +6856,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, MEDIA.listdir(urllib.parse.parse_qs(url.query).get("path", [""])[0]))
             except (ValueError, FileNotFoundError, OSError) as e:
                 return self._json(404, {"error": str(e)})
+        if path == "/api/media/dvd":                 # Startseite der Mediathek: Disc eingelegt/entnommen?
+            return self._json(200, {"discs": DVD.discs()})
         if path == "/api/media/nextfolder":
             try:
                 return self._json(200, MEDIA.next_folder(urllib.parse.parse_qs(url.query).get("path", [""])[0]) or {})
@@ -6908,6 +7054,8 @@ class Handler(BaseHTTPRequestHandler):
                 if s["covers_embed"]:
                     MEDIA.art_done.clear()               # beim naechsten Oeffnen der Ordner alle Titel einmal pruefen
                 return self._json(200, COVERS.status())
+            if parts == ["api", "media", "eject"]:
+                return self._json(200, {"ok": DVD.eject(str(self._body().get("dev") or ""))})
             if parts == ["api", "media", "now"]:
                 b = self._body()
                 MEDIA_NOW.clear()
