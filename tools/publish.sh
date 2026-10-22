@@ -264,7 +264,8 @@ iso_publish() {
 
   if [ -z "$iso" ]; then
     # ohne Angabe die neueste x86_64-ISO; 32-Bit-ISOs (…-i686-…) nur ausdruecklich:  vspub --iso <datei>
-    iso="$(ls -t "$ISO_DIR"/voidstation-*.iso 2>/dev/null | grep -v -- '-i686-' | head -n1 || true)"
+    iso="$(find "$ISO_DIR" -maxdepth 1 -name 'voidstation-*.iso' ! -name '*-i686-*' -printf '%T@ %p\n' 2>/dev/null \
+           | sort -rn | head -n1 | cut -d' ' -f2- || true)"
     [ -n "$iso" ] || die "Keine ISO in $ISO_DIR – erst bauen:  sudo bash ~/VoidStation/dist/build-iso.sh"
   fi
   [ -f "$iso" ] || die "Datei nicht gefunden: $iso"
