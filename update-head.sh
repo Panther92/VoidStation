@@ -468,6 +468,11 @@ fi
 say "8/8  Besitzrechte"
 chown -R "$VSUSER:$VSUSER" "$HOMEDIR/.config" "$HOMEDIR/.local" "$HOMEDIR/.bash_profile" "$HOMEDIR/.xinitrc"
 
+# Alles auf die Platte schreiben, bevor "Fertig" erscheint: ext4 haelt frisch geschriebene Dateien sonst noch
+# Sekunden im Speicher – geht der Rechner dann hart aus (Netzschalter, VM-Fenster zu), bleiben sie leer
+# (gesehen am 22.10.2026: xstart, Autostart, Web-Oberflaeche mit 0 Byte, Startseite kam nicht mehr).
+sync
+
 IP="$(ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -1)"
 cat <<EOF
 

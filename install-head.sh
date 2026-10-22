@@ -444,6 +444,11 @@ done
 NEED_NM=0
 [ -e "$SVDIR/NetworkManager" ] || NEED_NM=1
 
+# Alles auf die Platte schreiben, bevor "Fertig" erscheint: ext4 haelt frisch geschriebene Dateien sonst noch
+# Sekunden im Speicher – geht der Rechner dann hart aus (Netzschalter, VM-Fenster zu), bleiben sie leer
+# (gesehen am 22.10.2026: xstart, Autostart, Web-Oberflaeche mit 0 Byte, Startseite kam nicht mehr).
+sync
+
 cat <<EOF
 
 ---------------------------------------------------------------------
