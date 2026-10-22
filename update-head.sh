@@ -228,33 +228,43 @@ PYEOF
   fi
 fi
 
-# 32 Bit (experimentell): YouTube Light loest die YouTube-Kachel im Firefox-Kiosk ab (einmalig, an derselben Stelle).
-# Neue Installationen bekommen das schon von install.sh; 64 Bit behaelt Firefox, YouTube Light steht dort im AppCenter.
-YTLDONE=/usr/local/share/voidstation/ytlight-i686
+# 32 Bit (experimentell): YouTube Light loest die YouTube-Kachel im Firefox-Kiosk ab (einmalig, an derselben Stelle und
+# in derselben Groesse). Ist YouTube Light schon da (aus dem AppCenter: klein, am Ende der Gruppe), wandert diese Kachel
+# an den Platz der alten. Neue Installationen bekommen das schon von install.sh; 64 Bit behaelt Firefox, YouTube Light
+# steht dort im AppCenter.
+# ytlight-i686 = erste Fassung (nur Testing, 22.10.2026): entfernte bei vorhandenem YouTube Light nur die alte Kachel –
+# dann YouTube Light einmalig an den Anfang seiner Gruppe holen (breit).
+YTLDONE=/usr/local/share/voidstation/ytlight-i686-v2
+YTLOLD=/usr/local/share/voidstation/ytlight-i686
 if [ "$(xbps-uhelper arch 2>/dev/null)" = i686 ] && [ ! -e "$YTLDONE" ]; then
-  if python3 - "$TV/tiles.json" <<'PYEOF'
+  if python3 - "$TV/tiles.json" "$([ -e "$YTLOLD" ] && echo repair)" <<'PYEOF'
 import json, sys
-p = sys.argv[1]
+p, repair = sys.argv[1], sys.argv[2] == "repair"
 c = json.load(open(p, encoding="utf-8"))
-yt = {"id": "ytlight", "label": "YouTube Light", "sub": "Videos & Abos", "size": "wide", "color": "#6e2b2b",
-      "icon": "play", "cmd": ["~/.local/share/voidstation/qt/voidstation-player.py", "--yt"], "app": True}
-have = any(t.get("id") == "ytlight" for g in c["groups"] for t in g["tiles"])
-n = 0
-for g in c["groups"]:
-    out = []
-    for t in g["tiles"]:
-        if t.get("id") == "youtube":
-            n += 1
-            if not have:
-                out.append(dict(yt, size=t.get("size", "wide")))
-                have = True
-            continue
-        out.append(t)
-    g["tiles"] = out
-if n:
+new = {"id": "ytlight", "label": "YouTube Light", "sub": "Videos & Abos", "size": "wide", "color": "#6e2b2b",
+       "icon": "play", "cmd": ["~/.local/share/voidstation/qt/voidstation-player.py", "--yt"], "app": True}
+yt_pos = next(((gi, ti) for gi, g in enumerate(c["groups"]) for ti, t in enumerate(g["tiles"]) if t.get("id") == "youtube"), None)
+old = next(((gi, ti) for gi, g in enumerate(c["groups"]) for ti, t in enumerate(g["tiles"]) if t.get("id") == "ytlight"), None)
+msg = ""
+if yt_pos:
+    gi, ti = yt_pos
+    size = c["groups"][gi]["tiles"][ti].get("size", "wide")
+    tile = dict(c["groups"][old[0]]["tiles"][old[1]]) if old else dict(new)
+    tile["size"] = size
+    c["groups"][gi]["tiles"][ti] = tile                      # an die Stelle der alten Kachel
+    if old:
+        c["groups"][old[0]]["tiles"].pop(old[1])          # die kleine Kachel vom AppCenter
+    msg = "32 Bit: Kachel YouTube (Firefox) durch YouTube Light ersetzt"
+elif repair and old:
+    gi, ti = old
+    tile = c["groups"][gi]["tiles"].pop(ti)
+    tile["size"] = "wide"
+    c["groups"][gi]["tiles"].insert(0, tile)
+    msg = "32 Bit: YouTube Light an den Platz der alten YouTube-Kachel gerueckt"
+if msg:
     c["groups"] = [g for g in c["groups"] if g["tiles"]]
     json.dump(c, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
-    print("32 Bit: Kachel YouTube (Firefox) durch YouTube Light ersetzt")
+    print(msg)
 PYEOF
   then
     install -d -m 755 /usr/local/share/voidstation && date -I > "$YTLDONE" && chmod 644 "$YTLDONE"
