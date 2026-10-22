@@ -1413,13 +1413,14 @@ class AudioWatch:
         return time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
 
     def run(self):
-        for _ in range(90):                              # PipeWire startet mit der Sitzung, evtl. nach dem Launcher
-            if pactl_json("info") is not None:
-                break
-            time.sleep(1)
-        else:
-            log("Ton: PipeWire nicht erreichbar, keine Geraete-Ueberwachung")
-            return
+        tries = 0                                        # PipeWire startet mit der Sitzung, evtl. nach dem Launcher
+        while pactl_json("info") is None:                # nicht aufgeben: kommt der Ton spaeter (langsamer Rechner,
+            tries += 1                                   # WirePlumber neu gestartet), soll die Ueberwachung mitlaufen
+            if tries == 90:
+                log("Ton: PipeWire nach 90 s nicht erreichbar – versuche es weiter")
+            time.sleep(1 if tries < 90 else 10)
+        if tries >= 90:
+            log("Ton: PipeWire jetzt erreichbar")
         time.sleep(8)                                    # Geraete beim Hochfahren in Ruhe ankommen lassen
         try:
             audio_tidy()

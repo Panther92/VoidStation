@@ -15,8 +15,20 @@ unclutter --timeout 3 --jitter 10 --ignore-scrolling &
 python3 "$TV/launcher.py" >"$TV/launcher.log" 2>&1 &
 "$TV/home.sh" &
 
-# Ton: PipeWire + WirePlumber + Pulse-Ersatz, jeweils nur einmal
-pipewire >"$TV/logs/pipewire.log" 2>&1 &
-sleep 1
-pgrep -u "$(id -u)" -x wireplumber    >/dev/null || wireplumber    >"$TV/logs/wireplumber.log" 2>&1 &
-pgrep -u "$(id -u)" -x pipewire-pulse >/dev/null || pipewire-pulse >"$TV/logs/pipewire-pulse.log" 2>&1 &
+# Ton: PipeWire + WirePlumber + Pulse-Ersatz, von jedem genau einer.
+# Sind 10-wireplumber.conf / 20-pipewire-pulse.conf in /etc/pipewire/pipewire.conf.d verlinkt (install.sh),
+# startet PipeWire beide selbst. Frueher kamen sie zusaetzlich von hier, eine Sekunde nach PipeWire – auf langsamen
+# Rechnern (Live-Stick, alte Hardware) liefen dann zwei WirePlumber, einer blieb haengen, und es gab keinen Ton.
+# Selbst gestartet wird nur noch, was PipeWire nicht uebernimmt, und erst, wenn PipeWire bereit ist.
+pgrep -u "$(id -u)" -x pipewire >/dev/null || pipewire >"$TV/logs/pipewire.log" 2>&1 &
+(
+  PWCONF=/etc/pipewire/pipewire.conf.d
+  i=0
+  while [ ! -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/pipewire-0" ] && [ "$i" -lt 100 ]; do
+    sleep 0.2; i=$((i + 1))                                # hoechstens 20 s
+  done
+  [ -e "$PWCONF/10-wireplumber.conf" ] || pgrep -u "$(id -u)" -x wireplumber >/dev/null \
+    || wireplumber >"$TV/logs/wireplumber.log" 2>&1 &
+  [ -e "$PWCONF/20-pipewire-pulse.conf" ] || pgrep -u "$(id -u)" -x pipewire-pulse >/dev/null \
+    || pipewire-pulse >"$TV/logs/pipewire-pulse.log" 2>&1 &
+) &
