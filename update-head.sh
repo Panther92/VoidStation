@@ -228,6 +228,41 @@ PYEOF
   fi
 fi
 
+# 32 Bit (experimentell): YouTube Light loest die YouTube-Kachel im Firefox-Kiosk ab (einmalig, an derselben Stelle).
+# Neue Installationen bekommen das schon von install.sh; 64 Bit behaelt Firefox, YouTube Light steht dort im AppCenter.
+YTLDONE=/usr/local/share/voidstation/ytlight-i686
+if [ "$(xbps-uhelper arch 2>/dev/null)" = i686 ] && [ ! -e "$YTLDONE" ]; then
+  if python3 - "$TV/tiles.json" <<'PYEOF'
+import json, sys
+p = sys.argv[1]
+c = json.load(open(p, encoding="utf-8"))
+yt = {"id": "ytlight", "label": "YouTube Light", "sub": "Videos & Abos", "size": "wide", "color": "#6e2b2b",
+      "icon": "play", "cmd": ["~/.local/share/voidstation/qt/voidstation-player.py", "--yt"], "app": True}
+have = any(t.get("id") == "ytlight" for g in c["groups"] for t in g["tiles"])
+n = 0
+for g in c["groups"]:
+    out = []
+    for t in g["tiles"]:
+        if t.get("id") == "youtube":
+            n += 1
+            if not have:
+                out.append(dict(yt, size=t.get("size", "wide")))
+                have = True
+            continue
+        out.append(t)
+    g["tiles"] = out
+if n:
+    c["groups"] = [g for g in c["groups"] if g["tiles"]]
+    json.dump(c, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    print("32 Bit: Kachel YouTube (Firefox) durch YouTube Light ersetzt")
+PYEOF
+  then
+    install -d -m 755 /usr/local/share/voidstation && date -I > "$YTLDONE" && chmod 644 "$YTLDONE"
+  else
+    warn "YouTube Light konnte die YouTube-Kachel nicht ersetzen – naechstes Update versucht es erneut"
+  fi
+fi
+
 # Bluetooth: bluetoothctl braucht die Gruppe bluetooth (wirkt nach dem naechsten Neustart)
 getent group bluetooth >/dev/null && usermod -aG bluetooth "$VSUSER" || true
 
