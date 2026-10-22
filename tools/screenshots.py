@@ -22,7 +22,7 @@ LANG = os.environ.get("VS_LANG", "de")
 _src = (REPO / "launcher" / "launcher.py").read_text(encoding="utf-8")
 _tab = _src[_src.index("LANG_TABLE = ["):]
 LANGS = [{"id": i, "label": n} for i, n in re.findall(r'^\s*\("([A-Za-z-]+)", "([^"]+)"', _tab[:_tab.index("\n]")], re.M)]
-INSTALLED = {"steam", "retroarch", "duckstation", "kodi", "youtube-tv", "supertuxkart", "jellyfin", "netflix"}
+INSTALLED = {"steam", "retroarch", "duckstation", "kodi", "ard", "supertuxkart", "jellyfin", "netflix"}
 
 RADIO_NOW = {"station": {"name": "Deutschlandfunk", "url": "https://example.invalid/dlf"}, "title": "Nachrichten"}
 RADIO_FAVS = [

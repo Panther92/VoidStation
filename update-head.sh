@@ -180,6 +180,35 @@ PYEOF
   fi
 fi
 
+# YouTube TV-Oberflaeche (youtube.com/tv mit vorgetaeuschtem Smart-TV-Browser) ist aus dem AppCenter
+# geflogen: Google laesst sie nur auf echten Fernsehern zu und meldet sonst, das Geraet werde nicht erkannt.
+# Einmalig je Geraet: Kachel und Firefox-Profil entfernen. Normales YouTube (Kachel "YouTube") bleibt.
+YTTVDONE=/usr/local/share/voidstation/youtube-tv-removed
+if [ ! -e "$YTTVDONE" ]; then
+  if python3 - "$TV/tiles.json" <<'PYEOF'
+import json, sys
+p = sys.argv[1]
+c = json.load(open(p, encoding="utf-8"))
+n = 0
+for g in c["groups"]:
+    keep = [t for t in g["tiles"] if t.get("id") != "youtube-tv"]
+    n += len(g["tiles"]) - len(keep)
+    g["tiles"] = keep
+if n:
+    c["groups"] = [g for g in c["groups"] if g["tiles"]]
+    json.dump(c, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    print("Kachel entfernt: YouTube TV")
+PYEOF
+  then
+    if [ -d "$TV/profiles/youtube-tv" ]; then
+      rm -rf "$TV/profiles/youtube-tv" && echo "Firefox-Profil der YouTube TV-Oberflaeche entfernt"
+    fi
+    install -d -m 755 /usr/local/share/voidstation && date -I > "$YTTVDONE" && chmod 644 "$YTTVDONE"
+  else
+    warn "Kachel YouTube TV konnte nicht entfernt werden – naechstes Update versucht es erneut"
+  fi
+fi
+
 # Bluetooth: bluetoothctl braucht die Gruppe bluetooth (wirkt nach dem naechsten Neustart)
 getent group bluetooth >/dev/null && usermod -aG bluetooth "$VSUSER" || true
 

@@ -923,26 +923,6 @@
       }
     },
     {
-      "id": "youtube-tv",
-      "name": "YouTube TV-Oberfläche",
-      "cat": "Streaming",
-      "desc": "Experimentell: youtube.com/tv mit großer Fernbedienungs-Oberfläche und Koppeln mit dem Handy. Kann Google jederzeit sperren.",
-      "source": {
-        "type": "web",
-        "url": "https://www.youtube.com/tv",
-        "ua": "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/4.0 Chrome/76.0.3809.146 TV Safari/537.36"
-      },
-      "mouse": false,
-      "tile": {
-        "group": "Unterhaltung",
-        "size": "medium",
-        "color": "#5b2626",
-        "icon": "play",
-        "sub": "TV-Modus",
-        "label": "YouTube TV"
-      }
-    },
-    {
       "id": "ard",
       "name": "ARD Mediathek",
       "cat": "Streaming",
