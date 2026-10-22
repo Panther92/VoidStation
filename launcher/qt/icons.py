@@ -3,6 +3,10 @@
 Strichfarbe "currentColor" wird beim Zeichnen durch die Textfarbe ersetzt."""
 
 ICONS = {
+    # YouTube Light: Spaeter ansehen, Suche, Kanal
+    'clock': '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="24" cy="24" r="18"/><path d="M24 13v11l7 5"/></svg>',
+    'search': '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round"><circle cx="21" cy="21" r="13"/><path d="M31 31l11 11"/></svg>',
+    'user': '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="24" cy="17" r="9"/><path d="M8 43c1.5-9 8-14 16-14s14.5 5 16 14"/></svg>',
     'install': '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M24 5v19M16.5 17l7.5 7.5 7.5-7.5"/><rect x="5" y="30" width="38" height="13" rx="3"/><circle cx="35" cy="36.5" r="1.8" fill="currentColor"/><path d="M11 36.5h10"/></svg>',
     'cpu': '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"><rect x="12" y="12" width="24" height="24" rx="2"/><rect x="19" y="19" width="10" height="10"/><path d="M18 5v7M24 5v7M30 5v7M18 36v7M24 36v7M30 36v7M5 18h7M5 24h7M5 30h7M36 18h7M36 24h7M36 30h7"/></svg>',
     'gpu': '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round" stroke-linecap="round"><rect x="5" y="8" width="38" height="26" rx="3"/><path d="M17 41h14M24 34v7"/></svg>',

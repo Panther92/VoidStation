@@ -839,6 +839,31 @@
       }
     },
     {
+      "id": "ytlight",
+      "name": "YouTube Light",
+      "cat": "Medien",
+      "desc": "YouTube ohne Browser und ohne Google-Konto: suchen, Kanäle abonnieren, Playlists, Später ansehen und Weiterschauen – abgespielt mit dem VoidStation-Player, ganz mit dem Controller. Läuft auch auf alten Rechnern flüssig. Abos lassen sich aus Google Takeout, NewPipe und FreeTube übernehmen; alles bleibt auf dem Gerät.",
+      "source": {
+        "type": "builtin",
+        "pkgs": [
+          "yt-dlp",
+          "mpv",
+          "nodejs"
+        ]
+      },
+      "cmd": [
+        "~/.local/share/voidstation/qt/voidstation-player.py",
+        "--yt"
+      ],
+      "tile": {
+        "group": "Unterhaltung",
+        "size": "medium",
+        "color": "#6e2b2b",
+        "icon": "play",
+        "sub": "YouTube ohne Browser"
+      }
+    },
+    {
       "id": "freetube",
       "name": "FreeTube",
       "cat": "Medien",

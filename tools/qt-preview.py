@@ -8,10 +8,13 @@ Aufruf:    python3 tools/qt-preview.py                         -> Fenster 1280×
            VS_LANG=en …                                        -> englische Oberflaeche
            python3 tools/qt-preview.py --player tv             -> Fernseh-Player (Teststream von mpv: Testbild)
            python3 tools/qt-preview.py --player media --home DIR   -> Videos & Musik, DIR wie ein Home (DIR/share/Videos …)
+           python3 tools/qt-preview.py --player yt [--yt-demo]     -> YouTube Light mit yt-dlp-Attrappe (tools/yt-dlp-mock.py),
+                                                                      RSS-Feeds, Vorschaubildern und Testvideo von hier
 """
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -84,6 +87,84 @@ def media_list(q):
         return media().listdir(q.get("path", [""])[0])
     except (ValueError, OSError) as e:
         return {"error": str(e)}
+# YouTube Light (--player yt): echter Launcher-Code (YtLight), Daten im Wegwerf-Ordner; yt-dlp ist tools/yt-dlp-mock.py,
+# RSS-Feeds, Bilder und das Testvideo liefert dieser Server (/yt-rss, /yt-media/…). --yt-demo: Abos, Verlauf, Spaeter.
+YTP = {}
+
+
+def yt():
+    if "YT" not in YTP:
+        media()
+        L, tmp = PLAYER["L"], PLAYER["tmp"]
+        C = L.YtLight
+        C.SUBS, C.HIST, C.LATER = tmp / "yt-subs.json", tmp / "yt-history.json", tmp / "yt-later.json"
+        C.LOCAL, C.CACHE = tmp / "bin" / "yt-dlp", tmp / "ytcache"
+        C.RSS = f"http://127.0.0.1:{PORT}/yt-rss?"
+        C.img = lambda self, vid="", url="": yt_img(vid or url)
+        os.environ.setdefault("VS_YTDLP", str(REPO / "tools" / "yt-dlp-mock.py"))
+        os.environ.setdefault("VS_YT_MEDIA", f"http://127.0.0.1:{PORT}/yt-media/")
+        YTP["YT"] = C()
+        yt_media("v.mp4")                                     # Testvideo vorab erzeugen (sonst Wettlauf mit mpv)
+        if YTP.get("demo"):
+            sys.path.insert(0, str(REPO / "tools"))
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("ytmock", REPO / "tools" / "yt-dlp-mock.py")
+            M = importlib.util.module_from_spec(spec); spec.loader.exec_module(M)
+            Y = YTP["YT"]
+            Y._save(C.SUBS, [{"id": c, "title": n, "thumb": f"/api/yt/img?u=https://yt3.ggpht.com/{c}"} for c, n in M.CHANNELS])
+            hist = [dict(Y.video(M.video("Verlauf", i)), pos=60 + 90 * i, dur=600, t=int(time.time()) - i * 3600) for i in range(6) if i != 3]
+            Y._save(C.HIST, hist)
+            Y._save(C.LATER, [Y.video(M.video("Später", i)) for i in (0, 1, 4)])
+            s = L.settings_load(); s["yt"] = {"accepted": True, "quality": "auto"}; L.settings_save(s)
+    return YTP["YT"]
+
+
+def yt_img(key):
+    """Vorschaubild-Attrappe: Farbverlauf je Video/Kanal (ffmpeg), im Wegwerf-Ordner zwischengespeichert."""
+    import hashlib
+    h = hashlib.sha1(str(key).encode()).hexdigest()
+    f = PLAYER["tmp"] / "ytimg" / f"{h[:12]}.jpg"
+    if not f.exists():
+        f.parent.mkdir(parents=True, exist_ok=True)
+        size = "160x160" if "yt3." in str(key) else "320x180"
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i",
+                        f"gradients=s={size}:c0=0x{h[:6]}:c1=0x{h[6:12]}:seed={int(h[12:16], 16)}", "-frames:v", "1", "-y", str(f)])
+    return f.read_bytes() if f.exists() else None
+
+
+def yt_rss(q):
+    """Atom-Feed wie bei YouTube (Playlist-Feed UULF… bzw. Kanal-Feed) mit sechs Videos je Kanal."""
+    cid = q.get("channel_id", [""])[0] or "UC" + q.get("playlist_id", ["UULF"])[0][4:]
+    name = {"UCaaaaaaaaaaaaaaaaaaaaa1": "Retro Werkstatt", "UCbbbbbbbbbbbbbbbbbbbbb2": "Kochen mit Oma"}.get(cid, "Kanal " + cid[-4:])
+    import hashlib
+    ents = []
+    for i in range(6):
+        v = hashlib.sha1(f"{cid}{i}".encode()).hexdigest()[:10] + "f"
+        t = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(time.time() - (i * 30 + hash(cid) % 20) * 3600))
+        ents.append(f"""<entry><id>yt:video:{v}</id><yt:videoId>{v}</yt:videoId><yt:channelId>{cid}</yt:channelId>
+<title>{name}: Neues Video {i + 1}</title><link rel="alternate" href="https://www.youtube.com/watch?v={v}"/>
+<author><name>{name}</name></author><published>{t}</published><media:group><media:community>
+<media:statistics views="{(i + 1) * 4321}"/></media:community></media:group></entry>""")
+    return ('<?xml version="1.0" encoding="UTF-8"?><feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" '
+            'xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">'
+            f'<title>{name}</title>' + "".join(ents) + "</feed>").encode()
+
+
+def yt_media(name):
+    """Testvideo fuer die Wiedergabe: 30 s Testbild (H.264) und Ton (AAC) getrennt wie bei YouTube, dazu Untertitel."""
+    d = PLAYER["tmp"] / "ytmedia"
+    if not (d / "de.vtt").exists():                        # zuletzt geschrieben: alles da
+        d.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25", "-t", "30",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", str(d / "v.mp4")])
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "30",
+                        "-c:a", "aac", "-movflags", "+faststart", "-y", str(d / "a.m4a")])
+        for lang, txt in (("en", "Hello from the subtitle track"), ("de", "Hallo aus der Untertitelspur")):
+            (d / f"{lang}.vtt").write_text(f"WEBVTT\n\n00:00:01.000 --> 00:00:29.000\n{txt}\n", encoding="utf-8")
+    f = d / name
+    return f.read_bytes() if f.is_file() and f.parent == d else None
+
+
 # VS_TVDATA=<Ordner mit channels.json, streams.json, logos.json von iptv-org>: echte Senderliste statt Beispieldaten
 TVREAL = {}
 
@@ -219,6 +300,8 @@ class H(S.H):
             "/api/dl/settings": lambda: (media(), PLAYER["L"].MUSICDL.payload())[1],
             "/api/dl/status": lambda: (media(), PLAYER["L"].MUSICDL.status())[1],
         }
+        if p.startswith("/api/yt/") or p in ("/yt-rss",) or p.startswith("/yt-media/"):
+            return self.yt_get(p, q)
         if p == "/api/media/thumb":
             art = q.get("art", [""])[0]
             r = media().art(art) if art else media().thumb(q.get("path", [""])[0])
@@ -235,6 +318,51 @@ class H(S.H):
         if p in routes:
             return self.j(routes[p]())
         return super().do_GET()
+
+    def raw(self, code, data, ctype):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def yt_get(self, p, q):
+        g = lambda k: q.get(k, [""])[0]
+        Y = yt()
+        if p == "/yt-rss":
+            return self.raw(200, yt_rss(q), "application/atom+xml")
+        if p.startswith("/yt-media/"):                   # wie googlevideo: mit Range (mpv springt im Video)
+            data = yt_media(p.rsplit("/", 1)[1])
+            if not data:
+                return self.raw(404, b"", "text/plain")
+            m = re.match(r"bytes=(\d+)-(\d*)", self.headers.get("Range", ""))
+            if not m:
+                self.send_response(200)
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                return self.wfile.write(data)
+            a0 = int(m.group(1)); a1 = int(m.group(2)) if m.group(2) else len(data) - 1
+            part = data[a0:a1 + 1]
+            self.send_response(206)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Content-Range", f"bytes {a0}-{a0 + len(part) - 1}/{len(data)}")
+            self.send_header("Content-Length", str(len(part)))
+            self.end_headers()
+            return self.wfile.write(part)
+        what = p[len("/api/yt/"):]
+        try:
+            if what == "img":
+                data = Y.img(vid=g("v"), url=g("u"))
+                return self.raw(200, data, "image/jpeg") if data else self.raw(404, b"", "text/plain")
+            fn = {"state": Y.state, "home": Y.home, "history": Y.history, "later": Y.later, "subs": lambda: {"items": Y.subs()},
+                  "feed": lambda: Y.feed_get(300, force=g("force") == "1"), "search": lambda: Y.search(g("q"), g("kind") or "video"),
+                  "channel": lambda: Y.channel(g("id"), g("tab") or "videos"), "playlist": lambda: Y.playlist(g("id"))}[what]
+            return self.j(fn())
+        except PLAYER["L"].YtError as e:
+            return self.raw(502, json.dumps({"error": e.reason, "msg": str(e)}).encode(), "application/json")
 
     def do_POST(self):
         p = urlparse(self.path).path
@@ -271,6 +399,18 @@ class H(S.H):
             ch = next((c for c in S.TV if c["key"] == body.get("key")), None)
             st["tvfavs"] = [f for f in st["tvfavs"] if f["key"] != body.get("key")] + ([ch] if ch and p.endswith("/fav") else [])
             return self.j(st["tvfavs"])
+        if p.startswith("/api/yt/"):                 # YouTube Light: echter Launcher-Code mit yt-dlp-Attrappe
+            Y = yt()
+            act = p[len("/api/yt/"):]
+            fn = {"settings": lambda: Y.save_settings(body),
+                  "resolve": lambda: Y.resolve(str(body.get("id") or ""), str(body.get("quality") or ""), str(body.get("lang") or "de")),
+                  "progress": lambda: Y.progress(body), "later": lambda: Y.later_set(body), "sub": lambda: Y.sub_set(body),
+                  "import": Y.import_subs, "history/remove": lambda: Y.history_remove(str(body.get("id") or "") or "-"),
+                  "history/clear": lambda: Y.history_remove(""), "update": lambda: Y.update_ytdlp()}.get(act)
+            try:
+                return self.j(fn() if fn else {})
+            except PLAYER["L"].YtError as e:
+                return self.raw(502, json.dumps({"error": e.reason, "msg": str(e)}).encode(), "application/json")
         if p.startswith("/api/dl/"):                # Musik suchen: echter Launcher-Code (VS_IA_URL/VS_ITUNES_URL/VS_YTDLP: Testserver)
             media()
             D = PLAYER["L"].MUSICDL
@@ -392,13 +532,15 @@ def main():
     ap.add_argument("--bios", action="store_true", help="Geraet im BIOS-Modus")
     ap.add_argument("--clean", action="store_true", help="fuer Screenshots: kein Update-Hinweis, keine laufende App")
     ap.add_argument("--scale", type=float, help="Skalierung der Oberflaeche (Standard 1.25)")
-    ap.add_argument("--player", choices=["tv", "media"], help="Player statt Startseite: Fernsehen bzw. Videos & Musik")
+    ap.add_argument("--player", choices=["tv", "media", "yt"], help="Player statt Startseite: Fernsehen, Videos & Musik, YouTube Light")
+    ap.add_argument("--yt-demo", action="store_true", help="YouTube Light: Hinweis schon bestaetigt, Abos, Verlauf und Spaeter-Liste")
     ap.add_argument("--stream", help="Stream/Datei fuer den Fernseh-Player (Standard: Testbild von mpv)")
     ap.add_argument("--home", help="Ordner, der fuer die Mediathek als Home gilt (darin share/Videos, share/Musik)")
     ap.add_argument("--arg", default="", help="Startargument des Players (Sender bzw. Datei/Ordner)")
     a = ap.parse_args()
     if a.stream:
         PLAYER["stream"] = a.stream
+    YTP["demo"] = a.yt_demo
     if a.home:
         os.environ["HOME"] = str(Path(a.home).resolve())
     if a.clean:
@@ -430,6 +572,8 @@ def main():
     if a.player:
         prog = [sys.executable, str(REPO / "launcher" / "qt" / "voidstation-player.py"), "--" + a.player]
         prog += [a.arg or (S.TV[0]["key"] if a.player == "tv" else "")]
+        if a.player == "yt":
+            yt()                                                  # Wegwerf-Ordner und Beispieldaten vor dem Start
         env["VS_BASE"] = str(PLAYER["tmp"] or Path("/tmp"))      # Steuer-Socket nicht im Repo
         if a.shot or a.keys:
             env.pop("QT_QPA_PLATFORM", None) if os.environ.get("DISPLAY") else None

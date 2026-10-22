@@ -10,6 +10,7 @@ Theme, Sprachen, Gamepad zuerst, Tastatur und Maus gehen auch.
 Aufruf (startet der Launcher):
   voidstation-player.py --tv [<sender>]          Fernsehen: Senderliste, Favoriten und EPG kommen vom Launcher
   voidstation-player.py --media [<datei|ordner>] Videos & Musik aus ~/share/Videos, ~/share/Musik, USB-Laufwerken
+  voidstation-player.py --yt [<video-id|url>]    YouTube Light: YouTube ohne Browser (Launcher: /api/yt/…, yt-dlp)
 
 Darstellungsstufen (VS_PLAYER_LEVEL setzt der Launcher, sonst 0):
   0  Video in der Oberflaeche (libmpv ueber OpenGL, Qt mit EGL), Hardware-Decoding direkt (VA-API, NVDEC)
@@ -42,7 +43,7 @@ from pathlib import Path
 T0 = time.monotonic()
 HERE = Path(__file__).resolve().parent
 BASE = Path(os.environ.get("VS_BASE") or HERE.parent)
-MODE = "tv" if "--tv" in sys.argv else "media"
+MODE = "tv" if "--tv" in sys.argv else "yt" if "--yt" in sys.argv else "media"
 ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
 START_ARG = ARGS[0] if ARGS else ""
 SOCK = BASE / f"player-{MODE}.sock"

@@ -16,9 +16,12 @@ Kleiner lokaler Dienst fuer die Kacheloberflaeche:
 Lauscht ausschliesslich auf 127.0.0.1.
 """
 
+import csv
+import datetime
 import hashlib
 import json
 import os
+import random
 import re
 import shlex
 import shutil
@@ -33,6 +36,8 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
+from html import unescape as html_unescape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -125,11 +130,12 @@ def active_window():
 
 
 def media_notify(cmd):
-    """Laufendem Player "Videos & Musik" Bescheid geben (ohne zu warten): "background" = Startseite oder anderes
-    Programm kommt nach vorn (Videos halten an, Musik laeuft weiter), "pause" = Radio startet."""
+    """Laufendem Player "Videos & Musik" bzw. "YouTube Light" Bescheid geben (ohne zu warten): "background" =
+    Startseite oder anderes Programm kommt nach vorn (Videos halten an, Musik laeuft weiter), "pause" = Radio startet."""
     try:
-        if APPS._get("media"):
-            threading.Thread(target=PLAYERS.send, args=("media", {"cmd": cmd}), daemon=True).start()
+        for tid, mode in (("media", "media"), ("ytlight", "yt")):
+            if APPS._get(tid):
+                threading.Thread(target=PLAYERS.send, args=(mode, {"cmd": cmd}), daemon=True).start()
     except NameError:                                   # beim Start, bevor es APPS/PLAYERS gibt
         pass
 
@@ -324,8 +330,9 @@ class AppManager:
         if not cmd:
             raise ValueError("Kachel hat keinen Befehl")
         args = expand(cmd if isinstance(cmd, list) else ["sh", "-c", cmd])
-        if Path(args[0]).name == PLAYER_BIN.name:          # Videos & Musik: eigener Player (Stufe, Absturzzaehler)
-            return PLAYERS.start(tid, args[2] if len(args) > 2 else "", mode="media")
+        if Path(args[0]).name == PLAYER_BIN.name:          # Videos & Musik, YouTube Light: eigener Player (Stufe, Absturzzaehler)
+            mode = "yt" if "--yt" in args[1:2] else "media"
+            return PLAYERS.start(tid, args[2] if len(args) > 2 else "", mode=mode)
         media_notify("background")                         # anderes Programm: laufendes Video anhalten
         return self.start(tid, args)
 
@@ -452,7 +459,7 @@ APPS = AppManager()
 
 
 # ---------------------------------------------------------------------------
-#  Eigener Player (qt/voidstation-player.py): Fernsehen ("tv") und Videos & Musik ("media")
+#  Eigener Player (qt/voidstation-player.py): Fernsehen ("tv"), Videos & Musik ("media"), YouTube Light ("yt")
 # ---------------------------------------------------------------------------
 class PlayerManager:
     """Startet den Player, reicht Auftraege an einen laufenden weiter (Socket) und stuft nach Abstuerzen hoch:
@@ -490,14 +497,14 @@ class PlayerManager:
 
     def start(self, tid, arg="", mode="media"):
         level = min(self.level(), 2)
-        for other in ("tv", "media"):                # nur ein Video zur Zeit
+        for other in ("tv", "media", "ytlight"):     # nur ein Video zur Zeit
             if other != tid:
                 APPS.close(other)
         if tid == "tv":
             TV.raw = False
         if APPS._get(tid):
             msg = {"cmd": "tune", "key": arg} if mode == "tv" else {"cmd": "open", "path": arg}
-            if (not arg and mode == "media") or self.send(mode, msg):
+            if (not arg and mode in ("media", "yt")) or self.send(mode, msg):
                 APPS.focus(tid)
                 return "focused"
             APPS.close(tid)
@@ -520,7 +527,7 @@ class PlayerManager:
 
     def active(self, tid):
         """Laeuft fuer diese Kachel der eigene Player (nicht das nackte mpv)?"""
-        if tid == "media":
+        if tid in ("media", "ytlight"):
             return True
         return tid == "tv" and not TV.raw
 
@@ -1887,6 +1894,7 @@ class IPTV:
             args.append(f"--user-agent={e['ua']}")
         args.append(e["url"])
         APPS.close("media")
+        APPS.close("ytlight")
         APPS.close("tv")
         APPS.start("tv", args)
         self.raw = True
@@ -3288,7 +3296,10 @@ class MusicDL:
 
     @staticmethod
     def ytdlp():
-        exe = os.environ.get("VS_YTDLP") or shutil.which("yt-dlp")
+        # die eigene, aktuelle Kopie von YouTube Light (falls dort aktualisiert) vor dem Paket aus Void
+        local = YtLight.LOCAL
+        exe = os.environ.get("VS_YTDLP") or (str(local) if local.is_file() and os.access(local, os.X_OK) else "") \
+            or shutil.which("yt-dlp")
         return exe
 
     def tools(self):
@@ -3643,7 +3654,7 @@ def pad_mouse_default(tile_id):
     weil dort rechter Stick und Schultertasten zum Spiel gehoeren – R3 schaltet trotzdem um. Sonst an."""
     if not tile_id:
         return True
-    if tile_id in ("tv", "media") and PLAYERS.active(tile_id):   # eigener Player: komplett mit dem Controller bedienbar
+    if tile_id in ("tv", "media", "ytlight") and PLAYERS.active(tile_id):   # eigener Player: komplett mit dem Controller bedienbar
         return False
     t = find_tile(tile_id) or {}
     if isinstance(t.get("mouse"), bool):
@@ -3704,7 +3715,7 @@ def app_installed_in(a, pkgs, fps, tiles):
         return s["ref"] in fps
     if s["type"] == "appimage":
         return (APPDIR / a["id"] / "AppRun").exists()
-    if s["type"] == "web":
+    if s["type"] in ("web", "builtin"):                    # builtin: im Player eingebaut (YouTube Light) – nur die Kachel
         return a["id"] in tiles
     return False
 
@@ -3719,7 +3730,7 @@ def app_installed(a):
         return bool(r and r.returncode == 0)
     if s["type"] == "appimage":
         return (APPDIR / a["id"] / "AppRun").exists()
-    if s["type"] == "web":
+    if s["type"] in ("web", "builtin"):
         return a["id"] in tile_ids()
     return False
 
@@ -3958,6 +3969,12 @@ class Jobs:
             return True
         if s["type"] == "appimage":
             return self._appimage(a)
+        if s["type"] == "builtin":                     # Teil von VoidStation: nur fehlende Pakete nachholen, dann Kachel
+            for pkg in s.get("pkgs", []):
+                if not xbps_installed(pkg) and self._run(["sudo", "-n", PKG_HELPER, "install", pkg]) != 0:
+                    return False
+            self._log("in VoidStation eingebaut – Kachel wird angelegt")
+            return True
         if s["type"] == "web":
             prof = BASE / "profiles" / a["id"]
             prof.mkdir(parents=True, exist_ok=True)
@@ -4093,6 +4110,8 @@ class Jobs:
             for pkg in s.get("host_pkgs", []):
                 self._run(["sudo", "-n", PKG_HELPER, "remove", pkg])
             return ok
+        if s["type"] == "builtin":                     # nur die Kachel; Abos und Verlauf bleiben fuer spaeter
+            return True
         if s["type"] in ("appimage", "web"):
             target = APPDIR / a["id"] if s["type"] == "appimage" else BASE / "profiles" / a["id"]
             shutil.rmtree(target, ignore_errors=True)
@@ -5781,6 +5800,800 @@ BLUETOOTH = BluetoothManager()
 
 
 # ---------------------------------------------------------------------------
+#  YouTube Light (Player-Modus --yt, Kachel "ytlight"): YouTube ohne Browser und ohne Google-Konto.
+#  Suche, Kanaele, Playlists und Stream-Adressen ueber yt-dlp; Abos lokal ueber die RSS-Feeds der Kanaele
+#  (Import aus Google Takeout, NewPipe, FreeTube); Verlauf, Weiterschauen und "Spaeter ansehen" lokal.
+#  Shorts bleiben draussen (Feed: Playlist-Feed UULF… = nur normale Videos; Suche: /shorts/-Adressen und <= 60 s).
+#  Kein Google-Login: die Data-API verbietet Fremd-Player, Cookies aus einem Browser gefaehrden das Konto.
+# ---------------------------------------------------------------------------
+YT_VID = re.compile(r"[A-Za-z0-9_-]{11}")
+YT_CID = re.compile(r"UC[A-Za-z0-9_-]{22}")
+YT_PID = re.compile(r"[A-Za-z0-9_-]{10,80}")
+YT_QUALITIES = ("auto", "1080", "720", "480", "360")
+YT_IMG_HOSTS = re.compile(r"^https://(i\d?\.ytimg\.com|yt3\.ggpht\.com|yt3\.googleusercontent\.com|i\.ytimg\.com)/")
+# Fehlermeldungen von yt-dlp -> Grund fuer die Anzeige (yt.err.<grund>)
+YT_ERRORS = [
+    (re.compile(r"(?i)confirm your age|age-restricted|inappropriate for some users"), "age"),
+    (re.compile(r"(?i)not a bot|sign in to confirm"), "bot"),
+    (re.compile(r"(?i)private video"), "private"),
+    (re.compile(r"(?i)members[- ]only|join this channel"), "members"),
+    (re.compile(r"(?i)not available in your country|blocked it in your country|geo"), "geo"),
+    (re.compile(r"(?i)premieres? in|live event will begin|upcoming"), "upcoming"),
+    (re.compile(r"(?i)video unavailable|has been removed|does not exist|account.*terminated|no longer available"), "gone"),
+    (re.compile(r"(?i)requested format is not available|nsig|n challenge|signature|js runtime|javascript|"
+                r"some formats may be missing|unable to extract|http error 403"), "outdated"),
+    (re.compile(r"(?i)timed out|temporary failure in name resolution|network is unreachable|"
+                r"name or service not known|connection (refused|reset)|urlopen error|unable to download|"
+                r"unable to connect|proxy"), "offline"),
+]
+
+
+class YtError(Exception):
+    def __init__(self, reason, msg=""):
+        super().__init__(msg or reason)
+        self.reason = reason
+
+
+def yt_classify(text):
+    for rx, reason in YT_ERRORS:
+        if rx.search(text or ""):
+            return reason
+    return "failed"
+
+
+class YtLight:
+    SUBS = BASE / "yt-subs.json"
+    HIST = BASE / "yt-history.json"
+    LATER = BASE / "yt-later.json"
+    LOCAL = BASE / "bin" / "yt-dlp"                     # eigene, aktuelle yt-dlp-Kopie (Knopf "yt-dlp aktualisieren")
+    CACHE = Path.home() / ".cache" / "voidstation" / "yt"
+    RSS = "https://www.youtube.com/feeds/videos.xml?"
+    YTDLP_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/"
+    NS = {"a": "http://www.w3.org/2005/Atom", "yt": "http://www.youtube.com/xml/schemas/2015",
+          "m": "http://search.yahoo.com/mrss/"}
+    # Seiten von youtube.com ohne Zustimmungsdialog (EU): Cookie "Notwendige" wie nach "Alle ablehnen"
+    WEB_HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
+                   "Accept-Language": "en-US,en;q=0.8", "Cookie": "SOCS=CAI; CONSENT=PENDING+999"}
+    MAX_HIST = 500
+    MAX_LATER = 500
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.cache = {}                                  # (art, schluessel) -> (zeit, daten)
+        self.feed = {"items": [], "t": 0, "refreshing": False, "errors": 0}
+        self.upd = {"state": "idle", "msg": "", "t": 0}
+        self.ver = ("", 0.0)
+        self.avatar_busy = False
+
+    # ---- Dateien ----
+    @staticmethod
+    def _load(path, default):
+        try:
+            d = json.loads(path.read_text(encoding="utf-8"))
+            return d if isinstance(d, type(default)) else default
+        except (OSError, ValueError):
+            return default
+
+    @staticmethod
+    def _save(path, data):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+            tmp.replace(path)
+        except OSError as e:
+            log("YouTube Light:", path.name, e)
+
+    # ---- Einstellungen und Werkzeuge ----
+    @staticmethod
+    def weak():
+        v = os.environ.get("VS_WEAK", "")
+        return v == "1" if v in ("0", "1") else os.uname().machine in ("i386", "i486", "i586", "i686")
+
+    def settings(self):
+        d = settings_load().get("yt") or {}
+        q = str(d.get("quality") or "auto")
+        return {"accepted": bool(d.get("accepted")), "quality": q if q in YT_QUALITIES else "auto"}
+
+    def save_settings(self, body):
+        s = settings_load()
+        d = dict(s.get("yt") or {})
+        if "accepted" in body:
+            d["accepted"] = bool(body.get("accepted"))
+        if body.get("quality") in YT_QUALITIES:
+            d["quality"] = body["quality"]
+        s["yt"] = d
+        settings_save(s)
+        return self.state()
+
+    def tool(self):
+        if os.environ.get("VS_YTDLP"):
+            return os.environ["VS_YTDLP"]
+        if self.LOCAL.is_file() and os.access(self.LOCAL, os.X_OK):
+            return str(self.LOCAL)
+        return shutil.which("yt-dlp")
+
+    def version(self):
+        v, t = self.ver
+        if time.time() - t < 600:
+            return v
+        exe = self.tool()
+        r = run([exe, "--version"], timeout=40) if exe else None
+        v = r.stdout.strip() if r and r.returncode == 0 else ""
+        self.ver = (v, time.time())
+        return v
+
+    def base_args(self):
+        exe = self.tool()
+        if not exe:
+            raise YtError("noytdlp", "yt-dlp fehlt")
+        args = [exe, "--ignore-config", "--no-warnings", "--no-progress"]
+        if shutil.which("node"):                        # JS-Aufgaben von YouTube (yt-dlp-ejs), Node.js >= 22
+            args += ["--js-runtimes", "node"]
+        return args
+
+    def state(self):
+        self._auto_update()
+        return dict(self.settings(), weak=self.weak(), subs=len(self._load(self.SUBS, [])),
+                    tools={"ytdlp": self.version(), "local": self.LOCAL.is_file(), "node": bool(shutil.which("node"))},
+                    update=dict(self.upd))
+
+    def _ytdlp(self, args, timeout=60):
+        """yt-dlp mit -J aufrufen und das JSON zurueckgeben; Fehler als YtError mit Grund."""
+        full = self.base_args() + args
+        t0 = time.monotonic()
+        try:
+            r = subprocess.run(full, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            raise YtError("timeout", "yt-dlp antwortet nicht")
+        except OSError as e:
+            raise YtError("noytdlp", str(e))
+        if r.returncode != 0 or not r.stdout.strip():
+            err = [ln for ln in (r.stderr or "").splitlines() if "ERROR" in ln] or (r.stderr or "").strip().splitlines()
+            msg = (err[-1] if err else "yt-dlp-Fehler").replace("ERROR: ", "")
+            log(f"YouTube Light: yt-dlp ({time.monotonic() - t0:.1f} s):", msg[:300])
+            raise YtError(yt_classify(r.stderr), msg[:300])
+        try:
+            d = json.loads(r.stdout)
+        except ValueError:
+            raise YtError("failed", "Antwort von yt-dlp nicht lesbar")
+        if not isinstance(d, dict):
+            raise YtError("failed", "Antwort von yt-dlp nicht lesbar")
+        # Netzfehler bei Listen: yt-dlp meldet ERROR, liefert aber trotzdem JSON mit leeren Eintraegen ([null])
+        ents = d.get("entries")
+        if ents is not None:
+            d["entries"] = [e for e in ents if isinstance(e, dict)]
+            if not d["entries"] and "ERROR" in (r.stderr or ""):
+                err = [ln for ln in r.stderr.splitlines() if "ERROR" in ln]
+                log("YouTube Light: yt-dlp:", err[-1][:300])
+                raise YtError(yt_classify(r.stderr), err[-1].replace("ERROR: ", "")[:300])
+        return d
+
+    def _cached(self, kind, key, ttl, fn):
+        now = time.time()
+        with self.lock:
+            hit = self.cache.get((kind, key))
+            if hit and now - hit[0] < ttl:
+                return hit[1]
+        data = fn()
+        with self.lock:
+            self.cache[(kind, key)] = (now, data)
+            if len(self.cache) > 300:
+                for k, _ in sorted(self.cache.items(), key=lambda kv: kv[1][0])[:100]:
+                    self.cache.pop(k, None)
+        return data
+
+    # ---- Eintraege ----
+    @staticmethod
+    def _thumb_url(thumbs, square=False):
+        best, bw = "", 0
+        for t in thumbs or []:
+            if not isinstance(t, dict) or not t.get("url"):
+                continue
+            w = int(t.get("width") or 0)
+            h = int(t.get("height") or 0)
+            if square and w and h and abs(w - h) > 4:
+                continue
+            if w > 900 or (bw and w < bw):
+                continue
+            best, bw = t["url"], w
+        if best.startswith("//"):
+            best = "https:" + best
+        return best
+
+    @staticmethod
+    def img_url(u):
+        return "/api/yt/img?u=" + urllib.parse.quote(u, safe="") if u else ""
+
+    def video(self, e):
+        """Eintrag aus yt-dlp (flach) -> Video fuer die Oberflaeche; None fuer Shorts und Unbrauchbares."""
+        vid = str(e.get("id") or "")
+        url = str(e.get("url") or e.get("webpage_url") or "")
+        if not YT_VID.fullmatch(vid) or "/shorts/" in url:
+            return None
+        live = e.get("live_status") == "is_live" or bool(e.get("is_live"))
+        if e.get("live_status") in ("is_upcoming", "post_live") and not live:
+            return None
+        dur = int(e.get("duration") or 0)
+        if 0 < dur <= 60:                                  # Shorts tauchen in der Suche auch als normale Videos auf
+            return None
+        ts = e.get("timestamp") or e.get("release_timestamp") or 0
+        return {"kind": "video", "id": vid, "title": str(e.get("title") or "")[:200],
+                "channel": str(e.get("channel") or e.get("uploader") or "")[:100],
+                "channel_id": str(e.get("channel_id") or "") if YT_CID.fullmatch(str(e.get("channel_id") or "")) else "",
+                "duration": dur, "views": int(e.get("view_count") or 0), "published": int(ts or 0), "live": live,
+                "thumb": f"/api/yt/img?v={vid}"}
+
+    def channel_item(self, e):
+        cid = str(e.get("channel_id") or e.get("id") or "")
+        if not YT_CID.fullmatch(cid):
+            m = YT_CID.search(str(e.get("url") or ""))
+            cid = m.group(0) if m else ""
+        if not cid:
+            return None
+        return {"kind": "channel", "id": cid, "title": str(e.get("channel") or e.get("title") or "")[:100],
+                "followers": int(e.get("channel_follower_count") or 0),
+                "thumb": self.img_url(self._thumb_url(e.get("thumbnails"), square=True))}
+
+    def playlist_item(self, e):
+        url = str(e.get("url") or "")
+        m = re.search(r"[?&]list=([A-Za-z0-9_-]+)", url)
+        pid = m.group(1) if m else str(e.get("id") or "")
+        if not YT_PID.fullmatch(pid) or YT_VID.fullmatch(pid):
+            return None
+        thumb = self._thumb_url(e.get("thumbnails"))
+        return {"kind": "playlist", "id": pid, "title": str(e.get("title") or "")[:200],
+                "channel": str(e.get("channel") or e.get("uploader") or "")[:100],
+                "count": int(e.get("playlist_count") or 0), "thumb": self.img_url(thumb)}
+
+    def entry(self, e):
+        url = str(e.get("url") or "")
+        if "list=" in url and "watch?" not in url:
+            return self.playlist_item(e)
+        if "/channel/" in url or "/@" in url or YT_CID.fullmatch(str(e.get("id") or "")):
+            return self.channel_item(e)
+        return self.video(e)
+
+    def annotate(self, items):
+        """Fortschritt (Verlauf), Spaeter-Markierung und Abo-Status ergaenzen."""
+        hist = {h["id"]: h for h in self._load(self.HIST, []) if isinstance(h, dict) and h.get("id")}
+        later = {x.get("id") for x in self._load(self.LATER, []) if isinstance(x, dict)}
+        subs = {x.get("id") for x in self._load(self.SUBS, []) if isinstance(x, dict)}
+        out = []
+        for it in items:
+            if not it:
+                continue
+            it = dict(it)
+            if it["kind"] == "video":
+                h = hist.get(it["id"])
+                if h and not it.get("live"):
+                    it["pos"], it["dur"] = h.get("pos", 0), h.get("dur", 0)
+                it["later"] = it["id"] in later
+            elif it["kind"] == "channel":
+                it["sub"] = it["id"] in subs
+            out.append(it)
+        return out
+
+    # ---- Suche, Kanaele, Playlists ----
+    def search(self, q, kind="video"):
+        q = " ".join(str(q or "").split())[:200]
+        if not q:
+            return {"items": []}
+        if kind not in ("video", "channel", "playlist"):
+            kind = "video"
+
+        def fetch():
+            if kind == "video":
+                d = self._ytdlp(["-J", "--flat-playlist", f"ytsearch40:{q}"], timeout=90)
+                items = [self.video(e) for e in d.get("entries") or []]
+            else:
+                sp = "EgIQAg==" if kind == "channel" else "EgIQAw=="
+                url = "https://www.youtube.com/results?" + urllib.parse.urlencode({"search_query": q, "sp": sp})
+                d = self._ytdlp(["-J", "--flat-playlist", "--playlist-end", "30", url], timeout=90)
+                items = [self.entry(e) for e in d.get("entries") or []]
+                items = [x for x in items if x and x["kind"] == kind]
+            seen, out = set(), []
+            for x in items:
+                if x and (x["kind"], x["id"]) not in seen:
+                    seen.add((x["kind"], x["id"]))
+                    out.append(x)
+            return out
+        return {"items": self.annotate(self._cached("search", (kind, q.lower()), 600, fetch)), "q": q, "kind": kind}
+
+    def channel(self, cid, tab="videos"):
+        if not YT_CID.fullmatch(cid or ""):
+            raise YtError("gone", "ungueltige Kanal-ID")
+        tab = tab if tab in ("videos", "streams", "playlists") else "videos"
+
+        def fetch():
+            d = self._ytdlp(["-J", "--flat-playlist", "--playlist-end", "60",
+                             f"https://www.youtube.com/channel/{cid}/{tab}"], timeout=90)
+            ents = d.get("entries") or []
+            items = [self.playlist_item(e) if tab == "playlists" else self.video(e) for e in ents]
+            if tab == "streams":                           # vergangene Livestreams sind normale Videos
+                items = [x for x in items if x]
+            name = str(d.get("channel") or d.get("uploader") or d.get("title") or "")
+            name = re.sub(r"\s+-\s+(Videos|Live|Playlists)$", "", name)
+            thumb = self._thumb_url([t for t in d.get("thumbnails") or [] if "avatar" in str(t.get("id", ""))]
+                                    or d.get("thumbnails"), square=True)
+            return {"id": cid, "title": name[:100], "followers": int(d.get("channel_follower_count") or 0),
+                    "thumb": self.img_url(thumb), "tab": tab, "items": [x for x in items if x]}
+        r = dict(self._cached("channel", (cid, tab), 900, fetch))
+        self._sub_touch(cid, r.get("title"), r.get("thumb"))
+        r["sub"] = cid in {x.get("id") for x in self._load(self.SUBS, []) if isinstance(x, dict)}
+        r["items"] = self.annotate(r["items"])
+        return r
+
+    def playlist(self, pid):
+        if not YT_PID.fullmatch(pid or ""):
+            raise YtError("gone", "ungueltige Playlist-ID")
+
+        def fetch():
+            d = self._ytdlp(["-J", "--flat-playlist", "--playlist-end", "300",
+                             f"https://www.youtube.com/playlist?list={pid}"], timeout=120)
+            items = [self.video(e) for e in d.get("entries") or []]
+            return {"id": pid, "title": str(d.get("title") or "")[:200],
+                    "channel": str(d.get("channel") or d.get("uploader") or "")[:100],
+                    "channel_id": str(d.get("channel_id") or "") if YT_CID.fullmatch(str(d.get("channel_id") or "")) else "",
+                    "items": [x for x in items if x]}
+        r = dict(self._cached("playlist", pid, 900, fetch))
+        r["items"] = self.annotate(r["items"])
+        r["count"] = len(r["items"])
+        return r
+
+    # ---- Abspielen ----
+    def resolve(self, vid, quality="auto", lang="de"):
+        """Stream-Adressen fuer mpv: Bild und Ton getrennt (DASH) oder eine Adresse (Livestream: HLS)."""
+        if not YT_VID.fullmatch(vid or ""):
+            raise YtError("gone", "ungueltige Video-ID")
+        if quality not in YT_QUALITIES:
+            quality = self.settings()["quality"]
+        weak = self.weak()
+        h = (480 if weak else 1080) if quality == "auto" else int(quality)
+        # H.264 ist am billigsten zu dekodieren (und kann fast jede Grafikkarte); auf schwacher Hardware hoechstens 30 fps
+        sort = f"res:{h},vcodec:h264,acodec:aac" + (",fps:30" if weak else "")
+
+        def fetch():
+            d = self._ytdlp(["-J", "--no-playlist", "-f", "bv+ba/b", "-S", sort,
+                             f"https://www.youtube.com/watch?v={vid}"], timeout=150 if weak else 75)
+            rf = d.get("requested_formats") or []
+            vf = next((f for f in rf if f.get("vcodec") not in (None, "none")), None)
+            af = next((f for f in rf if f.get("vcodec") in (None, "none") and f.get("acodec") not in (None, "none")), None)
+            main = vf or d
+            url = str(main.get("url") or "")
+            if not url.startswith("http"):
+                raise YtError("failed", "keine Stream-Adresse")
+            hdr = main.get("http_headers") or d.get("http_headers") or {}
+            heights = sorted({int(f.get("height") or 0) for f in d.get("formats") or []
+                              if f.get("vcodec") not in (None, "none") and 144 <= int(f.get("height") or 0) <= 2160},
+                             reverse=True)
+            subs = []
+            for code, tracks in (d.get("subtitles") or {}).items():   # nur echte Untertitel, keine automatischen
+                vtt = next((t for t in tracks or [] if t.get("ext") == "vtt" and t.get("url")), None)
+                if vtt and code != "live_chat":
+                    subs.append({"lang": code, "name": str(vtt.get("name") or code), "url": vtt["url"]})
+            want = [lang.split("-")[0], "en", str(d.get("language") or "")]
+            subs.sort(key=lambda s: next((i for i, w in enumerate(want) if w and s["lang"].split("-")[0] == w), 9))
+            live = bool(d.get("is_live"))
+            return {"id": vid, "title": str(d.get("title") or "")[:200],
+                    "channel": str(d.get("channel") or d.get("uploader") or "")[:100],
+                    "channel_id": str(d.get("channel_id") or "") if YT_CID.fullmatch(str(d.get("channel_id") or "")) else "",
+                    "duration": int(d.get("duration") or 0), "live": live,
+                    "url": url, "audio": str(af.get("url") or "") if af else "",
+                    "ua": str(hdr.get("User-Agent") or ""), "referer": str(hdr.get("Referer") or ""),
+                    "height": int(main.get("height") or 0), "vcodec": str(main.get("vcodec") or ""),
+                    "heights": heights, "quality": quality, "subs": subs[:3],
+                    "thumb": f"/api/yt/img?v={vid}"}
+        t0 = time.monotonic()
+        key = ("resolve", (vid, quality, lang))
+        with self.lock:
+            hit = self.cache.get(key)
+        # Adressen gelten bei YouTube etwa 6 Stunden; Livestreams nur kurz aufheben
+        if hit and time.time() - hit[0] < (600 if hit[1].get("live") else 5400):
+            return hit[1]
+        r = fetch()
+        with self.lock:
+            self.cache[key] = (time.time(), r)
+        log(f"YouTube Light: {vid} aufgeloest in {time.monotonic() - t0:.1f} s ({r.get('height')}p {r.get('vcodec')})")
+        return r
+
+    # ---- Verlauf, Spaeter, Weiterschauen ----
+    @staticmethod
+    def _meta(body):
+        vid = str(body.get("id") or "")
+        if not YT_VID.fullmatch(vid):
+            raise ValueError("ungueltige Video-ID")
+        cid = str(body.get("channel_id") or "")
+        return {"kind": "video", "id": vid, "title": str(body.get("title") or "")[:200],
+                "channel": str(body.get("channel") or "")[:100], "channel_id": cid if YT_CID.fullmatch(cid) else "",
+                "duration": int(float(body.get("duration") or body.get("dur") or 0)), "live": bool(body.get("live")),
+                "thumb": f"/api/yt/img?v={vid}"}
+
+    def progress(self, body):
+        it = self._meta(body)
+        pos, dur = float(body.get("pos") or 0), float(body.get("dur") or 0)
+        with self.lock:
+            hist = [h for h in self._load(self.HIST, []) if isinstance(h, dict) and h.get("id") != it["id"]]
+            it.update({"pos": 0 if it["live"] else round(pos, 1), "dur": round(dur, 1), "t": int(time.time())})
+            hist.insert(0, it)
+            self._save(self.HIST, hist[:self.MAX_HIST])
+        return {"ok": True}
+
+    def history(self):
+        return {"items": self.annotate(self._load(self.HIST, []))}
+
+    def history_remove(self, vid):
+        with self.lock:
+            hist = self._load(self.HIST, [])
+            self._save(self.HIST, [h for h in hist if isinstance(h, dict) and h.get("id") != vid] if vid else [])
+        return self.history()
+
+    def resume_list(self):
+        out = []
+        for h in self._load(self.HIST, []):
+            if isinstance(h, dict) and not h.get("live") and h.get("dur", 0) > 0 and 30 < h.get("pos", 0) < 0.95 * h["dur"]:
+                out.append(h)
+        return self.annotate(out[:20])
+
+    def later(self):
+        return {"items": self.annotate(self._load(self.LATER, []))}
+
+    def later_set(self, body):
+        it = self._meta(body.get("item") or {})
+        with self.lock:
+            lst = [x for x in self._load(self.LATER, []) if isinstance(x, dict) and x.get("id") != it["id"]]
+            if body.get("on"):
+                lst.insert(0, it)
+            self._save(self.LATER, lst[:self.MAX_LATER])
+        return {"on": bool(body.get("on")), "n": len(lst)}
+
+    # ---- Abos ----
+    def subs(self):
+        lst = [x for x in self._load(self.SUBS, []) if isinstance(x, dict) and YT_CID.fullmatch(str(x.get("id") or ""))]
+        lst.sort(key=lambda x: str(x.get("title") or "").lower())
+        if any(not x.get("thumb") for x in lst):
+            self._fetch_avatars()
+        return [{"kind": "channel", "id": x["id"], "title": x.get("title") or x["id"], "thumb": x.get("thumb") or "",
+                 "sub": True} for x in lst]
+
+    def sub_set(self, body):
+        it = body.get("item") or {}
+        cid = str(it.get("id") or it.get("channel_id") or "")
+        if not YT_CID.fullmatch(cid):
+            raise ValueError("ungueltige Kanal-ID")
+        on = bool(body.get("on"))
+        with self.lock:
+            lst = [x for x in self._load(self.SUBS, []) if isinstance(x, dict) and x.get("id") != cid]
+            if on:
+                lst.append({"id": cid, "title": str(it.get("title") or it.get("channel") or "")[:100],
+                            "thumb": str(it.get("thumb") or ""), "t": int(time.time())})
+            self._save(self.SUBS, lst)
+            self.feed["t"] = 0                             # Feed beim naechsten Abruf neu holen
+        log("YouTube Light: Abo", "an" if on else "aus", cid)
+        return {"on": on, "n": len(lst)}
+
+    def _sub_touch(self, cid, title, thumb):
+        """Name und Bild eines abonnierten Kanals nachtragen (Import liefert oft nur die ID)."""
+        with self.lock:
+            lst = self._load(self.SUBS, [])
+            changed = False
+            for x in lst:
+                if isinstance(x, dict) and x.get("id") == cid:
+                    if title and not x.get("title"):
+                        x["title"], changed = title, True
+                    if thumb and not x.get("thumb"):
+                        x["thumb"], changed = thumb, True
+            if changed:
+                self._save(self.SUBS, lst)
+
+    def _fetch_avatars(self):
+        """Fehlende Kanalbilder nachladen (og:image der Kanalseite), eins pro Sekunde, im Hintergrund."""
+        if self.avatar_busy:
+            return
+        self.avatar_busy = True
+
+        def work():
+            try:
+                for x in self._load(self.SUBS, []):
+                    if not isinstance(x, dict) or x.get("thumb") or not YT_CID.fullmatch(str(x.get("id") or "")):
+                        continue
+                    if x.get("nothumb", 0) > time.time() - 86400:
+                        continue
+                    thumb, title = "", ""
+                    try:
+                        req = urllib.request.Request(f"https://www.youtube.com/channel/{x['id']}", headers=self.WEB_HEADERS)
+                        with urllib.request.urlopen(req, timeout=15) as r:
+                            html = r.read(1_500_000).decode("utf-8", "replace")
+                        m = re.search(r'<meta property="og:image" content="([^"]+)"', html)
+                        thumb = self.img_url(m.group(1).replace("&amp;", "&")) if m and YT_IMG_HOSTS.match(m.group(1)) else ""
+                        m = re.search(r'<meta property="og:title" content="([^"]+)"', html)
+                        title = m.group(1) if m else ""
+                    except (OSError, ValueError) as e:
+                        log("YouTube Light: Kanalbild", x["id"], e)
+                    with self.lock:
+                        lst = self._load(self.SUBS, [])
+                        for y in lst:
+                            if isinstance(y, dict) and y.get("id") == x["id"]:
+                                if thumb:
+                                    y["thumb"] = thumb
+                                else:
+                                    y["nothumb"] = int(time.time())
+                                if title and not y.get("title"):
+                                    y["title"] = html_unescape(title)[:100]
+                        self._save(self.SUBS, lst)
+                    time.sleep(1)
+            finally:
+                self.avatar_busy = False
+        threading.Thread(target=work, daemon=True).start()
+
+    def import_subs(self):
+        """Abos aus Dateien uebernehmen: Google Takeout (subscriptions.csv / Abos.csv, auch im ZIP), NewPipe
+        (newpipe_subscriptions*.json), FreeTube (profiles.db / *subscriptions*.db). Gesucht wird in ~/share und auf
+        USB-Laufwerken; vorhandene Abos bleiben."""
+        import zipfile
+        found, chans = [], {}
+
+        def take(text, name):
+            n0 = len(chans)
+            lines = text.splitlines()
+            if name.lower().endswith(".csv"):
+                for ln in lines[1:]:
+                    m = YT_CID.search(ln)
+                    if m:
+                        cols = next(csv.reader([ln]), [])
+                        title = next((c for c in reversed(cols) if c and "youtube.com" not in c and not YT_CID.fullmatch(c)), "")
+                        chans.setdefault(m.group(0), title.strip())
+            else:
+                try:
+                    objs = [json.loads(text)]
+                except ValueError:
+                    objs = []
+                    for ln in lines:                       # FreeTube: eine JSON-Zeile pro Profil
+                        try:
+                            objs.append(json.loads(ln))
+                        except ValueError:
+                            pass
+                for o in objs:
+                    for s in (o.get("subscriptions") or []) if isinstance(o, dict) else []:
+                        if not isinstance(s, dict):
+                            continue
+                        m = YT_CID.search(str(s.get("id") or s.get("url") or ""))
+                        if m:
+                            chans.setdefault(m.group(0), str(s.get("name") or "").strip())
+            if len(chans) > n0:
+                found.append(name)
+
+        def wanted(p):
+            n = p.name.lower()
+            return (n.endswith(".csv") and ("subscription" in n or n.startswith("abo"))) or \
+                   (n.endswith(".json") and "newpipe" in n and "subscription" in n) or \
+                   (n.endswith(".db") and ("profiles" in n or "subscription" in n)) or \
+                   (n.endswith(".zip") and n.startswith("takeout"))
+        roots = [Path.home() / "share"] + [p for d in ("/run/media", "/media") for p in Path(d).glob("*/*") if p.is_dir()]
+        for root in roots:
+            base_depth = len(root.parts)
+            for dirpath, dirs, files in os.walk(root):
+                if len(Path(dirpath).parts) - base_depth >= 4:
+                    dirs[:] = []
+                dirs[:] = [d for d in dirs if not d.startswith(".")]
+                for fn in files:
+                    p = Path(dirpath) / fn
+                    if not wanted(p):
+                        continue
+                    try:
+                        if p.stat().st_size > 50_000_000:
+                            continue
+                        if p.suffix.lower() == ".zip":
+                            with zipfile.ZipFile(p) as z:
+                                for zn in z.namelist():
+                                    low = zn.lower().rsplit("/", 1)[-1]
+                                    if low.endswith(".csv") and ("subscription" in low or low.startswith("abo")):
+                                        take(z.read(zn).decode("utf-8-sig", "replace"), f"{p.name}/{low}")
+                        else:
+                            take(p.read_text(encoding="utf-8-sig", errors="replace"), p.name)
+                    except (OSError, zipfile.BadZipFile, UnicodeError) as e:
+                        log("YouTube Light: Import", p, e)
+        added = 0
+        with self.lock:
+            lst = [x for x in self._load(self.SUBS, []) if isinstance(x, dict)]
+            have = {x.get("id") for x in lst}
+            for cid, title in chans.items():
+                if cid not in have:
+                    lst.append({"id": cid, "title": title[:100], "thumb": "", "t": int(time.time())})
+                    added += 1
+            self._save(self.SUBS, lst)
+            if added:
+                self.feed["t"] = 0
+        log(f"YouTube Light: Import aus {', '.join(found) or 'nichts gefunden'} – {added} neue Kanaele")
+        if added:
+            self._fetch_avatars()
+        return {"files": found, "found": len(chans), "added": added, "total": len(lst)}
+
+    # ---- Abo-Feed (RSS) ----
+    def _rss(self, cid):
+        """Neueste Videos eines Kanals. Zuerst der Playlist-Feed UULF… (nur normale Videos, ohne Shorts und
+        Livestreams), sonst der Kanal-Feed ohne /shorts/-Eintraege. Bei Fehlern der letzte gute Stand."""
+        cache = self.CACHE / "feeds" / f"{cid}.json"
+        old = self._load(cache, {})
+        items, err = None, ""
+        for q, shorts_filter in ((f"playlist_id=UULF{cid[2:]}", False), (f"channel_id={cid}", True)):
+            try:
+                req = urllib.request.Request(self.RSS + q, headers=UA)
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    root = ET.fromstring(r.read(3_000_000))
+            except urllib.error.HTTPError as e:
+                err = f"HTTP {e.code}"
+                if e.code == 404:
+                    continue
+                break
+            except (OSError, ET.ParseError) as e:
+                err = str(e)
+                break
+            items = []
+            title = (root.findtext("a:title", "", self.NS) or "").strip()
+            for en in root.findall("a:entry", self.NS):
+                vid = en.findtext("yt:videoId", "", self.NS)
+                link = en.find("a:link", self.NS)
+                href = link.get("href", "") if link is not None else ""
+                if not YT_VID.fullmatch(vid or "") or (shorts_filter and "/shorts/" in href):
+                    continue
+                stats = en.find("m:group/m:community/m:statistics", self.NS)
+                pub = en.findtext("a:published", "", self.NS)
+                try:
+                    ts = int(datetime.datetime.fromisoformat(pub.replace("Z", "+00:00")).timestamp())
+                except ValueError:
+                    ts = 0
+                items.append({"kind": "video", "id": vid, "title": (en.findtext("a:title", "", self.NS) or "")[:200],
+                              "channel": (en.findtext("a:author/a:name", "", self.NS) or title)[:100], "channel_id": cid,
+                              "duration": 0, "views": int(stats.get("views") or 0) if stats is not None else 0,
+                              "published": ts, "live": False, "thumb": f"/api/yt/img?v={vid}"})
+            break
+        if items is None:
+            return old.get("items") or [], err or "kein Feed"
+        self._save(cache, {"t": int(time.time()), "items": items})
+        return items, ""
+
+    def _refresh_feed(self):
+        from concurrent.futures import ThreadPoolExecutor
+        subs = [x for x in self._load(self.SUBS, []) if isinstance(x, dict) and YT_CID.fullmatch(str(x.get("id") or ""))]
+        t0 = time.monotonic()
+        errors, allv = 0, []
+        try:
+            with ThreadPoolExecutor(max_workers=6) as ex:
+                for items, err in ex.map(lambda s: self._rss(s["id"]), subs):
+                    allv += items
+                    errors += 1 if err else 0
+            seen, uniq = set(), []
+            for v in sorted(allv, key=lambda v: v["published"], reverse=True):
+                if v["id"] not in seen:
+                    seen.add(v["id"])
+                    uniq.append(v)
+            with self.lock:
+                self.feed.update(items=uniq[:300], t=time.time(), errors=errors)
+            log(f"YouTube Light: Feed aus {len(subs)} Kanaelen in {time.monotonic() - t0:.1f} s"
+                + (f", {errors} nicht erreichbar" if errors else ""))
+        finally:
+            with self.lock:
+                self.feed["refreshing"] = False
+
+    def feed_get(self, limit=150, force=False):
+        has_subs = bool(self._load(self.SUBS, []))
+        with self.lock:
+            stale = force or time.time() - self.feed["t"] > 900
+            if stale and has_subs and not self.feed["refreshing"]:
+                self.feed["refreshing"] = True
+                threading.Thread(target=self._refresh_feed, daemon=True).start()
+            items = list(self.feed["items"][:limit])
+            state = {"refreshing": self.feed["refreshing"], "errors": self.feed["errors"], "t": int(self.feed["t"])}
+        if not items and not self.feed["t"]:                # gleich nach dem Start: letzter Stand aus den Dateien
+            allv = []
+            for x in self._load(self.SUBS, []):
+                if isinstance(x, dict) and x.get("id"):
+                    allv += self._load(self.CACHE / "feeds" / f"{x['id']}.json", {}).get("items") or []
+            items = sorted({v["id"]: v for v in allv}.values(), key=lambda v: v["published"], reverse=True)[:limit]
+        return dict(state, items=self.annotate(items))
+
+    def home(self):
+        f = self.feed_get(60)
+        later = self._load(self.LATER, [])
+        return {"resume": self.resume_list(), "feed": f["items"], "refreshing": f["refreshing"], "errors": f["errors"],
+                "later": self.annotate(later[:30]), "laterCount": len(later), "subs": self.subs(),
+                "historyCount": len(self._load(self.HIST, []))}
+
+    # ---- Bilder (Zwischenspeicher, damit alte Rechner nicht alles neu laden) ----
+    def img(self, vid="", url=""):
+        if vid:
+            if not YT_VID.fullmatch(vid):
+                return None
+            url = f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg"
+        if not YT_IMG_HOSTS.match(url or ""):
+            return None
+        f = self.CACHE / "img" / (hashlib.sha1(url.encode()).hexdigest()[:20] + ".jpg")
+        try:
+            if f.is_file() and f.stat().st_size:
+                return f.read_bytes()
+        except OSError:
+            pass
+        try:
+            req = urllib.request.Request(url, headers=UA)
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = r.read(2_000_000)
+                if not str(r.headers.get("Content-Type", "")).startswith("image/"):
+                    return None
+        except (OSError, ValueError):
+            return None
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(data)
+            if random.random() < 0.02:                     # ab und zu aufraeumen: hoechstens ~4000 Bilder
+                files = sorted(f.parent.glob("*.jpg"), key=lambda p: p.stat().st_mtime)
+                for p in files[:max(0, len(files) - 4000)]:
+                    p.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return data
+
+    # ---- yt-dlp aktualisieren (eigene Kopie, Prüfsumme von GitHub) ----
+    def update_ytdlp(self, quiet=False):
+        with self.lock:
+            if self.upd["state"] == "running":
+                return dict(self.upd)
+            self.upd = {"state": "running", "msg": "", "t": int(time.time()), "quiet": quiet}
+
+        def work():
+            tmp = self.LOCAL.with_suffix(".new")
+            try:
+                req = urllib.request.Request(self.YTDLP_URL + "SHA2-256SUMS", headers=UA)
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    sums = r.read(200_000).decode("utf-8", "replace")
+                want = next((ln.split()[0] for ln in sums.splitlines()
+                             if len(ln.split()) == 2 and ln.split()[1].lstrip("*") == "yt-dlp"), "")
+                if not re.fullmatch(r"[0-9a-f]{64}", want):
+                    raise RuntimeError("Pruefsumme nicht gefunden")
+                self.LOCAL.parent.mkdir(parents=True, exist_ok=True)
+                h = hashlib.sha256()
+                req = urllib.request.Request(self.YTDLP_URL + "yt-dlp", headers=UA)
+                with urllib.request.urlopen(req, timeout=120) as r, open(tmp, "wb") as fh:
+                    while True:
+                        b = r.read(65536)
+                        if not b:
+                            break
+                        h.update(b)
+                        fh.write(b)
+                if h.hexdigest() != want:
+                    raise RuntimeError("Pruefsumme stimmt nicht")
+                tmp.chmod(0o755)
+                r = run([str(tmp), "--version"], timeout=60)
+                if not r or r.returncode != 0:
+                    raise RuntimeError("neue Version startet nicht")
+                tmp.replace(self.LOCAL)
+                self.ver = ("", 0.0)
+                with self.lock:
+                    self.cache = {k: v for k, v in self.cache.items() if k[0] != "resolve"}
+                    self.upd = {"state": "done", "msg": r.stdout.strip(), "t": int(time.time()), "quiet": quiet}
+                log("YouTube Light: yt-dlp aktualisiert auf", r.stdout.strip())
+            except (OSError, RuntimeError, ValueError) as e:
+                tmp.unlink(missing_ok=True)
+                with self.lock:
+                    self.upd = {"state": "error", "msg": str(e)[:200], "t": int(time.time()), "quiet": quiet}
+                log("YouTube Light: yt-dlp-Aktualisierung fehlgeschlagen:", e)
+        threading.Thread(target=work, daemon=True).start()
+        return dict(self.upd)
+
+    def _auto_update(self):
+        """Gibt es schon eine eigene yt-dlp-Kopie, wird sie woechentlich still aktualisiert (YouTube aendert oft etwas)."""
+        try:
+            age = time.time() - self.LOCAL.stat().st_mtime
+        except OSError:
+            return
+        if age > 7 * 86400 and self.upd["state"] != "running" and time.time() - self.upd.get("t", 0) > 86400:
+            self.update_ytdlp(quiet=True)
+
+
+YT = YtLight()
+
+
+# ---------------------------------------------------------------------------
 #  HTTP
 # ---------------------------------------------------------------------------
 class Handler(BaseHTTPRequestHandler):
@@ -5814,6 +6627,28 @@ class Handler(BaseHTTPRequestHandler):
             return json.loads(self.rfile.read(n))
         except ValueError:
             return {}
+
+    def _yt_get(self, what, qs):
+        """YouTube Light (GET): Zustand, Startseite, Feed, Suche, Kanal, Playlist, Verlauf, Spaeter, Abos, Bilder."""
+        g = lambda k: qs.get(k, [""])[0]
+        try:
+            if what == "img":
+                data = YT.img(vid=g("v"), url=g("u"))
+                return self._send(200, data, "image/jpeg") if data else self._send(404)
+            res = {"state": YT.state, "home": YT.home, "history": YT.history, "later": YT.later,
+                   "subs": lambda: {"items": YT.subs()},
+                   "feed": lambda: YT.feed_get(300, force=g("force") == "1"),
+                   "search": lambda: YT.search(g("q"), g("kind") or "video"),
+                   "channel": lambda: YT.channel(g("id"), g("tab") or "videos"),
+                   "playlist": lambda: YT.playlist(g("id"))}.get(what)
+            if not res:
+                return self._send(404)
+            return self._json(200, res())
+        except YtError as e:
+            return self._json(502, {"error": e.reason, "msg": str(e)})
+        except (ValueError, OSError) as e:
+            log("YouTube Light:", e)
+            return self._json(500, {"error": "failed", "msg": str(e)})
 
     def do_GET(self):
         if not self._host_ok():
@@ -5863,6 +6698,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, MUSICDL.payload())
         if path == "/api/dl/status":
             return self._json(200, MUSICDL.status())
+        if path.startswith("/api/yt/"):
+            return self._yt_get(path[8:], urllib.parse.parse_qs(url.query))
         if path == "/api/media/covers":
             return self._json(200, COVERS.status())
         if path == "/api/media/thumb":
@@ -6010,6 +6847,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"ok": True})
             if parts == ["api", "dl", "settings"]:
                 return self._json(200, MUSICDL.save_settings(self._body().get("sources")))
+            if parts[:2] == ["api", "yt"]:                        # YouTube Light
+                b = self._body()
+                act = "/".join(parts[2:])
+                res = {"settings": lambda: YT.save_settings(b),
+                       "resolve": lambda: YT.resolve(str(b.get("id") or ""), str(b.get("quality") or ""),
+                                                     str(b.get("lang") or "de")),
+                       "progress": lambda: YT.progress(b), "later": lambda: YT.later_set(b),
+                       "sub": lambda: YT.sub_set(b), "import": YT.import_subs,
+                       "history/remove": lambda: YT.history_remove(str(b.get("id") or "") or "-"),
+                       "history/clear": lambda: YT.history_remove(""),
+                       "update": lambda: YT.update_ytdlp()}.get(act)
+                if not res:
+                    return self._send(404)
+                return self._json(200, res())
             if parts == ["api", "dl", "search"]:
                 return self._json(200, MUSICDL.search(self._body().get("q")))
             if parts == ["api", "dl", "get"]:
@@ -6275,6 +7126,8 @@ class Handler(BaseHTTPRequestHandler):
                 APPS.close_all()
                 subprocess.Popen(POWER[parts[2]])
                 return self._json(200, {"ok": True})
+        except YtError as e:
+            return self._json(502, {"error": e.reason, "msg": str(e)})
         except Exception as e:  # noqa: BLE001
             log("Fehler:", e)
             return self._json(500, {"error": str(e)})

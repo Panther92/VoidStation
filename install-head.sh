@@ -122,13 +122,21 @@ else
   # Neue Installation: Anzeigename oben rechts (VSNAME, sonst voller Name, sonst Benutzername)
   NAME="${VSNAME:-$(getent passwd "$VSUSER" | cut -d: -f5 | cut -d, -f1)}"
   [ -n "$NAME" ] || NAME="${VSUSER^}"
-  python3 - "$TV/tiles.json" "$NAME" <<'PYEOF'
+  python3 - "$TV/tiles.json" "$NAME" "$(xbps-uhelper arch 2>/dev/null)" <<'PYEOF'
 import json, sys
-p, n = sys.argv[1], sys.argv[2]
+p, n, arch = sys.argv[1], sys.argv[2], sys.argv[3]
 d = json.load(open(p, encoding="utf-8")); d["user"] = n
+if arch == "i686":
+    # 32 Bit (experimentell): YouTube Light statt YouTube im Firefox-Kiosk (YouTube-Seite + VP9/AV1 in Software
+    # waeren auf alten Rechnern zu schwer); YouTube im Browser bleibt im AppCenter nicht verfuegbar
+    yt = {"id": "ytlight", "label": "YouTube Light", "sub": "Videos & Abos", "size": "wide", "color": "#6e2b2b",
+          "icon": "play", "cmd": ["~/.local/share/voidstation/qt/voidstation-player.py", "--yt"], "app": True}
+    for g in d.get("groups", []):
+        g["tiles"] = [yt if t.get("id") == "youtube" else t for t in g.get("tiles", [])]
 json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PYEOF
   echo "Anzeigename: $NAME"
+  if [ "$(xbps-uhelper arch 2>/dev/null)" = i686 ]; then echo "32 Bit: Kachel YouTube Light statt YouTube (Firefox)"; fi
 fi
 
 # ---------------------------------------------------------------------
