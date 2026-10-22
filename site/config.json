@@ -15,6 +15,7 @@
     "url": "https://sourceforge.net/projects/voidstation/files/32-Bit/voidstation-2026.10%2Btesting.20261022-i686-20261022.iso/download",
     "version": "2026.10+testing.20261022",
     "date": "2026-10-22",
-    "sha256": "b70868b90e04b3e688373f5698982ed004fe1f642ea2148107f35d60fe9e4077"
+    "sha256": "b70868b90e04b3e688373f5698982ed004fe1f642ea2148107f35d60fe9e4077",
+    "size_mb": 2053
   }
 }
