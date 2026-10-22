@@ -259,19 +259,21 @@ PYEOF
 
 iso_publish() {
   local iso="${1:-}" dir file ver stamp date sum old size_mb dest url sf_files
-  local site_ok=1 why="" need_sign=1 a check stable_ver
+  local site_ok=1 why="" need_sign=1 a check stable_ver arch=x86_64
   command -v rsync >/dev/null || die "rsync fehlt – einmalig:  sudo xbps-install -S rsync"
 
   if [ -z "$iso" ]; then
-    iso="$(ls -t "$ISO_DIR"/voidstation-*.iso 2>/dev/null | head -n1 || true)"
+    # ohne Angabe die neueste x86_64-ISO; 32-Bit-ISOs (…-i686-…) nur ausdruecklich:  vspub --iso <datei>
+    iso="$(ls -t "$ISO_DIR"/voidstation-*.iso 2>/dev/null | grep -v -- '-i686-' | head -n1 || true)"
     [ -n "$iso" ] || die "Keine ISO in $ISO_DIR – erst bauen:  sudo bash ~/VoidStation/dist/build-iso.sh"
   fi
   [ -f "$iso" ] || die "Datei nicht gefunden: $iso"
   dir="$(cd "$(dirname "$iso")" && pwd)"
   file="$(basename "$iso")"
-  [[ "$file" =~ ^voidstation-([0-9][0-9A-Za-z.+-]*)-([0-9]{8})\.iso$ ]] \
-    || die "Unerwarteter Dateiname: $file  (erwartet: voidstation-<version>-JJJJMMTT.iso)"
-  ver="${BASH_REMATCH[1]}"; stamp="${BASH_REMATCH[2]}"
+  [[ "$file" =~ ^voidstation-([0-9][0-9A-Za-z.+]*)(-i686)?-([0-9]{8})\.iso$ ]] \
+    || die "Unerwarteter Dateiname: $file  (erwartet: voidstation-<version>[-i686]-JJJJMMTT.iso)"
+  ver="${BASH_REMATCH[1]}"; stamp="${BASH_REMATCH[3]}"
+  [ -n "${BASH_REMATCH[2]}" ] && arch=i686
   case "$ver" in *+testing*) die "$file ist aus dem Testing-Stand gebaut – veroeffentlicht werden nur ISOs aus Stable (siehe RELEASING.md)" ;; esac
   date="${stamp:0:4}-${stamp:4:2}-${stamp:6:2}"
   dest="/home/frs/project/$SF_PROJECT/$ver/"
@@ -284,6 +286,10 @@ iso_publish() {
     site_ok=0; why="lokaler Stand weicht von GitHub ab – erst  vspub, dann nochmal  vspub --iso"
   elif ! git diff --quiet || ! git diff --cached --quiet; then
     site_ok=0; why="ungesicherte Aenderungen im Repo"
+  fi
+  # 32-Bit-ISO ist experimentell: kommt mit in den Versionsordner, die Webseite bleibt bei der x86_64-ISO
+  if [ "$arch" = i686 ]; then
+    site_ok=0; why="32-Bit-ISO (experimentell) – die Webseite bietet weiter die x86_64-ISO an"
   fi
   stable_ver="$(git show origin/stable:dist/version.json 2>/dev/null \
     | python3 -c 'import json,sys;print(json.load(sys.stdin)["version"])' 2>/dev/null || true)"
@@ -305,7 +311,7 @@ iso_publish() {
 
   echo
   echo "  ISO:       $dir/$file  ($size_mb MB)"
-  echo "  Version:   $ver vom $date"
+  echo "  Version:   $ver vom $date ($arch)"
   echo "  Ziel:      $SF_HOST:$dest"
   if [ "$site_ok" = 1 ]; then echo "  Webseite:  voidstation.de bietet danach diese ISO an"
   else echo "  Webseite:  bleibt unveraendert ($why)"; fi
@@ -378,6 +384,17 @@ iso_publish() {
   rm -f "$dir/$file" "$dir/$file.sha256" "$dir/$file.sha256.sig"
   echo "geloescht: $dir/$file (+ .sha256, .sha256.sig)"
 
+  if [ "$arch" = i686 ]; then
+    cat <<EOF
+
+Veroeffentlicht: VoidStation $ver – 32-Bit-ISO (experimentell) auf SourceForge
+  Link:  $url
+NICHT als "Default Download" markieren – der bleibt die x86_64-ISO
+(sonst zeigt .../files/latest/download auf die 32-Bit-Fassung).
+Bis alle Mirrors die Datei haben, kann es etwas dauern.
+EOF
+    return
+  fi
   cat <<EOF
 
 Veroeffentlicht: VoidStation $ver – Live-ISO auf SourceForge

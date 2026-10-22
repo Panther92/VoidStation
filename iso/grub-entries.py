@@ -16,12 +16,14 @@ void-mklive baut zwei Startmenues: GRUB fuer UEFI (boot/grub/grub_void.cfg) und 
 
 Die Sprache stellt Oberflaeche, Installer und Tastatur ein (voidstation.lang, locale.LANG, vconsole.keymap).
 Ohne Tastendruck startet nach TIMEOUT Sekunden "Deutsch › VoidStation Live starten".
+Mit VOIDSTATION_ARCH=i686 (32-Bit-ISO) gibt es je Sprache nur den einen Starteintrag (mit forcepae).
 
 Kernel, Initramfs und die Grund-Befehlszeile kommen aus dem ersten mklive-Eintrag. Das UEFI-Menue
 bekommt das Theme aus <art-ordner>/grub (Hintergrund, Logo, Kacheln, Schriften), das BIOS-Menue
 den Hintergrund <art-ordner>/isolinux/splash.png (640x480). Schreibt eine neue ISO, die
 Startbereiche (BIOS/UEFI) werden unveraendert uebernommen (xorriso -boot_image any replay).
 """
+import os
 import re
 import subprocess
 import sys
@@ -48,6 +50,14 @@ LANGS = [  # (id, Menuepunkt, Zusatz-Parameter der Sprache, Zurueck, [(id, Titel
     ("en", "English", "voidstation.lang=en locale.LANG=en_US.UTF-8 vconsole.keymap=us", "Back",
      [("live", "Start VoidStation Live", FREE), ("nvidia", "Start VoidStation Live (NVIDIA only)", NVIDIA)]),
 ]
+# 32-Bit-ISO (experimentell, VOIDSTATION_ARCH=i686 aus build-iso.sh): kein NVIDIA-Treiber und kein Startbild,
+# also nur ein Starteintrag je Sprache. forcepae: Pentium M (Banias, fruehe Dothan) koennen PAE, melden es aber
+# nicht – ohne den Parameter startet kein PAE-Kernel; CPUs, die PAE melden, merken davon nichts.
+ARCH = os.environ.get("VOIDSTATION_ARCH", "x86_64")
+if ARCH == "i686":
+    I686 = "forcepae"
+    LANGS = [(lid, lname, lextra, back, [(entries[0][0], entries[0][1], I686)])
+             for lid, lname, lextra, back, entries in LANGS]
 REBOOT = ("vs-reboot", "Reboot")
 DEFAULT = ("de", "live")                                    # Start nach Ablauf des Countdowns
 FONTS = ("vs-20.pf2", "vs-30.pf2", "vs-mono-20.pf2")        # build-iso.sh erzeugt sie mit grub-mkfont
@@ -71,8 +81,9 @@ def extract(iso, path, local):
 
 
 def merge_args(base, extra):
-    """Zusatz-Parameter anhaengen; gleichnamige key=value aus der Grundzeile fallen weg."""
-    keys = {a.split("=", 1)[0] for a in extra.split() if "=" in a}
+    """Zusatz-Parameter anhaengen; gleichnamige key=value und gleiche Schalter (z. B. forcepae)
+    aus der Grundzeile fallen weg."""
+    keys = {a.split("=", 1)[0] for a in extra.split()}
     words = [a for a in base.split() if a.split("=", 1)[0] not in keys]
     return " ".join(words + extra.split())
 

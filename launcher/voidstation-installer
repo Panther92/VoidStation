@@ -1267,6 +1267,16 @@ class Run:
         for k, v in (("GRUB_TIMEOUT", "3" if dual else "0"), ("GRUB_TIMEOUT_STYLE", "menu" if dual else "hidden"),
                      ("GRUB_DISABLE_OS_PROBER", "true"), ("GRUB_DISTRIBUTOR", '"VoidStation"')):
             txt = re.sub(rf"^#?\s*{k}=.*\n?", "", txt, flags=re.M) + f"{k}={v}\n"
+        # Kernel-Parameter, ohne die dieser Rechner nicht startet, vom Stick uebernehmen
+        # (forcepae: Pentium M melden PAE nicht – ohne ihn startet der 32-Bit-Kernel dort nicht)
+        m = re.search(r'^GRUB_CMDLINE_LINUX="([^"]*)"', txt, flags=re.M)
+        carry = [a for a in carry_cmdline() if not (m and a in m.group(1).split())]
+        if carry:
+            if m:
+                txt = txt[:m.start(1)] + " ".join(m.group(1).split() + carry) + txt[m.end(1):]
+            else:
+                txt += f'GRUB_CMDLINE_LINUX="{" ".join(carry)}"\n'
+            log("Kernel-Parameter uebernommen: " + " ".join(carry))
         grubdef.write_text(txt)
         # Eintraege fuer andere Systeme: deren eigener EFI-Lader wird gestartet (bleibt bei deren Updates gueltig)
         gd = T / "etc/grub.d/40_voidstation_andere"
@@ -1297,7 +1307,7 @@ class Run:
             (T / "etc/default/voidstation-efistub").write_text(
                 "# VoidStation: Kernel direkt starten (EFISTUB). Nach Aenderungen:  sudo voidstation-efistub\n"
                 f'ESP="/boot/efi"\nDISK="{disk}"\nPART={partno}\n'
-                f'OPTIONS="root=UUID={ru} ro quiet loglevel=3 rd.udev.log_level=3"\n')
+                f'OPTIONS="{" ".join([f"root=UUID={ru}", "ro", "quiet", "loglevel=3", "rd.udev.log_level=3"] + carry_cmdline())}"\n')
             chroot(["/usr/local/sbin/voidstation-efistub", "--setup"], check=False)
         elif efistub.exists():
             chroot(["/usr/local/sbin/voidstation-efistub", "--remove"], check=False)
@@ -1370,6 +1380,18 @@ class Run:
         except (OSError, Fail):
             pass
         self.umount_all()
+
+
+CARRY_ARGS = ("forcepae",)          # Kernel-Parameter des Sticks, die das installierte System auch braucht
+
+
+def carry_cmdline():
+    """Parameter aus CARRY_ARGS, mit denen der Stick gestartet wurde (fuer GRUB bzw. EFISTUB des Zielsystems)."""
+    try:
+        args = Path("/proc/cmdline").read_text().split()
+    except OSError:
+        return []
+    return [a for a in CARRY_ARGS if a in args]
 
 
 def nvidia_active():

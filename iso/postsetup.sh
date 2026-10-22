@@ -8,7 +8,11 @@ set -euo pipefail
 R="$1"
 SRC="${VOIDSTATION_SRC:?}"
 say() { printf '\n\033[1;36m--> %s\033[0m\n' "$*"; }
-ch() { chroot "$R" /usr/bin/env -i PATH=/usr/bin:/usr/sbin:/bin:/sbin HOME=/root TERM=dumb LANG=C.UTF-8 "$@"; }
+ARCH="${VOIDSTATION_ARCH:-x86_64}"
+# 32-Bit-Abbild auf einem 64-Bit-Bau-Rechner: setarch sorgt dafuer, dass uname im Chroot i686 meldet
+# (xbps und install.sh richten sich danach, sonst hielten sie das Abbild fuer x86_64)
+CHPRE=(); [ "$ARCH" = i686 ] && CHPRE=(setarch i686)
+ch() { "${CHPRE[@]}" chroot "$R" /usr/bin/env -i PATH=/usr/bin:/usr/sbin:/bin:/sbin HOME=/root TERM=dumb LANG=C.UTF-8 "$@"; }
 
 say "Live-Benutzer tv"
 cp -L /etc/resolv.conf "$R/etc/resolv.conf"             # nur fuer Downloads beim Bau (Mauszeiger)
@@ -46,6 +50,7 @@ for f in radio.json tvfavs.json; do
 done
 ch chown -R tv:tv /home/tv
 
+if ch xbps-query nvidia >/dev/null 2>&1; then
 say "NVIDIA-Treiber (nur ueber den Eintrag \"NVIDIA only\")"
 KVER="$(ls "$R/usr/lib/modules" | sort -V | tail -1)"
 nvko() { [ -n "$(find "$R/usr/lib/modules/$KVER" -name 'nvidia-drm.ko*' -print -quit 2>/dev/null)" ]; }
@@ -69,6 +74,9 @@ cat > "$R/etc/modprobe.d/voidstation-nvidia.conf" <<'EOF'
 # VoidStation: NVIDIA mit Kernel-Modesetting (Konsole/Startbild in voller Aufloesung, X ueber nvidia-drm)
 options nvidia_drm modeset=1 fbdev=1
 EOF
+else
+  say "NVIDIA-Treiber: nicht dabei ($ARCH) – nur freie Treiber"
+fi
 
 say "Startbild (Plymouth)"
 if [ -f "$R/usr/share/plymouth/themes/voidstation/voidstation.plymouth" ] && [ -x "$R/usr/bin/plymouthd" ]; then
