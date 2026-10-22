@@ -59,7 +59,7 @@ Everything you need from the couch – on a small PC next to the TV, with no acc
 
 ## YouTube and streaming {#streaming}
 
-- Full-screen YouTube (Firefox in kiosk mode), optionally with the TV interface
+- Full-screen YouTube (Firefox in kiosk mode)
 - Netflix, Prime Video, Disney+, Joyn, RTL+ and Twitch from the AppCenter – copy protection (Widevine) is enabled for them
 - Kodi, Jellyfin, Plex HTPC, Spotify and FreeTube from the AppCenter; VLC is still there with one click
 

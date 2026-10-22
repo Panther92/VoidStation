@@ -59,7 +59,7 @@ Alles, was man vom Sofa aus braucht – auf einem kleinen PC am Fernseher, ohne 
 
 ## YouTube und Streaming {#streaming}
 
-- YouTube im Vollbild (Firefox im Kioskmodus), auf Wunsch auch mit der TV-Oberfläche
+- YouTube im Vollbild (Firefox im Kioskmodus)
 - Netflix, Prime Video, Disney+, Joyn, RTL+ und Twitch aus dem AppCenter – Kopierschutz (Widevine) wird dafür eingeschaltet
 - Kodi, Jellyfin, Plex HTPC, Spotify und FreeTube aus dem AppCenter; VLC gibt es dort weiterhin mit einem Klick
 
