@@ -8,8 +8,9 @@ Void Linux als TV-Station: Kacheloberfläche im Stil von Windows 8, dunkel, bedi
 Läuft auf Openbox; die Startseite ist ein eigenes Programm in Python + Qt 6, das direkt auf der Grafikkarte zeichnet.
 Auch der Installer im Live-System ist Qt. Die bisherige Web-Oberfläche (WebKitGTK) bleibt als Rückfall umschaltbar (Einstellungen → System → Oberfläche).
 
-**Funktionen:** YouTube (Firefox im Kiosk-Modus), Radio mit Suche und Favoriten, TV-Sender aus aller Welt (iptv-org),
-Emulatoren, AppCenter für optionale Apps (xbps, Flatpak, AppImage, Web), Einstellungen (Sprache, Skalierung, Auflösung,
+**Funktionen:** YouTube (Firefox im Kiosk-Modus), Radio mit Suche und Favoriten, TV-Sender aus aller Welt (iptv-org) im eigenen Player
+(umschalten im Bild, Senderliste, Programminfo), **Videos & Musik** (Mediathek für Freigabe und USB-Laufwerke mit Covern,
+Weiterschauen, Wiederholen/Zufall, „Musik suchen“ mit Download samt Tags und Cover), Emulatoren, AppCenter für optionale Apps (xbps, Flatpak, AppImage, Web), Einstellungen (Sprache, Skalierung, Auflösung,
 Tonausgang, WLAN, Bluetooth, Mauszeiger), Samba-Freigabe `\\<rechner>\share`, mehrere Apps parallel mit Umschalten.
 Oberfläche auf **Deutsch oder Englisch**, dazu elf maschinell übersetzte Sprachen: Español, Français, Italiano, Latviešu, Magyar,
 Nederlands, Polski, Português (Brasil), Ελληνικά, Русский, Українська (Einstellungen → Sprache). Den Installer gibt es vorerst nur auf Deutsch/Englisch.
@@ -24,9 +25,19 @@ Fernzugriff per SSH lässt sich unter Einstellungen → System ein- und ausschal
 |---|---|---|
 | ![Fernsehen](docs/screenshots/2-fernsehen.webp) | ![AppCenter](docs/screenshots/3-appcenter.webp) | ![Radio](docs/screenshots/4-radio.webp) |
 
+| Fernseh-Player | Videos | Musik |
+|---|---|---|
+| ![Fernseh-Player](docs/screenshots/7-tv-player.webp) | ![Video](docs/screenshots/12-video.webp) | ![Musik](docs/screenshots/9-musik.webp) |
+
+| Mediathek | Musik suchen | Ton |
+|---|---|---|
+| ![Mediathek](docs/screenshots/8-mediathek.webp) | ![Musik suchen](docs/screenshots/10-musik-suchen.webp) | ![Ton](docs/screenshots/11-ton.webp) |
+
 | Installer | Installer: Ziel-SSD |
 |---|---|
 | ![Installer](docs/screenshots/5-installer.webp) | ![Ziel-SSD](docs/screenshots/6-ziel-ssd.webp) |
+
+Bild im Fernseh-Player und in „Videos“: „Big Buck Bunny“ © Blender Foundation | [peach.blender.org](https://peach.blender.org), [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/deed.de). Alle übrigen Inhalte der Screenshots sind Beispieldaten.
 
 ## Installation
 
@@ -44,7 +55,7 @@ VoidStation wird **ausschließlich über die Live-ISO** installiert:
 
 ## Live-ISO mit Installer
 
-Die Live-ISO ist eine komplette VoidStation zum Ausprobieren (YouTube, Fernsehen, Radio, VLC) mit der Kachel
+Die Live-ISO ist eine komplette VoidStation zum Ausprobieren (YouTube, Fernsehen, Radio, Videos & Musik) mit der Kachel
 **VoidStation installieren**. Der Installer läuft im selben Kacheldesign, auf Deutsch oder Englisch, und kopiert
 das Live-System auf die SSD – dafür braucht er kein Internet.
 
@@ -130,8 +141,12 @@ Herausgebers signiert sind (`ssh-keygen -Y`, Namensraum `voidstation`). Der öff
 | Gruppe vor / zurück | RT / LT | Bild ↓ / Bild ↑ | Pfeile oben rechts |
 | Leiser / lauter | LB / RB | − / + | |
 | Update öffnen (wenn unten rechts angezeigt) | Select | U | Klick auf den Hinweis |
-| Ausschalten | Start | – | ⏻ oben rechts |
-| Zurück zur Startseite (aus jedem Programm) | Guide / Home | Win | |
+| Ausschalten, Standby | Start | – | ⏻ oben rechts |
+| Zurück zur Startseite (aus jedem Programm) | Guide / Home | Win | Ecke unten rechts, dann **Startseite** |
+| Programm schließen (aus dem Programm heraus) | | | Ecke unten rechts, dann **App schließen** |
+
+In Programmen wie Firefox steuert der rechte Stick den Mauszeiger (R2 Klick, L2 Rechtsklick, R3 an/aus).
+Tasten im Fernseh-Player und in „Videos & Musik“: siehe [Hilfe](https://voidstation.de/hilfe/#fernsehen).
 
 Die Pfeile oben rechts erscheinen, sobald eine Seite breiter als der Bildschirm ist; der helle Punkt zeigt die aktuelle Gruppe.
 Warten Updates (oder ist nach einem neuen Kernel ein Neustart nötig), steht unten rechts ein gelber Hinweis.
@@ -153,7 +168,7 @@ falsche Platzhalter ab. Installer-Texte (`inst.*`) sind noch nicht übersetzt.
   (Qt-Datumsmuster), `fmt.clock` (`12`/`24`), `fmt.pct`; Ländernamen für den TV-Filter als `region.XX`.
 
 - Sprache wählen: Einstellungen → Sprache. Ohne Wahl gilt `LANG` der Sitzung (`fr_FR…` → Französisch, `pt_BR…` → Portugiesisch (Brasilien), Unbekanntes → Deutsch).
-- Programme aus den Kacheln starten mit `LANG`/`LANGUAGE` der gewählten Sprache (VLC, PCManFM, GTK/Qt); Firefox-Profile bekommen
+- Programme aus den Kacheln starten mit `LANG`/`LANGUAGE` der gewählten Sprache (PCManFM, GTK/Qt); Firefox-Profile bekommen
   vor jedem Start `intl.locale.requested` und `intl.accept_languages`. Programme mit eigener Spracheinstellung (Steam, Kodi) bleiben dabei.
 - Kacheln: Deutsche Standardnamen (z. B. „Fernsehen“) übersetzt `labels` in der jeweiligen Sprachdatei; eigene Namen bleiben, wie sie sind.
   Eigene Kacheln können auch zweisprachig sein: `"label": {"de": "Fernsehen", "en": "TV"}`.
@@ -211,7 +226,7 @@ VoidStation erkennt neue CSS-Dateien im Theme-Ordner automatisch und bietet sie 
 | Pfad | Inhalt |
 |---|---|
 | `launcher/launcher.py` | Backend: HTTP-API auf 127.0.0.1:8765, Apps starten/umschalten, Radio, TV, AppCenter, Einstellungen |
-| `launcher/qt/` | Startseite und Installer (Python + Qt 6): `voidstation-home.py` (Fenster, Gamepad, Texte, Farben), `qml/` (Oberfläche), `icons.py` |
+| `launcher/qt/` | Startseite, Player und Installer (Python + Qt 6): `voidstation-home.py` (Fenster, Gamepad, Texte, Farben), `voidstation-player.py` (Fernsehen, Videos & Musik über libmpv), `vscommon.py` (Gemeinsames), `qml/` (Oberfläche), `icons.py` |
 | `launcher/web/index.html` | Web-Oberfläche (Kacheln, Radio, TV, AppCenter, Einstellungen, Installer) – Rückfall, falls Qt nicht startet |
 | `launcher/web/themes/` | Themes als modulare CSS-Dateien (`default-dark`, `default-light`, `high-contrast`, `nord`) – gelten für beide Oberflächen |
 | `launcher/web/i18n/` | Texte beider Oberflächen, eine Datei je Sprache (`de.json`, `en.json`, …) |
