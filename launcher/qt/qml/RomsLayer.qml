@@ -36,7 +36,11 @@ Layer {
     }
 
     headRight: NowLine { main: rl.sysName; sub: Ui.t("roms.count", { count: rl.roms.length }) }
-    bar: [ Pill { id: startEmu; text: Ui.t("roms.startEmu"); onTriggered: { var t = rl.tile; app.closeLayer(rl); app.launch(t) } } ]
+    bar: [
+        Pill { id: startEmu; text: Ui.t("roms.startEmu"); onTriggered: { var t = rl.tile; app.closeLayer(rl); app.launch(t) } },
+        // Tastenbelegung des Emulators (KeymapLayer) – nur fuer Emulatoren, die VoidStation belegen kann
+        Pill { property string key: "romkeys"; visible: !!rl.romData && !!rl.romData.keymap; iconName: "gamepad"; text: Ui.t("keymap.title"); onTriggered: keymap.openFor(rl.tile) }
+    ]
 
     Track {
         id: trk

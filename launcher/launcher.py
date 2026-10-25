@@ -5428,16 +5428,14 @@ def ini_defaults(app, path, section, wanted, st):
 # ---- Controller: welche Taste ist welche? ------------------------------------------------------------------
 # mGBA liest Controller roh ueber SDL (Tastennummern statt "A/B"), und die Nummern haengen am Treiber: Ein
 # PS4-Nachbau, ein DualSense und ein Xbox-Pad zaehlen ihre Tasten verschieden. Woher die Belegung kommt, der Reihe nach:
-#   1. eigene Belegung in ~/.config/voidstation/pads.json (dieselbe Datei wie fuer die Startseite:
-#      {"<Geraetename oder vid:pid>": {"<evdev-Code>": "a"|"b"|"x"|"y"|"lb"|"rb"|"select"|"start"|"l3"|…}})
-#   2. SDL selbst (dieselbe Bibliothek, die mGBA laedt): SDL kennt die meisten Controller samt Nachbauten aus seiner
+#   1. SDL selbst (dieselbe Bibliothek, die mGBA laedt): SDL kennt die meisten Controller samt Nachbauten aus seiner
 #      Datenbank und sagt, welche rohe Taste "unten", "rechts", "oben" … ist (SDL_GameControllerGetBindForButton)
-#   3. Notfalls die Linux-Tastencodes (BTN_SOUTH = unten, BTN_EAST = rechts …)
-# Rollen wie bei SDL/Xbox nach Lage: a = unten (✕), b = rechts (○), x = links (□), y = oben (△).
+#   2. Notfalls die Linux-Tastencodes (BTN_SOUTH = unten, BTN_EAST = rechts …)
+# Das ist die Vorgabe; was man je Emulator selbst belegt hat (Tastenbelegung in der Spieleliste), steht darueber.
+# Rollen nach Lage: south = unten (✕/A), east = rechts (○/B), west = links (□/X), north = oben (△/Y).
 # SDL zaehlt Tasten unter Linux so (joystick/linux/SDL_sysjoystick.c, ConfigJoystick): erst alle Codes ab
 # BTN_JOYSTICK (0x120) aufsteigend, dann die darunter; Achsen nach Nummer ohne digitale Steuerkreuze (ABS_HAT*).
 # Damit das gilt, starten Emulatoren mit SDL_JOYSTICK_HIDAPI=0 (sonst zaehlt SDL PS4/PS5/Switch ueber hidraw anders).
-PADS_OVERRIDE = Path.home() / ".config/voidstation/pads.json"
 SDL_PROBE = r'''
 import ctypes, ctypes.util, json, os, sys
 os.environ["SDL_JOYSTICK_HIDAPI"] = "0"
@@ -5541,30 +5539,353 @@ def sdl_indices(pad):
     return {k: i for i, k in enumerate(order)}, {a: i for i, a in enumerate(axes)}
 
 
-def pad_roles(pad, probe=None):
-    """Rolle -> evdev-Code fuer ein Gamepad (a/b/x/y/lb/rb/select/start/l3/r3/up/down/left/right, soweit bekannt)
-    und woher die Belegung stammt ("eigene", "SDL", "Linux")."""
+def binding_label(b):
+    """Kurzbeschreibung einer Bindung fuer Log und Oberflaeche (z. B. "BTN_EAST", "ABS_Z+", "Kreuz ↑")."""
     from evdev import ecodes as E
-    try:
-        own = json.loads(PADS_OVERRIDE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        own = {}
-    for k in (pad["name"], pad.get("id")):
-        if isinstance(own.get(k), dict):
-            roles = {str(v): int(c) for c, v in own[k].items() if str(c).isdigit()}
-            return roles, "eigene"
-    btn, _ax = sdl_indices(pad)
+    if not b:
+        return ""
+    def one(n):                                    # evdev nennt manche Codes mehrfach (BTN_A = BTN_SOUTH …)
+        if isinstance(n, (list, tuple)):
+            return next((x for x in n if x.endswith(("SOUTH", "EAST", "NORTH", "WEST"))), n[-1])
+        return n
+    if "key" in b:
+        return one(E.BTN.get(b["key"]) or E.KEY.get(b["key"]) or str(b["key"]))
+    if "abs" in b:
+        return one(E.ABS.get(b["abs"], str(b["abs"]))) + ("+" if b.get("dir", 1) > 0 else "-")
+    if "hat" in b:
+        return {("y", -1): "HAT ↑", ("y", 1): "HAT ↓", ("x", -1): "HAT ←", ("x", 1): "HAT →"}.get((b["hat"], b["dir"]), "HAT")
+    return ""
+
+
+def pad_roles(pad, probe=None):
+    """Rolle -> Bindung fuer ein Gamepad und woher sie stammt ("SDL", "Linux").
+    Rollen nach Lage (PAD_ROLES): south/east/west/north = unten/rechts/links/oben (✕/○/□/△ bzw. A/B/X/Y),
+    l1 r1 l2 r2 select start l3 r3 up down left right. Bindung: {"key": evdev-Code} | {"abs": Code, "dir": ±1}
+    (Schultertaste als Achse) | {"hat": "x"|"y", "dir": ±1} (Steuerkreuz als Achse)."""
+    from evdev import ecodes as E
+    btn, ax = sdl_indices(pad)
     by_index = {i: c for c, i in btn.items()}
+    by_axis = {i: c for c, i in ax.items()}
     sdl = next((d for d in (probe or []) if d.get("path") == pad["path"] and d.get("buttons")), None)
     if sdl:
-        roles = {r: by_index[b["button"]] for r, b in sdl["buttons"].items()
-                 if b and "button" in b and b["button"] in by_index}
-        if "a" in roles and "b" in roles:
-            return roles, "SDL"
-    std = {"a": E.BTN_SOUTH, "b": E.BTN_EAST, "x": E.BTN_WEST, "y": E.BTN_NORTH, "lb": E.BTN_TL, "rb": E.BTN_TR,
-           "select": E.BTN_SELECT, "start": E.BTN_START, "l3": E.BTN_THUMBL, "r3": E.BTN_THUMBR,
-           "up": E.BTN_DPAD_UP, "down": E.BTN_DPAD_DOWN, "left": E.BTN_DPAD_LEFT, "right": E.BTN_DPAD_RIGHT}
-    return {r: c for r, c in std.items() if c in pad["keys"]}, "Linux"
+        names = {"a": "south", "b": "east", "x": "west", "y": "north", "lb": "l1", "rb": "r1", "select": "select",
+                 "start": "start", "l3": "l3", "r3": "r3", "up": "up", "down": "down", "left": "left", "right": "right"}
+        binds = {}
+        for r, b in sdl["buttons"].items():
+            if r in names and b and "button" in b and b["button"] in by_index:
+                binds[names[r]] = {"key": by_index[b["button"]]}
+            elif r in names and b and "hat" in b and r in ("up", "down", "left", "right"):
+                binds[names[r]] = {"hat": "y" if r in ("up", "down") else "x", "dir": -1 if r in ("up", "left") else 1}
+        for r, role in (("lt", "l2"), ("rt", "r2")):
+            b = (sdl.get("axes") or {}).get(r)
+            if b and "axis" in b and b["axis"] in by_axis:
+                binds[role] = {"abs": by_axis[b["axis"]], "dir": 1}
+            elif b and "button" in b and b["button"] in by_index:
+                binds[role] = {"key": by_index[b["button"]]}
+        if E.ABS_HAT0X in pad["axes"]:                 # Kreuz, zu dem SDL nichts sagt: als Hat annehmen
+            for r, h, d in (("up", "y", -1), ("down", "y", 1), ("left", "x", -1), ("right", "x", 1)):
+                binds.setdefault(r, {"hat": h, "dir": d})
+        used = [b for b in binds.values()]
+        for role, axis, key in (("l2", E.ABS_Z, E.BTN_TL2), ("r2", E.ABS_RZ, E.BTN_TR2)):
+            if role not in binds:                      # Trigger, zu denen SDL nichts sagt: Linux-Achse bzw. -Taste
+                for cand in ({"abs": axis, "dir": 1} if axis in pad["axes"] else None,
+                             {"key": key} if key in pad["keys"] else None):
+                    if cand and cand not in used:
+                        binds[role] = cand
+                        used.append(cand)
+                        break
+        if "south" in binds and "east" in binds:
+            return binds, "SDL"
+    std = {"south": E.BTN_SOUTH, "east": E.BTN_EAST, "west": E.BTN_WEST, "north": E.BTN_NORTH, "l1": E.BTN_TL,
+           "r1": E.BTN_TR, "l2": E.BTN_TL2, "r2": E.BTN_TR2, "select": E.BTN_SELECT, "start": E.BTN_START,
+           "l3": E.BTN_THUMBL, "r3": E.BTN_THUMBR, "up": E.BTN_DPAD_UP, "down": E.BTN_DPAD_DOWN,
+           "left": E.BTN_DPAD_LEFT, "right": E.BTN_DPAD_RIGHT}
+    binds = {r: {"key": c} for r, c in std.items() if c in pad["keys"]}
+    for r, code in (("l2", E.ABS_Z), ("r2", E.ABS_RZ)):
+        if r not in binds and code in pad["axes"]:
+            binds[r] = {"abs": code, "dir": 1}
+    if E.ABS_HAT0X in pad["axes"]:
+        for r, h, d in (("up", "y", -1), ("down", "y", 1), ("left", "x", -1), ("right", "x", 1)):
+            binds.setdefault(r, {"hat": h, "dir": d})
+    return binds, "Linux"
+
+
+# ---- Tastenbelegung je Emulator (Spieleliste des Emulators -> "Tastenbelegung") ------------------------------
+# Die Oberflaeche (KeymapLayer.qml) zeigt eine Skizze der Konsole und fragt deren Tasten der Reihe nach ab; man drueckt
+# jeweils die Controllertaste, die dafuer gelten soll. Gilt nur fuer den Emulator – die Startseite liest das nie.
+# ~/.config/voidstation/emu-pads.json:
+#   {"emus": {"<Kachel>": {"<vid:pid>": {"name": …, "map": {"<Konsolentaste>": Bindung}}}}}
+# Gespeichert wird nur, was von der Vorgabe abweicht (Vorgabe: Rolle aus EMU_LAYOUTS -> Bindung aus pad_roles).
+# Bindung: {"key": evdev-Code} | {"abs": Code, "dir": ±1} | {"hat": "x"|"y", "dir": ±1}, s. pad_roles.
+EMU_PADS = Path.home() / ".config/voidstation/emu-pads.json"
+PAD_ROLES = ["south", "east", "west", "north", "l1", "r1", "l2", "r2", "select", "start", "l3", "r3",
+             "up", "down", "left", "right"]
+# Je Kachel: Skizze der Konsole ("console", gezeichnet in ConsolePic.qml) und Tasten als (Kennung, Vorgabe-Rolle) in
+# der Reihenfolge, in der "Alle nacheinander" fragt. Kennungen aus EMU_ACTIONS gibt es auf der Konsole nicht – die
+# erledigt VoidStation selbst (Tastendruck an den Emulator, s. emu_action); sie stehen neben der Skizze.
+EMU_LAYOUTS = {
+    "gba": {"name": "mGBA", "sub": "Game Boy / Color / Advance", "console": "gba", "buttons": [
+        ("A", "east"), ("B", "south"), ("L", "l1"), ("R", "r1"), ("Start", "start"), ("Select", "select"),
+        ("Up", "up"), ("Down", "down"), ("Left", "left"), ("Right", "right"),
+        ("save", "north"), ("load", "west"), ("rewind", "l2"), ("ff", "r2")]},
+}
+EMU_ACTIONS = {"save", "load", "rewind", "ff"}
+EMU_PADS_LOCK = threading.Lock()
+# Controllertasten zum Anzeigen, je nach Bauart (Steuerkreuz: Pfeile, die Oberflaeche setzt "Kreuz" davor)
+ROLE_TEXT = {
+    "ps": {"south": "✕", "east": "○", "west": "□", "north": "△", "l1": "L1", "r1": "R1", "l2": "L2", "r2": "R2",
+           "select": "Share", "start": "Options", "l3": "L3", "r3": "R3"},
+    "xbox": {"south": "A", "east": "B", "west": "X", "north": "Y", "l1": "LB", "r1": "RB", "l2": "LT", "r2": "RT",
+             "select": "Back", "start": "Start", "l3": "LS", "r3": "RS"},
+}
+DPAD_TEXT = {"up": "↑", "down": "↓", "left": "←", "right": "→"}
+
+
+def emu_pads_load():
+    try:
+        d = json.loads(EMU_PADS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        d = {}
+    if not isinstance(d, dict):
+        d = {}
+    if not isinstance(d.get("emus"), dict):
+        d["emus"] = {}
+    return d
+
+
+def emu_pads_save(d):
+    EMU_PADS.parent.mkdir(parents=True, exist_ok=True)
+    tmp = EMU_PADS.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(EMU_PADS)
+
+
+def valid_bind(b):
+    if not isinstance(b, dict):
+        return None
+    if isinstance(b.get("key"), int):
+        return {"key": b["key"]}
+    if isinstance(b.get("abs"), int) and b.get("dir") in (1, -1):
+        return {"abs": b["abs"], "dir": b["dir"]}
+    if b.get("hat") in ("x", "y") and b.get("dir") in (1, -1):
+        return {"hat": b["hat"], "dir": b["dir"]}
+    return None
+
+
+def pad_style(name):
+    """Beschriftung der Controllertasten: PlayStation-Symbole oder Xbox-Buchstaben."""
+    return "ps" if re.search(r"sony|playstation|wireless controller|dualsense|dualshock|ps[345]", name or "", re.I) else "xbox"
+
+
+def emu_binds(emu, pad, probe=None, roles=None):
+    """Konsolentaste -> Bindung fuer einen Controller (Vorgabe ueber pad_roles, darueber die eigene Belegung)
+    und ob es fuer diesen Controller eine eigene Belegung gibt."""
+    lay = EMU_LAYOUTS.get(emu)
+    if not lay:
+        return {}, False
+    if roles is None:
+        roles = pad_roles(pad, probe)[0]
+    ent = (emu_pads_load()["emus"].get(emu) or {}).get(pad["id"])
+    own = ent.get("map") if isinstance(ent, dict) and isinstance(ent.get("map"), dict) else {}
+    out = {}
+    for btn, role in lay["buttons"]:
+        b = valid_bind(own.get(btn)) if btn in own else None
+        out[btn] = b if b else roles.get(role)
+    return out, any(valid_bind(v) for k, v in own.items())
+
+
+def keymap_payload(emu, path=""):
+    """Fuer die Seite "Tastenbelegung": Konsole, Controller, je Konsolentaste die Controllertaste."""
+    lay = EMU_LAYOUTS[emu]
+    pads = gamepads()
+    pad = next((p for p in pads if p["path"] == path), pads[0] if pads else None)
+    out = {"emu": emu, "name": lay["name"], "sub": lay.get("sub", ""), "console": lay["console"],
+           "pads": [{"path": p["path"], "name": p["name"]} for p in pads], "pad": None, "custom": False}
+    roles, src, style, binds = {}, "", "xbox", {}
+    if pad:
+        roles, src = pad_roles(pad, sdl_probe())
+        style = pad_style(pad["name"])
+        binds, out["custom"] = emu_binds(emu, pad, roles=roles)
+        out["pad"] = {"path": pad["path"], "name": pad["name"], "id": pad["id"], "src": src}
+    btns = []
+    for btn, defrole in lay["buttons"]:
+        b = binds.get(btn)
+        role = next((r for r, x in roles.items() if x == b), "") if b else ""
+        label = DPAD_TEXT.get(role) or ROLE_TEXT[style].get(role) or (binding_label(b) if b else "")
+        btns.append({"id": btn, "action": btn in EMU_ACTIONS, "bind": b, "role": role, "label": label,
+                     "custom": bool(pad) and b != roles.get(defrole)})
+    out["buttons"] = btns
+    return out
+
+
+def keymap_pad(path):
+    pad = next((p for p in gamepads() if p["path"] == path), None)
+    if not pad:
+        raise ValueError("Kein Controller unter diesem Pfad")
+    return pad
+
+
+def keymap_set(emu, path, button, bind):
+    """Eine Konsolentaste auf eine Controllertaste legen. Lag die Controllertaste schon auf einer anderen Konsolentaste,
+    tauschen die beiden (die andere bekommt die bisherige Taste). -> Liste der getauschten Konsolentasten."""
+    lay = EMU_LAYOUTS.get(emu)
+    if not lay or button not in dict(lay["buttons"]):
+        raise ValueError("Unbekannte Taste")
+    bind = valid_bind(bind)
+    if not bind:
+        raise ValueError("Ungueltige Taste")
+    pad = keymap_pad(path)
+    roles = pad_roles(pad, sdl_probe())[0]
+    defs = {b: roles.get(r) for b, r in lay["buttons"]}
+    with EMU_PADS_LOCK:
+        cur, _ = emu_binds(emu, pad, roles=roles)
+        new, swapped = dict(cur), []
+        for other, ob in cur.items():
+            if other != button and ob == bind:
+                new[other] = cur[button]
+                swapped.append(other)
+        new[button] = bind
+        m = {b: v for b, v in new.items() if v and v != defs[b]}
+        d = emu_pads_load()
+        emus = d["emus"].setdefault(emu, {})
+        if m:
+            emus[pad["id"]] = {"name": pad["name"], "map": m}
+        else:
+            emus.pop(pad["id"], None)
+        if not emus:
+            d["emus"].pop(emu, None)
+        emu_pads_save(d)
+    log(f"Tastenbelegung {emu} ({pad['name']}): {button} = {binding_label(bind)}",
+        f"(getauscht mit {', '.join(swapped)})" if swapped else "")
+    return swapped
+
+
+def keymap_reset(emu, path):
+    """Eigene Belegung eines Controllers fuer einen Emulator verwerfen (zurueck zur Vorgabe)."""
+    pad = keymap_pad(path)
+    with EMU_PADS_LOCK:
+        d = emu_pads_load()
+        (d["emus"].get(emu) or {}).pop(pad["id"], None)
+        if not d["emus"].get(emu):
+            d["emus"].pop(emu, None)
+        emu_pads_save(d)
+    log(f"Tastenbelegung {emu} ({pad['name']}): zurueck auf Vorgabe")
+
+
+class PadCapture:
+    """Tastenbelegung: auf den naechsten Tastendruck eines Controllers warten. Das Geraet ist dabei exklusiv geoeffnet
+    (EVIOCGRAB), damit Startseite und Guide-Taste nichts davon mitbekommen – sonst wuerde jeder Druck auch die
+    Oberflaeche bedienen. Zwischen zwei Fragen bleibt es kurz gegriffen (LINGER), damit ein schneller Druck nicht doch
+    in der Oberflaeche landet. Guide/PS-Taste = abbrechen."""
+    LINGER = 2.0
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.dev = None
+        self.rest = {}                               # Achse -> (Ruhewert, min, max), beim Greifen gemerkt
+        self.gen = 0                                 # jede neue Frage / Abbrechen zaehlt hoch
+
+    def _device(self, path):
+        import evdev  # type: ignore
+        from evdev import ecodes as E
+        if self.dev is not None and self.dev.path == path:
+            return self.dev
+        self._release()
+        if path not in {p["path"] for p in gamepads()}:
+            raise ValueError("Kein Controller unter diesem Pfad")
+        dev = evdev.InputDevice(path)
+        dev.grab()
+        self.dev = dev
+        self.rest = {c: (0 if E.ABS_HAT0X <= c <= E.ABS_HAT3Y else i.value, i.min, i.max)
+                     for c, i in dev.capabilities().get(E.EV_ABS, [])}
+        return dev
+
+    def _release(self):
+        dev, self.dev = self.dev, None
+        if dev is not None:
+            try:
+                dev.ungrab()
+            except OSError:
+                pass
+            try:
+                dev.close()
+            except OSError:
+                pass
+
+    def _linger(self, gen):
+        time.sleep(self.LINGER)
+        with self.lock:
+            if self.gen == gen:
+                self._release()
+
+    def cancel(self):
+        with self.lock:
+            self.gen += 1
+            self._release()
+
+    def capture(self, path, timeout=10.0):
+        """-> {"bind", "label"} | {"timeout": True} (nichts gedrueckt) | {"cancel": True} (Guide/PS-Taste)
+        | {"cancelled": True} (von der Oberflaeche abgebrochen)."""
+        import select as sel
+        from evdev import ecodes as E
+        sticks = {E.ABS_X, E.ABS_Y, E.ABS_RX, E.ABS_RY}
+        with self.lock:
+            self.gen += 1
+            gen = self.gen
+            dev = self._device(path)
+            rest = dict(self.rest)
+        try:
+            while sel.select([dev.fd], [], [], 0)[0]:  # Liegengebliebenes (Loslassen der vorigen Taste …) verwerfen
+                for _ev in dev.read():
+                    pass
+            held = set(dev.active_keys())             # noch gedrueckt: erst loslassen
+            armed = {}                                 # Achse muss erst in Ruhe sein, bevor sie zaehlt
+            for c, (v0, lo, hi) in rest.items():
+                armed[c] = abs(dev.absinfo(c).value - v0) / ((hi - lo) or 1) < 0.3
+            end = time.monotonic() + timeout
+            while time.monotonic() < end:
+                r, _, _ = sel.select([dev.fd], [], [], min(0.2, max(0.0, end - time.monotonic())))
+                if self.gen != gen:
+                    return {"cancelled": True}
+                if not r:
+                    continue
+                for ev in dev.read():
+                    if ev.type == E.EV_KEY:
+                        if ev.value == 0:
+                            held.discard(ev.code)
+                        elif ev.value == 1 and ev.code not in held:
+                            if ev.code == E.BTN_MODE:
+                                return {"cancel": True}
+                            b = {"key": ev.code}
+                            return {"bind": b, "label": binding_label(b)}
+                    elif ev.type == E.EV_ABS and ev.code not in sticks and ev.code in rest:
+                        if E.ABS_HAT0X <= ev.code <= E.ABS_HAT3Y:
+                            if ev.code in (E.ABS_HAT0X, E.ABS_HAT0Y):
+                                if ev.value == 0:
+                                    armed[ev.code] = True
+                                elif armed.get(ev.code):
+                                    b = {"hat": "x" if ev.code == E.ABS_HAT0X else "y", "dir": 1 if ev.value > 0 else -1}
+                                    return {"bind": b, "label": binding_label(b)}
+                            continue
+                        v0, lo, hi = rest[ev.code]
+                        x = abs(ev.value - v0) / ((hi - lo) or 1)
+                        if x < 0.3:
+                            armed[ev.code] = True
+                        elif x > 0.6 and armed.get(ev.code):    # deutlich gedrueckt (Schultertaste als Achse)
+                            b = {"abs": ev.code, "dir": 1 if ev.value > v0 else -1}
+                            return {"bind": b, "label": binding_label(b)}
+            return {"timeout": True}
+        except OSError:
+            if self.gen != gen:
+                return {"cancelled": True}
+            with self.lock:
+                self._release()
+            raise
+        finally:
+            threading.Thread(target=self._linger, args=(gen,), daemon=True).start()
+
+
+PAD_CAPTURE = PadCapture()
 
 
 # ---- mGBA (Kachel "gba"; geprueft am Quelltext von mGBA 0.10.5) ----------------------------------------------
@@ -5585,27 +5906,43 @@ MGBA_DEFAULTS = {
     "pauseOnFocusLost": "0",      # Anhalten im Hintergrund macht VoidStation selbst
     "suspendScreensaver": "1",
 }
+MGBA_KEYS = ["A", "B", "Select", "Start", "Right", "Left", "Up", "Down", "R", "L"]     # GBA-Tastennummern 0…9
+# Was VoidStation fuer mGBA selbst als Tastendruck schickt (mGBA-Vorgaben: Window.cpp; Zurueckspulen bekommt eine
+# Taste, die auf jedem Tastaturlayout gleich ist – die Vorgabe ` ist auf deutschen Tastaturen eine Tottaste)
+MGBA_ACTIONS = {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab"), "rewind": ("hold", "Scroll_Lock")}
+MGBA_REWIND_KEY = "ScrollLock"               # QKeySequence-Name fuer qt.ini [shortcutKey] holdRewind
 
 
-def mgba_pad_map(pad, roles):
-    """Belegung fuer mGBA: ○ (rechts) = A, ✕ (unten) = B, L/R, Select/Start, Steuerkreuz und linker Stick.
-    GBA-Tasten: A0 B1 Select2 Start3 Rechts4 Links5 Hoch6 Runter7 R8 L9."""
+def mgba_pad_map(pad, bmap):
+    """Belegung fuer mGBA aus Konsolentaste -> Bindung (emu_binds). Tasten -> keyX = SDL-Tastennummer,
+    Schultertasten als Achse -> axisX, Steuerkreuz als Achse -> hat0X. Der linke Stick steuert immer mit."""
     from evdev import ecodes as E
     btn, ax = sdl_indices(pad)
-    b = lambda role: str(btn[roles[role]]) if roles.get(role) in btn else "-1"
-    m = {"keyA": b("b"), "keyB": b("a"), "keySelect": b("select"), "keyStart": b("start"),
-         "keyL": b("lb"), "keyR": b("rb"), "keyUp": b("up"), "keyDown": b("down"), "keyLeft": b("left"),
-         "keyRight": b("right"), "hat0Up": "6", "hat0Right": "4", "hat0Down": "7", "hat0Left": "5"}
+    m = {f"key{k}": "-1" for k in MGBA_KEYS}
+    hat = {}
+    axes = {}
+    for k in MGBA_KEYS:
+        b = bmap.get(k) or {}
+        if "key" in b and b["key"] in btn:
+            m[f"key{k}"] = str(btn[b["key"]])
+        elif "hat" in b:
+            hat[{("y", -1): "Up", ("y", 1): "Down", ("x", -1): "Left", ("x", 1): "Right"}[(b["hat"], b["dir"])]] = \
+                str(MGBA_KEYS.index(k))
+        elif "abs" in b and b["abs"] in ax:
+            axes[k] = (ax[b["abs"]], b["dir"])
+    m.update({f"hat0{d}": hat.get(d, "-1") for d in ("Up", "Right", "Down", "Left")})
+    stick = {}
     if E.ABS_X in ax:
-        m.update({"axisLeftValue": "-16384", "axisLeftAxis": f"-{ax[E.ABS_X]}",
-                  "axisRightValue": "16384", "axisRightAxis": f"+{ax[E.ABS_X]}"})
+        stick["Left"], stick["Right"] = (ax[E.ABS_X], -1), (ax[E.ABS_X], 1)
     if E.ABS_Y in ax:
-        m.update({"axisUpValue": "-16384", "axisUpAxis": f"-{ax[E.ABS_Y]}",
-                  "axisDownValue": "16384", "axisDownAxis": f"+{ax[E.ABS_Y]}"})
+        stick["Up"], stick["Down"] = (ax[E.ABS_Y], -1), (ax[E.ABS_Y], 1)
+    for k, (a, d) in {**stick, **axes}.items():
+        m[f"axis{k}Value"] = str(16384 * d)
+        m[f"axis{k}Axis"] = ("+" if d > 0 else "-") + str(a)
     return m
 
 
-MGBA_AXIS_KEYS = [f"axis{d}{s}" for d in ("Left", "Right", "Up", "Down") for s in ("Value", "Axis")]
+MGBA_AXIS_KEYS = [f"axis{k}{s}" for k in MGBA_KEYS for s in ("Value", "Axis")]
 
 
 def qt_ini_group(name):
@@ -5627,73 +5964,94 @@ def ini_section_once(app, path, section, values, st, key, remove=()):
 
 
 def mgba_prepare():
-    """Vor jedem Start von mGBA: Grundeinstellungen und Controller-Belegung (nur, wo der Nutzer nichts geaendert hat)."""
+    """Vor jedem Start von mGBA: Grundeinstellungen und Controller-Belegung.
+    Hat man in VoidStation eine eigene Tastenbelegung festgelegt, gilt sie immer (sie ist ja ausdruecklich so
+    gewollt); sonst die Vorgabe, aber nur, wo der Nutzer in mGBA selbst nichts geaendert hat."""
     with EMU_LOCK:
         st = emu_state_load()
         wanted = dict(MGBA_DEFAULTS)
         if SYS_ARCH != "i686":                 # Zurueckspulen kostet jedes Bild Rechenzeit – auf alten Rechnern nicht
             wanted["rewindEnable"] = "1"
         ini_defaults("mgba", MGBA_CONFIG, "ports.qt", wanted, st)
-        # Controller: mGBA kennt von sich aus nur wenige Controller, und sein eingebautes Profil fuer "Wireless
-        # Controller" (PS4 und Nachbauten) ist fuer Windows gezaehlt – unter Linux lagen A/B daneben, und ✕ oeffnete
-        # das Laden-Fenster. Deshalb: Belegung fuer den ersten Controller (Spieler 1) als allgemeine Belegung UND als
-        # Profil unter dem Namen, den mGBA von SDL bekommt (dann greift das eingebaute Profil nicht), dazu dessen
-        # Kurzbefehle entschaerft. Savestates machen △/□ ueber VoidStation (emu_quick_state).
         pads = gamepads()
+        sdl_name = ""
         if pads:
             pad = pads[0]
             probe = sdl_probe()
             roles, src = pad_roles(pad, probe)
-            m = mgba_pad_map(pad, roles)
+            bmap, custom = emu_binds("gba", pad, roles=roles)
+            m = mgba_pad_map(pad, bmap)
             rm = [k for k in MGBA_AXIS_KEYS if k not in m]
-            if ini_section_once("mgba", MGBA_CONFIG, MGBA_PAD, m, st, "pad", rm):
-                log(f"mGBA: Controller-Belegung fuer {pad['name']} ({src}):", m)
-            else:
-                log("mGBA: eigene Controller-Belegung vorhanden, bleibt")
             sdl_name = next((d["name"] for d in probe if d.get("path") == pad["path"]), "") or \
                 (probe[0]["name"] if len(probe) == 1 else "")
-            if sdl_name:
-                ini_section_once("mgba", MGBA_CONFIG, f"gba.input-profile.{sdl_name}", m, st,
-                                 f"profile:{sdl_name}", rm)
+            sections = [(MGBA_PAD, "pad")] + ([(f"gba.input-profile.{sdl_name}", f"profile:{sdl_name}")] if sdl_name else [])
+            for sec, key in sections:
+                if custom:
+                    ini_update(MGBA_CONFIG, sec, m, remove=rm)
+                    st.setdefault("mgba", {})[key] = dict(m)
+                elif not ini_section_once("mgba", MGBA_CONFIG, sec, m, st, key, rm):
+                    log(f"mGBA: eigene Belegung in [{sec}] bleibt")
+            log(f"mGBA: Controller-Belegung fuer {pad['name']} ({src}{', eigene Tastenbelegung' if custom else ''}):", m)
         # Eingebaute Profile von mGBA (InputProfile.cpp) legen Kurzbefehle auf Controller-Tasten – gezaehlt wie unter
-        # Windows/macOS. Beim PS4-Controller ("Wireless Controller") liegt "Laden" auf Taste 0, unter Linux ist das ✕
-        # (= GBA-B): B oeffnete das Laden-Fenster, □ das Speichern-Fenster. Diese beiden fuer jeden passenden Namen
-        # abschalten – den von SDL und alle, unter denen mGBA schon ein Profil gespeichert hat. Nur, wo der Nutzer in
-        # mGBA nichts anderes eingestellt hat (Schluessel fehlt). L2/R2 = Zurueck-/Vorspulen aus dem Profil bleibt.
-        names = set(MGBA_BUILTIN_RE.findall("\n".join(
-            s[len("gba.input-profile."):] for s in ini_read(MGBA_CONFIG) if s.startswith("gba.input-profile."))))
-        names = {n for n in names if n}
-        if pads and sdl_name and MGBA_BUILTIN_RE.fullmatch(sdl_name):
+        # Windows/macOS. Beim PS4-Controller ("Wireless Controller") lag "Laden" auf ✕. Savestates und Spulen macht
+        # jetzt VoidStation (MGBA_ACTIONS, frei belegbar), deshalb alle vier abschalten – fuer den Namen von SDL und
+        # alle, unter denen mGBA schon ein Profil gespeichert hat. Nur, wo der Nutzer nichts eingestellt hat.
+        names = {n for n in MGBA_BUILTIN_RE.findall("\n".join(
+            s[len("gba.input-profile."):] for s in ini_read(MGBA_CONFIG) if s.startswith("gba.input-profile."))) if n}
+        if sdl_name and MGBA_BUILTIN_RE.fullmatch(sdl_name):
             names.add(sdl_name)
         for n in sorted(names):
             grp = "shortcutProfileButton." + qt_ini_group(n)
             cur = ini_read(MGBA_QT).get(grp, {})
-            fix = {k: "-1" for k in ("loadState", "saveState") if k not in cur}
-            # Version vom 25.10. hatte auch Vor-/Zurueckspulen abgeschaltet und eine leere Achsen-Gruppe geschrieben
-            old = st.get("mgba", {}).pop(f"shortcuts:{n}", None)
-            undo = [k for k in ("holdFastForward", "holdRewind") if old and cur.get(k) == "-1"]
-            if fix or undo:
-                ini_update(MGBA_QT, grp, fix, remove=undo)
-                log(f"mGBA: Kurzbefehle des eingebauten Profils fuer {n!r} entschaerft:", fix, undo)
-            olda = st.get("mgba", {}).pop(f"shortcutaxes:{n}", None)
-            if olda:
-                agrp = "shortcutProfileAxis." + qt_ini_group(n)
-                acur = ini_read(MGBA_QT).get(agrp, {})
-                ini_update(MGBA_QT, agrp, {}, remove=[k for k, v in acur.items() if v == "" and k in olda])
+            fix = {k: "-1" for k in ("loadState", "saveState", "holdFastForward", "holdRewind") if k not in cur}
+            if fix:
+                ini_update(MGBA_QT, grp, fix)
+                log(f"mGBA: Kurzbefehle des eingebauten Profils fuer {n!r} aus:", fix)
+        for k in [k for k in st.setdefault("mgba", {}) if k.startswith(("shortcuts:", "shortcutaxes:"))]:
+            st["mgba"].pop(k, None)                   # Merker aelterer Fassungen
+        # Zurueckspulen (gehalten) auf eine Taste, die xdotool auf jedem Layout schicken kann
+        keys = ini_read(MGBA_QT).get("shortcutKey", {})
+        if "holdRewind" not in keys or (keys["holdRewind"] == MGBA_REWIND_KEY):
+            if keys.get("holdRewind") != MGBA_REWIND_KEY:
+                ini_update(MGBA_QT, "shortcutKey", {"holdRewind": MGBA_REWIND_KEY})
         emu_state_save(st)
 
 
-def emu_quick_state(load):
-    """In mGBA: △ = Savestate speichern (Platz 1, Umschalt+F1), □ = laden (F1). Nur, wenn mGBA wirklich vorn ist."""
+def emu_front(kind):
+    """Kachel, wenn das aktive Fenster wirklich zum Programm `kind` gehoert (sonst None)."""
     tid = APPS.front()
-    if not tid or APPS.kinds.get(tid) != "mgba-qt" or not shutil.which("xdotool"):
-        return
+    if not tid or APPS.kinds.get(tid) != kind:
+        return None
     proc = APPS._get(tid)
     act = active_window()
     if not proc or not act or not any(int(w[0], 16) == act for w in APPS._windows_of(tid, proc)):
+        return None
+    return tid
+
+
+EMU_HELD = set()                              # gerade gehaltene Tasten (keydown geschickt), werden sicher losgelassen
+
+
+def emu_action(action, down):
+    """Aktion aus der Emulator-Belegung (mGBA: speichern, laden, vor-/zurueckspulen). Nur, wenn mGBA vorn ist;
+    eine gehaltene Taste wird beim Loslassen immer freigegeben."""
+    spec = MGBA_ACTIONS.get(action)
+    if not spec or not shutil.which("xdotool"):
         return
-    run(["xdotool", "key", "--clearmodifiers", "F1" if load else "shift+F1"])
-    log("mGBA: Savestate", "geladen" if load else "gespeichert")
+    how, key = spec
+    if how == "hold" and not down:
+        if key in EMU_HELD:
+            EMU_HELD.discard(key)
+            run(["xdotool", "keyup", key])
+        return
+    if not down or not emu_front("mgba-qt"):
+        return
+    if how == "tap":
+        run(["xdotool", "key", "--clearmodifiers", key])
+    else:
+        EMU_HELD.add(key)
+        run(["xdotool", "keydown", key])
+    log("mGBA:", action)
 
 
 # ---- Vollbild ------------------------------------------------------------------------------------------------
@@ -7669,6 +8027,28 @@ class Handler(BaseHTTPRequestHandler):
         except ValueError:
             return {}
 
+    def _keymap_post(self, rest, b):
+        """Tastenbelegung je Emulator: Taste abfragen (capture), belegen (set), zuruecksetzen (reset), abbrechen."""
+        try:
+            if rest == ["capture"]:
+                return self._json(200, PAD_CAPTURE.capture(str(b.get("path", "")), min(30.0, float(b.get("timeout") or 10))))
+            if rest == ["cancel"]:
+                PAD_CAPTURE.cancel()
+                return self._json(200, {"ok": True})
+            emu = str(b.get("emu", ""))
+            if emu not in EMU_LAYOUTS:
+                return self._json(404, {"error": "Unbekannter Emulator"})
+            path = str(b.get("path", ""))
+            if rest == ["set"]:
+                swapped = keymap_set(emu, path, str(b.get("button", "")), b.get("bind"))
+                return self._json(200, dict(keymap_payload(emu, path), swapped=swapped))
+            if rest == ["reset"]:
+                keymap_reset(emu, path)
+                return self._json(200, keymap_payload(emu, path))
+        except (ValueError, OSError) as e:
+            return self._json(400, {"error": str(e)})
+        return self._json(404, {"error": "unbekannt"})
+
     def _yt_get(self, what, qs):
         """YouTube Light (GET): Zustand, Startseite, Feed, Suche, Kanal, Playlist, Verlauf, Spaeter, Abos, Bilder."""
         g = lambda k: qs.get(k, [""])[0]
@@ -7823,7 +8203,13 @@ class Handler(BaseHTTPRequestHandler):
             for r in roms:
                 r["cover"] = ROM_COVERS.url(r)
             return self._json(200, {"system": ROMS.canonical_system(system), "folders": ROMS.folders(system),
-                                    "count": len(roms), "roms": roms})
+                                    "count": len(roms), "roms": roms, "keymap": system in EMU_LAYOUTS})
+        if path == "/api/keymap":                  # Tastenbelegung eines Emulators (Konsole, Controller, Tasten)
+            qs = urllib.parse.parse_qs(url.query)
+            emu = qs.get("emu", [""])[0]
+            if emu not in EMU_LAYOUTS:
+                return self._json(404, {"error": "Unbekannter Emulator"})
+            return self._json(200, keymap_payload(emu, qs.get("path", [""])[0]))
         if path == "/api/roms/cover":              # Bild zum Spiel (eigenes oder online gesucht, s. RomCovers)
             qs = urllib.parse.parse_qs(url.query)
             try:
@@ -8112,6 +8498,8 @@ class Handler(BaseHTTPRequestHandler):
                 except RuntimeError as e:
                     return self._json(502, {"error": str(e)})
                 return self._json(200, settings_payload())
+            if parts[:2] == ["api", "keymap"]:
+                return self._keymap_post(parts[2:], self._body())
             if parts == ["api", "roms", "launch"]:
                 b = self._body()
                 sys_id = str(b.get("system", ""))
@@ -8202,8 +8590,9 @@ def gamepad_watcher():
     """Controller-Tasten, die VoidStation selbst auswertet (auch wenn ein Programm vorn ist):
       * Guide/Home: Startseite nach vorn
       * L3 lang halten: Vollbild des Emulators vorn an/aus (emu_toggle_fullscreen)
-      * in mGBA: △ = Savestate speichern, □ = Savestate laden (emu_quick_state)
-    Welche Taste L3, △ und □ ist, kommt aus pad_roles (eigene Belegung, SDL, Linux-Codes)."""
+      * Aktionen aus der Tastenbelegung des Emulators, z. B. mGBA: △ speichern, □ laden, L2/R2 spulen
+    Welche Taste welche Rolle hat, kommt aus pad_roles (SDL, Linux-Codes) und emu_binds. Waehrend die Seite
+    "Tastenbelegung" eine Taste abfragt, haelt PadCapture das Geraet exklusiv – dann kommt hier nichts an."""
     try:
         import evdev  # type: ignore
         from evdev import ecodes
@@ -8213,76 +8602,110 @@ def gamepad_watcher():
         return
     sel = selectors.DefaultSelector()
     known = {}                                     # Pfad -> Geraet
-    roles = {}                                     # Pfad -> {evdev-Code: "l3" | "y" | "x"}
+    acts = {}                                      # Pfad -> [(Bindung, Aktion)]
+    rests = {}                                     # Pfad -> {Achse: (Ruhe, min, max)}
+    state = {}                                     # (Pfad, Aktion) -> gedrueckt
+    stamp = [None]                                 # Stand von emu-pads.json (Aenderung -> neu zuordnen)
 
-    def rescan():
+    def actions_for(pad, probe):
+        roles, src = pad_roles(pad, probe)
+        out = [(roles["l3"], "fullscreen")] if roles.get("l3") else []
+        bmap, custom = emu_binds("gba", pad, roles=roles)
+        for btn in MGBA_ACTIONS:
+            if bmap.get(btn):
+                out.append((bmap[btn], btn))
+        return out, src + (" + eigene Tastenbelegung" if custom else "")
+
+    def pads_stamp():
+        try:
+            return EMU_PADS.stat().st_mtime_ns
+        except OSError:
+            return 0
+
+    def rescan(force=False):
         pads = {p["path"]: p for p in gamepads()}
-        new = [p for p in pads if p not in known]
+        new = [p for p in pads if p not in known or force]
         probe = sdl_probe() if new else []
         for path in evdev.list_devices():
-            if path in known:
+            if path in known and not force:
                 continue
             try:
-                dev = evdev.InputDevice(path)
-                if path in pads or ecodes.BTN_MODE in dev.capabilities().get(ecodes.EV_KEY, []):
+                if path in known:
+                    dev = known[path]
+                else:
+                    dev = evdev.InputDevice(path)
+                    if not (path in pads or ecodes.BTN_MODE in dev.capabilities().get(ecodes.EV_KEY, [])):
+                        dev.close()
+                        continue
                     known[path] = dev
                     sel.register(dev, selectors.EVENT_READ)
-                    r = {}
-                    if path in pads:
-                        found, src = pad_roles(pads[path], probe)
-                        r = {found[k]: k for k in ("l3", "y", "x") if k in found}
-                        log("Gamepad erkannt:", dev.name, f"[{pads[path].get('id')}] (Belegung: {src}, Rollen:",
-                            ", ".join(f"{k}={v}" for k, v in sorted(found.items())) + ")")
-                    else:
-                        log("Gamepad erkannt:", dev.name)
-                    roles[path] = r or {ecodes.BTN_THUMBL: "l3"}
+                if path in pads:
+                    acts[path], src = actions_for(pads[path], probe)
+                    rests[path] = {c: (i.value, i.min, i.max) for c, i in dev.capabilities().get(ecodes.EV_ABS, [])}
+                    log("Gamepad erkannt:", dev.name, f"[{pads[path]['id']}] Belegung: {src};",
+                        ", ".join(f"{a}={binding_label(b)}" for b, a in acts[path]))
                 else:
-                    dev.close()
+                    acts[path] = [({"key": ecodes.BTN_THUMBL}, "fullscreen")]
+                    log("Gamepad erkannt:", dev.name)
             except OSError:
                 pass
 
     def drop(path):
         known.pop(path, None)
-        roles.pop(path, None)
-        for k in [k for k in held if k[0] == path]:
-            held.pop(k, None)
-            fired.discard(k)
+        acts.pop(path, None)
+        rests.pop(path, None)
+        for k in [k for k in state if k[0] == path]:
+            if state.pop(k):
+                emu_action(k[1], False)
+
+    def fire(path, action, on, ev_time):
+        k = (path, action)
+        was = state.get(k, False)
+        if on == was:
+            return
+        state[k] = on
+        if action == "fullscreen":
+            if on:
+                hold_since[k] = ev_time
+            else:
+                hold_since.pop(k, None)
+                done.discard(k)
+        else:
+            threading.Thread(target=emu_action, args=(action, on), daemon=True).start()
 
     last_scan = 0.0
-    held = {}                                      # (Pfad, Rolle) -> seit wann gedrueckt
-    fired = set()                                  # (Pfad, Rolle): langes Halten hat schon ausgeloest
+    hold_since = {}                                # L3: seit wann gehalten
+    done = set()                                   # L3: langes Halten hat schon umgeschaltet
     while True:
         if time.time() - last_scan > 5:
-            rescan()
+            st_now = pads_stamp()
+            rescan(force=st_now != stamp[0] and stamp[0] is not None)
+            stamp[0] = st_now
             last_scan = time.time()
-        for key, _ in sel.select(timeout=0.1 if held else 1):
+        for key, _ in sel.select(timeout=0.1 if hold_since else 1):
             dev = key.fileobj
             try:
                 for ev in dev.read():
-                    if ev.type != ecodes.EV_KEY:
-                        continue
-                    if ev.code == ecodes.BTN_MODE and ev.value == 1:
+                    if ev.type == ecodes.EV_KEY and ev.code == ecodes.BTN_MODE and ev.value == 1:
                         raise_home()
                         continue
-                    role = roles.get(dev.path, {}).get(ev.code)
-                    if not role:
+                    if ev.type not in (ecodes.EV_KEY, ecodes.EV_ABS):
                         continue
-                    if role in ("y", "x"):                             # △ speichern, □ laden
-                        if ev.value == 1:
-                            threading.Thread(target=emu_quick_state, args=(role == "x",), daemon=True).start()
-                        continue
-                    k = (dev.path, role)
-                    if ev.value == 1:
-                        held[k] = time.monotonic()
-                    elif ev.value == 0 and k in held:
-                        held.pop(k)
-                        fired.discard(k)
+                    for b, action in acts.get(dev.path, []):
+                        if ev.type == ecodes.EV_KEY and b.get("key") == ev.code and ev.value in (0, 1):
+                            fire(dev.path, action, ev.value == 1, time.monotonic())
+                        elif ev.type == ecodes.EV_ABS and "abs" in b and b["abs"] == ev.code:
+                            v0, lo, hi = rests.get(dev.path, {}).get(ev.code, (0, 0, 1))
+                            fire(dev.path, action, (ev.value - v0) * b["dir"] / ((hi - lo) or 1) > 0.4, time.monotonic())
+                        elif ev.type == ecodes.EV_ABS and "hat" in b and \
+                                ev.code == (ecodes.ABS_HAT0X if b["hat"] == "x" else ecodes.ABS_HAT0Y):
+                            fire(dev.path, action, ev.value * b["dir"] > 0, time.monotonic())
             except OSError:
                 sel.unregister(dev)
                 drop(dev.path)
-        for k, t in list(held.items()):
-            if k not in fired and time.monotonic() - t >= FS_HOLD:
-                fired.add(k)
+        for k, t in list(hold_since.items()):
+            if k not in done and time.monotonic() - t >= FS_HOLD:
+                done.add(k)
                 threading.Thread(target=emu_toggle_fullscreen, daemon=True).start()
 
 

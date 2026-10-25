@@ -53,6 +53,26 @@ STATIONS = [{"name": f"Testsender {i}", "url": f"https://example.invalid/s{i}", 
 ROMS = [{"title": n, "name": n, "filename": n.lower().replace(" ", "-") + ".gba", "size": "8 MB"} for n in
         ("Advance Wars", "Golden Sun", "Metroid Fusion", "Pokémon Smaragd", "Mario Kart", "Zelda Minish Cap", "F-Zero")]
 ROM_COVERS = Path(os.environ["VS_ROM_COVERS"]) if os.environ.get("VS_ROM_COVERS") else None
+# Tastenbelegung: Beispiel-Controller (PS4) und mGBA-Belegung wie im Launcher (EMU_LAYOUTS, keymap_payload)
+GBA_BUTTONS = [("A", "east"), ("B", "south"), ("L", "l1"), ("R", "r1"), ("Start", "start"), ("Select", "select"),
+               ("Up", "up"), ("Down", "down"), ("Left", "left"), ("Right", "right"),
+               ("save", "north"), ("load", "west"), ("rewind", "l2"), ("ff", "r2")]
+PS_TEXT = {"south": "✕", "east": "○", "west": "□", "north": "△", "l1": "L1", "r1": "R1", "l2": "L2", "r2": "R2",
+           "select": "Share", "start": "Options", "l3": "L3", "r3": "R3", "up": "↑", "down": "↓", "left": "←", "right": "→"}
+CAPTURE_ROLES = ["south", "east", "l1", "r1", "start", "select", "up", "down", "left", "right", "north", "west", "l2", "r2"]
+KEYMAP = {"own": {}, "step": 0, "nopad": os.environ.get("VS_NO_PAD") == "1"}
+
+
+def keymap_payload():
+    cur = {b: KEYMAP["own"].get(b, r) for b, r in GBA_BUTTONS}
+    pad = None if KEYMAP["nopad"] else {"path": "/dev/input/event21", "name": "Wireless Controller", "id": "054c:09cc", "src": "SDL"}
+    return {"emu": "gba", "name": "mGBA", "sub": "Game Boy / Color / Advance", "console": "gba",
+            "pads": [] if not pad else [{"path": pad["path"], "name": pad["name"]}], "pad": pad,
+            "custom": bool(KEYMAP["own"]),
+            "buttons": [{"id": b, "action": b in ("save", "load", "rewind", "ff"), "bind": {"role": cur[b]}, "role": cur[b],
+                         "label": PS_TEXT[cur[b]], "custom": cur[b] != r} for b, r in GBA_BUTTONS]}
+
+
 for _r in ROMS:                                   # wie der Launcher: Adresse immer da, 404 wenn es kein Bild gibt
     _r["cover"] = "/api/roms/cover?folder=gba&file=" + _r["filename"]
 
@@ -297,7 +317,9 @@ class H(S.H):
             "/api/bluetooth/status": bt_status,
             "/api/wifi/scan": lambda: [{"ssid": "FRITZ!Box 7530", "signal": 72, "secure": True, "active": True},
                                        {"ssid": "Nachbar", "signal": 31, "secure": True, "active": False}],
-            "/api/roms": lambda: {"system": q.get("system", ["gba"])[0], "count": len(ROMS), "roms": ROMS},
+            "/api/keymap": keymap_payload,
+            "/api/roms": lambda: {"system": q.get("system", ["gba"])[0], "count": len(ROMS), "roms": ROMS,
+                                  "keymap": q.get("system", ["gba"])[0] == "gba"},
             "/api/install/probe": lambda: PROBE,
             "/api/install/status": lambda: dict(inst_status(), autostart=LIVE["on"] and INST.get("state") == "idle" and not INST.get("seen")),
             "/api/install/gparted": lambda: {"running": False},
@@ -385,6 +407,25 @@ class H(S.H):
         n = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(n) or b"{}") if n else {}
         st = STATE
+        if p == "/api/keymap/capture":            # Vorschau: jede "Taste" nach 0,6 s, der Reihe nach
+            time.sleep(0.6)
+            role = CAPTURE_ROLES[KEYMAP["step"] % len(CAPTURE_ROLES)]
+            KEYMAP["step"] += 1
+            return self.j({"bind": {"role": role}, "label": role})
+        if p == "/api/keymap/set":
+            role = (body.get("bind") or {}).get("role")
+            cur = {b: KEYMAP["own"].get(b, r) for b, r in GBA_BUTTONS}
+            swapped = [o for o, r in cur.items() if o != body["button"] and r == role]
+            for o in swapped:
+                KEYMAP["own"][o] = cur[body["button"]]
+            KEYMAP["own"][body["button"]] = role
+            KEYMAP["own"] = {b: r for b, r in KEYMAP["own"].items() if r != dict(GBA_BUTTONS)[b]}
+            return self.j(dict(keymap_payload(), swapped=swapped))
+        if p == "/api/keymap/reset":
+            KEYMAP["own"] = {}
+            return self.j(keymap_payload())
+        if p == "/api/keymap/cancel":
+            return self.j({"ok": True})
         if p.startswith("/api/volume/"):
             a = p.rsplit("/", 1)[1]
             v = st["volume"]
