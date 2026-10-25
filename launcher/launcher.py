@@ -5571,6 +5571,10 @@ def pad_roles(pad, probe=None):
 MGBA_CONFIG = Path.home() / ".config/mgba/config.ini"
 MGBA_QT = Path.home() / ".config/mgba/qt.ini"
 MGBA_PAD = "gba.input.SDLB"                  # Belegung fuer alle Controller ohne eigenes Profil
+# Namen, fuer die mGBA 0.10 eingebaute Profile mitbringt (src/platform/qt/InputProfile.cpp)
+MGBA_BUILTIN_RE = re.compile(r"^(XInput Controller #\d+|Microsoft X-Box 360 pad|Xbox Gamepad \(userspace driver\)|"
+                             r"Xbox 360 Wired Controller|(?:Sony Computer Entertainment )?Wireless Controller|"
+                             r"PLAYSTATION\(R\)3 Controller|Wiimote \(..-..-..-..-..-..\))$", re.M)
 MGBA_DEFAULTS = {
     "autosave": "1",              # Stand alle 10 s und beim Beenden sichern (Platz 0) ...
     "autoload": "1",              # ... und beim naechsten Start dort weitermachen
@@ -5651,12 +5655,31 @@ def mgba_prepare():
             if sdl_name:
                 ini_section_once("mgba", MGBA_CONFIG, f"gba.input-profile.{sdl_name}", m, st,
                                  f"profile:{sdl_name}", rm)
-                ini_section_once("mgba", MGBA_QT, "shortcutProfileButton." + qt_ini_group(sdl_name),
-                                 {"loadState": "-1", "saveState": "-1", "holdFastForward": "-1", "holdRewind": "-1"},
-                                 st, f"shortcuts:{sdl_name}")
-                ini_section_once("mgba", MGBA_QT, "shortcutProfileAxis." + qt_ini_group(sdl_name),
-                                 {"loadState": "", "saveState": "", "holdFastForward": "", "holdRewind": ""},
-                                 st, f"shortcutaxes:{sdl_name}")
+        # Eingebaute Profile von mGBA (InputProfile.cpp) legen Kurzbefehle auf Controller-Tasten – gezaehlt wie unter
+        # Windows/macOS. Beim PS4-Controller ("Wireless Controller") liegt "Laden" auf Taste 0, unter Linux ist das ✕
+        # (= GBA-B): B oeffnete das Laden-Fenster, □ das Speichern-Fenster. Diese beiden fuer jeden passenden Namen
+        # abschalten – den von SDL und alle, unter denen mGBA schon ein Profil gespeichert hat. Nur, wo der Nutzer in
+        # mGBA nichts anderes eingestellt hat (Schluessel fehlt). L2/R2 = Zurueck-/Vorspulen aus dem Profil bleibt.
+        names = set(MGBA_BUILTIN_RE.findall("\n".join(
+            s[len("gba.input-profile."):] for s in ini_read(MGBA_CONFIG) if s.startswith("gba.input-profile."))))
+        names = {n for n in names if n}
+        if pads and sdl_name and MGBA_BUILTIN_RE.fullmatch(sdl_name):
+            names.add(sdl_name)
+        for n in sorted(names):
+            grp = "shortcutProfileButton." + qt_ini_group(n)
+            cur = ini_read(MGBA_QT).get(grp, {})
+            fix = {k: "-1" for k in ("loadState", "saveState") if k not in cur}
+            # Version vom 25.10. hatte auch Vor-/Zurueckspulen abgeschaltet und eine leere Achsen-Gruppe geschrieben
+            old = st.get("mgba", {}).pop(f"shortcuts:{n}", None)
+            undo = [k for k in ("holdFastForward", "holdRewind") if old and cur.get(k) == "-1"]
+            if fix or undo:
+                ini_update(MGBA_QT, grp, fix, remove=undo)
+                log(f"mGBA: Kurzbefehle des eingebauten Profils fuer {n!r} entschaerft:", fix, undo)
+            olda = st.get("mgba", {}).pop(f"shortcutaxes:{n}", None)
+            if olda:
+                agrp = "shortcutProfileAxis." + qt_ini_group(n)
+                acur = ini_read(MGBA_QT).get(agrp, {})
+                ini_update(MGBA_QT, agrp, {}, remove=[k for k, v in acur.items() if v == "" and k in olda])
         emu_state_save(st)
 
 
