@@ -22,6 +22,14 @@ Layer {
         Api.get("/api/roms?system=" + encodeURIComponent(t.id), function (j) { romData = j; focusFirst() },
                 function () { romData = { system: t.id, count: 0, roms: [] }; focusFirst() })
     }
+    function setMute(on) {
+        var t = tile
+        Api.post("/api/roms/mute", { system: t.id, on: on }, function (j) {
+            if (tile !== t || !romData) return
+            var d = Object.assign({}, romData); d.mute = j.mute; romData = d
+            app.toast(Ui.t(j.mute ? "roms.muteOn" : "roms.muteOff", { name: rl.sysName }))
+        }, function (e) { app.toast(Ui.t("common.failedMsg", { msg: e }), true) })
+    }
     function focusFirst() { Qt.callLater(function () { var it = Nav.collect(trk); app.setFocus(it.length ? it[0] : startEmu, true) }) }
     function firstFocus() { var it = Nav.collect(trk); return it.length ? it[0] : startEmu }
     // Spiel starten: Liste zu (zurueck auf der Startseite steht die Kachel als laufend da), Startbild wie bei
@@ -39,7 +47,16 @@ Layer {
     bar: [
         Pill { id: startEmu; text: Ui.t("roms.startEmu"); onTriggered: { var t = rl.tile; app.closeLayer(rl); app.launch(t) } },
         // Tastenbelegung des Emulators (KeymapLayer) – nur fuer Emulatoren, die VoidStation belegen kann
-        Pill { property string key: "romkeys"; visible: !!rl.romData && !!rl.romData.keymap; iconName: "gamepad"; text: Ui.t("keymap.title"); onTriggered: keymap.openFor(rl.tile) }
+        Pill { property string key: "romkeys"; visible: !!rl.romData && !!rl.romData.keymap; iconName: "gamepad"; text: Ui.t("keymap.title"); onTriggered: keymap.openFor(rl.tile) },
+        // Ton des Emulators aus (z. B. Podcast nebenher) – schaltet den Schalter des Emulators selbst (launcher.py EMU_MUTE)
+        Pill {
+            property string key: "rommute"
+            visible: !!rl.romData && rl.romData.mute !== undefined && rl.romData.mute !== null
+            iconName: "speaker"
+            text: Ui.t("roms.mute")
+            on: !!rl.romData && rl.romData.mute === true
+            onTriggered: rl.setMute(!on)
+        }
     ]
 
     Track {

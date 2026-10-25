@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Tastenbelegung eines Emulators (aus dessen Spieleliste): Skizze der Konsole, deren Tasten nacheinander abgefragt
 // werden – man drueckt jeweils die Controllertaste, die dafuer gelten soll. Daneben die aktuelle Belegung; eine Taste
-// waehlen belegt nur sie neu. Gilt nur fuer den Emulator, die Startseite bedient sich weiter wie bisher.
+// waehlen: neu belegen oder frei lassen. Gilt nur fuer den Emulator, die Startseite bedient sich weiter wie bisher.
 // Daten: /api/keymap (launcher.py, ~/.config/voidstation/emu-pads.json). Waehrend einer Abfrage haelt der Launcher
 // den Controller exklusiv: die Druecke bedienen dann nicht die Oberflaeche. Abbrechen: PS-/Guide-Taste, Esc, Maus.
 import QtQuick
@@ -23,6 +23,7 @@ Layer {
     property int secs: 0
     property int token: 0                        // veraltete Antworten nach Abbrechen ignorieren
     property string lastKey: ""
+    property string edit: ""                     // in der Liste gewaehlte Taste: neu belegen oder frei lassen?
     readonly property var keys: kd ? kd.buttons.filter(function (b) { return !b.action }) : []
     readonly property var extras: kd ? kd.buttons.filter(function (b) { return b.action }) : []
     readonly property real picW: Math.min(Ui.screenW * 0.38, Math.max(Ui.screenW * 0.26, (stage.height - 230 * Ui.f) * 100 / 62))
@@ -32,6 +33,7 @@ Layer {
         tile = t
         kd = null
         mode = ""
+        edit = ""
         app.openLayer(km)
         load("kmall")
     }
@@ -64,12 +66,31 @@ Layer {
     function btn(id) { return kd ? (kd.buttons.filter(function (b) { return b.id === id })[0] || null) : null }
     function handleBack() {
         if (mode) { stop(false); return true }
+        if (edit) { closeEdit(); return true }
         return false
+    }
+
+    // ---- Taste aus der Liste gewaehlt: neu belegen, frei lassen oder zurueck
+    function openEdit(id) {
+        edit = id
+        Qt.callLater(function () { refocus("kmrebind") })
+    }
+    function closeEdit() {
+        var id = edit
+        edit = ""
+        Qt.callLater(function () { refocus("kmb" + id) })
+    }
+    function clearOne(id) {
+        Api.post("/api/keymap/set", { emu: tile.id, path: padPath, button: id, bind: null }, function (j) {
+            kd = j
+            app.toast(Ui.t("keymap.cleared", { btn: btnText(id) }))
+            closeEdit()
+        }, function (e) { app.toast(Ui.t("common.failedMsg", { msg: e }), true) })
     }
 
     // ---- Abfrage: eine Taste nach der anderen, je bis zu 10 s; nichts gedrueckt = bleibt, wie sie ist
     function learnAll() { start(kd.buttons.map(function (b) { return b.id }), "kmall") }
-    function learnOne(id) { start([id], "kmb" + id) }
+    function learnOne(id) { edit = ""; start([id], "kmb" + id) }
     function start(ids, back) {
         if (!kd || !kd.pad) return
         lastKey = back
@@ -154,7 +175,7 @@ Layer {
             ConsolePic {
                 width: km.picW
                 kind: km.kd ? km.kd.console : "gba"
-                cur: km.cur
+                cur: km.cur || km.edit
                 done: Object.keys(km.session)
                 screenText: km.mode === "learn" ? km.btnText(km.cur) : ""
             }
@@ -176,15 +197,23 @@ Layer {
                 elide: Text.ElideNone
             }
             Info { visible: !!km.kd && !km.kd.pad; width: km.picW; html: Ui.esc(Ui.t("keymap.noPad")) }
+            SetRow {                                 // gewaehlte Taste: neu belegen / frei lassen
+                width: km.picW
+                visible: km.edit !== "" && !km.mode
+                label: km.edit ? Ui.t("keymap.editLabel", { btn: km.btnText(km.edit), key: km.ctrlText(km.btn(km.edit)) }) : ""
+                Pill { property string key: "kmrebind"; text: Ui.t("keymap.rebind"); onTriggered: km.learnOne(km.edit) }
+                Pill { property string key: "kmclear"; text: Ui.t("keymap.clear"); enabled: !!km.btn(km.edit) && !!km.btn(km.edit).bind; onTriggered: km.clearOne(km.edit) }
+                Pill { property string key: "kmeditback"; text: Ui.t("common.back"); onTriggered: km.closeEdit() }
+            }
             SetRow {
                 width: km.picW
-                visible: !!km.kd && !!km.kd.pad
+                visible: !!km.kd && !!km.kd.pad && km.edit === ""
                 Pill { property string key: "kmall"; visible: !km.mode; text: Ui.t("keymap.all"); onTriggered: km.learnAll() }
                 Pill { property string key: "kmreset"; visible: !km.mode && !!km.kd && km.kd.custom; text: Ui.t("keymap.reset"); onTriggered: km.reset() }
                 Pill { property string key: "kmcancel"; visible: km.mode !== ""; text: Ui.t("common.cancel"); onTriggered: km.stop(false) }
             }
             Info { visible: km.mode === "learn"; width: km.picW; html: Ui.t("keymap.learnHint") }
-            Info { visible: !km.mode && !!km.kd && !!km.kd.pad; width: km.picW; html: Ui.t("keymap.info." + (km.tile ? km.tile.id : ""), null, "") }
+            Info { visible: !km.mode && !km.edit && !!km.kd && !!km.kd.pad; width: km.picW; html: Ui.t("keymap.info." + (km.tile ? km.tile.id : ""), null, "") }
         }
         // Belegung: Konsolentaste -> Controllertaste; waehlen = nur diese Taste neu
         SetGroup {
@@ -201,9 +230,10 @@ Layer {
                         property string key: "kmb" + modelData.id
                         width: km.cellW
                         text: km.btnText(modelData.id) + "   →   " + km.ctrlText(modelData)
-                        on: km.cur === modelData.id
+                        on: km.cur === modelData.id || km.edit === modelData.id
+                        dim: !modelData.bind
                         enabled: !km.mode
-                        onTriggered: km.learnOne(modelData.id)
+                        onTriggered: km.edit === modelData.id ? km.closeEdit() : km.openEdit(modelData.id)
                     }
                 }
             }
@@ -217,9 +247,10 @@ Layer {
                         property string key: "kmb" + modelData.id
                         width: km.cellW
                         text: km.btnText(modelData.id) + "   →   " + km.ctrlText(modelData)
-                        on: km.cur === modelData.id
+                        on: km.cur === modelData.id || km.edit === modelData.id
+                        dim: !modelData.bind
                         enabled: !km.mode
-                        onTriggered: km.learnOne(modelData.id)
+                        onTriggered: km.edit === modelData.id ? km.closeEdit() : km.openEdit(modelData.id)
                     }
                 }
             }

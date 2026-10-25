@@ -5614,8 +5614,9 @@ def pad_roles(pad, probe=None):
 # Die Oberflaeche (KeymapLayer.qml) zeigt eine Skizze der Konsole und fragt deren Tasten der Reihe nach ab; man drueckt
 # jeweils die Controllertaste, die dafuer gelten soll. Gilt nur fuer den Emulator – die Startseite liest das nie.
 # ~/.config/voidstation/emu-pads.json:
-#   {"emus": {"<Kachel>": {"<vid:pid>": {"name": …, "map": {"<Konsolentaste>": Bindung}}}}}
-# Gespeichert wird nur, was von der Vorgabe abweicht (Vorgabe: Rolle aus EMU_LAYOUTS -> Bindung aus pad_roles).
+#   {"emus": {"<Kachel>": {"<vid:pid>": {"name": …, "map": {"<Konsolentaste>": Bindung | null}}}}}
+# Gespeichert wird nur, was von der Vorgabe abweicht (Vorgabe: Rolle aus EMU_LAYOUTS -> Bindung aus pad_roles);
+# null = absichtlich frei gelassen (z. B. Savestate laden, damit man nicht aus Versehen drankommt).
 # Bindung: {"key": evdev-Code} | {"abs": Code, "dir": ±1} | {"hat": "x"|"y", "dir": ±1}, s. pad_roles.
 EMU_PADS = Path.home() / ".config/voidstation/emu-pads.json"
 PAD_ROLES = ["south", "east", "west", "north", "l1", "r1", "l2", "r2", "select", "start", "l3", "r3",
@@ -5689,9 +5690,8 @@ def emu_binds(emu, pad, probe=None, roles=None):
     own = ent.get("map") if isinstance(ent, dict) and isinstance(ent.get("map"), dict) else {}
     out = {}
     for btn, role in lay["buttons"]:
-        b = valid_bind(own.get(btn)) if btn in own else None
-        out[btn] = b if b else roles.get(role)
-    return out, any(valid_bind(v) for k, v in own.items())
+        out[btn] = valid_bind(own[btn]) if btn in own else roles.get(role)   # null bzw. Unbrauchbares: frei
+    return out, bool(own)
 
 
 def keymap_payload(emu, path=""):
@@ -5726,14 +5726,16 @@ def keymap_pad(path):
 
 
 def keymap_set(emu, path, button, bind):
-    """Eine Konsolentaste auf eine Controllertaste legen. Lag die Controllertaste schon auf einer anderen Konsolentaste,
-    tauschen die beiden (die andere bekommt die bisherige Taste). -> Liste der getauschten Konsolentasten."""
+    """Eine Konsolentaste auf eine Controllertaste legen (bind=None: frei lassen). Lag die Controllertaste schon auf
+    einer anderen Konsolentaste, tauschen die beiden (die andere bekommt die bisherige Taste).
+    -> Liste der getauschten Konsolentasten."""
     lay = EMU_LAYOUTS.get(emu)
     if not lay or button not in dict(lay["buttons"]):
         raise ValueError("Unbekannte Taste")
-    bind = valid_bind(bind)
-    if not bind:
-        raise ValueError("Ungueltige Taste")
+    if bind is not None:
+        bind = valid_bind(bind)
+        if not bind:
+            raise ValueError("Ungueltige Taste")
     pad = keymap_pad(path)
     roles = pad_roles(pad, sdl_probe())[0]
     defs = {b: roles.get(r) for b, r in lay["buttons"]}
@@ -5741,11 +5743,11 @@ def keymap_set(emu, path, button, bind):
         cur, _ = emu_binds(emu, pad, roles=roles)
         new, swapped = dict(cur), []
         for other, ob in cur.items():
-            if other != button and ob == bind:
+            if bind and other != button and ob == bind:
                 new[other] = cur[button]
                 swapped.append(other)
         new[button] = bind
-        m = {b: v for b, v in new.items() if v and v != defs[b]}
+        m = {b: v for b, v in new.items() if v != defs[b]}
         d = emu_pads_load()
         emus = d["emus"].setdefault(emu, {})
         if m:
@@ -5755,7 +5757,7 @@ def keymap_set(emu, path, button, bind):
         if not emus:
             d["emus"].pop(emu, None)
         emu_pads_save(d)
-    log(f"Tastenbelegung {emu} ({pad['name']}): {button} = {binding_label(bind)}",
+    log(f"Tastenbelegung {emu} ({pad['name']}): {button} = {binding_label(bind) if bind else 'frei'}",
         f"(getauscht mit {', '.join(swapped)})" if swapped else "")
     return swapped
 
@@ -5967,6 +5969,7 @@ def mgba_prepare():
     """Vor jedem Start von mGBA: Grundeinstellungen und Controller-Belegung.
     Hat man in VoidStation eine eigene Tastenbelegung festgelegt, gilt sie immer (sie ist ja ausdruecklich so
     gewollt); sonst die Vorgabe, aber nur, wo der Nutzer in mGBA selbst nichts geaendert hat."""
+    emu_mute_apply("gba")
     with EMU_LOCK:
         st = emu_state_load()
         wanted = dict(MGBA_DEFAULTS)
@@ -6017,6 +6020,51 @@ def mgba_prepare():
         emu_state_save(st)
 
 
+# ---- Ton aus je Emulator (Spieleliste: "Spiel stumm") ----------------------------------------------------------
+# Geschaltet wird der Schalter des Emulators selbst, damit VoidStation und das Menue des Emulators uebereinstimmen.
+# mGBA 0.10: [ports.qt] mute (Window.cpp Audio -> Stumm; CoreController liest es beim Start).
+# Laeuft der Emulator gerade, schreibt er beim Beenden seine Einstellungen zurueck – deshalb merkt sich VoidStation
+# den Wunsch zusaetzlich und setzt ihn vor dem naechsten Start noch einmal (emu_mute_apply).
+EMU_MUTE = {"gba": lambda: (MGBA_CONFIG, "ports.qt", "mute")}
+
+
+def emu_muted(tile):
+    """True/False fuer Emulatoren, die VoidStation stumm schalten kann, sonst None."""
+    spec = EMU_MUTE.get(tile)
+    if not spec:
+        return None
+    path, sec, key = spec()
+    return ini_read(path).get(sec, {}).get(key, "0").strip().lower() not in ("0", "", "false")
+
+
+def emu_set_mute(tile, on):
+    spec = EMU_MUTE.get(tile)
+    if not spec:
+        raise ValueError("Dieser Emulator laesst sich nicht stumm schalten")
+    path, sec, key = spec()
+    with EMU_LOCK:
+        ini_update(path, sec, {key: "1" if on else "0"})
+        st = emu_state_load()
+        st.setdefault("mute", {})[tile] = bool(on)
+        emu_state_save(st)
+    log(f"{tile}: Ton {'aus' if on else 'an'}")
+
+
+def emu_mute_apply(tile):
+    """Vor dem Start: einen in VoidStation gesetzten Wunsch (noch) einmal schreiben, danach gilt wieder der Emulator."""
+    spec = EMU_MUTE.get(tile)
+    if not spec:
+        return
+    with EMU_LOCK:
+        st = emu_state_load()
+        want = (st.get("mute") or {}).pop(tile, None)
+        if want is None:
+            return
+        path, sec, key = spec()
+        ini_update(path, sec, {key: "1" if want else "0"})
+        emu_state_save(st)
+
+
 def emu_front(kind):
     """Kachel, wenn das aktive Fenster wirklich zum Programm `kind` gehoert (sonst None)."""
     tid = APPS.front()
@@ -6061,6 +6109,8 @@ EMU_FULLSCREEN = {"mgba-qt": ("-f", "ctrl+f"), "duckstation": ("-fullscreen", "F
 # Emulatoren mit einem einzigen Fenster ohne eigene Vollbild-Startoption: Vollbild ueber den Fenstermanager
 EMU_WM_FULLSCREEN = {"snes9x", "nestopia", "melonds", "stella", "vice", "retroarch"}
 FS_HOLD = 0.8                                # L3 so lange halten -> Vollbild an/aus
+SAVESTATE_HOLD = 0.5                         # Savestate speichern/laden erst nach so langem Halten (nicht aus Versehen)
+HOLD_ACTIONS = {"fullscreen": FS_HOLD, "save": SAVESTATE_HOLD, "load": SAVESTATE_HOLD}
 
 
 def emu_kind(args):
@@ -8203,7 +8253,8 @@ class Handler(BaseHTTPRequestHandler):
             for r in roms:
                 r["cover"] = ROM_COVERS.url(r)
             return self._json(200, {"system": ROMS.canonical_system(system), "folders": ROMS.folders(system),
-                                    "count": len(roms), "roms": roms, "keymap": system in EMU_LAYOUTS})
+                                    "count": len(roms), "roms": roms, "keymap": system in EMU_LAYOUTS,
+                                    "mute": emu_muted(system)})
         if path == "/api/keymap":                  # Tastenbelegung eines Emulators (Konsole, Controller, Tasten)
             qs = urllib.parse.parse_qs(url.query)
             emu = qs.get("emu", [""])[0]
@@ -8500,6 +8551,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, settings_payload())
             if parts[:2] == ["api", "keymap"]:
                 return self._keymap_post(parts[2:], self._body())
+            if parts == ["api", "roms", "mute"]:      # Spieleliste: "Spiel stumm"
+                b = self._body()
+                try:
+                    emu_set_mute(str(b.get("system", "")), bool(b.get("on")))
+                except (ValueError, OSError) as e:
+                    return self._json(400, {"error": str(e)})
+                return self._json(200, {"mute": emu_muted(str(b.get("system", "")))})
             if parts == ["api", "roms", "launch"]:
                 b = self._body()
                 sys_id = str(b.get("system", ""))
@@ -8590,7 +8648,8 @@ def gamepad_watcher():
     """Controller-Tasten, die VoidStation selbst auswertet (auch wenn ein Programm vorn ist):
       * Guide/Home: Startseite nach vorn
       * L3 lang halten: Vollbild des Emulators vorn an/aus (emu_toggle_fullscreen)
-      * Aktionen aus der Tastenbelegung des Emulators, z. B. mGBA: △ speichern, □ laden, L2/R2 spulen
+      * Aktionen aus der Tastenbelegung des Emulators, z. B. mGBA: △ speichern, □ laden (je eine halbe Sekunde
+        halten, SAVESTATE_HOLD – Antippen tut nichts), L2/R2 halten = spulen
     Welche Taste welche Rolle hat, kommt aus pad_roles (SDL, Linux-Codes) und emu_binds. Waehrend die Seite
     "Tastenbelegung" eine Taste abfragt, haelt PadCapture das Geraet exklusiv – dann kommt hier nichts an."""
     try:
@@ -8664,7 +8723,7 @@ def gamepad_watcher():
         if on == was:
             return
         state[k] = on
-        if action == "fullscreen":
+        if action in HOLD_ACTIONS:                 # erst nach langem Halten (Vollbild, Savestates)
             if on:
                 hold_since[k] = ev_time
             else:
@@ -8674,8 +8733,8 @@ def gamepad_watcher():
             threading.Thread(target=emu_action, args=(action, on), daemon=True).start()
 
     last_scan = 0.0
-    hold_since = {}                                # L3: seit wann gehalten
-    done = set()                                   # L3: langes Halten hat schon umgeschaltet
+    hold_since = {}                                # Halte-Aktionen (HOLD_ACTIONS): seit wann gehalten
+    done = set()                                   # langes Halten hat schon ausgeloest (einmal je Druck)
     while True:
         if time.time() - last_scan > 5:
             st_now = pads_stamp()
@@ -8704,9 +8763,10 @@ def gamepad_watcher():
                 sel.unregister(dev)
                 drop(dev.path)
         for k, t in list(hold_since.items()):
-            if k not in done and time.monotonic() - t >= FS_HOLD:
+            if k not in done and time.monotonic() - t >= HOLD_ACTIONS[k[1]]:
                 done.add(k)
-                threading.Thread(target=emu_toggle_fullscreen, daemon=True).start()
+                fn, args = (emu_toggle_fullscreen, ()) if k[1] == "fullscreen" else (emu_action, (k[1], True))
+                threading.Thread(target=fn, args=args, daemon=True).start()
 
 
 def app_prefs():

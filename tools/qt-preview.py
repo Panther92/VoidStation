@@ -60,7 +60,7 @@ GBA_BUTTONS = [("A", "east"), ("B", "south"), ("L", "l1"), ("R", "r1"), ("Start"
 PS_TEXT = {"south": "✕", "east": "○", "west": "□", "north": "△", "l1": "L1", "r1": "R1", "l2": "L2", "r2": "R2",
            "select": "Share", "start": "Options", "l3": "L3", "r3": "R3", "up": "↑", "down": "↓", "left": "←", "right": "→"}
 CAPTURE_ROLES = ["south", "east", "l1", "r1", "start", "select", "up", "down", "left", "right", "north", "west", "l2", "r2"]
-KEYMAP = {"own": {}, "step": 0, "nopad": os.environ.get("VS_NO_PAD") == "1"}
+KEYMAP = {"own": {}, "step": 0, "nopad": os.environ.get("VS_NO_PAD") == "1", "mute": False}
 
 
 def keymap_payload():
@@ -69,8 +69,8 @@ def keymap_payload():
     return {"emu": "gba", "name": "mGBA", "sub": "Game Boy / Color / Advance", "console": "gba",
             "pads": [] if not pad else [{"path": pad["path"], "name": pad["name"]}], "pad": pad,
             "custom": bool(KEYMAP["own"]),
-            "buttons": [{"id": b, "action": b in ("save", "load", "rewind", "ff"), "bind": {"role": cur[b]}, "role": cur[b],
-                         "label": PS_TEXT[cur[b]], "custom": cur[b] != r} for b, r in GBA_BUTTONS]}
+            "buttons": [{"id": b, "action": b in ("save", "load", "rewind", "ff"), "bind": {"role": cur[b]} if cur[b] else None,
+                         "role": cur[b] or "", "label": PS_TEXT.get(cur[b], ""), "custom": cur[b] != r} for b, r in GBA_BUTTONS]}
 
 
 for _r in ROMS:                                   # wie der Launcher: Adresse immer da, 404 wenn es kein Bild gibt
@@ -319,7 +319,8 @@ class H(S.H):
                                        {"ssid": "Nachbar", "signal": 31, "secure": True, "active": False}],
             "/api/keymap": keymap_payload,
             "/api/roms": lambda: {"system": q.get("system", ["gba"])[0], "count": len(ROMS), "roms": ROMS,
-                                  "keymap": q.get("system", ["gba"])[0] == "gba"},
+                                  "keymap": q.get("system", ["gba"])[0] == "gba",
+                                  "mute": KEYMAP["mute"] if q.get("system", ["gba"])[0] == "gba" else None},
             "/api/install/probe": lambda: PROBE,
             "/api/install/status": lambda: dict(inst_status(), autostart=LIVE["on"] and INST.get("state") == "idle" and not INST.get("seen")),
             "/api/install/gparted": lambda: {"running": False},
@@ -415,7 +416,7 @@ class H(S.H):
         if p == "/api/keymap/set":
             role = (body.get("bind") or {}).get("role")
             cur = {b: KEYMAP["own"].get(b, r) for b, r in GBA_BUTTONS}
-            swapped = [o for o, r in cur.items() if o != body["button"] and r == role]
+            swapped = [o for o, r in cur.items() if role and o != body["button"] and r == role]
             for o in swapped:
                 KEYMAP["own"][o] = cur[body["button"]]
             KEYMAP["own"][body["button"]] = role
@@ -424,6 +425,9 @@ class H(S.H):
         if p == "/api/keymap/reset":
             KEYMAP["own"] = {}
             return self.j(keymap_payload())
+        if p == "/api/roms/mute":
+            KEYMAP["mute"] = bool(body.get("on"))
+            return self.j({"mute": KEYMAP["mute"]})
         if p == "/api/keymap/cancel":
             return self.j({"ok": True})
         if p.startswith("/api/volume/"):
