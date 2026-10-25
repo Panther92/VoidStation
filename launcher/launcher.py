@@ -5634,7 +5634,7 @@ def mgba_prepare():
         # Controller" (PS4 und Nachbauten) ist fuer Windows gezaehlt – unter Linux lagen A/B daneben, und ✕ oeffnete
         # das Laden-Fenster. Deshalb: Belegung fuer den ersten Controller (Spieler 1) als allgemeine Belegung UND als
         # Profil unter dem Namen, den mGBA von SDL bekommt (dann greift das eingebaute Profil nicht), dazu dessen
-        # Kurzbefehle entschaerft. Savestates macht △ ueber VoidStation (emu_quick_state).
+        # Kurzbefehle entschaerft. Savestates machen △/□ ueber VoidStation (emu_quick_state).
         pads = gamepads()
         if pads:
             pad = pads[0]
@@ -5661,8 +5661,7 @@ def mgba_prepare():
 
 
 def emu_quick_state(load):
-    """△ am Controller in mGBA: kurz = Savestate speichern (Platz 1, Umschalt+F1), lang = laden (F1).
-    Nur, wenn mGBA wirklich vorn ist."""
+    """In mGBA: △ = Savestate speichern (Platz 1, Umschalt+F1), □ = laden (F1). Nur, wenn mGBA wirklich vorn ist."""
     tid = APPS.front()
     if not tid or APPS.kinds.get(tid) != "mgba-qt" or not shutil.which("xdotool"):
         return
@@ -8180,8 +8179,8 @@ def gamepad_watcher():
     """Controller-Tasten, die VoidStation selbst auswertet (auch wenn ein Programm vorn ist):
       * Guide/Home: Startseite nach vorn
       * L3 lang halten: Vollbild des Emulators vorn an/aus (emu_toggle_fullscreen)
-      * △ in mGBA: kurz = Savestate speichern, lang = laden (emu_quick_state)
-    Welche Taste L3 bzw. △ ist, kommt aus pad_roles (eigene Belegung, SDL, Linux-Codes)."""
+      * in mGBA: △ = Savestate speichern, □ = Savestate laden (emu_quick_state)
+    Welche Taste L3, △ und □ ist, kommt aus pad_roles (eigene Belegung, SDL, Linux-Codes)."""
     try:
         import evdev  # type: ignore
         from evdev import ecodes
@@ -8191,7 +8190,7 @@ def gamepad_watcher():
         return
     sel = selectors.DefaultSelector()
     known = {}                                     # Pfad -> Geraet
-    roles = {}                                     # Pfad -> {evdev-Code: "l3" | "y"}
+    roles = {}                                     # Pfad -> {evdev-Code: "l3" | "y" | "x"}
 
     def rescan():
         pads = {p["path"]: p for p in gamepads()}
@@ -8208,8 +8207,9 @@ def gamepad_watcher():
                     r = {}
                     if path in pads:
                         found, src = pad_roles(pads[path], probe)
-                        r = {found[k]: k for k in ("l3", "y") if k in found}
-                        log("Gamepad erkannt:", dev.name, f"(Belegung: {src}, L3={found.get('l3')}, △={found.get('y')})")
+                        r = {found[k]: k for k in ("l3", "y", "x") if k in found}
+                        log("Gamepad erkannt:", dev.name, f"[{pads[path].get('id')}] (Belegung: {src}, Rollen:",
+                            ", ".join(f"{k}={v}" for k, v in sorted(found.items())) + ")")
                     else:
                         log("Gamepad erkannt:", dev.name)
                     roles[path] = r or {ecodes.BTN_THUMBL: "l3"}
@@ -8244,13 +8244,15 @@ def gamepad_watcher():
                     role = roles.get(dev.path, {}).get(ev.code)
                     if not role:
                         continue
+                    if role in ("y", "x"):                             # △ speichern, □ laden
+                        if ev.value == 1:
+                            threading.Thread(target=emu_quick_state, args=(role == "x",), daemon=True).start()
+                        continue
                     k = (dev.path, role)
                     if ev.value == 1:
                         held[k] = time.monotonic()
                     elif ev.value == 0 and k in held:
                         held.pop(k)
-                        if role == "y" and k not in fired:             # △ kurz: speichern
-                            threading.Thread(target=emu_quick_state, args=(False,), daemon=True).start()
                         fired.discard(k)
             except OSError:
                 sel.unregister(dev)
@@ -8258,10 +8260,7 @@ def gamepad_watcher():
         for k, t in list(held.items()):
             if k not in fired and time.monotonic() - t >= FS_HOLD:
                 fired.add(k)
-                if k[1] == "l3":
-                    threading.Thread(target=emu_toggle_fullscreen, daemon=True).start()
-                else:                                                  # △ lang: laden
-                    threading.Thread(target=emu_quick_state, args=(True,), daemon=True).start()
+                threading.Thread(target=emu_toggle_fullscreen, daemon=True).start()
 
 
 def app_prefs():
