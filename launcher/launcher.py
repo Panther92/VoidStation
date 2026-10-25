@@ -983,10 +983,18 @@ def apply_appearance(s):
     size = int(s.get("cursor_size") or DEFAULTS["cursor_size"])
     xres = home / ".Xresources"
     try:
-        lines = [l for l in xres.read_text().splitlines() if not l.startswith(("Xft.dpi", "Xcursor."))]
+        lines = [l for l in xres.read_text().splitlines()
+                 if not l.startswith(("Xft.dpi", "Xcursor.", "XTerm*selectToClipboard", "XTerm*VT100.translations"))]
     except OSError:
         lines = []
     lines += [f"Xft.dpi: {dpi}", f"Xcursor.theme: {theme}", f"Xcursor.size: {size}"]
+    # Terminal (xterm): Einfuegen aus der Zwischenablage wie ueberall – Strg+Umschalt+V, Umschalt+Einfg und Rechtsklick
+    # (Controller: L2). Von Haus aus fuegt xterm nur die Markierung (PRIMARY) ein, nicht das mit Strg+C Kopierte.
+    # Markieren kopiert zugleich in die Zwischenablage, Strg+Umschalt+C ebenso.
+    lines += ["XTerm*selectToClipboard: true",
+              "XTerm*VT100.translations: #override Ctrl Shift <Key>V: insert-selection(CLIPBOARD)\\n"
+              "Ctrl Shift <Key>C: copy-selection(CLIPBOARD)\\nShift <Key>Insert: insert-selection(CLIPBOARD, PRIMARY)\\n"
+              "<Btn3Down>: ignore()\\n<Btn3Up>: insert-selection(CLIPBOARD, PRIMARY)"]
     xres.write_text("\n".join(lines) + "\n")
     run(["xrdb", "-merge", str(xres)])
     dark = theme_is_dark(s.get("theme") or DEFAULTS["theme"])
