@@ -5417,11 +5417,87 @@ def ini_defaults(app, path, section, wanted, st):
             mine[k] = v
 
 
-# ---- Controller: Tasten so nummerieren, wie SDL sie unter Linux zaehlt -------------------------------------
-# SDL (joystick/linux/SDL_sysjoystick.c, ConfigJoystick): erst alle Tasten ab BTN_JOYSTICK (0x120) aufsteigend,
-# dann die darunter; Achsen in der Reihenfolge ihrer Nummer ohne die digitalen Steuerkreuze (ABS_HAT*).
-# Damit stimmt die Rechnung, muss SDL den evdev-Weg nehmen: Emulatoren starten mit SDL_JOYSTICK_HIDAPI=0
-# (sonst zaehlen PS4/PS5/Switch-Controller ueber hidraw anders).
+# ---- Controller: welche Taste ist welche? ------------------------------------------------------------------
+# mGBA liest Controller roh ueber SDL (Tastennummern statt "A/B"), und die Nummern haengen am Treiber: Ein
+# PS4-Nachbau, ein DualSense und ein Xbox-Pad zaehlen ihre Tasten verschieden. Woher die Belegung kommt, der Reihe nach:
+#   1. eigene Belegung in ~/.config/voidstation/pads.json (dieselbe Datei wie fuer die Startseite:
+#      {"<Geraetename oder vid:pid>": {"<evdev-Code>": "a"|"b"|"x"|"y"|"lb"|"rb"|"select"|"start"|"l3"|…}})
+#   2. SDL selbst (dieselbe Bibliothek, die mGBA laedt): SDL kennt die meisten Controller samt Nachbauten aus seiner
+#      Datenbank und sagt, welche rohe Taste "unten", "rechts", "oben" … ist (SDL_GameControllerGetBindForButton)
+#   3. Notfalls die Linux-Tastencodes (BTN_SOUTH = unten, BTN_EAST = rechts …)
+# Rollen wie bei SDL/Xbox nach Lage: a = unten (✕), b = rechts (○), x = links (□), y = oben (△).
+# SDL zaehlt Tasten unter Linux so (joystick/linux/SDL_sysjoystick.c, ConfigJoystick): erst alle Codes ab
+# BTN_JOYSTICK (0x120) aufsteigend, dann die darunter; Achsen nach Nummer ohne digitale Steuerkreuze (ABS_HAT*).
+# Damit das gilt, starten Emulatoren mit SDL_JOYSTICK_HIDAPI=0 (sonst zaehlt SDL PS4/PS5/Switch ueber hidraw anders).
+PADS_OVERRIDE = Path.home() / ".config/voidstation/pads.json"
+SDL_PROBE = r'''
+import ctypes, ctypes.util, json, os, sys
+os.environ["SDL_JOYSTICK_HIDAPI"] = "0"
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+lib = None
+for n in ("libSDL2-2.0.so.0", ctypes.util.find_library("SDL2") or ""):
+    if n:
+        try:
+            lib = ctypes.CDLL(n)
+            break
+        except OSError:
+            pass
+if lib is None:
+    print("[]"); sys.exit()
+class Hat(ctypes.Structure):
+    _fields_ = [("hat", ctypes.c_int), ("mask", ctypes.c_int)]
+class Val(ctypes.Union):
+    _fields_ = [("button", ctypes.c_int), ("axis", ctypes.c_int), ("hat", Hat)]
+class Bind(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_int), ("value", Val)]
+lib.SDL_Init.argtypes = [ctypes.c_uint32]
+if lib.SDL_Init(0x200 | 0x2000) != 0:              # JOYSTICK | GAMECONTROLLER
+    print("[]"); sys.exit()
+lib.SDL_JoystickNameForIndex.restype = ctypes.c_char_p
+has_path = hasattr(lib, "SDL_JoystickPathForIndex")
+if has_path:
+    lib.SDL_JoystickPathForIndex.restype = ctypes.c_char_p
+lib.SDL_GameControllerOpen.restype = ctypes.c_void_p
+lib.SDL_GameControllerClose.argtypes = [ctypes.c_void_p]
+for f in ("SDL_GameControllerGetBindForButton", "SDL_GameControllerGetBindForAxis"):
+    getattr(lib, f).restype = Bind
+    getattr(lib, f).argtypes = [ctypes.c_void_p, ctypes.c_int]
+def enc(b):
+    if b.type == 1: return {"button": b.value.button}
+    if b.type == 2: return {"axis": b.value.axis}
+    if b.type == 3: return {"hat": b.value.hat.hat, "mask": b.value.hat.mask}
+    return None
+BTN = (("a", 0), ("b", 1), ("x", 2), ("y", 3), ("select", 4), ("guide", 5), ("start", 6), ("l3", 7), ("r3", 8),
+       ("lb", 9), ("rb", 10), ("up", 11), ("down", 12), ("left", 13), ("right", 14))
+AX = (("lx", 0), ("ly", 1), ("lt", 4), ("rt", 5))
+out = []
+for i in range(lib.SDL_NumJoysticks()):
+    d = {"index": i, "name": (lib.SDL_JoystickNameForIndex(i) or b"").decode("utf-8", "replace"),
+         "path": (lib.SDL_JoystickPathForIndex(i) or b"").decode() if has_path else ""}
+    if lib.SDL_IsGameController(i):
+        c = lib.SDL_GameControllerOpen(i)
+        if c:
+            d["buttons"] = {n: enc(lib.SDL_GameControllerGetBindForButton(c, k)) for n, k in BTN}
+            d["axes"] = {n: enc(lib.SDL_GameControllerGetBindForAxis(c, k)) for n, k in AX}
+            lib.SDL_GameControllerClose(c)
+    out.append(d)
+lib.SDL_Quit()
+print(json.dumps(out))
+'''
+
+
+def sdl_probe():
+    """Was SDL ueber die angeschlossenen Controller weiss (Name wie in mGBA, Pfad, Belegung). [] wenn SDL fehlt."""
+    try:
+        r = subprocess.run([sys.executable, "-I", "-c", SDL_PROBE], capture_output=True, text=True, timeout=10,
+                           env=dict(os.environ, SDL_JOYSTICK_HIDAPI="0"))
+        out = json.loads(r.stdout.strip() or "[]")
+        return out if isinstance(out, list) else []
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        log("SDL-Abfrage der Controller:", e)
+        return []
+
+
 def gamepads():
     """Angeschlossene Gamepads (evdev) in der Reihenfolge, in der SDL sie findet (nach Geraetenummer)."""
     try:
@@ -5434,14 +5510,17 @@ def gamepads():
         try:
             d = evdev.InputDevice(p)
             caps = d.capabilities()
-            name = d.name
+            name, info = d.name, d.info
             d.close()
         except OSError:
             continue
         keys = set(caps.get(E.EV_KEY, []))
         axes = {a[0] if isinstance(a, (tuple, list)) else a for a in caps.get(E.EV_ABS, [])}
-        if E.BTN_SOUTH in keys and (E.ABS_X in axes or E.ABS_HAT0X in axes or E.BTN_DPAD_UP in keys):
-            out.append({"path": p, "name": name, "keys": keys, "axes": axes})
+        pen = keys & {E.BTN_TOUCH, E.BTN_TOOL_PEN, E.BTN_STYLUS, E.BTN_TOOL_FINGER}
+        pad = (E.BTN_SOUTH in keys or E.BTN_TRIGGER in keys) and not pen
+        if pad and (E.ABS_X in axes or E.ABS_HAT0X in axes or E.BTN_DPAD_UP in keys):
+            out.append({"path": p, "name": name, "id": f"{info.vendor:04x}:{info.product:04x}",
+                        "keys": keys, "axes": axes})
     return out
 
 
@@ -5454,8 +5533,35 @@ def sdl_indices(pad):
     return {k: i for i, k in enumerate(order)}, {a: i for i, a in enumerate(axes)}
 
 
+def pad_roles(pad, probe=None):
+    """Rolle -> evdev-Code fuer ein Gamepad (a/b/x/y/lb/rb/select/start/l3/r3/up/down/left/right, soweit bekannt)
+    und woher die Belegung stammt ("eigene", "SDL", "Linux")."""
+    from evdev import ecodes as E
+    try:
+        own = json.loads(PADS_OVERRIDE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        own = {}
+    for k in (pad["name"], pad.get("id")):
+        if isinstance(own.get(k), dict):
+            roles = {str(v): int(c) for c, v in own[k].items() if str(c).isdigit()}
+            return roles, "eigene"
+    btn, _ax = sdl_indices(pad)
+    by_index = {i: c for c, i in btn.items()}
+    sdl = next((d for d in (probe or []) if d.get("path") == pad["path"] and d.get("buttons")), None)
+    if sdl:
+        roles = {r: by_index[b["button"]] for r, b in sdl["buttons"].items()
+                 if b and "button" in b and b["button"] in by_index}
+        if "a" in roles and "b" in roles:
+            return roles, "SDL"
+    std = {"a": E.BTN_SOUTH, "b": E.BTN_EAST, "x": E.BTN_WEST, "y": E.BTN_NORTH, "lb": E.BTN_TL, "rb": E.BTN_TR,
+           "select": E.BTN_SELECT, "start": E.BTN_START, "l3": E.BTN_THUMBL, "r3": E.BTN_THUMBR,
+           "up": E.BTN_DPAD_UP, "down": E.BTN_DPAD_DOWN, "left": E.BTN_DPAD_LEFT, "right": E.BTN_DPAD_RIGHT}
+    return {r: c for r, c in std.items() if c in pad["keys"]}, "Linux"
+
+
 # ---- mGBA (Kachel "gba"; geprueft am Quelltext von mGBA 0.10.5) ----------------------------------------------
 MGBA_CONFIG = Path.home() / ".config/mgba/config.ini"
+MGBA_QT = Path.home() / ".config/mgba/qt.ini"
 MGBA_PAD = "gba.input.SDLB"                  # Belegung fuer alle Controller ohne eigenes Profil
 MGBA_DEFAULTS = {
     "autosave": "1",              # Stand alle 10 s und beim Beenden sichern (Platz 0) ...
@@ -5469,17 +5575,15 @@ MGBA_DEFAULTS = {
 }
 
 
-def mgba_pad_map(pad):
-    """Belegung fuer mGBA: Tasten wie auf dem Game Boy angeordnet (rechte Taste = A, untere = B, wie mGBAs eigenes
-    Xbox-Profil), Schultertasten L/R, Steuerkreuz und linker Stick. GBA-Tasten: A0 B1 Select2 Start3 Rechts4
-    Links5 Hoch6 Runter7 R8 L9."""
+def mgba_pad_map(pad, roles):
+    """Belegung fuer mGBA: ○ (rechts) = A, ✕ (unten) = B, L/R, Select/Start, Steuerkreuz und linker Stick.
+    GBA-Tasten: A0 B1 Select2 Start3 Rechts4 Links5 Hoch6 Runter7 R8 L9."""
     from evdev import ecodes as E
     btn, ax = sdl_indices(pad)
-    b = lambda code: str(btn[code]) if code in btn else "-1"
-    m = {"keyA": b(E.BTN_EAST), "keyB": b(E.BTN_SOUTH), "keySelect": b(E.BTN_SELECT), "keyStart": b(E.BTN_START),
-         "keyL": b(E.BTN_TL), "keyR": b(E.BTN_TR), "keyUp": b(E.BTN_DPAD_UP), "keyDown": b(E.BTN_DPAD_DOWN),
-         "keyLeft": b(E.BTN_DPAD_LEFT), "keyRight": b(E.BTN_DPAD_RIGHT),
-         "hat0Up": "6", "hat0Right": "4", "hat0Down": "7", "hat0Left": "5"}
+    b = lambda role: str(btn[roles[role]]) if roles.get(role) in btn else "-1"
+    m = {"keyA": b("b"), "keyB": b("a"), "keySelect": b("select"), "keyStart": b("start"),
+         "keyL": b("lb"), "keyR": b("rb"), "keyUp": b("up"), "keyDown": b("down"), "keyLeft": b("left"),
+         "keyRight": b("right"), "hat0Up": "6", "hat0Right": "4", "hat0Down": "7", "hat0Left": "5"}
     if E.ABS_X in ax:
         m.update({"axisLeftValue": "-16384", "axisLeftAxis": f"-{ax[E.ABS_X]}",
                   "axisRightValue": "16384", "axisRightAxis": f"+{ax[E.ABS_X]}"})
@@ -5492,6 +5596,24 @@ def mgba_pad_map(pad):
 MGBA_AXIS_KEYS = [f"axis{d}{s}" for d in ("Left", "Right", "Up", "Down") for s in ("Value", "Axis")]
 
 
+def qt_ini_group(name):
+    """Gruppenname so maskiert, wie QSettings (IniFormat) ihn schreibt (Leerzeichen -> %20 usw.)."""
+    return "".join(c if c.isascii() and (c.isalnum() or c in "_-.") else "".join(f"%{b:02X}" for b in c.encode())
+                   if ord(c) <= 0xFF else f"%U{ord(c):04X}" for c in name)
+
+
+def ini_section_once(app, path, section, values, st, key, remove=()):
+    """Ganzen Abschnitt schreiben, solange er fehlt oder noch so aussieht, wie VoidStation ihn zuletzt schrieb."""
+    cur = ini_read(path).get(section)
+    last = st.get(app, {}).get(key)
+    if cur and cur != last:
+        return False                               # vom Nutzer in mGBA geaendert: bleibt
+    if cur != values:
+        ini_update(path, section, values, remove=remove)
+    st.setdefault(app, {})[key] = dict(values)
+    return True
+
+
 def mgba_prepare():
     """Vor jedem Start von mGBA: Grundeinstellungen und Controller-Belegung (nur, wo der Nutzer nichts geaendert hat)."""
     with EMU_LOCK:
@@ -5500,22 +5622,48 @@ def mgba_prepare():
         if SYS_ARCH != "i686":                 # Zurueckspulen kostet jedes Bild Rechenzeit – auf alten Rechnern nicht
             wanted["rewindEnable"] = "1"
         ini_defaults("mgba", MGBA_CONFIG, "ports.qt", wanted, st)
-        # Controller: mGBA kennt von sich aus nur alte Xbox-360-Pads – bei allen anderen fehlten A/B/Start ganz.
-        # Belegung fuer den ersten Controller (mGBA nimmt den ersten als Spieler 1), neu bei jedem Start, solange
-        # der Abschnitt noch so aussieht, wie VoidStation ihn geschrieben hat. Wer in mGBA selbst belegt, behaelt das.
+        # Controller: mGBA kennt von sich aus nur wenige Controller, und sein eingebautes Profil fuer "Wireless
+        # Controller" (PS4 und Nachbauten) ist fuer Windows gezaehlt – unter Linux lagen A/B daneben, und ✕ oeffnete
+        # das Laden-Fenster. Deshalb: Belegung fuer den ersten Controller (Spieler 1) als allgemeine Belegung UND als
+        # Profil unter dem Namen, den mGBA von SDL bekommt (dann greift das eingebaute Profil nicht), dazu dessen
+        # Kurzbefehle entschaerft. Savestates macht △ ueber VoidStation (emu_quick_state).
         pads = gamepads()
         if pads:
-            cur = ini_read(MGBA_CONFIG).get(MGBA_PAD)
-            last = st.get("mgba", {}).get("pad")
-            if cur and cur != last:
-                log("mGBA: eigene Controller-Belegung vorhanden, bleibt")
+            pad = pads[0]
+            probe = sdl_probe()
+            roles, src = pad_roles(pad, probe)
+            m = mgba_pad_map(pad, roles)
+            rm = [k for k in MGBA_AXIS_KEYS if k not in m]
+            if ini_section_once("mgba", MGBA_CONFIG, MGBA_PAD, m, st, "pad", rm):
+                log(f"mGBA: Controller-Belegung fuer {pad['name']} ({src}):", m)
             else:
-                m = mgba_pad_map(pads[0])
-                if cur != m:
-                    ini_update(MGBA_CONFIG, MGBA_PAD, m, remove=[k for k in MGBA_AXIS_KEYS if k not in m])
-                    log(f"mGBA: Controller-Belegung fuer {pads[0]['name']}:", m)
-                st.setdefault("mgba", {})["pad"] = m
+                log("mGBA: eigene Controller-Belegung vorhanden, bleibt")
+            sdl_name = next((d["name"] for d in probe if d.get("path") == pad["path"]), "") or \
+                (probe[0]["name"] if len(probe) == 1 else "")
+            if sdl_name:
+                ini_section_once("mgba", MGBA_CONFIG, f"gba.input-profile.{sdl_name}", m, st,
+                                 f"profile:{sdl_name}", rm)
+                ini_section_once("mgba", MGBA_QT, "shortcutProfileButton." + qt_ini_group(sdl_name),
+                                 {"loadState": "-1", "saveState": "-1", "holdFastForward": "-1", "holdRewind": "-1"},
+                                 st, f"shortcuts:{sdl_name}")
+                ini_section_once("mgba", MGBA_QT, "shortcutProfileAxis." + qt_ini_group(sdl_name),
+                                 {"loadState": "", "saveState": "", "holdFastForward": "", "holdRewind": ""},
+                                 st, f"shortcutaxes:{sdl_name}")
         emu_state_save(st)
+
+
+def emu_quick_state(load):
+    """△ am Controller in mGBA: kurz = Savestate speichern (Platz 1, Umschalt+F1), lang = laden (F1).
+    Nur, wenn mGBA wirklich vorn ist."""
+    tid = APPS.front()
+    if not tid or APPS.kinds.get(tid) != "mgba-qt" or not shutil.which("xdotool"):
+        return
+    proc = APPS._get(tid)
+    act = active_window()
+    if not proc or not act or not any(int(w[0], 16) == act for w in APPS._windows_of(tid, proc)):
+        return
+    run(["xdotool", "key", "--clearmodifiers", "F1" if load else "shift+F1"])
+    log("mGBA: Savestate", "geladen" if load else "gespeichert")
 
 
 # ---- Vollbild ------------------------------------------------------------------------------------------------
@@ -8021,6 +8169,11 @@ class Handler(BaseHTTPRequestHandler):
 #  Gamepad: Guide-Taste -> Startseite nach vorn
 # ---------------------------------------------------------------------------
 def gamepad_watcher():
+    """Controller-Tasten, die VoidStation selbst auswertet (auch wenn ein Programm vorn ist):
+      * Guide/Home: Startseite nach vorn
+      * L3 lang halten: Vollbild des Emulators vorn an/aus (emu_toggle_fullscreen)
+      * △ in mGBA: kurz = Savestate speichern, lang = laden (emu_quick_state)
+    Welche Taste L3 bzw. △ ist, kommt aus pad_roles (eigene Belegung, SDL, Linux-Codes)."""
     try:
         import evdev  # type: ignore
         from evdev import ecodes
@@ -8029,31 +8182,49 @@ def gamepad_watcher():
         log("python3-evdev fehlt, Gamepad-Home-Taste deaktiviert")
         return
     sel = selectors.DefaultSelector()
-    known = {}
+    known = {}                                     # Pfad -> Geraet
+    roles = {}                                     # Pfad -> {evdev-Code: "l3" | "y"}
 
     def rescan():
+        pads = {p["path"]: p for p in gamepads()}
+        new = [p for p in pads if p not in known]
+        probe = sdl_probe() if new else []
         for path in evdev.list_devices():
             if path in known:
                 continue
             try:
                 dev = evdev.InputDevice(path)
-                if ecodes.BTN_MODE in dev.capabilities().get(ecodes.EV_KEY, []):
+                if path in pads or ecodes.BTN_MODE in dev.capabilities().get(ecodes.EV_KEY, []):
                     known[path] = dev
                     sel.register(dev, selectors.EVENT_READ)
-                    log("Gamepad erkannt:", dev.name)
+                    r = {}
+                    if path in pads:
+                        found, src = pad_roles(pads[path], probe)
+                        r = {found[k]: k for k in ("l3", "y") if k in found}
+                        log("Gamepad erkannt:", dev.name, f"(Belegung: {src}, L3={found.get('l3')}, △={found.get('y')})")
+                    else:
+                        log("Gamepad erkannt:", dev.name)
+                    roles[path] = r or {ecodes.BTN_THUMBL: "l3"}
                 else:
                     dev.close()
             except OSError:
                 pass
 
+    def drop(path):
+        known.pop(path, None)
+        roles.pop(path, None)
+        for k in [k for k in held if k[0] == path]:
+            held.pop(k, None)
+            fired.discard(k)
+
     last_scan = 0.0
-    l3_down = {}                                   # Geraet -> Zeitpunkt, seit dem L3 gehalten wird
-    l3_done = set()                                # Geraete, deren aktuelles Halten schon umgeschaltet hat
+    held = {}                                      # (Pfad, Rolle) -> seit wann gedrueckt
+    fired = set()                                  # (Pfad, Rolle): langes Halten hat schon ausgeloest
     while True:
         if time.time() - last_scan > 5:
             rescan()
             last_scan = time.time()
-        for key, _ in sel.select(timeout=0.1 if l3_down else 1):
+        for key, _ in sel.select(timeout=0.1 if held else 1):
             dev = key.fileobj
             try:
                 for ev in dev.read():
@@ -8061,21 +8232,28 @@ def gamepad_watcher():
                         continue
                     if ev.code == ecodes.BTN_MODE and ev.value == 1:
                         raise_home()
-                    elif ev.code == ecodes.BTN_THUMBL:     # L3 (linken Stick druecken) lang halten: Vollbild an/aus
-                        if ev.value == 1:
-                            l3_down[dev.path] = time.monotonic()
-                        elif ev.value == 0:
-                            l3_down.pop(dev.path, None)
-                            l3_done.discard(dev.path)
+                        continue
+                    role = roles.get(dev.path, {}).get(ev.code)
+                    if not role:
+                        continue
+                    k = (dev.path, role)
+                    if ev.value == 1:
+                        held[k] = time.monotonic()
+                    elif ev.value == 0 and k in held:
+                        held.pop(k)
+                        if role == "y" and k not in fired:             # △ kurz: speichern
+                            threading.Thread(target=emu_quick_state, args=(False,), daemon=True).start()
+                        fired.discard(k)
             except OSError:
                 sel.unregister(dev)
-                known.pop(dev.path, None)
-                l3_down.pop(dev.path, None)
-                l3_done.discard(dev.path)
-        for path, t in list(l3_down.items()):
-            if path not in l3_done and time.monotonic() - t >= FS_HOLD:
-                l3_done.add(path)
-                threading.Thread(target=emu_toggle_fullscreen, daemon=True).start()
+                drop(dev.path)
+        for k, t in list(held.items()):
+            if k not in fired and time.monotonic() - t >= FS_HOLD:
+                fired.add(k)
+                if k[1] == "l3":
+                    threading.Thread(target=emu_toggle_fullscreen, daemon=True).start()
+                else:                                                  # △ lang: laden
+                    threading.Thread(target=emu_quick_state, args=(True,), daemon=True).start()
 
 
 def app_prefs():
