@@ -351,6 +351,14 @@
   .romcard .romicon svg { width: 100%; height: 100%; }
   .romcard .romname { font-size: calc(16px * var(--f)); font-weight: 500; z-index: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .romcard .romsub { font-size: calc(12px * var(--f)); color: var(--text-dim); z-index: 1; margin-top: calc(2px * var(--f)); }
+  /* Mit Bild (Boxbild): Bild links, Titel rechts, dahinter dasselbe Bild gedimmt */
+  .romcard .rombg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: .28; filter: blur(6px); transform: scale(1.1); }
+  .romcard .romcover { position: absolute; left: calc(10px * var(--f)); top: calc(10px * var(--f)); bottom: calc(10px * var(--f));
+    width: calc(50% - 15px * var(--f)); object-fit: contain; object-position: center; z-index: 1; }
+  .romcard.hascover { background: #101114; }
+  .romcard.hascover .romicon { display: none; }
+  .romcard.hascover .romname, .romcard.hascover .romsub { margin-left: 50%; padding-left: calc(5px * var(--f)); }
+  .romcard.hascover .romname { white-space: normal; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
   .btlist { display: flex; flex-direction: column; gap: calc(6px * var(--f)); margin-top: calc(8px * var(--f)); align-items: flex-start; }
   .btlist > .row { flex-wrap: nowrap; margin: 0; }
   /* Globales OSD-Keyboard */
@@ -3238,6 +3246,20 @@ async function renderRoms() {
       card.innerHTML = `<div class="romicon">${ICONS[curRomTile.icon] || ICONS.gamepad}</div>` +
         `<div class="romname">${esc(r.title || r.name)}</div>` +
         `<div class="romsub">${esc(r.size || (r.bytes ? gb(r.bytes) : ''))}</div>`;
+      if (r.cover) {                               // Bild erst zeigen, wenn es geladen ist (sonst bleibt das Symbol)
+        const img = new Image();
+        img.className = 'romcover';
+        img.alt = '';
+        img.onload = () => {
+          const bg = document.createElement('div');
+          bg.className = 'rombg';
+          bg.style.backgroundImage = `url("${img.src}")`;
+          card.prepend(bg);
+          card.appendChild(img);
+          card.classList.add('hascover');
+        };
+        img.src = r.cover;
+      }
       g.appendChild(card);
     });
     section(tr, T('roms.count', { count: roms.length }), g);

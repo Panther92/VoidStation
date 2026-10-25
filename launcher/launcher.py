@@ -165,6 +165,7 @@ class AppManager:
         self.claimed = {}                     # tile_id -> Fenster-IDs ohne passende Prozess-ID (Flatpak), beim Start zugeordnet
         self.paused = {}                      # tile_id -> Prozess-IDs, die im Hintergrund angehalten sind (SIGSTOP)
         self._pwatch = False                  # Waechter fuer angehaltene Programme laeuft
+        self.kinds = {}                       # tile_id -> Programm (z. B. "mgba-qt"), fuer die Vollbild-Taste
 
     def running(self):
         with self.lock:
@@ -346,7 +347,9 @@ class AppManager:
             firefox_prefs(args, ui_lang(), theme_is_dark(settings_load().get("theme") or DEFAULTS["theme"]))
         if Path(args[0]).name in ("dosbox", "dosbox-staging"):
             args = dosbox_prepare(args)
+        args, emu_env, wm_fs = emu_prepare(tid, args)   # Emulatoren: Vorgaben, Vollbild, Controller
         penv = app_env()
+        penv.update(emu_env)
         penv.update(env or {})
         self.pause_background(keep=tid)                 # anderes Programm kommt nach vorn: Emulatoren anhalten
         proc = subprocess.Popen(args, cwd=str(Path.home()), stdin=subprocess.DEVNULL, env=penv,
@@ -355,13 +358,14 @@ class AppManager:
         with self.lock:
             self.procs[tid] = proc
             self.shown.discard(tid)
+            self.kinds[tid] = emu_kind(args)
         self._touch(tid)
         # Neues Fenster aktiv nach vorn holen (Openbox verhindert sonst u. U. den Fokuswechsel,
         # und das Programm laeuft unsichtbar hinter der Startseite)
-        threading.Thread(target=self._bring_up, args=(tid, proc, before), daemon=True).start()
+        threading.Thread(target=self._bring_up, args=(tid, proc, before, wm_fs), daemon=True).start()
         return "started"
 
-    def _bring_up(self, tid, proc, before=frozenset()):
+    def _bring_up(self, tid, proc, before=frozenset(), fullscreen=False):
         # Auf das erste Fenster warten: anfangs schnell, danach gemaechlich - Steam braucht
         # bei der Ersteinrichtung mehrere Minuten, bis sich ein Fenster zeigt
         t0 = time.monotonic()
@@ -382,6 +386,8 @@ class AppManager:
                 time.sleep(0.4)
                 for wid, _, _ in wins:
                     run(["wmctrl", "-i", "-a", wid])
+                if fullscreen:                           # Emulator ohne eigene Vollbild-Option (EMU_WM_FULLSCREEN)
+                    run(["wmctrl", "-i", "-r", wins[0][0], "-b", "add,fullscreen"])
                 return
         with self.lock:                          # kein Fenster erkennbar -> nicht ewig "startet"
             self.shown.add(tid)
@@ -679,7 +685,8 @@ def volume_set(action):
 # ---------------------------------------------------------------------------
 SETTINGS = BASE / "settings.json"
 DEFAULTS = {"scale": 1.75, "resolution": None, "cursor_theme": "Bibata-Modern-Ice", "cursor_size": 48, "lang": None, "theme": "default-dark",
-            "sysupd_days": 90, "padmouse": True, "covers_auto": True, "covers_embed": False, "audio_auto": True}
+            "sysupd_days": 90, "padmouse": True, "covers_auto": True, "covers_embed": False, "audio_auto": True,
+            "emu_fullscreen": True, "save_backup": True, "rom_covers": True}
 SYSUPD_DAYS = (30, 60, 90)                  # Erinnerung an Systemupdates (ohne VoidStation-Update) nach … Tagen
 # Sprachen der Oberflaeche: Texte in web/i18n/<id>.json, fehlende Texte kommen aus en.json, dann aus de.json.
 # Anzeige immer in der eigenen Sprache. Je Sprache auch das Locale fuer gestartete Programme (LANG/LANGUAGE) und
@@ -5319,6 +5326,695 @@ ROMS = ROMManager()
 
 
 # ---------------------------------------------------------------------------
+#  Emulatoren: Vorgaben (Vollbild, Grafik, Controller), Spielstand-Sicherung, Cover in der Spieleliste
+# ---------------------------------------------------------------------------
+def ini_read(path):
+    """Einfache INI-Datei -> {abschnitt: {schluessel: wert}} (Gross-/Kleinschreibung bleibt, keine Interpolation)."""
+    out, sec = {}, None
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            sec = s[1:-1]
+            out.setdefault(sec, {})
+        elif sec is not None and "=" in s and not s.startswith((";", "#")):
+            k, v = s.split("=", 1)
+            out[sec][k.strip()] = v.strip()
+    return out
+
+
+def ini_update(path, section, values, remove=()):
+    """Schluessel in genau einem Abschnitt setzen bzw. entfernen; ein fehlender Abschnitt kommt ans Ende.
+    Alles andere in der Datei bleibt, wie es ist (anders als _ini_set, das Schluessel in allen Abschnitten loescht)."""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    head = f"[{section}]"
+    start = next((i for i, line in enumerate(lines) if line.strip() == head), None)
+    if start is None:
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if lines:
+            lines.append("")
+        lines.append(head)
+        start = len(lines) - 1
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].strip().startswith("[")), len(lines))
+    todo, drop, body = dict(values), set(remove), []
+    for line in lines[start + 1:end]:
+        k = line.split("=", 1)[0].strip() if "=" in line else None
+        if k in drop:
+            continue
+        if k in todo:
+            body.append(f"{k}={todo.pop(k)}")
+            continue
+        body.append(line)
+    while body and not body[-1].strip():
+        body.pop()
+    body += [f"{k}={v}" for k, v in todo.items()]
+    new = lines[:start + 1] + body + ([""] if end < len(lines) else []) + lines[end:]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".vs-tmp")
+    tmp.write_text("\n".join(new) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+EMU_STATE = BASE / "emu-defaults.json"      # was VoidStation zuletzt in die Einstellungen der Emulatoren geschrieben hat
+EMU_LOCK = threading.Lock()
+
+
+def emu_state_load():
+    try:
+        st = json.loads(EMU_STATE.read_text(encoding="utf-8"))
+        return st if isinstance(st, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def emu_state_save(st):
+    try:
+        tmp = EMU_STATE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(st, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(EMU_STATE)
+    except OSError as e:
+        log("emu-defaults.json:", e)
+
+
+def ini_defaults(app, path, section, wanted, st):
+    """Vorgaben von VoidStation in eine INI schreiben – aber nur Schluessel, die fehlen oder noch genau den Wert
+    haben, den VoidStation zuletzt geschrieben hat. Was der Nutzer im Programm selbst umgestellt hat, bleibt."""
+    mine = st.setdefault(app, {}).setdefault(section, {})
+    cur = ini_read(path).get(section, {})
+    todo = {k: v for k, v in wanted.items() if (k not in cur or cur[k] == mine.get(k)) and cur.get(k) != v}
+    if todo:
+        ini_update(path, section, todo)
+        log(f"{app}: Vorgaben gesetzt:", ", ".join(f"{k}={v}" for k, v in todo.items()))
+    for k, v in wanted.items():
+        if k not in cur or cur[k] == mine.get(k) or cur[k] == v:
+            mine[k] = v
+
+
+# ---- Controller: Tasten so nummerieren, wie SDL sie unter Linux zaehlt -------------------------------------
+# SDL (joystick/linux/SDL_sysjoystick.c, ConfigJoystick): erst alle Tasten ab BTN_JOYSTICK (0x120) aufsteigend,
+# dann die darunter; Achsen in der Reihenfolge ihrer Nummer ohne die digitalen Steuerkreuze (ABS_HAT*).
+# Damit stimmt die Rechnung, muss SDL den evdev-Weg nehmen: Emulatoren starten mit SDL_JOYSTICK_HIDAPI=0
+# (sonst zaehlen PS4/PS5/Switch-Controller ueber hidraw anders).
+def gamepads():
+    """Angeschlossene Gamepads (evdev) in der Reihenfolge, in der SDL sie findet (nach Geraetenummer)."""
+    try:
+        import evdev  # type: ignore
+        from evdev import ecodes as E
+    except ImportError:
+        return []
+    out = []
+    for p in sorted(evdev.list_devices(), key=lambda s: int(re.sub(r"\D", "", s) or 0)):
+        try:
+            d = evdev.InputDevice(p)
+            caps = d.capabilities()
+            name = d.name
+            d.close()
+        except OSError:
+            continue
+        keys = set(caps.get(E.EV_KEY, []))
+        axes = {a[0] if isinstance(a, (tuple, list)) else a for a in caps.get(E.EV_ABS, [])}
+        if E.BTN_SOUTH in keys and (E.ABS_X in axes or E.ABS_HAT0X in axes or E.BTN_DPAD_UP in keys):
+            out.append({"path": p, "name": name, "keys": keys, "axes": axes})
+    return out
+
+
+def sdl_indices(pad):
+    """(Tasten, Achsen) eines Gamepads als {evdev-Code: SDL-Nummer}."""
+    from evdev import ecodes as E
+    keys = pad["keys"]
+    order = sorted(k for k in keys if E.BTN_JOYSTICK <= k < E.KEY_MAX) + sorted(k for k in keys if k < E.BTN_JOYSTICK)
+    axes = sorted(a for a in pad["axes"] if not E.ABS_HAT0X <= a <= E.ABS_HAT3Y)
+    return {k: i for i, k in enumerate(order)}, {a: i for i, a in enumerate(axes)}
+
+
+# ---- mGBA (Kachel "gba"; geprueft am Quelltext von mGBA 0.10.5) ----------------------------------------------
+MGBA_CONFIG = Path.home() / ".config/mgba/config.ini"
+MGBA_PAD = "gba.input.SDLB"                  # Belegung fuer alle Controller ohne eigenes Profil
+MGBA_DEFAULTS = {
+    "autosave": "1",              # Stand alle 10 s und beim Beenden sichern (Platz 0) ...
+    "autoload": "1",              # ... und beim naechsten Start dort weitermachen
+    "lockAspectRatio": "1",       # Seitenverhaeltnis behalten
+    "lockIntegerScaling": "1",    # ganzzahlig vergroessern: gleich breite, scharfe Pixel (720p/1080p: wenig Rand)
+    "resampleVideo": "0",         # nicht weichzeichnen
+    "interframeBlending": "0",
+    "pauseOnFocusLost": "0",      # Anhalten im Hintergrund macht VoidStation selbst
+    "suspendScreensaver": "1",
+}
+
+
+def mgba_pad_map(pad):
+    """Belegung fuer mGBA: Tasten wie auf dem Game Boy angeordnet (rechte Taste = A, untere = B, wie mGBAs eigenes
+    Xbox-Profil), Schultertasten L/R, Steuerkreuz und linker Stick. GBA-Tasten: A0 B1 Select2 Start3 Rechts4
+    Links5 Hoch6 Runter7 R8 L9."""
+    from evdev import ecodes as E
+    btn, ax = sdl_indices(pad)
+    b = lambda code: str(btn[code]) if code in btn else "-1"
+    m = {"keyA": b(E.BTN_EAST), "keyB": b(E.BTN_SOUTH), "keySelect": b(E.BTN_SELECT), "keyStart": b(E.BTN_START),
+         "keyL": b(E.BTN_TL), "keyR": b(E.BTN_TR), "keyUp": b(E.BTN_DPAD_UP), "keyDown": b(E.BTN_DPAD_DOWN),
+         "keyLeft": b(E.BTN_DPAD_LEFT), "keyRight": b(E.BTN_DPAD_RIGHT),
+         "hat0Up": "6", "hat0Right": "4", "hat0Down": "7", "hat0Left": "5"}
+    if E.ABS_X in ax:
+        m.update({"axisLeftValue": "-16384", "axisLeftAxis": f"-{ax[E.ABS_X]}",
+                  "axisRightValue": "16384", "axisRightAxis": f"+{ax[E.ABS_X]}"})
+    if E.ABS_Y in ax:
+        m.update({"axisUpValue": "-16384", "axisUpAxis": f"-{ax[E.ABS_Y]}",
+                  "axisDownValue": "16384", "axisDownAxis": f"+{ax[E.ABS_Y]}"})
+    return m
+
+
+MGBA_AXIS_KEYS = [f"axis{d}{s}" for d in ("Left", "Right", "Up", "Down") for s in ("Value", "Axis")]
+
+
+def mgba_prepare():
+    """Vor jedem Start von mGBA: Grundeinstellungen und Controller-Belegung (nur, wo der Nutzer nichts geaendert hat)."""
+    with EMU_LOCK:
+        st = emu_state_load()
+        wanted = dict(MGBA_DEFAULTS)
+        if SYS_ARCH != "i686":                 # Zurueckspulen kostet jedes Bild Rechenzeit – auf alten Rechnern nicht
+            wanted["rewindEnable"] = "1"
+        ini_defaults("mgba", MGBA_CONFIG, "ports.qt", wanted, st)
+        # Controller: mGBA kennt von sich aus nur alte Xbox-360-Pads – bei allen anderen fehlten A/B/Start ganz.
+        # Belegung fuer den ersten Controller (mGBA nimmt den ersten als Spieler 1), neu bei jedem Start, solange
+        # der Abschnitt noch so aussieht, wie VoidStation ihn geschrieben hat. Wer in mGBA selbst belegt, behaelt das.
+        pads = gamepads()
+        if pads:
+            cur = ini_read(MGBA_CONFIG).get(MGBA_PAD)
+            last = st.get("mgba", {}).get("pad")
+            if cur and cur != last:
+                log("mGBA: eigene Controller-Belegung vorhanden, bleibt")
+            else:
+                m = mgba_pad_map(pads[0])
+                if cur != m:
+                    ini_update(MGBA_CONFIG, MGBA_PAD, m, remove=[k for k in MGBA_AXIS_KEYS if k not in m])
+                    log(f"mGBA: Controller-Belegung fuer {pads[0]['name']}:", m)
+                st.setdefault("mgba", {})["pad"] = m
+        emu_state_save(st)
+
+
+# ---- Vollbild ------------------------------------------------------------------------------------------------
+# Programm -> (Startoption, Taste zum Umschalten). Beide aus dem Quelltext der Programme: mGBA (commandline.c "-f",
+# Window.cpp Strg+F), DuckStation (qthost.cpp "-fullscreen", hotkeys.cpp F11).
+EMU_FULLSCREEN = {"mgba-qt": ("-f", "ctrl+f"), "duckstation": ("-fullscreen", "F11")}
+# Emulatoren mit einem einzigen Fenster ohne eigene Vollbild-Startoption: Vollbild ueber den Fenstermanager
+EMU_WM_FULLSCREEN = {"snes9x", "nestopia", "melonds", "stella", "vice", "retroarch"}
+FS_HOLD = 0.8                                # L3 so lange halten -> Vollbild an/aus
+
+
+def emu_kind(args):
+    p = Path(str(args[0]))
+    return p.parent.name.lower() if p.name == "AppRun" else p.name
+
+
+def emu_fullscreen_wanted(tid):
+    t = find_tile(tid) or {}
+    if isinstance(t.get("fullscreen"), bool):
+        return t["fullscreen"]
+    return bool(settings_load().get("emu_fullscreen", True))
+
+
+def emu_prepare(tid, args):
+    """Vor dem Start: Vorgaben schreiben, Vollbild-Option einsetzen. -> (args, Umgebung, Vollbild ueber Fenstermanager)"""
+    kind = emu_kind(args)
+    env, wm_fs = {}, False
+    if kind == "mgba-qt":
+        try:
+            mgba_prepare()
+        except Exception as e:  # noqa: BLE001 – Vorgaben duerfen den Start nie verhindern
+            log("mGBA-Vorgaben:", e)
+        env["SDL_JOYSTICK_HIDAPI"] = "0"
+    # Nur mit Spiel (aus der Spieleliste): "Emulator ohne Spiel starten" bleibt im Fenster, dort will man die Menues
+    game = len(args) > 1 and Path(str(args[-1])).suffix.lower() in {e for x in ROMS.EXTENSIONS.values() for e in x}
+    if game and emu_fullscreen_wanted(tid):
+        spec = EMU_FULLSCREEN.get(kind)
+        if spec:
+            if spec[0] not in args:
+                args = [args[0], spec[0]] + list(args[1:])
+        elif tid in EMU_WM_FULLSCREEN:
+            wm_fs = True
+    return args, env, wm_fs
+
+
+def emu_toggle_fullscreen():
+    """L3 lang gedrueckt: Vollbild des Emulators vorn an/aus (zum Beispiel, um an die Menues von mGBA zu kommen).
+    Nur, wenn das aktive Fenster wirklich zu einem Emulator gehoert – nie in Firefox, Steam oder der Startseite."""
+    tid = APPS.front()
+    if not tid or not app_suspendable(tid):
+        return
+    proc = APPS._get(tid)
+    act = active_window()
+    if not proc or not act or not any(int(w[0], 16) == act for w in APPS._windows_of(tid, proc)):
+        return
+    key = EMU_FULLSCREEN.get(APPS.kinds.get(tid, ""), (None, None))[1]
+    if key and shutil.which("xdotool"):
+        run(["xdotool", "key", "--clearmodifiers", key])
+    else:
+        run(["wmctrl", "-i", "-r", hex(act), "-b", "toggle,fullscreen"])
+    log("Vollbild umgeschaltet:", tid)
+
+
+# ---- Spielstand-Sicherung -------------------------------------------------------------------------------------
+class SaveBackup:
+    """Sichert alle 30 Minuten (und kurz nach dem Beenden eines Emulators) die Spielstaende nach
+    ~/share/Spielstand-Backups/<Datum_Uhrzeit>/ – vom PC aus ueber die Freigabe erreichbar.
+      * nur, wenn sich seit der letzten Sicherung etwas geaendert hat
+      * unveraenderte Dateien sind harte Links auf die vorige Sicherung (kostet keinen Platz)
+      * behaelt alle Sicherungen der letzten 24 Stunden, danach eine pro Tag fuer 30 Tage
+    Gesichert werden Speicherstaende neben den Spielen (share/ROMs: .sav, .srm, Savestates .ss0–.ss9 …) und die
+    bekannten Ordner der Emulatoren, soweit vorhanden. Abschalten: "save_backup": false in settings.json."""
+    INTERVAL = 1800
+    KEEP_ALL = 24 * 3600
+    KEEP_DAYS = 30
+    MAX_FILE = 512 * 1024 * 1024
+    SAVE_EXT = re.compile(r"\.(sav|srm|sra|eep|fla|rtc|mpk|dsv|mcr|mcd|ss\d|st\d|state\d*|oops)$", re.I)
+    ROOT = Path.home() / "share" / "Spielstand-Backups"
+    H = Path.home()
+    # (Name im Backup, Ordner, nur Speicherstaende?) – fehlende Ordner werden uebersprungen
+    SOURCES = [
+        ("ROMs", H / "share" / "ROMs", True),                                # mGBA, melonDS, Snes9x … neben dem Spiel
+        ("DuckStation", H / ".local/share/duckstation/memcards", False),
+        ("DuckStation-Savestates", H / ".local/share/duckstation/savestates", False),
+        ("PPSSPP", H / ".config/ppsspp/PSP/SAVEDATA", False),
+        ("PPSSPP-Savestates", H / ".config/ppsspp/PSP/PPSSPP_STATE", False),
+        ("Dolphin-GC", H / ".local/share/dolphin-emu/GC", False),
+        ("Dolphin-Savestates", H / ".local/share/dolphin-emu/StateSaves", False),
+        ("RetroArch", H / ".config/retroarch/saves", False),
+        ("RetroArch-Savestates", H / ".config/retroarch/states", False),
+        ("PCSX2", H / ".var/app/net.pcsx2.PCSX2/config/PCSX2/memcards", False),
+        ("PCSX2-Savestates", H / ".var/app/net.pcsx2.PCSX2/config/PCSX2/sstates", False),
+        ("Flycast", H / ".var/app/org.flycast.Flycast/data/flycast", True),
+        ("Mednafen", H / ".mednafen/sav", False),
+        ("Mednafen-Savestates", H / ".mednafen/mcs", False),
+        ("Nestopia", H / ".nestopia/save", False),
+        ("ScummVM", H / ".local/share/scummvm/saves", False),
+    ]
+    STAMP = "%Y-%m-%d_%H-%M-%S"
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.last_sig = None
+        self.last_run = 0.0
+        self.last_result = None
+
+    def enabled(self):
+        return bool(settings_load().get("save_backup", True))
+
+    def _files(self):
+        """[(Pfad im Backup, Datei, Groesse, mtime_ns)] aller zu sichernden Dateien."""
+        out = []
+        for name, root, saves_only in self.SOURCES:
+            if not root.is_dir():
+                continue
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = [d for d in dirnames if not d.startswith(".") and d != "Cover"]
+                for fn in filenames:
+                    if saves_only and not self.SAVE_EXT.search(fn):
+                        continue
+                    p = Path(dirpath) / fn
+                    try:
+                        s = p.stat()
+                    except OSError:
+                        continue
+                    if s.st_size > self.MAX_FILE or not p.is_file():
+                        continue
+                    out.append((f"{name}/{p.relative_to(root)}", p, s.st_size, s.st_mtime_ns))
+        out.sort()
+        return out
+
+    def snapshots(self):
+        try:
+            return sorted(d for d in self.ROOT.iterdir() if d.is_dir() and re.fullmatch(r"\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d", d.name))
+        except OSError:
+            return []
+
+    def run_once(self, why=""):
+        if not self.enabled():
+            return None
+        with self.lock:
+            self.last_run = time.time()
+            files = self._files()
+            if not files:
+                return None
+            sig = hashlib.sha1(json.dumps([(r, sz, mt) for r, _, sz, mt in files]).encode()).hexdigest()
+            snaps = self.snapshots()
+            if self.last_sig is None:
+                try:
+                    self.last_sig = (snaps[-1] / ".signatur").read_text().strip() if snaps else ""
+                except OSError:
+                    self.last_sig = ""
+            if sig == self.last_sig:
+                return None
+            prev = snaps[-1] if snaps else None
+            name = datetime.datetime.now().strftime(self.STAMP)
+            tmp = self.ROOT / f".{name}.tmp"
+            shutil.rmtree(tmp, ignore_errors=True)
+            copied = linked = 0
+            try:
+                for rel, src, size, mtime in files:
+                    dst = tmp / rel
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    old = prev / rel if prev else None
+                    try:
+                        if old and old.is_file():
+                            os_ = old.stat()
+                            if os_.st_size == size and os_.st_mtime_ns == mtime:
+                                os.link(old, dst)
+                                linked += 1
+                                continue
+                    except OSError:
+                        pass
+                    shutil.copy2(src, dst)
+                    copied += 1
+                (tmp / ".signatur").write_text(sig)
+                tmp.rename(self.ROOT / name)
+            except OSError as e:
+                log("Spielstand-Sicherung fehlgeschlagen:", e)
+                shutil.rmtree(tmp, ignore_errors=True)
+                return None
+            self.last_sig = sig
+            self._readme()
+            self._prune()
+            self.last_result = {"name": name, "copied": copied, "linked": linked}
+            log(f"Spielstaende gesichert ({why}): {name}, {copied} neu, {linked} unveraendert")
+            return self.last_result
+
+    def _prune(self):
+        now = datetime.datetime.now()
+        keep_day = set()
+        for d in reversed(self.snapshots()):
+            try:
+                t = datetime.datetime.strptime(d.name, self.STAMP)
+            except ValueError:
+                continue
+            age = (now - t).total_seconds()
+            day = t.date()
+            if age <= self.KEEP_ALL:
+                keep_day.add(day)
+                continue
+            if age <= self.KEEP_DAYS * 86400 and day not in keep_day:
+                keep_day.add(day)                    # neueste Sicherung dieses Tages behalten
+                continue
+            shutil.rmtree(d, ignore_errors=True)
+
+    def _readme(self):
+        f = self.ROOT / "LIESMICH.txt"
+        if f.exists():
+            return
+        try:
+            f.write_text(
+                "VoidStation – Spielstand-Sicherung / save backups\n"
+                "=================================================\n"
+                "Alle 30 Minuten (und kurz nach dem Beenden eines Emulators) landet hier ein Ordner mit Datum und\n"
+                "Uhrzeit – aber nur, wenn sich ein Spielstand geaendert hat. Behalten werden alle Sicherungen der\n"
+                "letzten 24 Stunden und danach eine pro Tag fuer 30 Tage.\n"
+                "Zurueckholen: Emulator beenden, Datei aus dem gewuenschten Ordner an ihren alten Platz kopieren\n"
+                "(ROMs/... = Freigabe-Ordner ROMs; mGBA: .sav = Spielstand im Spiel, .ss0 = automatischer Stand).\n\n"
+                "Every 30 minutes (and shortly after an emulator closes) a dated folder appears here – only if a save\n"
+                "changed. All backups of the last 24 hours are kept, then one per day for 30 days.\n"
+                "To restore: close the emulator and copy the file back to where it came from.\n", encoding="utf-8")
+        except OSError:
+            pass
+
+    def watcher(self):
+        """Hintergrund-Thread: alle 30 Minuten, und 10 s nachdem ein Emulator beendet wurde."""
+        time.sleep(180)
+        emus_before = set()
+        due_at = 0.0
+        while True:
+            try:
+                emus = {t for t in APPS.running() if app_suspendable(t)}
+                if emus_before - emus:
+                    due_at = time.time() + 10
+                emus_before = emus
+                if due_at and time.time() >= due_at:
+                    due_at = 0.0
+                    self.run_once("Emulator beendet")
+                elif time.time() - self.last_run >= self.INTERVAL:
+                    self.run_once("alle 30 Minuten")
+            except Exception as e:  # noqa: BLE001 – der Waechter darf nie sterben
+                log("Spielstand-Sicherung:", e)
+            time.sleep(15)
+
+
+SAVES = SaveBackup()
+
+
+# ---- Cover in der Spieleliste ----------------------------------------------------------------------------------
+class RomCovers:
+    """Bild zu jedem Spiel der Spieleliste. Reihenfolge:
+      1. eigenes Bild: ROMs/<system>/Cover/<Name des Spiels>.png|.jpg|.jpeg|.webp (oder gleichnamig neben dem Spiel)
+      2. sonst online gesucht und dauerhaft als ROMs/<system>/Cover/<Name>.png gespeichert – Quelle sind die
+         Boxbilder von libretro-thumbnails (dieselben wie in RetroArch), Liste ueber GitHub, Rueckfall
+         thumbnails.libretro.com
+    Gesucht wird nach dem genauen Dateinamen (No-Intro-Namen wie "Pokemon - Crystal Version (USA, Europe)"), dann
+    nach dem Titel ohne Klammern (Region der eigenen Sprache bevorzugt), dann aehnlich geschrieben. ROM-Hacks und
+    selbst benannte Dateien finden oft nichts – dafuer ist Punkt 1 da. Nicht Gefundenes wird 14 Tage nicht erneut
+    gesucht. Abschalten: "rom_covers": false in settings.json."""
+    SYSTEMS = {                                  # Ordner unter share/ROMs -> System bei libretro
+        "gba": "Nintendo - Game Boy Advance", "gbc": "Nintendo - Game Boy Color", "gb": "Nintendo - Game Boy",
+        "snes": "Nintendo - Super Nintendo Entertainment System", "nes": "Nintendo - Nintendo Entertainment System",
+        "psx": "Sony - PlayStation", "psp": "Sony - PlayStation Portable", "nds": "Nintendo - Nintendo DS",
+        "gamecube": "Nintendo - GameCube", "dreamcast": "Sega - Dreamcast", "n64": "Nintendo - Nintendo 64",
+        "megadrive": "Sega - Mega Drive - Genesis", "genesis": "Sega - Mega Drive - Genesis",
+        "atari2600": "Atari - 2600", "c64": "Commodore - 64",
+    }
+    BY_EXT = {".gba": "gba", ".gbc": "gbc", ".gb": "gb"}     # mGBA-Ordner enthalten alle drei
+    IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
+    LIST_AGE = 30 * 86400
+    MISS_AGE = 14 * 86400
+    CACHE = BASE / "cache" / "romcovers"
+    REGIONS = {"de": ("Germany", "Europe", "World", "USA"), "en": ("USA", "World", "Europe")}
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.list_locks = {}
+        self.lists = {}                          # System -> {"names": set, "by_key": {schluessel: [namen]}}
+        self.list_fail = {}                      # System -> Zeitpunkt des letzten Fehlschlags
+        self.dl = threading.Semaphore(3)
+        self.miss = None
+
+    def enabled(self):
+        return bool(settings_load().get("rom_covers", True))
+
+    @staticmethod
+    def key(name):
+        """Vergleichsschluessel: ohne Klammern, Akzente, "The", Satzzeichen."""
+        s = re.sub(r"\s*[\(\[][^()\[\]]*[\)\]]", "", name)
+        s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower().replace("&", " and ")
+        s = re.sub(r"\bthe\b", " ", s)
+        return re.sub(r"[^a-z0-9]", "", s)
+
+    @staticmethod
+    def thumb_name(stem):
+        return re.sub(r'[&*/:`<>?\\|"]', "_", stem)
+
+    def system_of(self, folder, filename):
+        return self.SYSTEMS.get(self.BY_EXT.get(Path(filename).suffix.lower(), folder))
+
+    def own_image(self, folder, filename):
+        stem = Path(filename).stem
+        base = ROMS.rom_dir / folder
+        for d in (base / "Cover", base):
+            for ext in self.IMG_EXT:
+                p = d / (stem + ext)
+                if p.is_file():
+                    return p
+        return None
+
+    def url(self, rom):
+        """Adresse fuer die Oberflaeche; ?v= wechselt, sobald ein Bild da ist (sonst haelt Qt das alte Ergebnis)."""
+        f = rom.get("folder") or rom.get("system") or ""
+        own = self.own_image(f, rom["filename"])
+        v = int(own.stat().st_mtime) if own else 0
+        return ("/api/roms/cover?folder=" + urllib.parse.quote(f) + "&file=" + urllib.parse.quote(rom["filename"])
+                + f"&v={v}")
+
+    # -- Liste der vorhandenen Bilder eines Systems --
+    def _repo(self, system):
+        return system.replace(" ", "_")
+
+    def _load_list(self, system):
+        with self.lock:
+            lk = self.list_locks.setdefault(system, threading.Lock())
+        with lk:
+            if system in self.lists:
+                return self.lists[system]
+            if time.time() - self.list_fail.get(system, 0) < 600:
+                return None
+            self.CACHE.mkdir(parents=True, exist_ok=True)
+            cf = self.CACHE / (self._repo(system) + ".json")
+            names = None
+            try:
+                if time.time() - cf.stat().st_mtime < self.LIST_AGE:
+                    names = json.loads(cf.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
+            if names is None:
+                names = self._fetch_list(system)
+                if names:
+                    try:
+                        cf.write_text(json.dumps(names, ensure_ascii=False), encoding="utf-8")
+                    except OSError:
+                        pass
+                else:
+                    try:                            # offline: lieber alte Liste als keine
+                        names = json.loads(cf.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        self.list_fail[system] = time.time()
+                        return None
+            by_key = {}
+            for n in names:
+                by_key.setdefault(self.key(n), []).append(n)
+            self.lists[system] = {"names": set(names), "by_key": by_key}
+            return self.lists[system]
+
+    def _fetch_list(self, system):
+        repo = self._repo(system)
+        try:                                        # GitHub: eine Anfrage je System (ohne Konto 60 pro Stunde)
+            req = urllib.request.Request(
+                f"https://api.github.com/repos/libretro-thumbnails/{repo}/git/trees/master?recursive=1",
+                headers={**UA, "Accept": "application/vnd.github+json"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                tree = json.loads(r.read().decode("utf-8"))
+            names = [t["path"][len("Named_Boxarts/"):-4] for t in tree.get("tree", [])
+                     if t.get("path", "").startswith("Named_Boxarts/") and t["path"].endswith(".png")]
+            if names:
+                return names
+        except (OSError, ValueError, KeyError) as e:
+            log("Cover-Liste (GitHub):", system, e)
+        try:                                        # Rueckfall: Verzeichnisliste von thumbnails.libretro.com
+            req = urllib.request.Request(
+                "https://thumbnails.libretro.com/" + urllib.parse.quote(system) + "/Named_Boxarts/", headers=UA)
+            with urllib.request.urlopen(req, timeout=30) as r:
+                html = r.read().decode("utf-8", "replace")
+            return [urllib.parse.unquote(h)[:-4] for h in re.findall(r'href="([^"?/]+\.png)"', html)]
+        except OSError as e:
+            log("Cover-Liste (libretro):", system, e)
+        return []
+
+    def _pick(self, lst, stem):
+        tn = self.thumb_name(stem)
+        if tn in lst["names"]:
+            return tn
+        k = self.key(stem)
+        cands = lst["by_key"].get(k)
+        if not cands and len(k) >= 6:              # "Pokemon Smaragd" -> "Pokemon - Smaragd-Edition", nur wenn eindeutig
+            longer = [x for x in lst["by_key"] if x.startswith(k)]
+            if len(longer) == 1:
+                cands = lst["by_key"][longer[0]]
+        if not cands and len(k) >= 4:
+            import difflib
+            close = difflib.get_close_matches(k, list(lst["by_key"]), n=1, cutoff=0.88)
+            cands = lst["by_key"][close[0]] if close else None
+        if not cands:
+            return None
+        own = set(re.findall(r"\(([^)]*)\)", stem))
+        pref = self.REGIONS.get(ui_lang(), self.REGIONS["en"])
+
+        def score(n):
+            tags = re.findall(r"\(([^)]*)\)", n)
+            regs = [r.strip() for t in tags[:1] for r in t.split(",")]
+            s = len(own & set(tags)) * 10
+            for i, r in enumerate(pref):
+                if r in regs:
+                    s += (len(pref) - i)
+                    break
+            return (s, -len(n))
+        return max(cands, key=score)
+
+    def _download(self, system, name, depth=0):
+        """PNG-Daten des Boxbilds. libretro-thumbnails enthaelt Verweise (Symlinks): GitHub liefert dann statt des
+        Bildes nur den Namen des Zielbilds – dem wird gefolgt (hoechstens zweimal)."""
+        repo = self._repo(system)
+        for u in (f"https://raw.githubusercontent.com/libretro-thumbnails/{repo}/master/Named_Boxarts/"
+                  + urllib.parse.quote(name + ".png"),
+                  "https://thumbnails.libretro.com/" + urllib.parse.quote(system) + "/Named_Boxarts/"
+                  + urllib.parse.quote(name + ".png")):
+            try:
+                with self.dl:
+                    with urllib.request.urlopen(urllib.request.Request(u, headers=UA), timeout=30) as r:
+                        data = r.read(8 * 1024 * 1024)
+            except OSError:
+                continue
+            if data[:8] == b"\x89PNG\r\n\x1a\n":
+                return data
+            link = data.strip()
+            if len(link) < 300 and link.endswith(b".png") and depth < 2:
+                return self._download(system, link.decode("utf-8", "replace").split("/")[-1][:-4], depth + 1)
+        return None
+
+    def _miss_load(self):
+        if self.miss is None:
+            try:
+                self.miss = json.loads((self.CACHE / "miss.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                self.miss = {}
+        return self.miss
+
+    def _miss_set(self, k, on):
+        with self.lock:
+            m = self._miss_load()
+            if on:
+                m[k] = time.time()
+            else:
+                m.pop(k, None)
+            try:
+                self.CACHE.mkdir(parents=True, exist_ok=True)
+                (self.CACHE / "miss.json").write_text(json.dumps(m), encoding="utf-8")
+            except OSError:
+                pass
+
+    def get(self, folder, filename):
+        """Pfad zum Bild des Spiels oder None (holt es bei Bedarf aus dem Netz – kann einige Sekunden dauern)."""
+        if folder not in ROMS.EXTENSIONS or os.path.basename(filename) != filename:
+            return None
+        rom = (ROMS.rom_dir / folder / filename)
+        if not rom.is_file():
+            return None
+        own = self.own_image(folder, filename)
+        if own or not self.enabled():
+            return own
+        system = self.system_of(folder, filename)
+        if not system:
+            return None
+        mk = f"{folder}/{filename}"
+        with self.lock:
+            t = self._miss_load().get(mk, 0)
+        if time.time() - t < self.MISS_AGE:
+            return None
+        lst = self._load_list(system)
+        if not lst:
+            return None                              # offline – naechstes Mal wieder versuchen
+        name = self._pick(lst, Path(filename).stem)
+        data = self._download(system, name) if name else None
+        if not data:
+            if not name:                             # nichts Passendes: 14 Tage Ruhe; Downloadfehler: bald wieder
+                self._miss_set(mk, True)
+            return None
+        out = ROMS.rom_dir / folder / "Cover" / (Path(filename).stem + ".png")
+        try:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            tmp = out.with_name(out.name + ".part")
+            tmp.write_bytes(data)
+            tmp.replace(out)
+        except OSError as e:
+            log("Cover nicht gespeichert:", out, e)
+            return None
+        self._miss_set(mk, False)
+        log("Cover gespeichert:", out.name, "<-", name)
+        return out
+
+
+ROM_COVERS = RomCovers()
+
+
+# ---------------------------------------------------------------------------
 #  Bluetooth: Kopfhoerer, Controller, Joysticks, Tastaturen – BlueZ ueber D-Bus
 # ---------------------------------------------------------------------------
 BT_AGENT_XML = """
@@ -6946,8 +7642,19 @@ class Handler(BaseHTTPRequestHandler):
                         summary[s] = len(r)
                 return self._json(200, {"systems": summary})
             roms = ROMS.list_roms(system)
+            for r in roms:
+                r["cover"] = ROM_COVERS.url(r)
             return self._json(200, {"system": ROMS.canonical_system(system), "folders": ROMS.folders(system),
                                     "count": len(roms), "roms": roms})
+        if path == "/api/roms/cover":              # Bild zum Spiel (eigenes oder online gesucht, s. RomCovers)
+            qs = urllib.parse.parse_qs(url.query)
+            try:
+                f = ROM_COVERS.get(qs.get("folder", [""])[0], qs.get("file", [""])[0])
+                if f:
+                    return self._send(200, f.read_bytes(), MIME.get(f.suffix.lower(), "image/png"))
+            except OSError as e:
+                log("Cover:", e)
+            return self._send(404)
         if path == "/api/bluetooth/status":
             return self._json(200, BLUETOOTH.status())
         if path == "/tiles.json":
@@ -7340,19 +8047,35 @@ def gamepad_watcher():
                 pass
 
     last_scan = 0.0
+    l3_down = {}                                   # Geraet -> Zeitpunkt, seit dem L3 gehalten wird
+    l3_done = set()                                # Geraete, deren aktuelles Halten schon umgeschaltet hat
     while True:
         if time.time() - last_scan > 5:
             rescan()
             last_scan = time.time()
-        for key, _ in sel.select(timeout=1):
+        for key, _ in sel.select(timeout=0.1 if l3_down else 1):
             dev = key.fileobj
             try:
                 for ev in dev.read():
-                    if ev.type == ecodes.EV_KEY and ev.code == ecodes.BTN_MODE and ev.value == 1:
+                    if ev.type != ecodes.EV_KEY:
+                        continue
+                    if ev.code == ecodes.BTN_MODE and ev.value == 1:
                         raise_home()
+                    elif ev.code == ecodes.BTN_THUMBL:     # L3 (linken Stick druecken) lang halten: Vollbild an/aus
+                        if ev.value == 1:
+                            l3_down[dev.path] = time.monotonic()
+                        elif ev.value == 0:
+                            l3_down.pop(dev.path, None)
+                            l3_done.discard(dev.path)
             except OSError:
                 sel.unregister(dev)
                 known.pop(dev.path, None)
+                l3_down.pop(dev.path, None)
+                l3_done.discard(dev.path)
+        for path, t in list(l3_down.items()):
+            if path not in l3_done and time.monotonic() - t >= FS_HOLD:
+                l3_done.add(path)
+                threading.Thread(target=emu_toggle_fullscreen, daemon=True).start()
 
 
 def app_prefs():
@@ -7408,6 +8131,7 @@ def main():
     if not LIVE:                                    # im Live-System gibt es keine Updates
         threading.Thread(target=updates_background_check, daemon=True).start()
         threading.Thread(target=kernel_autopurge, daemon=True).start()
+        threading.Thread(target=SAVES.watcher, daemon=True).start()   # Spielstaende alle 30 Minuten sichern
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
     log(f"laeuft auf http://{HOST}:{PORT}/")
     try:

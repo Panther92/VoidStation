@@ -50,13 +50,38 @@ Layer {
                 cellW: Ui.u * rl.fit.k * 1.5
                 cellH: Ui.u * rl.fit.k
                 delegate: Component {
+                    // Mit Bild (Boxbild, s. RomCovers im Launcher): Bild links, Titel rechts, dahinter dasselbe Bild
+                    // gedimmt als Flaeche. Ohne Bild (laedt noch, nicht gefunden): Symbol der Kachel wie bisher.
                     Tile {
                         id: card
                         property var rom: modelData
+                        readonly property bool hasCover: cover.status === Image.Ready
                         tileColor: Ui.c.surfaceCard
                         enterDelay: Math.min(index * 25, 600)
                         onTriggered: rl.launchRom(modelData)
+                        Image {
+                            anchors.fill: parent
+                            source: cover.status === Image.Ready ? cover.source : ""
+                            fillMode: Image.PreserveAspectCrop
+                            asynchronous: true
+                            sourceSize: Qt.size(64, 64)
+                            smooth: true
+                            opacity: 0.28
+                        }
+                        Rectangle { anchors.fill: parent; color: "#000000"; opacity: card.hasCover ? 0.35 : 0 }
+                        Image {
+                            id: cover
+                            x: 10 * Ui.f; y: 10 * Ui.f
+                            width: parent.width * 0.5 - 15 * Ui.f; height: parent.height - 20 * Ui.f
+                            source: modelData.cover ? Ui.url(modelData.cover) : ""
+                            fillMode: Image.PreserveAspectFit
+                            horizontalAlignment: Image.AlignHCenter
+                            asynchronous: true
+                            sourceSize: Qt.size(Math.ceil(width * 1.5), Math.ceil(height * 1.5))
+                            visible: status === Image.Ready
+                        }
                         Glyph {
+                            visible: !card.hasCover
                             name: rl.tile ? (rl.tile.icon || "gamepad") : "gamepad"
                             color: Ui.c.textPrimary
                             opacity: 0.22
@@ -64,10 +89,17 @@ Layer {
                             x: (parent.width - width) / 2; y: parent.height * 0.4 - height / 2
                         }
                         Column {
-                            x: 14 * Ui.f; width: parent.width - 28 * Ui.f
+                            x: card.hasCover ? parent.width * 0.5 + 5 * Ui.f : 14 * Ui.f
+                            width: card.hasCover ? parent.width * 0.5 - 19 * Ui.f : parent.width - 28 * Ui.f
                             anchors.bottom: parent.bottom; anchors.bottomMargin: 14 * Ui.f
                             spacing: 2 * Ui.f
-                            Txt { width: parent.width; text: modelData.title || modelData.name || ""; font.pixelSize: 16 * Ui.f; font.weight: Font.Medium }
+                            Txt {
+                                width: parent.width
+                                text: modelData.title || modelData.name || ""
+                                font.pixelSize: 16 * Ui.f; font.weight: Font.Medium
+                                wrapMode: card.hasCover ? Text.Wrap : Text.NoWrap
+                                maximumLineCount: card.hasCover ? 4 : 1
+                            }
                             Txt { width: parent.width; text: modelData.size || ""; font.pixelSize: 12 * Ui.f; color: Ui.c.textDim; visible: text !== "" }
                         }
                     }

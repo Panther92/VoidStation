@@ -10,6 +10,7 @@ Aufruf:    python3 tools/qt-preview.py                         -> Fenster 1280×
            python3 tools/qt-preview.py --player media --home DIR   -> Videos & Musik, DIR wie ein Home (DIR/share/Videos …)
            python3 tools/qt-preview.py --player yt [--yt-demo]     -> YouTube Light mit yt-dlp-Attrappe (tools/yt-dlp-mock.py),
                                                                       RSS-Feeds, Vorschaubildern und Testvideo von hier
+           VS_ROM_COVERS=DIR …                                 -> Spieleliste mit Bildern: DIR/<Dateiname ohne Endung>.png
 """
 import argparse
 import json
@@ -51,6 +52,9 @@ STATE = {"running": ["youtube"], "radio": S.RADIO_NOW, "tv": None, "favs": list(
 STATIONS = [{"name": f"Testsender {i}", "url": f"https://example.invalid/s{i}", "favicon": ""} for i in range(1, 15)]
 ROMS = [{"title": n, "name": n, "filename": n.lower().replace(" ", "-") + ".gba", "size": "8 MB"} for n in
         ("Advance Wars", "Golden Sun", "Metroid Fusion", "Pokémon Smaragd", "Mario Kart", "Zelda Minish Cap", "F-Zero")]
+ROM_COVERS = Path(os.environ["VS_ROM_COVERS"]) if os.environ.get("VS_ROM_COVERS") else None
+for _r in ROMS:                                   # wie der Launcher: Adresse immer da, 404 wenn es kein Bild gibt
+    _r["cover"] = "/api/roms/cover?folder=gba&file=" + _r["filename"]
 
 
 TILES = json.loads(json.dumps(S.TILES))
@@ -309,6 +313,11 @@ class H(S.H):
         }
         if p.startswith("/api/yt/") or p in ("/yt-rss",) or p.startswith("/yt-media/"):
             return self.yt_get(p, q)
+        if p == "/api/roms/cover":
+            f = ROM_COVERS / (Path(q.get("file", [""])[0]).stem + ".png") if ROM_COVERS else None
+            if f and f.is_file():
+                return self.raw(200, f.read_bytes(), "image/png")
+            return self.raw(404, b"", "text/plain")
         if p == "/api/media/thumb":
             art = q.get("art", [""])[0]
             r = media().art(art) if art else media().thumb(q.get("path", [""])[0])
