@@ -977,6 +977,7 @@ def apply_color_scheme(dark):
 #  - Farben nach dem Theme (hell/dunkel) mit ruhiger 16-Farben-Palette; Cyan = Petrol wie im Logo (Eingabeaufforderung,
 #    Titelzeile von fastfetch). boldColors aus: fett bleibt dieselbe Farbe statt der grelleren "hellen" Variante.
 #  - meldet sich als xterm-256color (sonst nutzen htop, nano & Co. nur 8 Farben), 10.000 Zeilen zum Zurueckscrollen
+#  - Eingabemarke als blinkender senkrechter Strich (wie in Editoren und Browsern) statt Block
 #  - Schrift DejaVu Sans Mono 14 (skaliert mit Xft.dpi), Strg + / Strg - groesser/kleiner, Strg 0 zurueck
 #  - Einfuegen aus der Zwischenablage wie ueberall: Strg+Umschalt+V, Umschalt+Einfg und Rechtsklick (Controller: L2).
 #    Von Haus aus fuegt xterm nur die Markierung (PRIMARY) ein, nicht das mit Strg+C Kopierte. Markieren kopiert
@@ -990,12 +991,13 @@ XTERM_PALETTE = {
                        "#6b6f76", "#d0393b", "#3d9441", "#a87a00", "#3c74d0", "#9452c4", "#3f8fa0", "#e4e4e1"]},
 }
 XTERM_KEYS = re.compile(r"XTerm\*(selectToClipboard|VT100\.translations|termName|saveLines|faceName|faceSize\d?|"
-                        r"boldColors|background|foreground|cursorColor|color\d+)\s*:")
+                        r"boldColors|background|foreground|cursorColor|cursorBar|cursorBlink|color\d+)\s*:")
 
 
 def xterm_resources(dark):
     pal = XTERM_PALETTE[bool(dark)]
     out = ["XTerm*termName: xterm-256color", "XTerm*saveLines: 10000", "XTerm*boldColors: false",
+           "XTerm*cursorBar: true", "XTerm*cursorBlink: true",
            "XTerm*faceName: DejaVu Sans Mono", "XTerm*faceSize: 14"]
     # Stufen fuer Strg +/- (xterm springt zwischen faceSize1..6; dazwischen liegt die Grundgroesse 14)
     out += [f"XTerm*faceSize{i}: {v}" for i, v in enumerate((8, 10, 12, 17, 20, 26), 1)]
