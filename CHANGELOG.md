@@ -9,8 +9,6 @@ ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freig
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
 ## Testing – 2026-10-27
-- Updates: Der Dialog öffnet sofort, statt minutenlang auf die Paketprüfung zu warten. Die Systemupdates werden im Hintergrund geprüft, der Dialog ergänzt sie, sobald das fertig ist. Laden der Paketlisten dauert höchstens 90 Sekunden je Versuch – vorher konnte ein hängender Server die Prüfung 5 Minuten blockieren
-- Schnellster Void-Server: VoidStation misst vor jedem Update die offiziellen Void-Mirrors (Frankfurt, Helsinki, Fastly, Chicago) und lädt vom schnellsten – statt von dem, den `repo-default` gerade zufällig liefert (heute: Helsinki mit 270 KB/s). Antwortet ein Server nicht, wird sofort gewechselt. Eine eigene Paketquelle in `/etc/xbps.d` bleibt unangetastet; Stand mit `sudo voidstation-pkg mirror status`
 - `vsctl` ohne Angabe zeigt jetzt eine Übersicht aller Befehle; neu ist `vsctl version` (Version, Build und Update-Kanal). Im Terminal vervollständigt Tab die Befehle und bei `vsctl launch` die Kachel-IDs
 - Die Textkonsole (Strg+Alt+F2 …) begrüßt mit „VoidStation <Version>“ statt „Void“ – ein eigener Text in `/etc/issue` bleibt
 - Fenster, die Openbox selbst einrahmt – Dialoge und Hilfsfenster etwa von Emulatoren (z. B. „Spielstand laden“ in mGBA) –, tragen jetzt die Farben des gewählten Kachel-Themes statt des hellgrauen Openbox-Standards: Titelleiste und Rahmen wie die Kacheln, Schrift Noto Sans, der Schließen-Knopf wird beim Zeigen rot. Ein Theme-Wechsel gilt sofort auch für offene Fenster
@@ -73,6 +71,10 @@ ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freig
 - Versionsnummern nach Kalender: Jahr und Monat der Freigabe, z. B. 2026.11. Hotfixes dazu heißen 2026.11.1, 2026.11.2 usw.; die Live-ISO trägt dieselbe Nummer wie die Version, die sie enthält
 - Kanal Testing zeigt den Stand als z. B. „2026.11+testing.20261120“ (nach 2026.11, letzte Änderung am 20.11.). Wer von Testing auf Stable wechselt, bekommt weiterhin kein älteres Update angeboten
 - Tastenbelegung und „Spiel stumm“ jetzt auch in den elf weiteren Sprachen übersetzt (bisher englisch)
+
+## 2026.10.1 – 2026-10-27
+- Updates: Der Dialog öffnet sofort, statt minutenlang auf die Paketprüfung zu warten. Die Systemupdates werden im Hintergrund geprüft, der Dialog ergänzt sie, sobald das fertig ist. Laden der Paketlisten dauert höchstens 90 Sekunden je Versuch – vorher konnte ein hängender Server die Prüfung 5 Minuten blockieren
+- Schnellster Void-Server: VoidStation misst vor jedem Update die offiziellen Void-Mirrors (Frankfurt, Helsinki, Fastly, Chicago) und lädt vom schnellsten – statt von dem, den `repo-default` gerade zufällig liefert (heute: Helsinki mit 270 KB/s). Antwortet ein Server nicht, wird sofort gewechselt. Eine eigene Paketquelle in `/etc/xbps.d` bleibt unangetastet; Stand mit `sudo voidstation-pkg mirror status`
 
 ## 2026.10 – 2026-10-16
 - FreeTube und andere Flatpak-Programme: Der Dateidialog zeigte nur ein leeres Homeverzeichnis – z. B. ließen sich keine Abos importieren. Jetzt öffnet sich ein Dialog mit Zugriff auf alle eigenen Ordner; das Programm bekommt nur die gewählte Datei. Gilt für Programme, die nach dem Update gestartet werden
