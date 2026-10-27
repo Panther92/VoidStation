@@ -1483,13 +1483,39 @@ const SET_PAGES = {
       const b = pill(num(s) + '×', () => setScale(s), Math.abs(s - scale) < 0.01);
       b.dataset.key = 'scale' + s; rs.appendChild(b);
     }
+    const hz = r => num(Math.round(r * 100) / 100);
     for (const d of sett.displays || []) {
       const rr = row(col(tr, T('settings.resolution', { name: d.name })));
-      const modes = d.modes.filter(m => { const [w, h] = m.split('x').map(v => parseInt(v, 10)); return w >= 1024 && h >= 576; }).slice(0, 6);
+      // ab 1024x576, nur Modi mit mindestens ~50 Hz (dazu die aktuelle und die bevorzugte), hoechstens acht
+      const modes = d.modes.filter(m => {
+        const [w, h] = m.split('x').map(v => parseInt(v, 10));
+        return w >= 1024 && h >= 576 && (m === d.current || m === d.preferred || ((d.rates || {})[m] || []).some(r => r >= 49));
+      }).slice(0, 8);
       for (const m of modes) {
         const label = m.replace('x', '×').replace(/i$/, ' ' + T('settings.interlaced')) + (m === d.current && d.rate ? ` · ${Math.round(d.rate)} Hz` : '');
         const b = pill(label, () => setResolution(m), m === d.current); b.dataset.key = 'res' + m; rr.appendChild(b);
       }
+      const rates = [];
+      for (const r of (d.rates || {})[d.current] || []) if (r >= 23 && !rates.some(x => Math.abs(x - r) < 0.005)) rates.push(r);
+      rates.sort((a, b) => b - a);
+      if (rates.length > 1) {
+        const fr = row(col(tr, T('settings.rate', { name: d.name })));
+        const a0 = pill(esc(T('settings.rateAuto')) + (!sett.rate && d.rate ? ` · ${hz(d.rate)} Hz` : ''), () => setResolution(d.current), !sett.rate);
+        a0.dataset.key = 'rateauto' + d.name; fr.appendChild(a0);
+        for (const r of rates) {
+          const b = pill(hz(r) + ' Hz', () => setResolution(d.current, r), !!sett.rate && Math.abs(r - sett.rate) < 0.005);
+          b.dataset.key = 'rate' + d.name + r; fr.appendChild(b);
+        }
+      }
+    }
+    if (sett.match_rate !== undefined) {
+      const mc = col(tr, T('settings.matchRate'));
+      const mr = row(mc);
+      for (const on of [true, false]) {
+        const b = pill(T(on ? 'common.on' : 'common.off'), () => setMatchRate(on), !!sett.match_rate === on);
+        b.dataset.key = 'mr' + on; mr.appendChild(b);
+      }
+      const mi = document.createElement('div'); mi.className = 'info'; mi.textContent = T('settings.matchRateHint'); mc.appendChild(mi);
     }
   },
   design(tr) {
@@ -1865,9 +1891,19 @@ async function setCursor(c) {
   renderSettings();
   toast(T('settings.cursorToast'));
 }
-async function setResolution(m) {
-  try { sett = await api('/api/settings/resolution', { mode: m }); toast(T('settings.resToast', { mode: m.replace('x', '×') })); } catch (e) { return toast(T('common.failedMsg', { msg: e.message }), true); }
+async function setResolution(m, rate) {
+  const body = rate ? { mode: m, rate } : { mode: m };
+  try {
+    sett = await api('/api/settings/resolution', body);
+    toast(rate ? T('settings.rateToast', { hz: num(Math.round(rate * 100) / 100) }) : T('settings.resToast', { mode: m.replace('x', '×') }));
+  } catch (e) { return toast(T('common.failedMsg', { msg: e.message }), true); }
   setTimeout(() => { layout(); renderSettings(); }, 800);
+}
+async function setMatchRate(on) {
+  if (!!sett.match_rate === on) return;
+  try { sett = await api('/api/settings/matchrate', { on }); } catch (e) { return toast(T('common.failedMsg', { msg: e.message }), true); }
+  renderSettings();
+  toast(T(on ? 'settings.matchRateOnToast' : 'settings.matchRateOffToast'));
 }
 function audioDev() { return sett?.audio?.ok ? (sett.audio.devices || []).find(d => d.active) || null : null; }
 function devLabel(d) {

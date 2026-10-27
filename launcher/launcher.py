@@ -524,6 +524,10 @@ class PlayerManager:
     def _watch(self, tid, proc, level):
         t0 = time.monotonic()
         rc = proc.wait()
+        try:
+            DISPLAY_RATE.request(0, {"ytlight": "yt"}.get(tid, tid))   # Player zu -> Desktop-Rate
+        except Exception as e:  # noqa: BLE001
+            log("Bildrate zuruecksetzen:", e)
         if rc in self.CRASH or rc > 0:
             with self.lock:
                 self.fails.append(time.time())
@@ -686,7 +690,8 @@ def volume_set(action):
 SETTINGS = BASE / "settings.json"
 DEFAULTS = {"scale": 1.75, "resolution": None, "cursor_theme": "Bibata-Modern-Ice", "cursor_size": 48, "lang": None, "theme": "default-dark",
             "sysupd_days": 90, "padmouse": True, "covers_auto": True, "covers_embed": False, "audio_auto": True,
-            "emu_fullscreen": True, "save_backup": True, "rom_covers": True}
+            "emu_fullscreen": True, "save_backup": True, "rom_covers": True,
+            "rate": None, "match_rate": False}
 SYSUPD_DAYS = (30, 60, 90)                  # Erinnerung an Systemupdates (ohne VoidStation-Update) nach … Tagen
 # Sprachen der Oberflaeche: Texte in web/i18n/<id>.json, fehlende Texte kommen aus en.json, dann aus de.json.
 # Anzeige immer in der eigenen Sprache. Je Sprache auch das Locale fuer gestartete Programme (LANG/LANGUAGE) und
@@ -1246,10 +1251,14 @@ def xrandr_info():
     return outs
 
 
-def _best_rate(rates):
-    """Moeglichst 60 Hz (60.00 vor 59.94), sonst die hoechste Rate."""
+def _best_rate(rates, want=None):
+    """Gewaehlte Rate (Einstellungen -> Anzeige), sonst moeglichst 60 Hz (60.00 vor 59.94), sonst die hoechste."""
     if not rates:
         return None
+    if want:
+        hit = [r for r in rates if abs(r - want) < 0.005]
+        if hit:
+            return hit[0]
     near = [r for r in rates if abs(r - 60) < 0.5]
     return max(near) if near else max(rates)
 
@@ -1267,12 +1276,15 @@ def _auto_mode(o):
     return max(prog, key=lambda m: int(m.split("x")[0]) * int(m.split("x")[1].rstrip("i")))
 
 
-def apply_resolution(res):
+def apply_resolution(res, want_rate=None):
+    """Aufloesung (None = automatisch) und Bildrate des Desktops setzen (want_rate None = ~60 Hz)."""
     for o in xrandr_info():
         mode = res if res in o["modes"] else (None if res else _auto_mode(o))
+        if not mode and want_rate and o["current"]:
+            mode = o["current"]                         # automatische Aufloesung, aber feste Bildrate
         if not mode:
             continue
-        rate = _best_rate(o["rates"].get(mode, []))
+        rate = _best_rate(o["rates"].get(mode, []), want_rate)
         if mode == o["current"] and (rate is None or o["rate"] == rate):
             continue
         cmd = ["xrandr", "--output", o["name"], "--mode", mode]
@@ -1280,6 +1292,110 @@ def apply_resolution(res):
             cmd += ["--rate", f"{rate:.2f}"]
         run(cmd)
         log("Aufloesung", o["name"], mode, f"{rate} Hz" if rate else "", "(automatisch)" if not res else "")
+
+
+def apply_display(s=None):
+    """Aufloesung und Bildrate aus den Einstellungen."""
+    s = s or settings_load()
+    apply_resolution(s.get("resolution"), s.get("rate"))
+
+
+# Bildrate an das Video anpassen (Einstellungen -> Anzeige, Standard aus): Laeuft vorn ein Video mit 25/50 fps,
+# schaltet der Bildschirm auf 50 Hz (sonst ruckelt es auf 60 Hz gleichmaessig: Bilder abwechselnd 2 und 3 Takte lang),
+# 23,976 fps auf 23,98 Hz, 29,97 auf 59,94 Hz – nur wenn die aktuelle Aufloesung die Rate anbietet. Den Wunsch meldet
+# der Player (POST /api/display/video {fps, src}), sobald die Bildrate feststeht, und 0, wenn kein Video mehr vorn
+# laeuft (Ende, Musik, Startseite, Player zu). Zurueck auf die Desktop-Rate geht es spaetestens, wenn der Player endet.
+# Jede Umschaltung kostet 1–3 s schwarzes Bild (HDMI rastet neu ein) – deshalb nur, wenn die Rate nicht ohnehin passt.
+RATE_TOL = 0.002                                       # 0,2 %: 24 fps auf 23,98 Hz (0,1 %) gilt noch als passend
+
+
+def rate_fits(fps, rate):
+    """Zeigt rate jedes Bild gleich lang (ganzzahliges Vielfaches, bis auf RATE_TOL)?"""
+    if not fps or not rate:
+        return False
+    k = round(rate / fps)
+    return k >= 1 and abs(rate - k * fps) / rate <= RATE_TOL
+
+
+def pick_rate(fps, rates):
+    """Passende Bildschirm-Rate fuer ein Video: kleinste Abweichung, bei Gleichstand die hoehere Rate
+    (25 fps -> 50 Hz statt 25 Hz). None, wenn keine Rate passt (z. B. 50 fps auf einem reinen 60-Hz-Fernseher)."""
+    best = None
+    for r in set(rates or []):
+        if not 23 <= r <= 145 or not rate_fits(fps, r):
+            continue
+        key = (round(abs(r - round(r / fps) * fps) / r, 5), -r)
+        if best is None or key < best[0]:
+            best = (key, r)
+    return best[1] if best else None
+
+
+class DisplayRate:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.wanted = 0.0                              # Bildrate des Videos, das gerade vorn laeuft (0 = keins)
+        self.src = ""                                  # welcher Player sie gemeldet hat (tv, media, yt)
+        self.base = {}                                 # Ausgang -> (Modus, Rate) vor dem Umschalten
+        self.now = None                                # zuletzt gesetzte Video-Rate (fuer die Technik-Anzeige)
+
+    def request(self, fps, src=""):
+        with self.lock:
+            try:
+                fps = float(fps or 0)
+            except (TypeError, ValueError):
+                fps = 0.0
+            if not fps and src and self.src and src != self.src:
+                return self.state()                    # ein anderer Player hat inzwischen uebernommen
+            self.wanted = fps if 10 <= fps <= 121 else 0.0
+            self.src = src if self.wanted else ""
+            self._apply()
+            return self.state()
+
+    def reapply(self):
+        """Beim Umschalten der Einstellung und nach dem Standby: laeuft vorn ein Video, gilt (wieder) dessen Rate.
+        base bleibt – es haelt die Desktop-Rate fest, auch wenn der Bildschirm nach dem Aufwachen schon darauf steht."""
+        with self.lock:
+            self._apply()
+
+    def state(self):
+        return {"on": bool(settings_load().get("match_rate")), "fps": self.wanted, "rate": self.now}
+
+    def _apply(self):
+        if not self.wanted or not settings_load().get("match_rate"):
+            self._restore()
+            return
+        for o in xrandr_info():
+            mode, cur = o["current"], o["rate"]
+            if not mode or not cur:
+                continue
+            if rate_fits(self.wanted, cur):
+                self.now = cur if o["name"] in self.base else None
+                continue
+            r = pick_rate(self.wanted, o["rates"].get(mode, []))
+            if not r:
+                log(f"Bildrate: {self.wanted:.3f} fps – {o['name']} bietet bei {mode} keine passende Rate")
+                continue
+            self.base.setdefault(o["name"], (mode, cur))
+            run(["xrandr", "--output", o["name"], "--mode", mode, "--rate", f"{r:.2f}"])
+            self.now = r
+            log(f"Bildrate an Video angepasst: {self.wanted:.3f} fps -> {o['name']} {mode} {r} Hz (vorher {cur} Hz)")
+
+    def _restore(self):
+        if not self.base:
+            self.now = None
+            return
+        outs = {o["name"]: o for o in xrandr_info()}
+        for name, (mode, rate) in self.base.items():
+            o = outs.get(name)
+            if not o or o["current"] != mode or (o["rate"] and abs(o["rate"] - rate) < 0.005):
+                continue                               # inzwischen andere Aufloesung oder schon zurueck
+            run(["xrandr", "--output", name, "--mode", mode, "--rate", f"{rate:.2f}"])
+            log(f"Bildrate zurueck: {name} {mode} {rate} Hz")
+        self.base = {}
+        self.now = None
+
+
+DISPLAY_RATE = DisplayRate()
 
 
 def pactl_json(*args):
@@ -5180,7 +5296,8 @@ def resume_watcher():
             log(f"aus dem Standby zurueck (nach {dur(max(slept, 0))}) – geweckt von: {wake_sources(last_wake, wake)}")
             time.sleep(3)                               # Bildschirm und Treiber erst aufwachen lassen
             try:
-                apply_resolution(settings_load().get("resolution"))
+                apply_display()
+                DISPLAY_RATE.reapply()                  # laeuft vorn ein Video, wieder dessen Rate
             except Exception as e:  # noqa: BLE001
                 log("Aufloesung nach dem Standby:", e)
             g, cnt, wake = gap(), _suspend_counts(), _wakeup_counts()
@@ -5198,7 +5315,8 @@ def settings_payload():
                        "sizes": CURSOR_SIZES}, "displays": xrandr_info(),
             "audio": audio_info(), "volume": volume_get(), "net": net_info(), "share": share_info(),
             "sysupd_days": sysupd_days(s), "sysupd_choices": SYSUPD_DAYS,
-            "frontend": frontend(), "frontends": frontends(), "padmouse": bool(s.get("padmouse", True))}
+            "frontend": frontend(), "frontends": frontends(), "padmouse": bool(s.get("padmouse", True)),
+            "rate": s.get("rate"), "match_rate": bool(s.get("match_rate"))}
 
 
 # ---------------------------------------------------------------------------
@@ -8706,12 +8824,33 @@ class Handler(BaseHTTPRequestHandler):
                 restart_home_later()
                 return self._json(200, settings_payload())
             if parts == ["api", "settings", "resolution"]:
-                res = str(self._body().get("mode", ""))
-                if not any(res in o["modes"] for o in xrandr_info()):
+                b = self._body()
+                res = str(b.get("mode", ""))
+                outs = [o for o in xrandr_info() if res in o["modes"]]
+                if not outs:
                     return self._json(400, {"error": "Aufloesung nicht verfuegbar"})
-                apply_resolution(res)
-                s = settings_load(); s["resolution"] = res; settings_save(s)
+                rate = None                                 # ohne Angabe: wieder automatisch (~60 Hz)
+                if b.get("rate") not in (None, "", 0):
+                    try:
+                        rate = round(float(b["rate"]), 2)
+                    except (TypeError, ValueError):
+                        return self._json(400, {"error": "ungueltige Bildrate"})
+                    if not any(abs(r - rate) < 0.005 for o in outs for r in o["rates"].get(res, [])):
+                        return self._json(400, {"error": "Bildrate nicht verfuegbar"})
+                with DISPLAY_RATE.lock:
+                    DISPLAY_RATE.base = {}                  # die neue Wahl gilt als Desktop-Rate
+                    apply_resolution(res, rate)
+                s = settings_load(); s["resolution"] = res; s["rate"] = rate; settings_save(s)
                 return self._json(200, settings_payload())
+            if parts == ["api", "settings", "matchrate"]:
+                on = bool(self._body().get("on"))
+                s = settings_load(); s["match_rate"] = on; settings_save(s)
+                log("Bildrate an Video anpassen:", "an" if on else "aus")
+                DISPLAY_RATE.reapply()
+                return self._json(200, settings_payload())
+            if parts == ["api", "display", "video"]:
+                b = self._body()
+                return self._json(200, DISPLAY_RATE.request(b.get("fps"), str(b.get("src") or "")))
             if parts[:2] == ["api", "audio"] and len(parts) == 3 and parts[2] in ("device", "format", "mic"):
                 b = self._body()
                 key = str(b.get("key") or "")
@@ -8999,7 +9138,7 @@ def main():
     app_prefs()
     s = settings_load()
     apply_appearance(s)
-    apply_resolution(s.get("resolution"))
+    apply_display(s)
     threading.Thread(target=gamepad_watcher, daemon=True).start()
     threading.Thread(target=resume_watcher, daemon=True).start()
     BLUETOOTH.start()                               # Kopplungs-Agent (BlueZ ueber D-Bus)

@@ -273,12 +273,22 @@ Layer {
     function setCursor(c) {
         Api.post("/api/settings/cursor", c, function (j) { update(function () { sett = j }); app.toast(Ui.t("settings.cursorToast")) }, fail)
     }
-    function setResolution(m) {
-        Api.post("/api/settings/resolution", { mode: m }, function (j) {
+    function setResolution(m, rate) {
+        var body = { mode: m }
+        if (rate) body.rate = rate
+        Api.post("/api/settings/resolution", body, function (j) {
             update(function () { sett = j })
-            app.toast(Ui.t("settings.resToast", { mode: m.replace("x", "\u00d7") }))
+            app.toast(rate ? Ui.t("settings.rateToast", { hz: hz(rate) }) : Ui.t("settings.resToast", { mode: m.replace("x", "\u00d7") }))
         }, fail)
     }
+    function setMatchRate(on) {
+        if (!!sett.match_rate === on) return
+        Api.post("/api/settings/matchrate", { on: on }, function (j) {
+            update(function () { sett = j })
+            app.toast(Ui.t(on ? "settings.matchRateOnToast" : "settings.matchRateOffToast"))
+        }, fail)
+    }
+    function hz(r) { return Ui.num(Math.round(r * 100) / 100, 2) }
     function devLabel(d) {
         switch (d.kind) {
         case "hdmi": return (d.name || Ui.t("audio.tv")) + (d.num ? " " + d.num : "")
@@ -303,8 +313,22 @@ Layer {
         audioPost("/api/audio/mic", { key: d.key, on: on }, Ui.t(on ? "audio.micOn" : "audio.micOff"))
     }
     function setAudioAuto(on) { audioPost("/api/audio/auto", { on: on }, "") }
+    // Aufloesungen ab 1024x576, die mindestens ~50 Hz koennen (4K mit nur 30 Hz ruckelt) – dazu immer die aktuelle
+    // und die bevorzugte; hoechstens acht, groesste zuerst (Reihenfolge von xrandr)
     function modes(d) {
-        return d.modes.filter(function (m) { var p = m.split("x"); return parseInt(p[0]) >= 1024 && parseInt(p[1]) >= 576 }).slice(0, 6)
+        return d.modes.filter(function (m) {
+            var p = m.split("x")
+            if (parseInt(p[0]) < 1024 || parseInt(p[1]) < 576) return false
+            return m === d.current || m === d.preferred || ((d.rates || {})[m] || []).some(function (r) { return r >= 49 })
+        }).slice(0, 8)
+    }
+    // Bildraten der aktuellen Aufloesung ab 23 Hz, hoechste zuerst, ohne Doppelte (xrandr kennt 60.00 oft zweimal)
+    function rates(d) {
+        var out = []
+        ;((d.rates || {})[d.current] || []).forEach(function (r) {
+            if (r >= 23 && !out.some(function (x) { return Math.abs(x - r) < 0.005 })) out.push(r)
+        })
+        return out.sort(function (a, b) { return b - a })
     }
 
     // ---- Netzwerk, Bluetooth, System
@@ -506,6 +530,41 @@ Layer {
                     }
                 }
             }
+        }
+        // Bildrate je Ausgang: Automatisch (~60 Hz) oder fest, z. B. 50 Hz fuer Fernsehen aus Europa
+        Repeater {
+            model: s.cat === "display" && s.sett ? (s.sett.displays || []).filter(function (d) { return s.rates(d).length > 1 }) : []
+            SetGroup {
+                property var d: modelData
+                availH: s.colH; title: Ui.t("settings.rate", { name: modelData.name })
+                SetRow {
+                    Pill {
+                        property string key: "rateauto" + d.name
+                        text: Ui.t("settings.rateAuto") + (!s.sett.rate && d.rate ? " · " + s.hz(d.rate) + " Hz" : "")
+                        on: !s.sett.rate
+                        onTriggered: s.setResolution(d.current)
+                    }
+                    Repeater {
+                        model: s.rates(d)
+                        Pill {
+                            property string key: "rate" + d.name + modelData
+                            text: s.hz(modelData) + " Hz"
+                            on: !!s.sett.rate && Math.abs(modelData - s.sett.rate) < 0.005
+                            onTriggered: s.setResolution(d.current, modelData)
+                        }
+                    }
+                }
+            }
+        }
+        SetGroup {
+            visible: s.cat === "display" && !!s.sett && s.sett.match_rate !== undefined; availH: s.colH; title: Ui.t("settings.matchRate")
+            SetRow {
+                Repeater {
+                    model: [true, false]
+                    Pill { property string key: "mr" + modelData; text: Ui.t(modelData ? "common.on" : "common.off"); on: !!s.sett && !!s.sett.match_rate === modelData; onTriggered: s.setMatchRate(modelData) }
+                }
+            }
+            Info { html: Ui.esc(Ui.t("settings.matchRateHint")) }
         }
         // Design
         SetGroup {

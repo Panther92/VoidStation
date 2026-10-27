@@ -71,7 +71,10 @@ SETTINGS = {
     "cursor": {"theme": "Bibata-Modern-Ice", "size": 48,
                "themes": [{"id": "Bibata-Modern-Ice", "label": "Hell"}, {"id": "Bibata-Modern-Classic", "label": "Dunkel"}],
                "sizes": [32, 48, 64, 80, 96]},
-    "displays": [{"name": "HDMI-1", "current": "1280x720", "rate": 60.0, "modes": ["1920x1080i", "1280x720", "720x576"]}],
+    "displays": [{"name": "HDMI-1", "current": "1280x720", "rate": 60.0, "preferred": "1920x1080i",
+                  "modes": ["1920x1080i", "1280x720", "720x576"],
+                  "rates": {"1920x1080i": [60.0, 50.0, 59.94], "1280x720": [60.0, 50.0, 59.94], "720x576": [50.0]}}],
+    "rate": None, "match_rate": False,
     "audio": {"ok": True, "auto": True, "devices": [
         {"key": "alsa_card.pci-0000_00_1f.3#hdmi0", "kind": "hdmi", "name": "", "num": 0, "active": True,
          "formats": [{"id": "stereo", "key": "audio.fmt.stereo", "label": ""}, {"id": "surround-51", "key": "audio.fmt.surround", "label": "5.1"},

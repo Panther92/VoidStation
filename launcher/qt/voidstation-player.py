@@ -135,7 +135,7 @@ PROPS = {"pause": "paused", "paused-for-cache": "buffering", "playback-time": "p
          "estimated-vf-fps": "fps", "video-codec": "codec", "hwdec-current": "hwdec", "frame-drop-count": "dropped",
          "playlist-pos": "plpos", "playlist-count": "plcount", "metadata": "meta", "video-aspect-override": "aspect",
          "panscan": "panscan", "audio-codec-name": "acodec", "audio-bitrate": "abitrate", "audio-params": "aparams",
-         "current-ao": "ao", "current-vo": "vo"}
+         "current-ao": "ao", "current-vo": "vo", "container-fps": "cfps"}
 
 
 def mpv_options(ui_lang="de"):
@@ -207,7 +207,7 @@ class Engine(QObject):
                     "title": "", "cache": 0, "tracks": [], "aid": None, "sid": None, "vid": None, "vw": 0, "vh": 0,
                     "fps": 0, "codec": "", "hwdec": "", "dropped": 0, "plpos": -1, "plcount": 0, "meta": {},
                     "aspect": "", "panscan": 0, "level": LEVEL, "embedded": self.embeddedVideo, "active": False,
-                    "acodec": "", "abitrate": 0, "asr": 0, "ach": 0, "ao": "", "vo": ""}
+                    "acodec": "", "abitrate": 0, "asr": 0, "ach": 0, "ao": "", "vo": "", "cfps": 0, "drate": 0}
         self.last_err = ""
         self.is_started = False
         self.cur = None               # (url, opts) der laufenden Datei – fuer reload()
@@ -309,7 +309,7 @@ class Engine(QObject):
         self.is_started = False
         for k, v in (("position", 0), ("duration", 0), ("buffering", False), ("title", ""), ("tracks", []),
                      ("dropped", 0), ("active", True), ("meta", {}), ("vw", 0), ("vh", 0), ("acodec", ""),
-                     ("abitrate", 0), ("asr", 0), ("ach", 0)):
+                     ("abitrate", 0), ("asr", 0), ("ach", 0), ("cfps", 0), ("fps", 0)):
             self._st[k] = v
         self.stChanged.emit()
 
@@ -875,6 +875,78 @@ class Bridge(VsBase):
             self._engine.title = t or "Player"
 
 
+class RateReporter(QObject):
+    """Bildrate an das Video anpassen (Einstellung im Launcher, Standard aus): meldet dem Launcher die Bildrate des
+    Videos, das gerade vorn laeuft – erst wenn sie 2 s feststeht (Zappen, Pufferphasen), und 0, sobald kein Video mehr
+    vorn laeuft (Ende, Musik, Startseite). Ob umgeschaltet wird, entscheidet der Launcher (POST /api/display/video)."""
+    STABLE = 2.0
+
+    def __init__(self, app):
+        super().__init__()
+        self.app = app
+        self.sent = 0.0
+        self.cand, self.since = 0.0, time.monotonic()
+        self.t = QTimer(self)
+        self.t.setInterval(1000)
+        self.t.timeout.connect(self.tick)
+        self.t.start()
+
+    @staticmethod
+    def same(a, b):
+        return (not a and not b) or bool(a and b and abs(a - b) / max(a, b) < 0.01)   # gemessene fps schwanken
+
+    def want(self):
+        st = self.app.engine._st
+        if not st.get("active") or not st.get("vw") or st.get("idle"):
+            return 0.0
+        if not any(t.get("type") == "video" and t.get("selected") and not t.get("albumart") for t in st.get("tracks") or []):
+            return 0.0                                     # Musik (auch mit Cover)
+        if os.environ.get("VS_FRONT") != "1" and not self.app._pad_active():
+            return 0.0                                     # Startseite oder anderes Programm vorn
+        for key in ("cfps", "fps"):                        # Angabe des Containers, sonst gemessen
+            try:
+                fps = float(st.get(key) or 0)
+            except (TypeError, ValueError):
+                fps = 0.0
+            if 10 <= fps <= 121:
+                return round(fps, 3)
+        return 0.0
+
+    def tick(self):
+        w = self.want()
+        now = time.monotonic()
+        if not self.same(w, self.cand):
+            self.cand, self.since = w, now
+            return
+        if now - self.since >= self.STABLE and not self.same(self.cand, self.sent):
+            self.send(self.cand)
+
+    def send(self, fps, wait=False):
+        self.sent = fps
+        body = json.dumps({"fps": fps, "src": MODE}).encode()
+
+        def post():
+            import urllib.request
+            try:
+                req = urllib.request.Request(vscommon.API + "/api/display/video", data=body,
+                                             headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    j = json.loads(r.read().decode() or "{}")
+                self.app.engine._upd.emit("drate", float(j.get("rate") or 0))
+            except (OSError, ValueError) as e:
+                log("Bildrate melden:", e)
+        if wait:
+            post()
+        else:
+            threading.Thread(target=post, daemon=True).start()
+
+    def release(self):
+        """Beim Beenden: Desktop-Rate sofort (der Launcher setzt sie spaetestens zurueck, wenn der Prozess endet)."""
+        self.t.stop()
+        if self.sent:
+            self.send(0.0, wait=True)
+
+
 class PlayerApp:
     def __init__(self):
         QGuiApplication.setApplicationName("voidstation-player")
@@ -906,6 +978,7 @@ class PlayerApp:
         self.pump.key.connect(self.vs.padKey)
         self.pump.connected.connect(self.vs.padConnected)
         self.server = None
+        self.rates = None
 
     @staticmethod
     def _lang():
@@ -1012,6 +1085,7 @@ class PlayerApp:
             self.video.failed.connect(self._fallback)
             self.win.setProperty("videoItem", self.video)
         self._serve()
+        self.rates = RateReporter(self)
         self.qapp.aboutToQuit.connect(self._shutdown)
         log(f"Player ({MODE}) bereit nach {time.monotonic() - T0:.2f} s, Stufe {LEVEL}"
             + (" (schwache Hardware: Xv, sparsam)" if WEAK else ""))
@@ -1019,6 +1093,8 @@ class PlayerApp:
         return self.qapp.exec()
 
     def _shutdown(self):
+        if self.rates is not None:
+            self.rates.release()
         try:
             self.engine.stop()
         except Exception:  # noqa: BLE001

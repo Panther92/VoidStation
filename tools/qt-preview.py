@@ -595,6 +595,15 @@ class H(S.H):
                 return self.j({"lang": body.get("lang")})
             if p.endswith("/padmouse"):
                 STATE["padmouse"] = bool(body.get("on"))
+            if p.endswith("/resolution"):
+                d = S.SETTINGS["displays"][0]
+                d["current"] = body.get("mode") or d["current"]
+                r = body.get("rate")
+                S.SETTINGS["rate"] = float(r) if r else None
+                d["rate"] = float(r) if r else max((x for x in d["rates"].get(d["current"], [60.0]) if abs(x - 60) < 0.5),
+                                                   default=max(d["rates"].get(d["current"], [60.0])))
+            if p.endswith("/matchrate"):
+                S.SETTINGS["match_rate"] = bool(body.get("on"))
             if p.endswith("/frontend"):
                 STATE["frontend"] = body.get("frontend")
             return self.j(settings())
