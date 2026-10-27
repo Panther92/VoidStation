@@ -67,6 +67,7 @@
   "upd.sysUnchecked": "not checked yet",
   "upd.sysDueAt": "Reminder from {date} – “Update” installs them now if you like",
   "upd.sysError": "Package repository not reachable",
+  "upd.sysChecking": "Still checking for system updates …",
   "upd.rebootKernel": "New kernel installed – restart required",
   "upd.rebootVs": "VoidStation updated – restart required",
   "upd.kernelStuck": "Kernel {version} is installed, but {running} keeps starting – restarting won’t change that. Please report it on GitHub.",

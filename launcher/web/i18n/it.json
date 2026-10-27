@@ -67,6 +67,7 @@
   "upd.sysUnchecked": "non ancora controllato",
   "upd.sysDueAt": "Promemoria dal {date} – se vuoi, “Aggiorna” li installa subito",
   "upd.sysError": "Repository dei pacchetti non raggiungibile",
+  "upd.sysChecking": "Controllo degli aggiornamenti di sistema in corso …",
   "upd.rebootKernel": "Nuovo kernel installato – riavvio necessario",
   "upd.rebootVs": "VoidStation aggiornato – riavvio necessario",
   "upd.kernelStuck": "Il kernel {version} è installato, ma si avvia sempre {running} – riavviare non cambierà nulla. Segnalalo su GitHub, per favore.",

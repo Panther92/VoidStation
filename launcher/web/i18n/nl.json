@@ -67,6 +67,7 @@
   "upd.sysUnchecked": "nog niet gecontroleerd",
   "upd.sysDueAt": "Herinnering vanaf {date} – „Bijwerken” installeert ze nu als je wilt",
   "upd.sysError": "Pakketbron niet bereikbaar",
+  "upd.sysChecking": "Systeemupdates worden nog gecontroleerd …",
   "upd.rebootKernel": "Nieuwe kernel geïnstalleerd – herstart nodig",
   "upd.rebootVs": "VoidStation bijgewerkt – herstart nodig",
   "upd.kernelStuck": "Kernel {version} is geïnstalleerd, maar {running} blijft starten – herstarten verandert daar niets aan. Meld het alsjeblieft op GitHub.",

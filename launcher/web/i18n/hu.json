@@ -67,6 +67,7 @@
   "upd.sysUnchecked": "még nincs ellenőrizve",
   "upd.sysDueAt": "Emlékeztető ettől: {date} – ha szeretnéd, a „Frissítés” most telepíti őket",
   "upd.sysError": "A csomagtároló nem érhető el",
+  "upd.sysChecking": "A rendszerfrissítések keresése még folyamatban …",
   "upd.rebootKernel": "Új kernel telepítve – újraindítás szükséges",
   "upd.rebootVs": "VoidStation frissítve – újraindítás szükséges",
   "upd.kernelStuck": "A(z) {version} kernel telepítve van, de továbbra is a(z) {running} indul – az újraindítás ezen nem változtat. Kérlek, jelezd a GitHubon.",

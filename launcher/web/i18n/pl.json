@@ -67,6 +67,7 @@
   "upd.sysUnchecked": "jeszcze nie sprawdzono",
   "upd.sysDueAt": "Przypomnienie od {date} – „Aktualizuj” zainstaluje je od razu, jeśli chcesz",
   "upd.sysError": "Repozytorium pakietów jest nieosiągalne",
+  "upd.sysChecking": "Trwa jeszcze sprawdzanie aktualizacji systemu …",
   "upd.rebootKernel": "Zainstalowano nowe jądro – wymagany restart",
   "upd.rebootVs": "VoidStation zaktualizowany – wymagany restart",
   "upd.kernelStuck": "Jądro {version} jest zainstalowane, ale wciąż uruchamia się {running} – restart tego nie zmieni. Zgłoś to proszę na GitHubie.",

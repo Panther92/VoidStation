@@ -285,6 +285,30 @@ def inst_status():
     return st
 
 
+# Einstellungen → Updates: ?force=1 stoesst wie auf dem Geraet eine Paketpruefung "im Hintergrund" an, die hier
+# VS_UPD_CHECK Sekunden dauert (Standard 4). VS_UPD=sys -> kein VoidStation-Update, Systemupdates erst nach der Pruefung
+# (die Oberflaeche wartet); VS_UPD=none -> nichts zu tun.
+UPD = {"until": 0.0, "done": False}
+
+
+def updates(q):
+    now = time.time()
+    if q.get("force", [""])[0] == "1" and now >= UPD["until"]:
+        UPD["until"] = now + float(os.environ.get("VS_UPD_CHECK", "4"))
+    checking = now < UPD["until"]
+    if not checking and UPD["until"]:
+        UPD["done"] = True
+    mode = os.environ.get("VS_UPD", "")
+    vs = mode not in ("sys", "none")
+    pkgs = ["linux6.18", "mesa", "firefox", "mpv"] if UPD["done"] and mode != "none" else (["mesa"] if vs else [])
+    system = {"count": len(pkgs), "pkgs": pkgs, "kernel": "6.18.59_1" if "linux6.18" in pkgs else None, "flatpak": 0,
+              "appimage": [], "proton": None, "checked": True, "due": False, "due_at": 0, "checking": checking}
+    return {"local": "0.12.1", "remote": "0.13.0", "available": vs, "any": bool(vs or pkgs), "channel": "stable",
+            "channel_label": "Stable", "changes": [{"version": "0.13.0", "changes": ["Neue Qt-Startseite"],
+                                                     "changes_en": ["New Qt start page"]}] if vs else [],
+            "system": system, "reboot": {}}
+
+
 class H(S.H):
     def do_GET(self):
         u = urlparse(self.path)
@@ -308,12 +332,7 @@ class H(S.H):
                                     "next": {"title": "Wetter"}},
             "/api/apps": S.apps,
             "/api/apps/job": job,
-            "/api/updates": lambda: {"local": "0.12.1", "remote": "0.13.0", "available": True, "any": True, "channel": "stable",
-                                     "channel_label": "Stable", "changes": [{"version": "0.13.0", "changes": ["Neue Qt-Startseite"],
-                                                                              "changes_en": ["New Qt start page"]}],
-                                     "system": {"count": 12, "pkgs": ["linux6.18", "mesa"], "kernel": "6.18.45_1", "flatpak": 0,
-                                                "appimage": [], "proton": None, "checked": True, "due": False, "due_at": 0},
-                                     "reboot": {}},
+            "/api/updates": lambda: updates(q),
             "/api/bluetooth/status": bt_status,
             "/api/wifi/scan": lambda: [{"ssid": "FRITZ!Box 7530", "signal": 72, "secure": True, "active": True},
                                        {"ssid": "Nachbar", "signal": 31, "secure": True, "active": False}],

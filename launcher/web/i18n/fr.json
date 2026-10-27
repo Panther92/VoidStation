@@ -67,6 +67,7 @@
   "upd.sysUnchecked": "pas encore vérifié",
   "upd.sysDueAt": "Rappel à partir du {date} – « Mettre à jour » les installe tout de suite si tu veux",
   "upd.sysError": "Dépôt de paquets injoignable",
+  "upd.sysChecking": "Recherche des mises à jour du système en cours …",
   "upd.rebootKernel": "Nouveau noyau installé – redémarrage nécessaire",
   "upd.rebootVs": "VoidStation mis à jour – redémarrage nécessaire",
   "upd.kernelStuck": "Le noyau {version} est installé, mais c’est toujours {running} qui démarre – redémarrer n’y changera rien. Merci de le signaler sur GitHub.",

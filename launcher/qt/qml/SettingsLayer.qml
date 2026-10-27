@@ -148,6 +148,7 @@ Layer {
         if (sum && y.due_at && !y.due && !vsState.available)
             line += "<br>" + Ui.esc(Ui.t("upd.sysDueAt", { date: Ui.loc.toString(new Date(y.due_at * 1000), Ui.t("fmt.dateYear", null, "d. MMMM yyyy")) }))
         if (y.error && !(y.pkgs && y.pkgs.length)) line = Ui.esc(Ui.t("upd.sysError"))
+        if (y.checking) line += "<br>" + Ui.esc(Ui.t("upd.sysChecking"))
         var rb = vsState.reboot || {}
         if (rb.kernel || rb.voidstation) line += "<br><b>" + Ui.esc(Ui.t(rb.kernel ? "upd.rebootKernel" : "upd.rebootVs")) + "</b>"
         if (rb.kernel_stuck) line += "<br>" + Ui.esc(Ui.t("upd.kernelStuck", { version: rb.kernel_stuck.version, running: rb.kernel_stuck.running }))
@@ -157,37 +158,86 @@ Layer {
         Api.get("/api/updates" + (force ? "?force=1" : ""), function (j) { update(function () { vsState = j }); if (then) then() },
                 function () { vsState = { local: null, remote: null, available: false, any: false, error: "api" }; if (then) then() })
     }
+    // Updates: Der VoidStation-Stand ist in Sekunden da, die Paketpruefung (Paketlisten laden, Flatpak …) laeuft im
+    // Hintergrund. Gibt es schon etwas zu zeigen, oeffnet der Dialog sofort und ergaenzt den Systemteil, sobald die
+    // Pruefung fertig ist. Sonst wird auf die Pruefung gewartet (hoechstens 3 Minuten).
+    property int updSeq: 0
+    function updDialogText(v) {
+        var parts = []
+        if (v.available) {
+            var news = (v.changes || []).map(function (e) {
+                var tr = Ui.lang === "de" ? null : ((e["changes_" + Ui.lang] || []).length ? e["changes_" + Ui.lang] : e.changes_en)   // Changelog gibt es de + en
+                var ch = (tr && tr.length) ? tr : (e.changes || [])
+                return e.version + ":\n" + ch.map(function (c) { return "\u2022 " + c }).join("\n")
+            }).join("\n\n")
+            parts.push(Ui.t("upd.confirmText", { remote: v.remote, local: v.local || "\u2013", channel: chLabel(v) }) + (news ? "\n\n" + Ui.t("upd.news") + "\n" + news : ""))
+        }
+        var y = v.system, rb = v.reboot || {}
+        if (y && y.count) {
+            var names = y.pkgs.slice(0, 12).join(", ") + (y.pkgs.length > 12 ? " " + Ui.t("upd.more", { n: Ui.num(y.pkgs.length - 12) }) : "")
+            parts.push(Ui.t("upd.system") + ": " + sysSummary(v) + (names ? "\n" + names : "") + (y.checking ? "\n" + Ui.t("upd.sysChecking") : ""))
+        } else if (y && y.checking) {
+            parts.push(Ui.t("upd.system") + ": " + Ui.t("upd.sysChecking"))
+        }
+        var restart = v.available || (y && y.kernel) || rb.kernel || rb.voidstation
+        parts.push(Ui.t(restart ? "upd.keep" : "upd.keepNoReboot"))
+        return parts.join("\n\n")
+    }
+    function updShow(seq) {
+        if (seq !== updSeq) return
+        var v = vsState
+        if (!v) return app.toast(Ui.t("upd.unreachable"), true)
+        if (v.busy) return app.toast(Ui.t("upd.xbpsBusy"), true)
+        var rb = v.reboot || {}, y = v.system || {}
+        if (!v.any) {
+            if (rb.kernel || rb.voidstation) return app.rebootPrompt(rb)
+            if (y.checking || (y.error && !v.available)) return app.toast(Ui.t("upd.sysError"), true)   // Pruefung haengt/scheiterte
+            if (!v.remote) return app.toast(vsNoRemote(v), true)
+            return app.toast(Ui.t("upd.upToDate"))
+        }
+        app.dialog(Ui.t("upd.confirmTitle"), updDialogText(v), [[Ui.t("upd.now"), function () { app.jobStart("update") }], [Ui.t("common.cancel")]])
+        updDlg.seq = seq
+        if (y.checking) updWait(seq, function () {
+            // Dialog noch offen? Dann den Systemteil mit dem frischen Stand neu schreiben
+            if (updDlg.seq === seq && adlg.open && adlg.title === Ui.t("upd.confirmTitle") && vsState) adlg.text = updDialogText(vsState)
+        })
+    }
+    QtObject { id: updDlg; property int seq: -1 }
+    function updWait(seq, done) {
+        sysPoll.seq = seq; sysPoll.done = done; sysPoll.until = Date.now() + 180000
+        sysPoll.restart()
+    }
+    Timer {
+        id: sysPoll
+        interval: 1500; repeat: true
+        property int seq: 0
+        property var done: null
+        property real until: 0
+        onTriggered: {
+            if (seq !== s.updSeq) { stop(); return }
+            Api.get("/api/updates", function (j) {
+                if (!sysPoll.running || sysPoll.seq !== s.updSeq) return
+                if (j) update(function () { vsState = j })
+                if (j && j.system && j.system.checking && Date.now() < sysPoll.until) return
+                sysPoll.stop()
+                var f = sysPoll.done; sysPoll.done = null
+                if (f) f()
+            }, function () {})
+        }
+    }
     function runUpdates() {
         if (app.jobBusy) return app.toast(Ui.t("common.busy"))
-        app.toast(Ui.t("upd.checking"))
+        var seq = ++updSeq
+        toastBox.show(Ui.t("upd.checking"), false, 200000)
         refreshVs(true, function () {
+            if (seq !== updSeq) return
+            var v = vsState, y = (v && v.system) || {}
+            if (v && !v.busy && y.checking && !(v.available || y.count)) {
+                // noch nichts Bekanntes zum Zeigen: auf die Paketpruefung warten
+                return updWait(seq, function () { toastBox.hide(); updShow(seq) })
+            }
             toastBox.hide()
-            var v = vsState
-            if (!v) return app.toast(Ui.t("upd.unreachable"), true)
-            if (v.busy) return app.toast(Ui.t("upd.xbpsBusy"), true)
-            var rb = v.reboot || {}
-            if (!v.any) {
-                if (rb.kernel || rb.voidstation) return app.rebootPrompt(rb)
-                if (!v.remote) return app.toast(vsNoRemote(v), true)
-                return app.toast(Ui.t("upd.upToDate"))
-            }
-            var parts = []
-            if (v.available) {
-                var news = (v.changes || []).map(function (e) {
-                    var tr = Ui.lang === "de" ? null : ((e["changes_" + Ui.lang] || []).length ? e["changes_" + Ui.lang] : e.changes_en)   // Changelog gibt es de + en
-                    var ch = (tr && tr.length) ? tr : e.changes
-                    return e.version + ":\n" + ch.map(function (c) { return "\u2022 " + c }).join("\n")
-                }).join("\n\n")
-                parts.push(Ui.t("upd.confirmText", { remote: v.remote, local: v.local || "\u2013", channel: chLabel(v) }) + (news ? "\n\n" + Ui.t("upd.news") + "\n" + news : ""))
-            }
-            var y = v.system
-            if (y && y.count) {
-                var names = y.pkgs.slice(0, 12).join(", ") + (y.pkgs.length > 12 ? " " + Ui.t("upd.more", { n: Ui.num(y.pkgs.length - 12) }) : "")
-                parts.push(Ui.t("upd.system") + ": " + sysSummary(v) + (names ? "\n" + names : ""))
-            }
-            var restart = v.available || (y && y.kernel) || rb.kernel || rb.voidstation
-            parts.push(Ui.t(restart ? "upd.keep" : "upd.keepNoReboot"))
-            app.dialog(Ui.t("upd.confirmTitle"), parts.join("\n\n"), [[Ui.t("upd.now"), function () { app.jobStart("update") }], [Ui.t("common.cancel")]])
+            updShow(seq)
         })
     }
     function setChannel(ch) {

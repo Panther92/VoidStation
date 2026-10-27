@@ -67,6 +67,7 @@
   "upd.sysUnchecked": "vēl nav pārbaudīts",
   "upd.sysDueAt": "Atgādinājums no {date} – ja vēlies, “Atjaunināt” tos instalē uzreiz",
   "upd.sysError": "Pakotņu repozitorijs nav sasniedzams",
+  "upd.sysChecking": "Vēl tiek meklēti sistēmas atjauninājumi …",
   "upd.rebootKernel": "Instalēts jauns kodols – nepieciešama restartēšana",
   "upd.rebootVs": "VoidStation atjaunināts – nepieciešama restartēšana",
   "upd.kernelStuck": "Kodols {version} ir instalēts, bet joprojām startē {running} – restartēšana to nemainīs. Lūdzu, ziņo par to GitHub.",

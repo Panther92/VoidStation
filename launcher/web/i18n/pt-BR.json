@@ -67,6 +67,7 @@
   "upd.sysUnchecked": "ainda não verificado",
   "upd.sysDueAt": "Lembrete a partir de {date} – se quiser, “Atualizar” instala agora",
   "upd.sysError": "Repositório de pacotes inacessível",
+  "upd.sysChecking": "Ainda verificando atualizações do sistema …",
   "upd.rebootKernel": "Novo kernel instalado – é preciso reiniciar",
   "upd.rebootVs": "VoidStation atualizado – é preciso reiniciar",
   "upd.kernelStuck": "O kernel {version} está instalado, mas {running} continua iniciando – reiniciar não vai mudar isso. Por favor, informe no GitHub.",
