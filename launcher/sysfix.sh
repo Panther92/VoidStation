@@ -254,6 +254,13 @@ else
   rm -f /etc/os-release.vs-tmp
   say "Systemname: /etc/os-release nicht geschrieben (bleibt Void)"
 fi
+# Begruessung der Textkonsole (Strg+Alt+F2 …, /etc/issue): ersetzt nur Voids Vorgabe und fruehere VoidStation-Zeilen
+# (auch "VoidStation – Void Linux" vom Installer); eigene Texte und die des Live-Sticks bleiben
+case "$(head -n1 /etc/issue 2>/dev/null)" in
+  'Void \r (\n) (\l)'|VoidStation*)
+    printf '%s \\r (\\n) (\\l)\n\n' "$(sed -n 's/^PRETTY_NAME="\(.*\)"/\1/p' /etc/os-release 2>/dev/null | grep . || echo VoidStation)" \
+      > /etc/issue ;;
+esac
 
 # ---------------------------------------------------------------------
 # 8. Terminal: Shell-Komfort (Verlauf, Vervollstaendigung, Eingabeaufforderung, Aliase – fuer alle Benutzer,

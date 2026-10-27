@@ -1058,7 +1058,124 @@ def apply_appearance(s):
     os.environ.update({"XCURSOR_THEME": theme, "XCURSOR_SIZE": str(size),
                        "QT_STYLE_OVERRIDE": qt_style, "GTK_THEME": gtk_env})
     run(["xsetroot", "-cursor_name", "left_ptr"])
+    try:
+        apply_openbox_theme(s.get("theme") or DEFAULTS["theme"], dark)
+    except OSError as e:
+        log("Openbox-Theme nicht geschrieben:", e)
     threading.Thread(target=apply_color_scheme, args=(dark,), daemon=True).start()   # Start nicht aufhalten
+
+
+# Openbox: Fenster, die Openbox selbst zeichnet (Dialoge und Hilfsfenster von Emulatoren & Co. – normale Fenster
+# laufen ohne Rahmen), sehen aus wie das gewaehlte Kachel-Theme statt wie Clearlooks. Das Theme "VoidStation" wird aus
+# den Farben der Theme-Datei (web/themes/<name>.css) gebaut und nach jedem Theme-Wechsel neu geschrieben;
+# rc.xml waehlt es. Schriften stehen in rc.xml.
+OB_CLOSE_XBM = """#define close_width 10
+#define close_height 10
+static unsigned char close_bits[] = {
+   0x03, 0x03, 0x87, 0x03, 0xce, 0x01, 0xfc, 0x00, 0x78, 0x00, 0x78, 0x00,
+   0xfc, 0x00, 0xce, 0x01, 0x87, 0x03, 0x03, 0x03 };
+"""
+
+
+def theme_colors(theme):
+    """Farben (#rrggbb) aus web/themes/<theme>.css; rgba(...) wird auf --surface-card bzw. --bg-main gemischt."""
+    try:
+        css = (WEB / "themes" / f"{theme}.css").read_text(encoding="utf-8")
+    except OSError:
+        css = ""
+    raw = dict(re.findall(r"--([a-z0-9-]+):\s*([^;]+);", css))
+
+    def hexc(v):
+        v = (v or "").strip()
+        m = re.fullmatch(r"#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})", v)
+        if m:
+            h = m.group(1)
+            return "#" + ("".join(c * 2 for c in h) if len(h) == 3 else h).lower()
+        return None
+
+    base = hexc(raw.get("surface-card")) or hexc(raw.get("bg-main")) or "#22262b"
+    out = {}
+    for k, v in raw.items():
+        c = hexc(v)
+        m = re.fullmatch(r"rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)", v.strip())
+        if not c and m:
+            r, g, b, a = int(m.group(1)), int(m.group(2)), int(m.group(3)), float(m.group(4))
+            br, bg_, bb = (int(base[i:i + 2], 16) for i in (1, 3, 5))
+            c = "#%02x%02x%02x" % tuple(round(x * a + y * (1 - a)) for x, y in ((r, br), (g, bg_), (b, bb)))
+        if c:
+            out[k] = c
+    return out
+
+
+def openbox_themerc(theme, dark):
+    c = theme_colors(theme)
+    fb = ({"surface-card": "#22262b", "surface-dialog": "#1a1d21", "surface-card-hover": "#2e343b",
+           "surface-active": "#4a5260", "text-primary": "#ecebe8", "text-dim": "#a7a6a4", "border-subtle": "#2c3035",
+           "border-focus": "#f2efe9", "status-danger-bg": "#6e2b2b"} if dark else
+          {"surface-card": "#ffffff", "surface-dialog": "#ffffff", "surface-card-hover": "#eef2f6",
+           "surface-active": "#b8c8dc", "text-primary": "#15181c", "text-dim": "#5f6266", "border-subtle": "#d0d5dc",
+           "border-focus": "#1a73e8", "status-danger-bg": "#c62828"})
+    g = lambda k: c.get(k) or fb[k]
+    title, title_in, text, dim = g("surface-card"), g("surface-dialog"), g("text-primary"), g("text-dim")
+    border, hover, active, danger = g("border-subtle"), g("surface-card-hover"), g("surface-active"), g("status-danger-bg")
+    btn_text = "#ffffff"                                  # weisses X auf Rot, in allen Themes
+    lines = [
+        f"# VoidStation: Openbox-Theme passend zum Kachel-Theme \"{theme}\" – wird vom Launcher geschrieben",
+        "border.width: 1", "padding.width: 10", "padding.height: 8",
+        "window.handle.width: 0", "window.client.padding.width: 0", "window.client.padding.height: 0",
+        "window.label.text.justify: left",
+        f"window.active.border.color: {border}", f"window.inactive.border.color: {border}",
+        f"window.active.title.separator.color: {border}", f"window.inactive.title.separator.color: {border}",
+        "window.active.title.bg: flat solid", f"window.active.title.bg.color: {title}",
+        "window.inactive.title.bg: flat solid", f"window.inactive.title.bg.color: {title_in}",
+        "window.active.label.bg: parentrelative", f"window.active.label.text.color: {text}",
+        "window.inactive.label.bg: parentrelative", f"window.inactive.label.text.color: {dim}",
+        f"window.active.client.color: {title}", f"window.inactive.client.color: {title_in}",
+    ]
+    for st, img in (("active", text), ("inactive", dim)):
+        lines += [f"window.{st}.button.unpressed.bg: parentrelative", f"window.{st}.button.unpressed.image.color: {img}",
+                  f"window.{st}.button.disabled.bg: parentrelative", f"window.{st}.button.disabled.image.color: {dim}",
+                  f"window.{st}.button.hover.bg: flat solid", f"window.{st}.button.hover.bg.color: {hover}",
+                  f"window.{st}.button.hover.image.color: {text}",
+                  f"window.{st}.button.pressed.bg: flat solid", f"window.{st}.button.pressed.bg.color: {active}",
+                  f"window.{st}.button.pressed.image.color: {text}",
+                  f"window.{st}.button.toggled.bg: parentrelative", f"window.{st}.button.toggled.image.color: {img}"]
+    # Schliessen-Knopf: beim Zeigen rot hinterlegt (wie die Ecke "App schliessen")
+    lines += ["window.active.button.close.hover.bg: flat solid", f"window.active.button.close.hover.bg.color: {danger}",
+              f"window.active.button.close.hover.image.color: {btn_text}",
+              "window.active.button.close.pressed.bg: flat solid", f"window.active.button.close.pressed.bg.color: {danger}",
+              f"window.active.button.close.pressed.image.color: {btn_text}"]
+    lines += [
+        "menu.border.width: 1", f"menu.border.color: {border}", "menu.overlap.x: 0", "menu.overlap.y: 0",
+        "menu.title.bg: flat solid", f"menu.title.bg.color: {title}", f"menu.title.text.color: {text}",
+        "menu.title.text.justify: left",
+        "menu.items.bg: flat solid", f"menu.items.bg.color: {title_in}", f"menu.items.text.color: {text}",
+        f"menu.items.disabled.text.color: {dim}",
+        "menu.items.active.bg: flat solid", f"menu.items.active.bg.color: {hover}", f"menu.items.active.text.color: {text}",
+        f"menu.separator.color: {border}", "menu.separator.width: 1", "menu.separator.padding.width: 6",
+        "menu.separator.padding.height: 3",
+        "osd.border.width: 1", f"osd.border.color: {border}", "osd.bg: flat solid", f"osd.bg.color: {title_in}",
+        f"osd.label.text.color: {text}", "osd.hilight.bg: flat solid", f"osd.hilight.bg.color: {active}",
+        "osd.unhilight.bg: flat solid", f"osd.unhilight.bg.color: {hover}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def apply_openbox_theme(theme, dark):
+    d = Path.home() / ".local/share/themes/VoidStation/openbox-3"
+    d.mkdir(parents=True, exist_ok=True)
+    changed = False
+    for name, txt in (("themerc", openbox_themerc(theme, dark)), ("close.xbm", OB_CLOSE_XBM)):
+        p = d / name
+        try:
+            if p.read_text(encoding="utf-8") == txt:
+                continue
+        except OSError:
+            pass
+        p.write_text(txt, encoding="utf-8")
+        changed = True
+    if changed and os.environ.get("DISPLAY") and shutil.which("openbox"):
+        run(["openbox", "--reconfigure"])                   # laufendes Openbox laedt das Theme neu
 
 
 def restart_home_later(delay=0.8):

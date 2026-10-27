@@ -4,7 +4,39 @@
 # vsctl status          -> was laeuft gerade?
 # vsctl update          -> alle Updates wie Einstellungen → Updates: Void-Pakete (inkl. Kernel),
 #                          Flatpak, AppImages, Proton-GE und VoidStation selbst; Protokoll laeuft mit
+# vsctl version         -> installierte VoidStation-Version, Build und Update-Kanal
+# vsctl / vsctl help    -> diese Uebersicht
+# Tab-Vervollstaendigung (Befehle, Kachel-IDs): /etc/bash/bashrc.d/voidstation.sh
 URL=http://127.0.0.1:8765/api
+TV="$(dirname "$(readlink -f "$0")")"
+
+usage() {
+  cat <<'EOF'
+vsctl – VoidStation von der Kommandozeile steuern
+
+  vsctl home           laufendes Programm schließen, zurück zur Startseite
+  vsctl launch <id>    Kachel starten (IDs: Tab-Taste nach "vsctl launch")
+  vsctl status         was läuft gerade?
+  vsctl update         alle Updates wie Einstellungen → Updates (mit Protokoll)
+  vsctl version        installierte Version, Build und Update-Kanal
+EOF
+}
+
+version() {
+  python3 - "$TV/version.json" /usr/local/share/voidstation/channel <<'PYEOF'
+import json, sys
+try:
+    v = json.load(open(sys.argv[1], encoding="utf-8"))
+except (OSError, ValueError):
+    v = {}
+try:
+    ch = open(sys.argv[2]).read().strip()
+except OSError:
+    ch = ""
+print(f"VoidStation {v.get('version') or '?'}" + (f" (Build {v['build']})" if v.get("build") else ""))
+print("Update-Kanal:", {"stable": "Stable", "main": "Testing"}.get(ch, ch or "?"))
+PYEOF
+}
 
 update() {
   if ! curl -fsS -o /dev/null "$URL/status" 2>/dev/null; then
@@ -41,6 +73,8 @@ case "$1" in
   launch) curl -fsS -X POST -H 'X-TV: 1' "$URL/launch/$2" ;;
   status) curl -fsS "$URL/status" ;;
   update) update; exit $? ;;
-  *) echo "Benutzung: vsctl home | launch <id> | status | update" >&2; exit 1 ;;
+  version|--version|-V) version; exit $? ;;
+  ""|help|-h|--help) usage; exit 0 ;;
+  *) echo "vsctl: unbekannter Befehl \"$1\"" >&2; usage >&2; exit 1 ;;
 esac
 echo
