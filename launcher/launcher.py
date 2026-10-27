@@ -1505,7 +1505,9 @@ class Jobs:
             self._log("xbps läuft gerade (z. B. im Terminal) – bitte warten, bis es fertig ist.")
             return False, {"busy": True}, False
         self._log("Suche nach Updates …")
-        _sys_check(sync=True, logf=self._log)
+        # Gerade erst (Einstellungen → Updates) mit frischen Paketlisten geprueft: nicht noch einmal laden
+        fresh = time.time() - (_SCACHE["t"] or 0) < 180 and not _SCACHE["error"]
+        _sys_check(sync=not fresh, logf=self._log)
         s = dict(_SCACHE)
         vs = vs_update_status(force=True)
         ok, done = True, []
@@ -2003,7 +2005,9 @@ def _sys_check(sync, logf=None):
     if LIVE:
         return
     res = {"pkgs": [], "error": None}
-    r = run(["sudo", "-n", PKG_HELPER, "check"] + ([] if sync else ["--nosync"]), timeout=300)
+    # Der Helfer begrenzt das Laden der Paketlisten selbst (90 s je Versuch, dazwischen Mirror-Wahl) – sudo hier
+    # abzuschiessen wuerde xbps darunter weiterlaufen lassen ("xbps beschaeftigt" beim naechsten Mal)
+    r = run(["sudo", "-n", PKG_HELPER, "check"] + ([] if sync else ["--nosync"]), timeout=240)
     if r is None:
         res["error"] = "xbps antwortet nicht"
     else:
@@ -2018,7 +2022,7 @@ def _sys_check(sync, logf=None):
     if sync:
         res.update(flatpak=[], appimage=[], proton=None)
         if shutil_which("flatpak"):
-            f = run(["flatpak", "remote-ls", "--user", "--updates", "--columns=application"], timeout=120)
+            f = run(["flatpak", "remote-ls", "--user", "--updates", "--columns=application"], timeout=45)
             if f and f.returncode == 0:
                 res["flatpak"] = [x.strip() for x in f.stdout.splitlines() if x.strip()]
         apps = catalog()["apps"]
@@ -2040,6 +2044,28 @@ def _sys_check(sync, logf=None):
     _SCACHE.update(res)
     if not res["pkgs"] and not res["error"]:
         sys_mark_current()                         # alles aktuell (auch nach Update im Terminal): Frist beginnt neu
+
+
+_SYS_BG = {"running": False}
+_SYS_BG_LOCK = threading.Lock()
+
+
+def sys_check_background():
+    """Pruefung mit frischen Paketlisten im Hintergrund starten (Einstellungen → Updates). Die Oberflaeche wartet
+    nicht darauf: Sie zeigt sofort den bekannten Stand und fragt nach, bis "checking" weg ist."""
+    with _SYS_BG_LOCK:
+        if _SYS_BG["running"]:
+            return
+        _SYS_BG["running"] = True
+
+    def _go():
+        try:
+            sys_check(sync=True)
+        except Exception as e:  # noqa: BLE001
+            log("Paketpruefung fehlgeschlagen:", e)
+        finally:
+            _SYS_BG["running"] = False
+    threading.Thread(target=_go, daemon=True).start()
 
 
 def sys_check(sync):
@@ -2074,15 +2100,22 @@ def sys_state():
     return {"pkgs": [p["name"] for p in pkgs], "kernel": kernel, "flatpak": len(_SCACHE["flatpak"]),
             "appimage": [names.get(i, i) for i in _SCACHE["appimage"]], "proton": _SCACHE["proton"],
             "count": count, "error": _SCACHE["error"], "checked": _SCACHE["t"] or None,
+            "checking": _SYS_BG["running"] or (SYS_LOCK.locked() and not JOBS.busy()),   # auch die 6-h-Pruefung
             "days": days, "due_at": due_at, "due": bool(due_at and time.time() >= due_at)}
 
 
 def updates_state(force=False):
-    """Gesamtstand fuer Einstellungen → Updates: VoidStation + System + Neustart."""
+    """Gesamtstand fuer Einstellungen → Updates: VoidStation + System + Neustart.
+    force: VoidStation-Stand jetzt holen (ein kleiner Abruf) und die Paketpruefung im Hintergrund anstossen –
+    die Antwort wartet nicht auf xbps (frueher bis zu 5 Minuten, wenn ein Mirror hing); system.checking zeigt,
+    dass die Pruefung noch laeuft."""
     vs = vs_update_status(force)          # ohne force: nur, wenn der letzte Stand aelter als 10 min ist
     busy = False
-    if force and not sys_check(sync=True):
-        busy = JOBS.busy() or xbps_busy()
+    if force and not LIVE:
+        if JOBS.busy() or xbps_busy():
+            busy = True
+        else:
+            sys_check_background()
     sysst = sys_state()
     return {**vs, "system": sysst, "reboot": reboot_needed(), "busy": busy,
             "any": bool(vs["available"] or sysst["count"]), "notify": bool(vs["available"] or sysst["due"])}

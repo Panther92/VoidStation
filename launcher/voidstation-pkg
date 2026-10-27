@@ -158,6 +158,135 @@ xserver_repair() {
 }
 
 # ---------------------------------------------------------------------
+#  Paketquelle: schnellsten Tier-1-Mirror von Void waehlen
+# ---------------------------------------------------------------------
+# Void liefert repo-default.voidlinux.org – ein Name, der auf irgendeinen Tier-1-Mirror zeigen kann, auch auf einen
+# gerade ueberlasteten (27.10.2026: Helsinki lieferte 270 KB/s bzw. gar nichts, der Sync hing 5 Minuten).
+# Darum messen wir die Tier-1-Mirrors (https://xmirror.voidlinux.org) und tragen den schnellsten in /etc/xbps.d ein:
+# je Void-Repo-Datei aus /usr/share/xbps.d eine gleichnamige Datei (die in /etc gehen vor), nur der Server getauscht.
+# Eigene Einstellungen bleiben: Liegt in /etc/xbps.d eine Paketquelle, die kein Tier-1-Mirror ist (oder eine
+# selbst angelegte Datei), fasst VoidStation nichts an. Gemessen wird beim Update immer, bei der Update-Pruefung
+# hoechstens einmal am Tag und sofort, wenn das Laden der Paketlisten scheitert oder haengt.
+MIRROR_STATE=/usr/local/share/voidstation/mirror        # "<Zeitpunkt> <Basis-Adresse> <Bytes/s>"
+MIRROR_DEFAULT=https://repo-default.voidlinux.org
+MIRRORS="https://repo-de.voidlinux.org https://repo-fastly.voidlinux.org https://repo-fi.voidlinux.org https://mirrors.summithq.com/voidlinux"
+MIRROR_MARK="# VoidStation: Paketquelle automatisch gewaehlt (voidstation-pkg mirror) – wird bei Bedarf neu geschrieben"
+
+mirror_tier1() {   # $1 = Adresse; zeigt sie auf einen Tier-1-Mirror (oder repo-default)?
+  for b in $MIRROR_DEFAULT $MIRRORS; do
+    case "$1" in "$b"/*) return 0 ;; esac
+  done
+  return 1
+}
+
+mirror_files() {   # Void-Repo-Dateien (nur Namen), z. B. 00-repository-main.conf, 10-repository-nonfree.conf
+  for f in /usr/share/xbps.d/*-repository-*.conf; do
+    [ -f "$f" ] && echo "${f##*/}"
+  done
+}
+
+mirror_custom() {  # eigene Paketquelle in /etc/xbps.d? Gibt die Datei aus.
+  for f in /etc/xbps.d/*.conf; do
+    [ -f "$f" ] || continue
+    n="${f##*/}"
+    [ "$n" = 99-repository-xlibre.conf ] && continue
+    urls="$(sed -n 's/^[[:space:]]*repository[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' "$f")"
+    [ -n "$urls" ] || continue
+    for u in $urls; do
+      mirror_tier1 "$u" || { echo "$n"; return 0; }
+    done
+    [ -f "/usr/share/xbps.d/$n" ] || { echo "$n"; return 0; }   # selbst angelegte Datei mit Tier-1-Adresse
+  done
+  return 1
+}
+
+mirror_name() { echo "$1" | sed -e 's#^https://##' -e 's#/.*##'; }
+
+mirror_apply() {   # $1 = Basis-Adresse: alle Void-Repo-Dateien auf diesen Server stellen
+  base="$1"
+  mirror_tier1 "$base/x" || return 1
+  mkdir -p /etc/xbps.d
+  script="$(for b in $MIRROR_DEFAULT $MIRRORS; do
+    printf 's#^\\([[:space:]]*repository[[:space:]]*=[[:space:]]*\\)%s/#\\1%s/#\n' "$b" "$base"
+  done)"
+  for n in $(mirror_files); do
+    tmp="/etc/xbps.d/.$n.vs-tmp"
+    { echo "$MIRROR_MARK"; sed "$script" "/usr/share/xbps.d/$n"; } > "$tmp" || { rm -f "$tmp"; return 1; }
+    if cmp -s "$tmp" "/etc/xbps.d/$n"; then rm -f "$tmp"; continue; fi
+    chmod 644 "$tmp" && mv -f "$tmp" "/etc/xbps.d/$n"
+  done
+}
+
+mirror_measure() { # je Mirror "<Bytes/s> <Basis-Adresse>", schnellster zuerst (gemessen parallel, hoechstens 10 s)
+  arch="$(xbps-uhelper arch 2>/dev/null)"; [ -n "$arch" ] || arch="$(uname -m)"
+  case "$arch" in *-musl) path="current/musl/$arch-repodata" ;; *) path="current/$arch-repodata" ;; esac
+  d="$(mktemp -d /tmp/voidstation-mirror.XXXXXX)" || return 1
+  i=0
+  for b in $MIRRORS; do
+    i=$((i + 1))
+    ( r="$(curl -s -o /dev/null --proto '=https' --connect-timeout 4 -m 10 \
+             -w '%{http_code} %{size_download} %{speed_download}' "$b/$path" 2>/dev/null)"
+      echo "${r:-000 0 0} $b" > "$d/$i" ) &
+  done
+  wait
+  cat "$d"/* 2>/dev/null | awk '{ s = ($1 == 200 && $2 > 100000) ? int($3) : 0; print s, $4 }' | sort -rn
+  rm -rf "$d"
+}
+
+mirror_auto() {    # [now]: jetzt messen (sonst hoechstens einmal am Tag); Ausgabe nur, wenn gemessen wurde
+  [ -e /etc/voidstation-live ] && return 0
+  [ -n "$(mirror_files)" ] || return 0
+  mirror_custom >/dev/null && return 0
+  last=0; cur=""
+  [ -f "$MIRROR_STATE" ] && read -r last cur _ < "$MIRROR_STATE"
+  case "$last" in ""|*[!0-9]*) last=0 ;; esac
+  mirror_tier1 "$cur/x" || cur=""
+  now="$(date +%s)"
+  if [ "$1" != now ] && [ -n "$cur" ] && [ $((now - last)) -lt 86400 ]; then
+    mirror_apply "$cur"              # neu hinzugekommene Repos (z. B. multilib fuer Steam) gleich mit umstellen
+    return 0
+  fi
+  command -v curl >/dev/null 2>&1 || { [ -n "$cur" ] && mirror_apply "$cur"; return 0; }
+  res="$(mirror_measure)"
+  best="$(echo "$res" | awk 'NR == 1 { print $2 }')"
+  bs="$(echo "$res" | awk 'NR == 1 { print $1 + 0 }')"
+  echo "Paketquelle: Mirrors gemessen –$(echo "$res" | awk '{ n = $2; sub("^https://", "", n); sub("/.*", "", n); printf " %s %.1f MB/s;", n, $1 / 1048576 }' | sed 's/;$//')"
+  if [ -z "$best" ] || [ "${bs:-0}" -lt 51200 ]; then   # unter 50 KB/s: offline oder alles gestoert – nichts aendern
+    echo "Paketquelle: kein Mirror brauchbar erreichbar – bleibt bei $(mirror_name "${cur:-$MIRROR_DEFAULT}")"
+    [ -n "$cur" ] && mirror_apply "$cur"
+    return 1
+  fi
+  if [ -n "$cur" ] && [ "$cur" != "$best" ]; then
+    # Der bisherige bleibt, wenn er mindestens 70 % des schnellsten schafft (kein Hin und Her bei kleinen Unterschieden)
+    cs="$(echo "$res" | awk -v b="$cur" '$2 == b { print $1 + 0 }')"
+    if [ -n "$cs" ] && [ "$cs" -ge $((bs * 7 / 10)) ]; then best="$cur"; bs="$cs"; fi
+  fi
+  mirror_apply "$best" || return 1
+  echo "$now $best $bs" > "$MIRROR_STATE"; chmod 644 "$MIRROR_STATE"
+  echo "Paketquelle: $(mirror_name "$best")"
+}
+
+mirror_status() {
+  if c="$(mirror_custom)"; then echo "eigene Paketquelle ($c) – VoidStation waehlt keinen Mirror"; return 0; fi
+  if [ -f "$MIRROR_STATE" ]; then
+    read -r last cur bs < "$MIRROR_STATE"
+    echo "Mirror: $(mirror_name "$cur") ($(awk -v s="${bs:-0}" 'BEGIN { printf "%.1f MB/s", s / 1048576 }'), gemessen $(date -d "@$last" '+%d.%m.%Y %H:%M' 2>/dev/null))"
+  else
+    echo "Mirror: Void-Vorgabe ($(mirror_name "$MIRROR_DEFAULT")), noch nicht gemessen"
+  fi
+}
+
+# Paketlisten laden, hoechstens 90 s je Versuch; haengt oder scheitert es, neu messen und noch einmal
+repo_sync() {
+  timeout -k 5 90 xbps-install -S && return 0
+  echo "Paketlisten nicht geladen – suche einen anderen Mirror …"
+  mirror_auto now
+  timeout -k 5 90 xbps-install -S && return 0
+  echo "Paketquelle antwortet nicht – bitte spaeter noch einmal versuchen"
+  return 1
+}
+
+# ---------------------------------------------------------------------
 #  Fernzugriff (SSH) an/aus
 # ---------------------------------------------------------------------
 ssh_ctl() {
@@ -202,6 +331,7 @@ main() {
   case "$cmd" in
     install)
       check_pkgs "$@" || return $?
+      mirror_auto
       xbps-install -Sy "$@"
       ;;
     remove)
@@ -213,21 +343,39 @@ main() {
       check_pkgs "$@" || return $?
       xbps-pkgdb -m auto "$@"
       ;;
-    sync)
-      xbps-install -S
+    sync)                                   # z. B. nach neuen Repos (multilib fuer Steam): die gleich mit umstellen
+      mirror_auto
+      repo_sync
       ;;
     update)
-      xbps-install -Syu xbps || true        # xbps muss sich ggf. zuerst selbst aktualisieren
-      xbps-install -Syu
+      mirror_auto now                       # vor jedem Update den schnellsten Mirror suchen (dauert hoechstens 10 s)
+      repo_sync || return 1
+      xbps-install -yu xbps || true         # xbps muss sich ggf. zuerst selbst aktualisieren
+      xbps-install -yu
       ;;
     check)                                  # ausstehende Paket-Updates auflisten (--nosync: ohne Paketlisten zu laden)
-      [ "$1" = "--nosync" ] || xbps-install -S >/dev/null 2>&1
+      synced=1
+      if [ "$1" != "--nosync" ]; then
+        mirror_auto >/dev/null 2>&1
+        repo_sync >/dev/null 2>&1 || synced=0
+      fi
       out="$(xbps-install -un 2>&1)"; rc=$?
       case "$out" in
         *"must be updated"*) xbps-install -un xbps 2>/dev/null; return 0 ;;   # erst xbps selbst, danach der Rest
       esac
       [ -n "$out" ] && printf '%s\n' "$out"
+      if [ "$synced" = 0 ]; then              # Stand der alten Paketlisten; letzte Zeile = Fehlermeldung fuer den Launcher
+        echo "Paketquelle antwortet nicht" >&2
+        return 3
+      fi
       return $rc
+      ;;
+    mirror)                                 # Paketquelle: status | auto (jetzt messen)
+      case "$1" in
+        auto) mirror_auto now ;;
+        status|"") mirror_status ;;
+        *) echo "mirror: status | auto"; return 2 ;;
+      esac
       ;;
     selfupdate)
       selfupdate
@@ -255,7 +403,7 @@ main() {
         *) echo "Kanal muss stable oder main sein"; return 2 ;; esac
       ;;
     *)
-      echo "Benutzung: voidstation-pkg install|remove|markauto <paket>... | sync | update | check [--nosync] | selfupdate | kernelpurge | channel stable|main | xserver ensure|repair|status | ssh on|off|status | bluetooth on|off|status"
+      echo "Benutzung: voidstation-pkg install|remove|markauto <paket>... | sync | update | check [--nosync] | mirror status|auto | selfupdate | kernelpurge | channel stable|main | xserver ensure|repair|status | ssh on|off|status | bluetooth on|off|status"
       return 2
       ;;
   esac
