@@ -71,7 +71,7 @@ PKGS="xinit xauth xset xrandr xprop setxkbmap $GPU_PKGS \
   python3-pyside6-declarative qt6-svg qt6-imageformats qt6-plugin-tls-openssl \
   pipewire wireplumber alsa-utils bluez libspa-bluetooth \
   noto-fonts-ttf noto-fonts-emoji noto-fonts-cjk dejavu-fonts-ttf \
-  NetworkManager wireless-regdb chrony htop nano fastfetch mousepad"
+  NetworkManager wireless-regdb chrony htop nano fastfetch mousepad bash-completion"
 MISSING=""
 for p in $PKGS; do
   xbps-query "$p" >/dev/null 2>&1 && continue
@@ -169,6 +169,23 @@ GETTY_ARGS="--autologin $VSUSER --noclear"
 BAUD_RATE=38400
 TERM_NAME=linux
 EOF
+
+# Terminal: die Void-Vorgabe PS1='[\u@\h \W]\$ ' aus ~/.bashrc nehmen – sie ueberdeckt sonst die
+# Eingabeaufforderung von VoidStation (/etc/bash/bashrc.d/voidstation.sh, s. sysfix.sh). Nur die unveraenderte Zeile;
+# ein eigenes PS1 bleibt und geht vor.
+python3 - "$HOMEDIR/.bashrc" <<'PYEOF'
+import sys
+p = sys.argv[1]
+try:
+    lines = open(p, encoding="utf-8").read().split("\n")
+except OSError:
+    sys.exit(0)
+old = r"PS1='[\u@\h \W]\$ '"
+if old in lines:
+    lines[lines.index(old)] = "# PS1: kommt von VoidStation (/etc/bash/bashrc.d/voidstation.sh) – ein eigenes PS1 hier geht vor"
+    open(p, "w", encoding="utf-8").write("\n".join(lines))
+    print("Eingabeaufforderung: VoidStation-Vorgabe")
+PYEOF
 
 # Gruppen: Gamepad/Eingabe, Ton, Grafik, DVD-Laufwerk (optical bzw. cdrom, je nach udev-Regeln)
 for g in input audio video render bluetooth optical cdrom; do

@@ -972,6 +972,45 @@ def apply_color_scheme(dark):
             log("gsettings", key, "nicht gesetzt:", (r.stderr.strip() if r else "nicht ausfuehrbar"))
 
 
+# Terminal (xterm) – eingestellt ueber ~/.Xresources, gilt fuer jedes neu geoeffnete Terminal (Kachel, Strg+Alt+T,
+# Terminal-Apps wie htop, "Im Terminal" startende Programme):
+#  - Farben nach dem Theme (hell/dunkel) mit ruhiger 16-Farben-Palette; Cyan = Petrol wie im Logo (Eingabeaufforderung,
+#    Titelzeile von fastfetch). boldColors aus: fett bleibt dieselbe Farbe statt der grelleren "hellen" Variante.
+#  - meldet sich als xterm-256color (sonst nutzen htop, nano & Co. nur 8 Farben), 10.000 Zeilen zum Zurueckscrollen
+#  - Schrift DejaVu Sans Mono 14 (skaliert mit Xft.dpi), Strg + / Strg - groesser/kleiner, Strg 0 zurueck
+#  - Einfuegen aus der Zwischenablage wie ueberall: Strg+Umschalt+V, Umschalt+Einfg und Rechtsklick (Controller: L2).
+#    Von Haus aus fuegt xterm nur die Markierung (PRIMARY) ein, nicht das mit Strg+C Kopierte. Markieren kopiert
+#    zugleich in die Zwischenablage, Strg+Umschalt+C ebenso.
+XTERM_PALETTE = {
+    True: {"background": "#111316", "foreground": "#dcdcdc", "cursorColor": "#dcdcdc",
+           "colors": ["#1e2126", "#d0585c", "#6fb36f", "#d6b45a", "#5b8ed6", "#a77dd0", "#5fa8b8", "#c8c8c8",
+                      "#5c6370", "#e8797c", "#8fcf8f", "#ebd07f", "#80aaf0", "#c59de6", "#8cc8d4", "#f2f2f2"]},
+    False: {"background": "#f6f6f4", "foreground": "#1e1f22", "cursorColor": "#1e1f22",
+            "colors": ["#1e1f22", "#b3261e", "#2e7d32", "#8a6100", "#2a5db0", "#7b3fa6", "#2f6b7a", "#b8bcc2",
+                       "#6b6f76", "#d0393b", "#3d9441", "#a87a00", "#3c74d0", "#9452c4", "#3f8fa0", "#e4e4e1"]},
+}
+XTERM_KEYS = re.compile(r"XTerm\*(selectToClipboard|VT100\.translations|termName|saveLines|faceName|faceSize\d?|"
+                        r"boldColors|background|foreground|cursorColor|color\d+)\s*:")
+
+
+def xterm_resources(dark):
+    pal = XTERM_PALETTE[bool(dark)]
+    out = ["XTerm*termName: xterm-256color", "XTerm*saveLines: 10000", "XTerm*boldColors: false",
+           "XTerm*faceName: DejaVu Sans Mono", "XTerm*faceSize: 14"]
+    # Stufen fuer Strg +/- (xterm springt zwischen faceSize1..6; dazwischen liegt die Grundgroesse 14)
+    out += [f"XTerm*faceSize{i}: {v}" for i, v in enumerate((8, 10, 12, 17, 20, 26), 1)]
+    out += [f"XTerm*{k}: {pal[k]}" for k in ("background", "foreground", "cursorColor")]
+    out += [f"XTerm*color{i}: {c}" for i, c in enumerate(pal["colors"])]
+    out += ["XTerm*selectToClipboard: true",
+            "XTerm*VT100.translations: #override Ctrl Shift <Key>V: insert-selection(CLIPBOARD)\\n"
+            "Ctrl Shift <Key>C: copy-selection(CLIPBOARD)\\nShift <Key>Insert: insert-selection(CLIPBOARD, PRIMARY)\\n"
+            "<Btn3Down>: ignore()\\n<Btn3Up>: insert-selection(CLIPBOARD, PRIMARY)\\n"
+            "Ctrl <Key>plus: larger-vt-font()\\nCtrl <Key>KP_Add: larger-vt-font()\\n"
+            "Ctrl <Key>minus: smaller-vt-font()\\nCtrl <Key>KP_Subtract: smaller-vt-font()\\n"
+            "Ctrl <Key>0: set-vt-font(d)\\nCtrl <Key>KP_0: set-vt-font(d)"]
+    return out
+
+
 def apply_appearance(s):
     """Skalierung (Xft.dpi), Mauszeiger und Farbschema (hell/dunkel nach dem Theme) fuer neu gestartete
     Programme setzen."""
@@ -982,22 +1021,16 @@ def apply_appearance(s):
         theme = next(iter(cursor_themes()), "Adwaita")
     size = int(s.get("cursor_size") or DEFAULTS["cursor_size"])
     xres = home / ".Xresources"
+    dark = theme_is_dark(s.get("theme") or DEFAULTS["theme"])
     try:
         lines = [l for l in xres.read_text().splitlines()
-                 if not l.startswith(("Xft.dpi", "Xcursor.", "XTerm*selectToClipboard", "XTerm*VT100.translations"))]
+                 if not l.startswith(("Xft.dpi", "Xcursor.")) and not XTERM_KEYS.match(l)]
     except OSError:
         lines = []
     lines += [f"Xft.dpi: {dpi}", f"Xcursor.theme: {theme}", f"Xcursor.size: {size}"]
-    # Terminal (xterm): Einfuegen aus der Zwischenablage wie ueberall – Strg+Umschalt+V, Umschalt+Einfg und Rechtsklick
-    # (Controller: L2). Von Haus aus fuegt xterm nur die Markierung (PRIMARY) ein, nicht das mit Strg+C Kopierte.
-    # Markieren kopiert zugleich in die Zwischenablage, Strg+Umschalt+C ebenso.
-    lines += ["XTerm*selectToClipboard: true",
-              "XTerm*VT100.translations: #override Ctrl Shift <Key>V: insert-selection(CLIPBOARD)\\n"
-              "Ctrl Shift <Key>C: copy-selection(CLIPBOARD)\\nShift <Key>Insert: insert-selection(CLIPBOARD, PRIMARY)\\n"
-              "<Btn3Down>: ignore()\\n<Btn3Up>: insert-selection(CLIPBOARD, PRIMARY)"]
+    lines += xterm_resources(dark)
     xres.write_text("\n".join(lines) + "\n")
     run(["xrdb", "-merge", str(xres)])
-    dark = theme_is_dark(s.get("theme") or DEFAULTS["theme"])
     gtk_name = "Adwaita-dark" if dark else "Adwaita"
     for gtk in ("gtk-3.0", "gtk-4.0"):
         vals = {"gtk-cursor-theme-name": theme, "gtk-cursor-theme-size": str(size),
@@ -4838,7 +4871,7 @@ def local_apps():
                 continue                              # schon als Katalog-App oder Standard-Kachel vorhanden
             seen.add(stem)
             if e.get("Terminal") == "true":
-                args = ["xterm", "-fa", "DejaVu Sans Mono", "-fs", "14", "-e"] + args
+                args = ["xterm", "-e"] + args          # Schrift/Farben: ~/.Xresources (apply_appearance)
             cats = e.get("Categories", "")
             icon = next((i for k, i in LOCAL_ICONS if k in cats.split(";")), "globe")
             loc = lambda k: e.get(f"{k}[{lang}]") or e.get(f"{k}[{lang.split('_')[0]}]")   # pt_BR, sonst pt

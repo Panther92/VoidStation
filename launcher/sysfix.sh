@@ -18,6 +18,8 @@
 #   5. Flatpak-Programme: Dateidialog ueber xdg-desktop-portal (GTK-Oberflaeche). Ohne Portal sehen
 #      Flatpaks ohne Dateirechte (z. B. FreeTube beim Abo-Import) nur ein leeres Homeverzeichnis.
 #      Unter Openbox ist XDG_CURRENT_DESKTOP leer, darum legt portals.conf das GTK-Backend fest.
+#   7. Systemname: /etc/os-release meldet "VoidStation <Version>" (ID_LIKE=void), xbps laesst sie stehen.
+#   8. Terminal: bash-Komfort (/etc/bash/bashrc.d), fastfetch mit VoidStation-Logo, nano mit Syntaxfarben.
 # =====================================================================
 CHROOT="${VOIDSTATION_CHROOT:-0}"
 say() { printf '%s\n' "$*"; }
@@ -206,4 +208,69 @@ SuspendState=mem
 EOF
 chmod 644 /etc/elogind/sleep.conf.d/voidstation.conf
 say "Standby: wecken per USB-Tastatur/-Maus/Fernbedienung (nicht per Bluetooth), nur Suspend-to-RAM"
+
+# ---------------------------------------------------------------------
+# 7. Name des Systems: /etc/os-release ("VoidStation <Version>" statt "Void Linux")
+#    Lesen u. a. fastfetch und der Installer (Kachel "Neben …"). Void liefert /etc/os-release als Verweis auf
+#    /usr/lib/os-release (Paket base-files); das Original bleibt dort unveraendert, /etc geht laut Spezifikation
+#    vor. noextract haelt xbps davon ab, den Verweis bei einem Update von base-files zurueckzuschreiben.
+#    ID_LIKE=void: Werkzeuge, die Abkoemmlinge kennen, behandeln VoidStation wie Void (fastfetch: Void-Farben).
+VSDIR="$(cd "$(dirname "$0")" && pwd)"
+mkdir -p /etc/xbps.d
+cat > /etc/xbps.d/voidstation-os-release.conf <<'EOF'
+# VoidStation: eigene /etc/os-release behalten (das Void-Original liegt unveraendert in /usr/lib/os-release)
+noextract=/etc/os-release
+EOF
+chmod 644 /etc/xbps.d/voidstation-os-release.conf
+if python3 - "$VSDIR/version.json" > /etc/os-release.vs-tmp <<'PYEOF'
+import json, re, sys
+try:
+    v = json.load(open(sys.argv[1], encoding="utf-8"))
+except (OSError, ValueError):
+    v = {}
+ver = str(v.get("version") or "")
+build = str(v.get("build") or "")
+ver = ver if re.fullmatch(r"[0-9A-Za-z.+_-]+", ver) else ""
+build = build if re.fullmatch(r"[0-9a-f]+", build) else ""
+m = re.match(r"\d{4}\.\d{2}(?:\.\d+)?|0\.\d+\.\d+", ver)
+out = ['NAME="VoidStation"', 'ID="voidstation"', 'ID_LIKE="void"',
+       f'PRETTY_NAME="VoidStation {ver}"' if ver else 'PRETTY_NAME="VoidStation"']
+if ver:
+    out.append(f'VERSION="{ver}"')                     # z. B. 2026.11 oder 2026.11+testing.20261120
+if m:
+    out.append(f'VERSION_ID="{m.group(0)}"')           # nur Ziffern und Punkte (Spezifikation: kein "+")
+if build:
+    out.append(f'BUILD_ID="{build}"')
+out += ['HOME_URL="https://voidstation.de/"',
+        'DOCUMENTATION_URL="https://github.com/Panther92/VoidStation#readme"',
+        'BUG_REPORT_URL="https://github.com/Panther92/VoidStation/issues"',
+        'ANSI_COLOR="0;38;2;95;168;184"']
+print("\n".join(out))
+PYEOF
+then
+  chmod 644 /etc/os-release.vs-tmp && mv -f /etc/os-release.vs-tmp /etc/os-release
+  say "Systemname: $(sed -n 's/^PRETTY_NAME="\(.*\)"/\1/p' /etc/os-release)"
+else
+  rm -f /etc/os-release.vs-tmp
+  say "Systemname: /etc/os-release nicht geschrieben (bleibt Void)"
+fi
+
+# ---------------------------------------------------------------------
+# 8. Terminal: Shell-Komfort (Verlauf, Vervollstaendigung, Eingabeaufforderung, Aliase – fuer alle Benutzer,
+#    eigene ~/.bashrc geht vor), fastfetch mit VoidStation-Logo, nano mit Syntaxfarben und Zeilennummern.
+#    xterm selbst (Farben nach Theme, Schriftgroesse, 256 Farben) stellt der Launcher ueber ~/.Xresources ein.
+mkdir -p /etc/bash/bashrc.d /etc/xdg/fastfetch /usr/local/share/voidstation
+install -m 644 "$VSDIR/shell/bashrc.sh" /etc/bash/bashrc.d/voidstation.sh
+install -m 644 "$VSDIR/shell/fastfetch-logo.ansi" /usr/local/share/voidstation/fastfetch-logo.ansi
+install -m 644 "$VSDIR/shell/fastfetch.jsonc" /etc/xdg/fastfetch/config.jsonc
+# Void legt keine /etc/nanorc an (nur ein Beispiel unter /usr/share/examples/nano) – Block einmalig anhaengen
+if ! grep -q 'VoidStation' /etc/nanorc 2>/dev/null; then
+  cat >> /etc/nanorc <<'EOF'
+## VoidStation: Syntaxfarben und Zeilennummern (eigene Einstellungen in ~/.nanorc gehen vor)
+include "/usr/share/nano/*.nanorc"
+set linenumbers
+EOF
+  chmod 644 /etc/nanorc
+fi
+say "Terminal: Vervollstaendigung, Verlauf, Eingabeaufforderung, fastfetch-Logo, nano mit Farben"
 exit 0

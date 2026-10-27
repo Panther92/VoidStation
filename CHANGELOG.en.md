@@ -8,7 +8,11 @@ hotfixes to it `## 2026.11.1 – …`. New changes go first under `## Testing �
 at the top; `vspub --release` or `vspub --hotfix` assigns the number when releasing (see `RELEASING.md`).
 Older versions (up to 0.15.0) still use the old numbering.
 
-## Testing – 2026-10-25
+## Testing – 2026-10-27
+- More comfortable terminal: **Tab** now also completes commands, options and package names (e.g. `xbps-install fire` + Tab; new package bash-completion). **↑/↓** search the history for what you've already typed (`ls` + ↑ only shows earlier `ls` commands; on an empty line it works as before). The history keeps 10,000 commands without duplicates and no longer gets lost with several terminals open. New prompt `paul@Wohnzimmer ~/share $` in petrol (red as root); after an error the exit code is shown in red before it. Plus `ll`, `la`, `..` and coloured output for `ls`, `grep`, `diff` and `ip`. Applies to every terminal and over SSH; your own settings in `~/.bashrc` take precedence – only Void's default prompt line there is commented out once
+- The terminal follows the theme (light/dark) with calmer colours, announces 256 colours (htop, nano & co. look better) and keeps 10,000 lines of scrollback. **Ctrl +** / **Ctrl −** change the font size, **Ctrl 0** resets it. The tile, Ctrl+Alt+T and terminal programs such as the system monitor now use the same font (DejaVu Sans Mono); the fixed colours in these tiles are dropped by the update
+- nano shows syntax colours and line numbers (your own settings in `~/.nanorc` take precedence)
+- The system now identifies itself as **VoidStation**: `fastfetch` and other tools show “VoidStation <version>” instead of “Void Linux”, and fastfetch shows the VoidStation logo (four tiles with a V). This comes from a separate `/etc/os-release` (ID `voidstation`, based on `void`); Void's original stays in `/usr/lib/os-release`, and system updates don't overwrite the file. Your own fastfetch settings in `~/.config/fastfetch/config.jsonc` take precedence
 - mGBA game list: new **“Mute game”** switch – the emulator stays silent, e.g. while a podcast is playing. It flips mGBA's own switch (Audio → Mute), so both always agree; applies from the next game start
 - Button mapping: picking a button in the list now offers “Remap”, **“Leave free”** or “Back”. Free buttons do nothing – e.g. fast forward, if it's too easy to hit by accident. “Default” brings them back
 - mGBA: save state (△) and load state (□) only trigger when you **hold the button for half a second** – an accidental tap does nothing. Triggers once per press

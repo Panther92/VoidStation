@@ -106,15 +106,7 @@
           "color": "#2f3238",
           "icon": "terminal",
           "cmd": [
-            "xterm",
-            "-fa",
-            "Monospace",
-            "-fs",
-            "14",
-            "-bg",
-            "#111316",
-            "-fg",
-            "#dcdcdc"
+            "xterm"
           ]
         }
       ]

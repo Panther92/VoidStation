@@ -1226,14 +1226,6 @@
       },
       "cmd": [
         "xterm",
-        "-fa",
-        "Monospace",
-        "-fs",
-        "13",
-        "-bg",
-        "#111316",
-        "-fg",
-        "#dcdcdc",
         "-e",
         "htop"
       ],

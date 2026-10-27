@@ -53,7 +53,7 @@ say "1/8  Pakete"
 MISSING=""
 for p in curl elogind xrdb pulseaudio-utils xdotool mpv python3-mpv ffmpegthumbnailer ffmpeg yt-dlp nodejs lsdvd samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf xprop adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 \
          bluez libspa-bluetooth htop nano fastfetch mousepad python3-pyside6-declarative qt6-svg qt6-imageformats qt6-plugin-tls-openssl \
-         wireless-regdb; do
+         wireless-regdb bash-completion; do
   xbps-query "$p" >/dev/null 2>&1 || MISSING="$MISSING $p"
 done
 if [ -n "$MISSING" ]; then xbps-install -Sy $MISSING || warn "Paketinstallation fehlgeschlagen"; else echo "alles da"; fi
@@ -110,6 +110,22 @@ chmod +x "$TV/launcher.py" "$TV/home.sh" "$TV/vsctl" "$TV/voidstation-shell.py" 
 echo "__VS_VERSION__" > "$TV/VERSION"
 echo '__VS_VERSION_B64__' | base64 -d > "$TV/version.json" 2>/dev/null || true
 cp "$TV/openbox/"{rc.xml,menu.xml,autostart} "$HOMEDIR/.config/openbox/"
+# Terminal: die Void-Vorgabe PS1='[\u@\h \W]\$ ' aus ~/.bashrc nehmen – sie ueberdeckt sonst die
+# Eingabeaufforderung von VoidStation (/etc/bash/bashrc.d/voidstation.sh, s. sysfix.sh). Nur die unveraenderte Zeile;
+# ein eigenes PS1 bleibt und geht vor.
+python3 - "$HOMEDIR/.bashrc" <<'PYEOF'
+import sys
+p = sys.argv[1]
+try:
+    lines = open(p, encoding="utf-8").read().split("\n")
+except OSError:
+    sys.exit(0)
+old = r"PS1='[\u@\h \W]\$ '"
+if old in lines:
+    lines[lines.index(old)] = "# PS1: kommt von VoidStation (/etc/bash/bashrc.d/voidstation.sh) – ein eigenes PS1 hier geht vor"
+    open(p, "w", encoding="utf-8").write("\n".join(lines))
+    print("Eingabeaufforderung: VoidStation-Vorgabe")
+PYEOF
 
 python3 - "$TV/tiles.json" <<'PYEOF'
 import json, sys
@@ -152,6 +168,20 @@ for t in [t for g in c["groups"] for t in g["tiles"]]:
         t["cmd"] = ["mgba-qt"]; t["sub"] = "mGBA"
     if t.get("id") == "files" and t.get("cmd") == ["pcmanfm", "~"]:
         t["cmd"] = ["pcmanfm", "~/share"]
+    # Terminal (und Terminal-Apps wie htop): Schrift und Farben kommen jetzt aus ~/.Xresources (folgen dem Theme);
+    # die alten festen Vorgaben raus, eigene andere Werte bleiben
+    if t.get("cmd") and t["cmd"][0] == "xterm":
+        old = {"-fa": {"Monospace", "DejaVu Sans Mono"}, "-fs": {"13", "14"}, "-bg": {"#111316"}, "-fg": {"#dcdcdc"}}
+        cmd, out, i = t["cmd"], [t["cmd"][0]], 1
+        while i < len(cmd):
+            if cmd[i] == "-e":
+                out += cmd[i:]; break
+            if cmd[i] in old and i + 1 < len(cmd) and cmd[i + 1] in old[cmd[i]]:
+                i += 2; continue
+            out.append(cmd[i]); i += 1
+        if out != cmd:
+            t["cmd"] = out
+            print("Kachel", t.get("label", t.get("id")) + ": Terminal folgt jetzt dem Theme")
 json.dump(c, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PYEOF
 xbps-query vba-m >/dev/null 2>&1 && xbps-remove -Ry vba-m >/dev/null 2>&1 && echo "defektes vba-m entfernt"

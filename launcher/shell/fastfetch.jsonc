@@ -1,0 +1,23 @@
+// VoidStation: Vorgaben fuer fastfetch (liegt unter /etc/xdg/fastfetch/config.jsonc).
+// Eine eigene ~/.config/fastfetch/config.jsonc geht vor – anlegen z. B. mit  fastfetch --gen-config
+// Logo: das App-Icon als ANSI-Grafik (tools/fastfetch-logo.py). Titelzeile in Cyan (im VoidStation-Terminal
+// Petrol), Beschriftungen fett in der Textfarbe – passt zu hellem und dunklem Theme.
+{
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/master/doc/json_schema.json",
+  "logo": {
+    "type": "file-raw",
+    "source": "/usr/local/share/voidstation/fastfetch-logo.ansi",
+    "width": 32,
+    "height": 16,
+    "padding": { "top": 1, "left": 1, "right": 3 }
+  },
+  "display": {
+    "color": { "keys": "1;39", "title": "1;36", "separator": "39" }
+  },
+  // Standardliste von fastfetch (ohne "modules" zeigt fastfetch mit eigener Konfiguration nichts an)
+  "modules": [
+    "title", "separator", "os", "host", "kernel", "uptime", "packages", "shell", "display", "de", "wm",
+    "wmtheme", "theme", "icons", "font", "cursor", "terminal", "terminalfont", "cpu", "gpu", "memory", "swap",
+    "disk", "localip", "battery", "poweradapter", "locale", "break", "colors"
+  ]
+}
