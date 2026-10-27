@@ -4,6 +4,10 @@ Neueste Version oben. Die erste Überschrift bestimmt die Versionsnummer, die Ge
 Format: `## <Version> – <JJJJ-MM-TT>`, darunter Stichpunkte.
 Jede Version steht auch in `CHANGELOG.en.md` (englisch) – sonst bricht `build.sh` ab.
 
+## Testing – 2026-10-27
+- Updates: Der Dialog öffnet sofort, statt minutenlang auf die Paketprüfung zu warten. Die Systemupdates werden im Hintergrund geprüft, der Dialog ergänzt sie, sobald das fertig ist. Laden der Paketlisten dauert höchstens 90 Sekunden je Versuch – vorher konnte ein hängender Server die Prüfung 5 Minuten blockieren
+- Schnellster Void-Server: VoidStation misst vor jedem Update die offiziellen Void-Mirrors (Frankfurt, Helsinki, Fastly, Chicago) und lädt vom schnellsten – statt von dem, den `repo-default` gerade zufällig liefert (heute: Helsinki mit 270 KB/s). Antwortet ein Server nicht, wird sofort gewechselt. Eine eigene Paketquelle in `/etc/xbps.d` bleibt unangetastet; Stand mit `sudo voidstation-pkg mirror status`
+
 ## 2026.10 – 2026-10-16
 - FreeTube und andere Flatpak-Programme: Der Dateidialog zeigte nur ein leeres Homeverzeichnis – z. B. ließen sich keine Abos importieren. Jetzt öffnet sich ein Dialog mit Zugriff auf alle eigenen Ordner; das Programm bekommt nur die gewählte Datei. Gilt für Programme, die nach dem Update gestartet werden
 - Programme und Browser folgen dem VoidStation-Theme: Steht in FreeTube & Co. „Systemvorgabe“ als Farbschema, war das bisher immer hell, YouTube und die Mediatheken waren dagegen immer dunkel. Jetzt alles dunkel bei dunklen Themes und hell bei „Default Light“ – Firefox-Kacheln, Chromium, Brave, LibreWolf, GTK- und Qt-Programme. Wirkt beim nächsten Start des Programms, manche wechseln sofort

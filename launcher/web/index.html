@@ -1722,12 +1722,20 @@ async function runUpdates() {
   if (JOBS_BUSY()) return toast(T('common.busy'));
   toast(T('upd.checking'));
   await refreshVs(true);
+  // Die Paketpruefung laeuft im Hintergrund; nur warten, wenn es sonst noch nichts zu zeigen gibt (hoechstens 3 min)
+  const until = Date.now() + 180000;
+  while (vsState && !vsState.busy && vsState.system?.checking && !(vsState.available || vsState.system.count) && Date.now() < until) {
+    toast(T('upd.checking'));
+    await new Promise(r => setTimeout(r, 1500));
+    await refreshVs(false);
+  }
   $('#toast').classList.remove('show');
   if (!vsState) return toast(T('upd.unreachable'), true);
   if (vsState.busy) return toast(T('upd.xbpsBusy'), true);
   const rb = vsState.reboot || {};
   if (!vsState.any) {
     if (rb.kernel || rb.voidstation) return rebootPrompt(rb);
+    if (vsState.system?.checking || (vsState.system?.error && !vsState.available)) return toast(T('upd.sysError'), true);
     if (!vsState.remote) return toast(vsNoRemote(vsState), true);
     return toast(T('upd.upToDate'));
   }
@@ -1740,7 +1748,9 @@ async function runUpdates() {
   const y = vsState.system;
   if (y && y.count) {
     const names = y.pkgs.slice(0, 12).join(', ') + (y.pkgs.length > 12 ? ' ' + T('upd.more', { n: num(y.pkgs.length - 12) }) : '');
-    parts.push(T('upd.system') + ': ' + sysSummary(vsState) + (names ? '\n' + names : ''));
+    parts.push(T('upd.system') + ': ' + sysSummary(vsState) + (names ? '\n' + names : '') + (y.checking ? '\n' + T('upd.sysChecking') : ''));
+  } else if (y && y.checking) {
+    parts.push(T('upd.system') + ': ' + T('upd.sysChecking'));
   }
   const restart = vsState.available || y?.kernel || rb.kernel || rb.voidstation;
   parts.push(T(restart ? 'upd.keep' : 'upd.keepNoReboot'));
