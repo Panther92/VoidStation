@@ -75,6 +75,17 @@ After two failed starts, VoidStation reinstalls the XLibre display server once. 
 
 In `~/.local/share/voidstation/logs/`. During installation, the installer's log is at `/run/voidstation-installer/install.log` and can be saved straight to a USB stick.
 
+### 4K TV: only 30 Hz or a lower resolution
+
+Many TVs ship with their HDMI inputs set to a narrow bandwidth. 4K then tops out at 30 Hz, and only lower resolutions run smoothly. The fix is a setting on the TV – for exactly the input the VoidStation PC is plugged into:
+
+- **Samsung:** *External Device Manager → Input Signal Plus* (up to 2018: *HDMI UHD Color*)
+- **LG:** *HDMI ULTRA HD Deep Colour*
+- **Sony:** *HDMI signal format → Enhanced format*
+- **Philips:** *HDMI Ultra HD → Optimal*
+
+Other brands use similar names (*HDMI 2.0*, *Enhanced*). Then pick the full resolution under **Settings → Display**. If it still doesn't work, it's usually the cable: 4K at 60 Hz needs one rated for 18 Gbit/s (*Premium High Speed*). To check, run `xrandr` in the terminal – `3840x2160` must list `60.00`.
+
 ### Is VoidStation an official Void Linux project?
 
 No. VoidStation is an independent project built on Void Linux. Please don't take questions about VoidStation to the Void team – ask [in the Discussions](https://github.com/Panther92/VoidStation/discussions) instead.

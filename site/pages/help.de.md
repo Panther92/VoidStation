@@ -75,6 +75,17 @@ Nach zwei Fehlstarts installiert VoidStation den Grafik-Server XLibre einmal neu
 
 Unter `~/.local/share/voidstation/logs/`. Das Protokoll des Installers liegt während der Installation unter `/run/voidstation-installer/install.log` und lässt sich direkt auf einen USB-Stick speichern.
 
+### 4K-Fernseher: nur 30 Hz oder kleinere Auflösung
+
+Viele Fernseher stellen ihre HDMI-Anschlüsse ab Werk auf eine schmale Bandbreite. 4K gibt es dann höchstens mit 30 Hz, flüssig läuft es nur in kleinerer Auflösung. Abhilfe schafft eine Einstellung im Fernseher – für genau den Anschluss, an dem der VoidStation-PC hängt:
+
+- **Samsung:** *Eingangssignal Plus*, bei Modellen ab 2025 *Externe Geräteverwaltung → Erweitertes Eingangssignal*, bis 2018 *HDMI UHD Color*
+- **LG:** *HDMI ULTRA HD Deep Colour*
+- **Sony:** *HDMI-Signalformat → Erweitertes Format*
+- **Philips:** *HDMI Ultra HD → Optimal*
+
+Bei anderen Marken heißt sie ähnlich (*HDMI 2.0*, *Erweitert*, *Enhanced*). Danach unter **Einstellungen → Anzeige** die volle Auflösung wählen. Klappt es trotzdem nicht, liegt es meist am Kabel: 4K mit 60 Hz braucht eines für 18 Gbit/s (*Premium High Speed*). Ob es geklappt hat, zeigt `xrandr` im Terminal – hinter `3840x2160` muss `60.00` stehen.
+
 ### Ist VoidStation ein offizielles Void-Linux-Projekt?
 
 Nein. VoidStation ist ein eigenständiges Projekt, das auf Void Linux aufbaut. Fragen zu VoidStation bitte nicht an das Void-Team, sondern [in die Discussions](https://github.com/Panther92/VoidStation/discussions).
