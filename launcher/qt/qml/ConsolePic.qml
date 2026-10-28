@@ -151,9 +151,134 @@ Item {
                 { id: "R", t: "R", x: 82, y: 4, w: 18, h: 5, r: 2 },
                 { id: "Start", t: "Start", x: 50, y: 50, w: 9, h: 4, r: 2 }
             ].concat(dpad(24, 43, 5)).concat(diamond(78, 37, 7, 6.2, ["Y", "Y"], ["A", "A"], ["X", "X"], ["B", "B"]))
+        },
+        // Nintendo 64: drei Griffe, Stick auf dem mittleren (Z dahinter), Kreuz links, A/B und vier C-Tasten rechts
+        n64: {
+            w: 100, h: 80,
+            body: "M18 10H82C92 10 98 18 98 28C98 40 92 48 86 54L80 66C78 72 72 72 70 66L66 52H60L56 74C55 79 45 79 44 74"
+                + "L40 52H34L30 66C28 72 22 72 20 66L14 54C8 48 2 40 2 28C2 18 8 10 18 10Z",
+            screen: { x: 38, y: 13, w: 24, h: 9, r: 1, plain: true },
+            deco: [ { x: 50, y: 44, w: 10, h: 10, r: 5 } ],
+            keys: [
+                { id: "L", t: "L", x: 18, y: 7, w: 20, h: 4, r: 1.6 },
+                { id: "R", t: "R", x: 82, y: 7, w: 20, h: 4, r: 1.6 },
+                { id: "Z", t: "Z", x: 50, y: 64, w: 8, h: 5, r: 1.6 },
+                { id: "Start", t: "Start", x: 50, y: 29, w: 9, h: 4, r: 2 },
+                { id: "A", t: "A", x: 75, y: 38, w: 8, h: 8, r: 4 },
+                { id: "B", t: "B", x: 67, y: 32, w: 7, h: 7, r: 3.5 }
+            ].concat(dpad(19, 29, 4.6)).concat(diamond(84, 23, 5, 4.6, ["CUp", "▲"], ["CDown", "▼"], ["CLeft", "◀"], ["CRight", "▶"]))
+        },
+        // Xbox-Pad (Controller S): Stick links oben, Kreuz darunter, A/B/X/Y rechts, Weiss/Schwarz darunter, Trigger oben
+        xbox: {
+            w: 100, h: 70,
+            body: "M22 10H78C90 10 97 20 98 32L99 52C100 64 90 70 82 62L70 50H30L18 62C10 70 0 64 1 52L2 32C3 20 10 10 22 10Z",
+            screen: { x: 38, y: 13, w: 24, h: 9, r: 1, plain: true },
+            deco: [],
+            keys: [
+                { id: "LT", t: "LT", x: 22, y: 5, w: 16, h: 4.5, r: 1.8 },
+                { id: "RT", t: "RT", x: 78, y: 5, w: 16, h: 4.5, r: 1.8 },
+                { id: "LS", t: "LS", x: 21, y: 27, w: 11, h: 11, r: 5.5 },
+                { id: "RS", t: "RS", x: 64, y: 44, w: 10, h: 10, r: 5 },
+                { id: "Back", t: "Back", x: 43, y: 31, w: 8, h: 3.2, r: 1.6 },
+                { id: "Start", t: "Start", x: 57, y: 31, w: 8, h: 3.2, r: 1.6 },
+                { id: "White", t: "○", x: 74, y: 40, w: 5, h: 5, r: 2.5 },
+                { id: "Black", t: "●", x: 86, y: 41, w: 5, h: 5, r: 2.5 }
+            ].concat(dpad(36, 44, 4)).concat(diamond(80, 25, 6, 6, ["Y", "Y"], ["A", "A"], ["X", "X"], ["B", "B"]))
+        },
+        // Nintendo 3DS: aufgeklappt, oben breiter Bildschirm; Schiebepad ueber dem Kreuz, ZL/ZR neben L/R
+        n3ds: {
+            w: 100, h: 110,
+            body: "M10 2H90C95 2 98 5 98 10V46C98 49 96 50 93 50H7C4 50 2 49 2 46V10C2 5 5 2 10 2Z"
+                + "M7 54H93C96 54 98 56 98 59V100C98 105 95 108 90 108H10C5 108 2 105 2 100V59C2 56 4 54 7 54Z",
+            screen: { x: 17, y: 8, w: 66, h: 38, r: 1.5 },
+            deco: [ { x: 50, y: 77, w: 40, h: 30, r: 1 }, { x: 15, y: 67, w: 10, h: 10, r: 5 } ],
+            keys: [
+                { id: "L", t: "L", x: 10, y: 55, w: 13, h: 3.4, r: 1.7 },
+                { id: "ZL", t: "ZL", x: 24, y: 55, w: 10, h: 3.4, r: 1.7 },
+                { id: "ZR", t: "ZR", x: 76, y: 55, w: 10, h: 3.4, r: 1.7 },
+                { id: "R", t: "R", x: 90, y: 55, w: 13, h: 3.4, r: 1.7 },
+                { id: "Select", t: "Select", x: 40, y: 99, w: 11, h: 3.4, r: 1.7 },
+                { id: "Start", t: "Start", x: 60, y: 99, w: 11, h: 3.4, r: 1.7 }
+            ].concat(dpad(15, 88, 4.4)).concat(diamond(86, 72, 6, 5.6, ["X", "X"], ["B", "B"], ["Y", "Y"], ["A", "A"]))
+        },
+        // Wii U GamePad: breites Tablet, Bildschirm in der Mitte, Sticks oben (L3/R3), Kreuz und A/B/X/Y darunter
+        wiiu: {
+            w: 100, h: 56,
+            body: "M8 6H92C97 6 100 10 100 16V42C100 49 96 53 90 53H10C4 53 0 49 0 42V16C0 10 3 6 8 6Z",
+            screen: { x: 24, y: 11, w: 52, h: 36, r: 1 },
+            deco: [],
+            keys: [
+                { id: "ZL", t: "ZL", x: 9, y: 3.2, w: 11, h: 3.4, r: 1.5 },
+                { id: "L", t: "L", x: 22, y: 3.2, w: 10, h: 3.4, r: 1.5 },
+                { id: "R", t: "R", x: 78, y: 3.2, w: 10, h: 3.4, r: 1.5 },
+                { id: "ZR", t: "ZR", x: 91, y: 3.2, w: 11, h: 3.4, r: 1.5 },
+                { id: "L3", t: "L3", x: 12, y: 18, w: 9, h: 9, r: 4.5 },
+                { id: "R3", t: "R3", x: 88, y: 18, w: 9, h: 9, r: 4.5 },
+                { id: "Minus", t: "−", x: 82, y: 48, w: 6, h: 3, r: 1.5 },
+                { id: "Plus", t: "+", x: 92, y: 48, w: 6, h: 3, r: 1.5 }
+            ].concat(dpad(12, 36, 3.8)).concat(diamond(88, 35, 5, 4.4, ["X", "X"], ["B", "B"], ["Y", "Y"], ["A", "A"]))
+        },
+        // Arcade-Bedienfeld: Joystick links, sechs Tasten in zwei Reihen, Muenze und Start in der Mitte
+        arcade: {
+            w: 100, h: 50,
+            body: "M8 8H92C95 8 96 9 97 12L100 42C100 45 98 46 96 46H4C2 46 0 45 0 42L3 12C4 9 5 8 8 8Z",
+            screen: { x: 36, y: 11, w: 28, h: 8, r: 1, plain: true },
+            deco: [ { x: 20, y: 28, w: 7, h: 7, r: 3.5 } ],
+            keys: [
+                { id: "Coin", t: "Coin", x: 43, y: 24, w: 10, h: 3.6, r: 1.8 },
+                { id: "Start", t: "Start", x: 57, y: 24, w: 10, h: 3.6, r: 1.8 },
+                { id: "Button1", t: "1", x: 66, y: 27, w: 8, h: 8, r: 4 },
+                { id: "Button2", t: "2", x: 77, y: 25, w: 8, h: 8, r: 4 },
+                { id: "Button3", t: "3", x: 88, y: 23, w: 8, h: 8, r: 4 },
+                { id: "Button4", t: "4", x: 66, y: 38, w: 8, h: 8, r: 4 },
+                { id: "Button5", t: "5", x: 77, y: 36, w: 8, h: 8, r: 4 },
+                { id: "Button6", t: "6", x: 88, y: 34, w: 8, h: 8, r: 4 }
+            ].concat(dpad(20, 28, 6))
+        },
+        // Tastatur (DOS): die Tasten, die der Controller tippt
+        keyboard: {
+            w: 100, h: 48,
+            body: "M4 2H96C98 2 100 4 100 6V42C100 44 98 46 96 46H4C2 46 0 44 0 42V6C0 4 2 2 4 2Z",
+            screen: { x: 30, y: 5, w: 44, h: 9, r: 1, plain: true },
+            deco: [],
+            keys: [
+                { id: "Esc", t: "Esc", x: 8, y: 9, w: 9, h: 5.5, r: 1 },
+                { id: "F1", t: "F1", x: 20, y: 9, w: 7, h: 5.5, r: 1 },
+                { id: "Tab", t: "Tab", x: 9, y: 18, w: 11, h: 5.5, r: 1 },
+                { id: "KeyY", t: "Y", x: 41, y: 25, w: 7, h: 5.5, r: 1 },
+                { id: "KeyN", t: "N", x: 52, y: 25, w: 7, h: 5.5, r: 1 },
+                { id: "Enter", t: "Enter", x: 70, y: 22, w: 10, h: 13, r: 1 },
+                { id: "Shift", t: "Shift", x: 11, y: 32, w: 15, h: 5.5, r: 1 },
+                { id: "Ctrl", t: "Ctrl", x: 9, y: 40, w: 11, h: 5.5, r: 1 },
+                { id: "Alt", t: "Alt", x: 22, y: 40, w: 9, h: 5.5, r: 1 },
+                { id: "Space", t: "␣", x: 47, y: 40, w: 32, h: 5.5, r: 1 },
+                { id: "KeyUp", t: "▲", x: 88, y: 32, w: 6.5, h: 5.5, r: 1 },
+                { id: "KeyLeft", t: "◀", x: 80.5, y: 40, w: 6.5, h: 5.5, r: 1 },
+                { id: "KeyDown", t: "▼", x: 88, y: 40, w: 6.5, h: 5.5, r: 1 },
+                { id: "KeyRight", t: "▶", x: 95.5, y: 40, w: 6.5, h: 5.5, r: 1 }
+            ]
+        },
+        // RetroPad (RetroArch): Griffe, Kreuz links, X/B/Y/A rechts (wie SNES), L/R und L2/R2 oben, zwei Sticks
+        retropad: {
+            w: 100, h: 66,
+            body: "M22 12H78C88 12 94 18 96 28L99 50C100 60 92 66 84 60L72 48H28L16 60C8 66 0 60 1 50L4 28C6 18 12 12 22 12Z",
+            screen: { x: 36, y: 13, w: 28, h: 9, r: 1, plain: true },
+            deco: [],
+            keys: [
+                { id: "L2", t: "L2", x: 22, y: 3, w: 16, h: 4.5, r: 1.6 },
+                { id: "R2", t: "R2", x: 78, y: 3, w: 16, h: 4.5, r: 1.6 },
+                { id: "L", t: "L", x: 22, y: 8.5, w: 18, h: 4, r: 1.4 },
+                { id: "R", t: "R", x: 78, y: 8.5, w: 18, h: 4, r: 1.4 },
+                { id: "Select", t: "Select", x: 42, y: 27, w: 8, h: 3, r: 1.5 },
+                { id: "Start", t: "Start", x: 58, y: 27, w: 8, h: 3, r: 1.5 },
+                { id: "L3", t: "L3", x: 37, y: 41, w: 10, h: 10, r: 5 },
+                { id: "R3", t: "R3", x: 63, y: 41, w: 10, h: 10, r: 5 }
+            ].concat(dpad(22, 28, 5)).concat(diamond(78, 28, 6, 6.2, ["X", "X"], ["B", "B"], ["Y", "Y"], ["A", "A"]))
         }
     })
-    readonly property var spec: specs[kind] || specs.gba
+    // Konsolen mit gleicher Skizze: PlayStation 2 = PlayStation-Pad (DualShock)
+    readonly property var alias: ({ ps2: "psx" })
+    readonly property var spec: specs[kind] || specs[alias[kind]] || specs.gba
     readonly property real aspect: spec.h / spec.w
     readonly property real k: width / spec.w
     height: width * aspect

@@ -384,14 +384,15 @@ fi
 
 say "Extra: Freigabe-Ordner $SHARE"
 for d in ROMs/gba ROMs/gbc ROMs/nes ROMs/snes ROMs/psx ROMs/psp ROMs/nds ROMs/gamecube ROMs/dreamcast \
-         ROMs/dos ROMs/c64 ROMs/atari2600 ROMs/scummvm BIOS Musik Videos Bilder; do
+         ROMs/dos ROMs/c64 ROMs/atari2600 ROMs/scummvm ROMs/ps2 ROMs/n64 ROMs/xbox ROMs/3ds ROMs/wiiu ROMs/mame \
+         BIOS Musik Videos Bilder; do
   mkdir -p "$SHARE/$d"
 done
 [ -f "$SHARE/LIESMICH.txt" ] || cat > "$SHARE/LIESMICH.txt" <<'EOF'
 VoidStation Freigabe
 =================
 ROMs/<system>   Spiele fuer die Emulatoren (gba, gbc, nes, snes, psx, psp, nds …)
-BIOS            BIOS-Dateien (z. B. PlayStation fuer DuckStation)
+BIOS            BIOS-Dateien aus der eigenen Konsole (PlayStation 1/2, Xbox) – VoidStation findet sie selbst
 Musik, Videos   eigene Medien (Kachel "Videos & Musik")
 Bilder          fuer den Bildbetrachter
 EOF

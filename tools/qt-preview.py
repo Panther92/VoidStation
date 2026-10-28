@@ -60,7 +60,10 @@ _ns = {}
 exec(_src[_src.index("_DPAD = ["):_src.index("EMU_ACTIONS = {")], _ns)
 EMU_LAYOUTS = _ns["EMU_LAYOUTS"]
 PS_TEXT = {"south": "✕", "east": "○", "west": "□", "north": "△", "l1": "L1", "r1": "R1", "l2": "L2", "r2": "R2",
-           "select": "Share", "start": "Options", "l3": "L3", "r3": "R3", "up": "↑", "down": "↓", "left": "←", "right": "→"}
+           "select": "Share", "start": "Options", "l3": "L3", "r3": "R3", "up": "↑", "down": "↓", "left": "←", "right": "→",
+           "rs_up": "R↑", "rs_down": "R↓", "rs_left": "R←", "rs_right": "R→"}
+# BIOS-Hinweis der Spieleliste wie launcher.py bios_status (VS_BIOS_OK=1: alles da)
+BIOS_NEED = {"duckstation": ["bios"], "pcsx2": ["bios"], "xemu": ["mcpx", "flash", "hdd"]}
 CAPTURE_ROLES = ["south", "east", "west", "north", "l1", "r1", "l2", "r2", "start", "select", "up", "down", "left", "right",
                  "l3", "r3"]
 KEYMAP = {"own": {}, "step": 0, "nopad": os.environ.get("VS_NO_PAD") == "1", "mute": False}
@@ -72,6 +75,7 @@ def keymap_payload(emu="gba"):
     cur = {b: own.get(b, r) for b, r in lay["buttons"]}
     pad = None if KEYMAP["nopad"] else {"path": "/dev/input/event21", "name": "Wireless Controller", "id": "054c:09cc", "src": "SDL"}
     return {"emu": emu, "name": lay["name"], "sub": lay.get("sub", ""), "console": lay["console"], "notes": lay.get("notes", []),
+            "rstick": any(r.startswith("rs_") for _, r in lay["buttons"]),
             "pads": [] if not pad else [{"path": pad["path"], "name": pad["name"]}], "pad": pad, "custom": bool(own),
             "buttons": [{"id": b, "action": b in ("save", "load", "rewind", "ff"), "bind": {"role": cur[b]} if cur[b] else None,
                          "role": cur[b] or "", "label": PS_TEXT.get(cur[b], ""), "custom": cur[b] != r} for b, r in lay["buttons"]]}
@@ -85,7 +89,9 @@ TILES = json.loads(json.dumps(S.TILES))
 TILES["groups"].insert(1, {"name": "Spiele", "tiles": [
     {"id": "gba", "label": "Game Boy Advance", "sub": "mGBA", "size": "wide", "color": "#2d3763", "icon": "handheld", "cmd": ["mgba-qt"]}]
     + [{"id": t, "label": lay["sub"], "sub": lay["name"], "color": "#3a3157", "icon": "gamepad", "cmd": [t]}
-       for t, lay in EMU_LAYOUTS.items() if t != "gba"]})
+       for t, lay in EMU_LAYOUTS.items() if t != "gba"
+       and (not os.environ.get("VS_PREVIEW_EMUS") or t in os.environ["VS_PREVIEW_EMUS"].split(","))]})
+# VS_PREVIEW_EMUS=pcsx2,rmg …: nur diese Emulator-Kacheln (fuer Bildschirmfotos der Tastenbelegung)
 
 
 JOB = {}
@@ -345,7 +351,10 @@ class H(S.H):
             "/api/keymap": lambda: keymap_payload(q.get("emu", ["gba"])[0]),
             "/api/roms": lambda: {"system": q.get("system", ["gba"])[0], "count": len(ROMS), "roms": ROMS,
                                   "keymap": q.get("system", ["gba"])[0] in EMU_LAYOUTS,
-                                  "mute": KEYMAP["mute"] if q.get("system", ["gba"])[0] == "gba" else None},
+                                  "mute": KEYMAP["mute"] if q.get("system", ["gba"])[0] == "gba" else None,
+                                  "bios": None if q.get("system", ["gba"])[0] not in BIOS_NEED else
+                                  {"ok": True, "missing": []} if os.environ.get("VS_BIOS_OK") == "1" else
+                                  {"ok": False, "missing": BIOS_NEED[q.get("system", ["gba"])[0]]}},
             "/api/install/probe": lambda: PROBE,
             "/api/install/status": lambda: dict(inst_status(), autostart=LIVE["on"] and INST.get("state") == "idle" and not INST.get("seen")),
             "/api/install/gparted": lambda: {"running": False},

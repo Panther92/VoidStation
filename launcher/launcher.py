@@ -888,6 +888,20 @@ def dosbox_prepare(args):
     home = Path.home()
     rom_dir = home / "share" / "ROMs" / "dos"
     vs_conf = BASE / "dosbox" / "voidstation.conf"
+    # Spiel aus der Spieleliste (Datei oder Ordner unter share/ROMs/dos): ueber [autoexec] starten, danach beenden
+    game, own_conf = None, None
+    if len(args) > 1:
+        t = Path(str(args[-1]))
+        try:
+            inside = t.resolve().is_relative_to(rom_dir.resolve()) and t.resolve() != rom_dir.resolve()
+        except OSError:
+            inside = False
+        if inside and t.exists():
+            args = list(args[:-1])
+            if t.suffix.lower() == ".conf":
+                own_conf = t                      # eigene .conf bringt ihr eigenes [autoexec] mit
+            else:
+                game = t
     try:
         rom_dir.mkdir(parents=True, exist_ok=True)
         primary = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config") / "dosbox" / "dosbox-staging.conf"
@@ -897,19 +911,43 @@ def dosbox_prepare(args):
             log("DOSBox: Grundeinstellung angelegt:", primary)
         keyb = DOSBOX_KEYB.get(x_keyboard_layout() or "", "auto")
         lang = DOSBOX_LANG.get(ui_lang(), "en")
+        auto = "" if own_conf else dosbox_game_lines(game, rom_dir)
         vs_conf.parent.mkdir(parents=True, exist_ok=True)
         vs_conf.write_text(
             "# Von VoidStation vor jedem Start von DOSBox neu geschrieben – Aenderungen hier gehen verloren.\n"
             "# Eigene Einstellungen: ~/.config/dosbox/dosbox-staging.conf\n\n"
             f"[dosbox]\nlanguage = {lang}\n\n"
             f"[dos]\nkeyboardlayout = {keyb}\n\n"
-            f'[autoexec]\nmount c "{rom_dir}"\nc:\n', encoding="utf-8")
+            f'[autoexec]\n{auto}', encoding="utf-8")
     except OSError as e:
         log("DOSBox: Einstellungen nicht geschrieben:", e)
         return args
-    if str(vs_conf) in args:
-        return args
-    return [args[0], "--conf", str(vs_conf)] + list(args[1:])
+    if str(vs_conf) not in args:
+        args = [args[0], "--conf", str(vs_conf)] + list(args[1:])
+    if own_conf:
+        args = list(args) + ["--conf", str(own_conf)]
+    return args
+
+
+def dosbox_game_lines(game, root):
+    """[autoexec]-Zeilen: Laufwerk C: und ggf. Spiel starten, danach DOSBox beenden. Ein Spiel-Ordner (bzw. der Ordner
+    einer Spieldatei) wird selbst zu C: – so stoeren lange Ordnernamen nicht (DOS kennt nur 8.3) und das Spiel findet
+    seine Dateien wie von der Diskette gewohnt. Ordner: genau eine Start-Datei darin (.bat vor .exe/.com, ohne
+    Installations-/Einrichtungsprogramme) – sonst nur C: und die Eingabe dem Spieler ueberlassen."""
+    if game is None:
+        return f'mount c "{root}"\nc:\n'
+    if game.is_dir():
+        files = sorted(f for f in game.iterdir() if f.is_file() and f.suffix.lower() in (".bat", ".exe", ".com")
+                       and not re.match(r"(install|setup|config|setsound|uninst)", f.stem, re.I))
+        bats = [f for f in files if f.suffix.lower() == ".bat"]
+        pick = bats[0] if len(bats) == 1 else files[0] if len(files) == 1 else None
+        mount = game
+    else:
+        pick, mount = game, game.parent
+    out = f'mount c "{mount}"\nc:\n'
+    if pick is not None:
+        out += ("call " if pick.suffix.lower() == ".bat" else "") + pick.name + "\nexit\n"
+    return out
 
 
 def settings_save(s):
@@ -5495,6 +5533,16 @@ class ROMManager:
         "ppsspp": "psp",
         "flycast": "dreamcast",
         "dolphin": "gamecube",
+        "vice": "c64",            # VICE (x64sc) startet die Datei direkt (Autostart)
+        "stella": "atari2600",
+        "pcsx2": "ps2",
+        "rmg": "n64",
+        "xemu": "xbox",
+        "azahar": "3ds",
+        "cemu": "wiiu",
+        "mame": "mame",
+        "dosbox": "dos",
+        "scummvm": "scummvm",
         "retroarch": "retroarch",
     }
     SYSTEM_TO_TILE = {v: k for k, v in TILE_TO_SYSTEM.items()}
@@ -5515,14 +5563,39 @@ class ROMManager:
         "nds": [".nds", ".zip"],
         "gamecube": [".iso", ".rvz", ".gcm"],
         "dreamcast": [".cdi", ".gdi", ".chd"],
-        "n64": [".z64", ".n64", ".v64"],
+        "n64": [".z64", ".n64", ".v64", ".zip", ".7z"],
+        "ps2": [".iso", ".chd", ".cso", ".zso", ".cue", ".gz", ".elf"],
+        "xbox": [".iso", ".xiso"],
+        "3ds": [".3ds", ".cci", ".cxi", ".3dsx", ".zcci", ".zcxi", ".z3dsx"],
+        "wiiu": [".wua", ".wux", ".wud", ".rpx"],
         "c64": [".d64", ".t64", ".prg", ".crt"],
         "atari2600": [".a26", ".bin"],
         "megadrive": [".md", ".bin", ".smd", ".gen", ".zip", ".7z"],
         "genesis": [".md", ".bin", ".smd", ".gen", ".zip", ".7z"],
         "scummvm": [".scummvm"],
-        "dos": [".conf", ".exe", ".bat"],
+        "dos": [".conf", ".exe", ".bat", ".com"],
+        "mame": [".zip", ".7z"],
+        "retroarch": [".zip", ".7z"],             # dazu alles, was die installierten Kerne lesen (retroarch_exts)
     }
+    # Ordner, in denen auch Unterordner als Spiel zaehlen (DOS-Spiel bzw. ScummVM-Spiel = Ordner)
+    DIR_SYSTEMS = {"dos", "scummvm"}
+    # Optionen direkt vor der Spieldatei (xemu: -dvd_path, Cemu: -g – sonst nimmt das Programm die Datei nicht)
+    ROM_ARGS = {"xbox": ["-dvd_path"], "wiiu": ["-g"]}
+
+    def rom_args(self, canon, target):
+        """Was hinter den Befehl des Emulators kommt, um genau dieses Spiel zu starten."""
+        if canon == "mame":                       # MAME will den Namen des ROM-Sets, nicht die Datei
+            return [target.stem]
+        if canon == "scummvm":                    # Spiel = Ordner (eine .scummvm-Datei liegt darin)
+            d = target if target.is_dir() else target.parent
+            return (["--fullscreen"] if emu_fullscreen_wanted("scummvm") else []) + [f"--path={d}", "--auto-detect"]
+        if canon == "retroarch":
+            core = retroarch_core(target)
+            if not core:
+                raise ValueError(f"Kein RetroArch-Kern fuer {target.suffix or target.name} – in RetroArch unter "
+                                 "Online-Aktualisierung einen Kern laden")
+            return ["-L", str(core), str(target)]
+        return self.ROM_ARGS.get(canon, []) + [str(target)]
     # Befehle aus catalog.json als Basis/Fallback
     EMULATOR_CMD = {
         "gba": ["mgba-qt"],
@@ -5555,11 +5628,20 @@ class ROMManager:
         if not sys_dir.is_dir():
             return []
         valid_exts = set(self.EXTENSIONS.get(folder, [".zip"]))
+        if folder == "retroarch":
+            valid_exts |= retroarch_exts()
+        dirs = folder in self.DIR_SYSTEMS
+        names = mame_names([i.stem for i in sys_dir.iterdir() if i.is_file()]) if folder == "mame" else {}
         roms = []
         try:
             for item in sorted(sys_dir.iterdir()):
+                if dirs and item.is_dir() and not item.name.startswith("."):
+                    roms.append({"id": hashlib.sha1(str(item).encode()).hexdigest()[:10], "name": item.name,
+                                 "filename": item.name, "system": folder, "folder": folder, "size": "", "bytes": 0,
+                                 "dir": True})
+                    continue
                 if item.is_file() and item.suffix.lower() in valid_exts:
-                    name = item.stem
+                    name = names.get(item.stem) or item.stem
                     clean_name = re.sub(r"\s*[\(\[][^()\[\]]*[\)\]]", "", name).strip() or name
                     size_bytes = item.stat().st_size
                     size_mb = round(size_bytes / (1024 * 1024), 1)
@@ -5597,7 +5679,7 @@ class ROMManager:
         for f in cands:
             sys_dir = (self.rom_dir / f).resolve()
             t = (sys_dir / safe_name).resolve()
-            if t.is_file() and t.is_relative_to(sys_dir):
+            if (t.is_file() or (canon in self.DIR_SYSTEMS and t.is_dir())) and t.is_relative_to(sys_dir) and t != sys_dir:
                 target = t
                 break
         if not target:
@@ -5609,7 +5691,7 @@ class ROMManager:
         tid = self.SYSTEM_TO_TILE.get(canon, canon)
         for src in (find_tile(system), find_tile(tid), catalog_app(system), catalog_app(tid)):
             if src and isinstance(src.get("cmd"), list):
-                cmd = expand(src["cmd"]) + [str(target)]
+                cmd = expand(src["cmd"]) + self.rom_args(canon, target)
                 break
         # 3. Fallback: erstes vorhandene Programm aus EMULATOR_CMD
         if not cmd and canon in self.EMULATOR_CMD:
@@ -5769,6 +5851,10 @@ if has_path:
 lib.SDL_GameControllerOpen.restype = ctypes.c_void_p
 lib.SDL_GameControllerNameForIndex.restype = ctypes.c_char_p
 lib.SDL_GameControllerClose.argtypes = [ctypes.c_void_p]
+class Guid(ctypes.Structure):
+    _fields_ = [("data", ctypes.c_uint8 * 16)]
+lib.SDL_JoystickGetDeviceGUID.restype = Guid
+lib.SDL_JoystickGetGUIDString.argtypes = [Guid, ctypes.c_char_p, ctypes.c_int]
 for f in ("SDL_GameControllerGetBindForButton", "SDL_GameControllerGetBindForAxis"):
     getattr(lib, f).restype = Bind
     getattr(lib, f).argtypes = [ctypes.c_void_p, ctypes.c_int]
@@ -5779,11 +5865,14 @@ def enc(b):
     return None
 BTN = (("a", 0), ("b", 1), ("x", 2), ("y", 3), ("select", 4), ("guide", 5), ("start", 6), ("l3", 7), ("r3", 8),
        ("lb", 9), ("rb", 10), ("up", 11), ("down", 12), ("left", 13), ("right", 14))
-AX = (("lx", 0), ("ly", 1), ("lt", 4), ("rt", 5))
+AX = (("lx", 0), ("ly", 1), ("rx", 2), ("ry", 3), ("lt", 4), ("rt", 5))
 out = []
 for i in range(lib.SDL_NumJoysticks()):
     d = {"index": i, "name": (lib.SDL_JoystickNameForIndex(i) or b"").decode("utf-8", "replace"),
          "path": (lib.SDL_JoystickPathForIndex(i) or b"").decode() if has_path else ""}
+    buf = ctypes.create_string_buffer(64)
+    lib.SDL_JoystickGetGUIDString(lib.SDL_JoystickGetDeviceGUID(i), buf, 64)
+    d["guid"] = buf.value.decode()
     if lib.SDL_IsGameController(i):
         d["gcname"] = (lib.SDL_GameControllerNameForIndex(i) or b"").decode("utf-8", "replace")
         c = lib.SDL_GameControllerOpen(i)
@@ -5900,6 +5989,7 @@ def pad_roles(pad, probe=None):
                         used.append(cand)
                         break
         if "south" in binds and "east" in binds:
+            stick_roles(binds, pad, sdl, by_axis)
             return binds, "SDL"
     std = {"south": E.BTN_SOUTH, "east": E.BTN_EAST, "west": E.BTN_WEST, "north": E.BTN_NORTH, "l1": E.BTN_TL,
            "r1": E.BTN_TR, "l2": E.BTN_TL2, "r2": E.BTN_TR2, "select": E.BTN_SELECT, "start": E.BTN_START,
@@ -5912,7 +6002,28 @@ def pad_roles(pad, probe=None):
     if E.ABS_HAT0X in pad["axes"]:
         for r, h, d in (("up", "y", -1), ("down", "y", 1), ("left", "x", -1), ("right", "x", 1)):
             binds.setdefault(r, {"hat": h, "dir": d})
+    stick_roles(binds, pad)
     return binds, "Linux"
+
+
+# Rechter Stick als vier Richtungen (N64: C-Tasten) – zusaetzlich zu PAD_ROLES, nur als Vorgabe einzelner Konsolen
+STICK_ROLES = ["rs_up", "rs_down", "rs_left", "rs_right"]
+STICK_TEXT = {"rs_up": "R↑", "rs_down": "R↓", "rs_left": "R←", "rs_right": "R→"}
+
+
+def stick_roles(binds, pad, sdl=None, by_axis=None):
+    """rs_up/rs_down/rs_left/rs_right: Achsen des rechten Sticks (laut SDL, sonst ABS_RX/ABS_RY)."""
+    from evdev import ecodes as E
+    axes = (sdl or {}).get("axes") or {}
+    def code(name, fallback):
+        b = axes.get(name)
+        if b and "axis" in b and by_axis and b["axis"] in by_axis:
+            return by_axis[b["axis"]]
+        return fallback if fallback in pad["axes"] else None
+    rx, ry = code("rx", E.ABS_RX), code("ry", E.ABS_RY)
+    if rx is not None and ry is not None and rx != ry:
+        binds.update({"rs_up": {"abs": ry, "dir": -1}, "rs_down": {"abs": ry, "dir": 1},
+                      "rs_left": {"abs": rx, "dir": -1}, "rs_right": {"abs": rx, "dir": 1}})
 
 
 # ---- Tastenbelegung je Emulator (Spieleliste des Emulators -> "Tastenbelegung") ------------------------------
@@ -5959,6 +6070,40 @@ EMU_LAYOUTS = {
     "flycast": {"name": "Flycast", "sub": "Dreamcast", "console": "dc", "notes": ["sticks", "flycast"], "buttons": [
         ("A", "south"), ("B", "east"), ("X", "west"), ("Y", "north"), ("L", "l2"), ("R", "r2"),
         ("Start", "start"), *_DPAD, ("ff", "r1")]},
+    "pcsx2": {"name": "PCSX2", "sub": "PlayStation 2", "console": "ps2", "notes": ["sticks", "pcsx2"], "buttons": [
+        ("Cross", "south"), ("Circle", "east"), ("Square", "west"), ("Triangle", "north"),
+        ("L1", "l1"), ("R1", "r1"), ("L2", "l2"), ("R2", "r2"), ("L3", "l3"), ("R3", "r3"),
+        ("Start", "start"), ("Select", "select"), *_DPAD, ("save", ""), ("load", ""), ("ff", "")]},
+    # N64: A unten, B links (wie auf dem Original schraeg darueber), Z auf dem linken Trigger, C-Tasten auf dem rechten Stick
+    "rmg": {"name": "Rosalie's Mupen GUI", "sub": "Nintendo 64", "console": "n64", "notes": ["n64"], "buttons": [
+        ("A", "south"), ("B", "west"), ("Z", "l2"), ("L", "l1"), ("R", "r1"), ("Start", "start"),
+        ("CUp", "rs_up"), ("CDown", "rs_down"), ("CLeft", "rs_left"), ("CRight", "rs_right"), *_DPAD,
+        ("save", ""), ("load", ""), ("ff", "r2")]},
+    "xemu": {"name": "xemu", "sub": "Xbox", "console": "xbox", "notes": ["sticks", "xemu"], "buttons": [
+        ("A", "south"), ("B", "east"), ("X", "west"), ("Y", "north"), ("White", "l1"), ("Black", "r1"),
+        ("LT", "l2"), ("RT", "r2"), ("Back", "select"), ("Start", "start"), ("LS", "l3"), ("RS", "r3"), *_DPAD,
+        ("save", ""), ("load", "")]},
+    "azahar": {"name": "Azahar", "sub": "Nintendo 3DS", "console": "n3ds", "notes": ["sticks"], "buttons": [
+        ("A", "east"), ("B", "south"), ("X", "north"), ("Y", "west"), ("L", "l1"), ("R", "r1"), ("ZL", "l2"),
+        ("ZR", "r2"), ("Start", "start"), ("Select", "select"), *_DPAD, ("save", ""), ("load", ""), ("ff", "")]},
+    "cemu": {"name": "Cemu", "sub": "Wii U", "console": "wiiu", "notes": ["sticks", "cemu"], "buttons": [
+        ("A", "east"), ("B", "south"), ("X", "north"), ("Y", "west"), ("L", "l1"), ("R", "r1"), ("ZL", "l2"),
+        ("ZR", "r2"), ("Plus", "start"), ("Minus", "select"), ("L3", "l3"), ("R3", "r3"), *_DPAD]},
+    # Arcade: sechs Tasten in zwei Reihen (unten 1–3, oben 4–6 ≈ Controller unten/rechts/links/oben + Schultern)
+    "mame": {"name": "MAME", "sub": "Arcade", "console": "arcade", "notes": ["sticks", "mame"], "buttons": [
+        ("Button1", "south"), ("Button2", "east"), ("Button3", "west"), ("Button4", "north"), ("Button5", "l1"),
+        ("Button6", "r1"), ("Coin", "select"), ("Start", "start"), *_DPAD, ("save", ""), ("load", ""), ("ff", "r2")]},
+    # DOS: der Controller als Tastatur – die Tasten schickt VoidStation (EMU_KEYS), DOSBox selbst bleibt unveraendert
+    "dosbox": {"name": "DOSBox Staging", "sub": "DOS", "console": "keyboard", "notes": ["dosbox"], "buttons": [
+        ("Space", "south"), ("Ctrl", "east"), ("Alt", "west"), ("Shift", "north"), ("Enter", "start"),
+        ("Esc", "select"), ("KeyY", "l1"), ("KeyN", "r1"), ("Tab", "l2"), ("F1", "r2"), ("KeyUp", "up"),
+        ("KeyDown", "down"), ("KeyLeft", "left"), ("KeyRight", "right")]},
+    # RetroPad: Lage wie beim SNES-Pad (B unten, A rechts, Y links, X oben)
+    "retroarch": {"name": "RetroArch", "sub": "RetroPad", "console": "retropad", "notes": ["sticks", "retroarch"],
+                  "buttons": [
+        ("B", "south"), ("A", "east"), ("Y", "west"), ("X", "north"), ("L", "l1"), ("R", "r1"), ("L2", "l2"),
+        ("R2", "r2"), ("L3", "l3"), ("R3", "r3"), ("Start", "start"), ("Select", "select"), *_DPAD,
+        ("save", ""), ("load", ""), ("ff", ""), ("rewind", "")]},
 }
 EMU_ACTIONS = {"save", "load", "rewind", "ff"}
 # Was VoidStation fuer die Extras an das Fenster des Emulators schickt (tap = einmal, hold = solange gedrueckt).
@@ -5966,6 +6111,12 @@ EMU_ACTIONS = {"save", "load", "rewind", "ff"}
 #   mGBA 0.10 Window.cpp · Snes9x 1.60 (keine Vorgabe) · Nestopia 1.53 inputmanager.cpp (F5/F7) · DuckStation
 #   hotkeys.cpp (F2/F1/Tab) · PPSSPP 1.20 (Speichern/Laden ohne Vorgabe, Tab) · melonDS 1.1 Window.cpp (Umschalt+F1/F1)
 #   · Dolphin 2609 HotkeyManager.cpp (Umschalt+F1/F1/Tab) · Flycast 2.7 keyboard_device.h (Leertaste)
+#   · PCSX2 2.8 Pad.cpp (F1/F3; Turbo halten setzt VoidStation auf Tab) · RMG 0.9 Settings.cpp (F5/F7; F4 schaltet die
+#   Geschwindigkeitsbremse – "toggle": beim Druecken und beim Loslassen je einmal) · xemu 0.8 main.cc (F5 laden,
+#   Umschalt+F5 speichern, sobald F5 einem Schnappschuss zugeordnet ist – macht VoidStation) · Azahar 2126 (Schnell-
+#   speichern/-laden und Turbo ohne Vorgabe, setzt VoidStation) · MAME 0.282 inpttype.ipp (Umschalt+F6/F7 Schnell-
+#   speichern/-laden, Einfg vorspulen) · RetroArch 1.22 config.def.keybinds.h (F2/F4, L halten, R zurueckspulen)
+#   · DOSBox: alle Tasten – der Controller tippt auf der Tastatur
 EMU_KEYS = {
     "gba": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab"), "rewind": ("hold", "Scroll_Lock")},
     "snes9x": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab")},
@@ -5975,6 +6126,17 @@ EMU_KEYS = {
     "melonds": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab")},
     "dolphin": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab")},
     "flycast": {"ff": ("hold", "space")},
+    "pcsx2": {"save": ("tap", "F1"), "load": ("tap", "F3"), "ff": ("hold", "Tab")},
+    "rmg": {"save": ("tap", "F5"), "load": ("tap", "F7"), "ff": ("toggle", "F4")},
+    "xemu": {"save": ("tap", "shift+F5"), "load": ("tap", "F5")},
+    "azahar": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("toggle", "F12")},
+    "mame": {"save": ("tap", "shift+F6"), "load": ("tap", "shift+F7"), "ff": ("hold", "Insert")},
+    "retroarch": {"save": ("tap", "F2"), "load": ("tap", "F4"), "ff": ("hold", "l"), "rewind": ("hold", "r")},
+    "dosbox": {"Space": ("hold", "space"), "Ctrl": ("hold", "Control_L"), "Alt": ("hold", "Alt_L"),
+               "Shift": ("hold", "Shift_L"), "Enter": ("hold", "Return"), "Esc": ("hold", "Escape"),
+               "KeyY": ("hold", "y"), "KeyN": ("hold", "n"), "Tab": ("hold", "Tab"), "F1": ("hold", "F1"),
+               "KeyUp": ("hold", "Up"), "KeyDown": ("hold", "Down"), "KeyLeft": ("hold", "Left"),
+               "KeyRight": ("hold", "Right")},
 }
 EMU_PADS_LOCK = threading.Lock()
 # Controllertasten zum Anzeigen, je nach Bauart (Steuerkreuz: Pfeile, die Oberflaeche setzt "Kreuz" davor)
@@ -6045,7 +6207,8 @@ def keymap_payload(emu, path=""):
     pads = gamepads()
     pad = next((p for p in pads if p["path"] == path), pads[0] if pads else None)
     out = {"emu": emu, "name": lay["name"], "sub": lay.get("sub", ""), "console": lay["console"],
-           "notes": [n for n in lay.get("notes", []) if n != "duckstation" or not duck_ready()],
+           "notes": [n for n in lay.get("notes", []) if n not in KEYMAP_NOTE_READY or not KEYMAP_NOTE_READY[n]()],
+           "rstick": any(r in STICK_ROLES for _, r in lay["buttons"]),
            "pads": [{"path": p["path"], "name": p["name"]} for p in pads], "pad": None, "custom": False}
     roles, src, style, binds = {}, "", "xbox", {}
     if pad:
@@ -6057,7 +6220,7 @@ def keymap_payload(emu, path=""):
     for btn, defrole in lay["buttons"]:
         b = binds.get(btn)
         role = next((r for r, x in roles.items() if x == b), "") if b else ""
-        label = DPAD_TEXT.get(role) or ROLE_TEXT[style].get(role) or (binding_label(b) if b else "")
+        label = DPAD_TEXT.get(role) or STICK_TEXT.get(role) or ROLE_TEXT[style].get(role) or (binding_label(b) if b else "")
         btns.append({"id": btn, "action": btn in EMU_ACTIONS, "bind": b, "role": role, "label": label,
                      "custom": bool(pad) and b != roles.get(defrole)})
     out["buttons"] = btns
@@ -6171,12 +6334,13 @@ class PadCapture:
             self.gen += 1
             self._release()
 
-    def capture(self, path, timeout=10.0):
+    def capture(self, path, timeout=10.0, rstick=False):
         """-> {"bind", "label"} | {"timeout": True} (nichts gedrueckt) | {"cancel": True} (Guide/PS-Taste)
-        | {"cancelled": True} (von der Oberflaeche abgebrochen)."""
+        | {"cancelled": True} (von der Oberflaeche abgebrochen). rstick: auch der rechte Stick zaehlt (N64: C-Tasten),
+        sonst nie ein Stick – ein leichtes Wackeln soll keine Taste belegen."""
         import select as sel
         from evdev import ecodes as E
-        sticks = {E.ABS_X, E.ABS_Y, E.ABS_RX, E.ABS_RY}
+        sticks = {E.ABS_X, E.ABS_Y} if rstick else {E.ABS_X, E.ABS_Y, E.ABS_RX, E.ABS_RY}
         with self.lock:
             self.gen += 1
             gen = self.gen
@@ -6395,7 +6559,8 @@ def keymap_context(tile):
 
 
 def bind_role(b, roles):
-    return next((r for r, x in roles.items() if x == b), "") if b else ""
+    """Rolle (PAD_ROLES) einer Bindung, "" fuer alles andere (auch Richtungen des rechten Sticks)."""
+    return next((r for r in PAD_ROLES if roles.get(r) == b), "") if b else ""
 
 
 def bind_raw(ctx, b):
@@ -6657,7 +6822,8 @@ def melonds_value(ctx, b):
 
 
 def toml_dump(d):
-    """Kleiner TOML-Schreiber fuer melonDS.toml (Tabellen, Zahlen, Wahrheitswerte, Texte, Listen davon)."""
+    """Kleiner TOML-Schreiber fuer melonDS.toml und xemu.toml (Tabellen, Listen von Tabellen, Zahlen,
+    Wahrheitswerte, Texte, Listen davon)."""
     def key(k):
         return k if re.fullmatch(r"[A-Za-z0-9_-]+", k) else json.dumps(k, ensure_ascii=False)
 
@@ -6673,15 +6839,21 @@ def toml_dump(d):
         raise ValueError(f"TOML: {type(v)}")
 
     out = []
+    is_tables = lambda v: isinstance(v, list) and bool(v) and all(isinstance(x, dict) for x in v)
 
-    def table(t, path):
-        scal = [(k, v) for k, v in t.items() if not isinstance(v, dict)]
-        subs = [(k, v) for k, v in t.items() if isinstance(v, dict)]
-        if path and (scal or not subs):
+    def table(t, path, head=True):
+        scal = [(k, v) for k, v in t.items() if not isinstance(v, dict) and not is_tables(v)]
+        subs = [(k, v) for k, v in t.items() if isinstance(v, dict) or is_tables(v)]
+        if head and path and (scal or not subs):
             out.append("\n[" + ".".join(key(p) for p in path) + "]")
         out.extend(f"{key(k)} = {val(v)}" for k, v in scal)
         for k, v in subs:
-            table(v, path + [k])
+            if isinstance(v, dict):
+                table(v, path + [k])
+            else:
+                for item in v:
+                    out.append("\n[[" + ".".join(key(p) for p in path + [k]) + "]]")
+                    table(item, path + [k], head=False)
     table(d, [])
     return "\n".join(out).lstrip("\n") + "\n"
 
@@ -6819,9 +6991,770 @@ def flycast_prepare(ctx):
         log("Flycast: Controller-Belegung", path.name)
 
 
+# -- BIOS: Dateien aus der Freigabe share/BIOS (vom PC aus befuellt). VoidStation sucht dort (auch in Unterordnern) und
+# stellt den Emulator darauf ein, solange dessen eigener Ordner bzw. Pfad nichts Brauchbares enthaelt. Erkannt wird
+# an der Groesse, wie in den Emulatoren selbst: PlayStation 512 KiB (DuckStation bios.h), PlayStation 2 4–8 MiB
+# (PCSX2 BiosTools.cpp), Xbox: MCPX-Boot-ROM 512 Byte, Flash-BIOS 256 KiB oder 1 MiB, Festplatte als .qcow2 (xemu).
+BIOS_DIR = Path.home() / "share" / "BIOS"
+BIOS_KINDS = {
+    "psx": lambda f, n: n == 0x80000,
+    "ps2": lambda f, n: 4 << 20 <= n <= 8 << 20 and f.suffix.lower() not in (".qcow2", ".iso", ".chd"),
+    "mcpx": lambda f, n: n == 512,
+    "flash": lambda f, n: n in (0x40000, 0x100000),
+    "hdd": lambda f, n: f.suffix.lower() == ".qcow2",
+}
+
+
+def bios_find(kind, root=None, deep=True):
+    """Dateien einer Art in share/BIOS (bzw. root), mit Unterordnern (2 Ebenen), sortiert: oben vor tief, nach Name."""
+    root = Path(root) if root else BIOS_DIR
+    out = []
+    try:
+        level = [root]
+        for depth in range(3 if deep else 1):
+            nxt = []
+            for d in level:
+                for f in sorted(d.iterdir(), key=lambda x: x.name.casefold()):
+                    if f.name.startswith("."):
+                        continue
+                    if f.is_dir():
+                        nxt.append(f)
+                    elif f.is_file() and BIOS_KINDS[kind](f, f.stat().st_size):
+                        out.append(f)
+            level = nxt
+    except OSError:
+        pass
+    return out
+
+
+def bios_dir_has(kind, d):
+    return bool(d) and Path(d).is_dir() and bool(bios_find(kind, d, deep=False))
+
+
+# Je Kachel: was gebraucht wird und wo der Emulator gerade sucht (Ordner bzw. Datei je Art)
+def _duck_bios_dir():
+    v = ini_read(DUCK_INI).get("BIOS", {}).get("SearchDirectory", "bios") or "bios"
+    p = Path(v).expanduser()
+    return p if p.is_absolute() else DUCK_INI.parent / p
+
+
+def _pcsx2_bios_dir():
+    v = ini_read(PCSX2_INI).get("Folders", {}).get("Bios", "bios") or "bios"
+    p = Path(v).expanduser()
+    return p if p.is_absolute() else PCSX2_INI.parent.parent / p
+
+
+def bios_status(tile):
+    """Fuer die Spieleliste: {"ok": bool, "missing": [Art …]} – None, wenn der Emulator kein BIOS braucht."""
+    if tile == "duckstation":
+        ok = bios_dir_has("psx", _duck_bios_dir()) or bios_dir_has("ps2", _duck_bios_dir()) or bool(bios_find("psx"))
+        return {"ok": ok, "missing": [] if ok else ["bios"]}
+    if tile == "pcsx2":
+        ok = bios_dir_has("ps2", _pcsx2_bios_dir()) or bool(bios_find("ps2"))
+        return {"ok": ok, "missing": [] if ok else ["bios"]}
+    if tile == "xemu":
+        files = xemu_files(xemu_load())
+        miss = [k for k in ("mcpx", "flash", "hdd") if not files.get(k) and not bios_find(k)]
+        return {"ok": not miss, "missing": miss}
+    return None
+
+
+def bios_prepare(tile):
+    """Vor dem Start: Emulator auf share/BIOS stellen, wenn er selbst nichts findet (DuckStation, PCSX2)."""
+    if tile == "duckstation" and duck_ready():
+        cur = _duck_bios_dir()
+        if not (bios_dir_has("psx", cur) or bios_dir_has("ps2", cur)):
+            hit = (bios_find("psx") or [None])[0]
+            if hit:
+                ini_update(DUCK_INI, "BIOS", {"SearchDirectory": str(hit.parent)})
+                log("DuckStation: BIOS aus", hit.parent)
+    if tile == "pcsx2" and pcsx2_ready():
+        cur = _pcsx2_bios_dir()
+        if not bios_dir_has("ps2", cur):
+            hit = (bios_find("ps2") or [None])[0]
+            if hit:
+                ini_update(PCSX2_INI, "Folders", {"Bios": str(hit.parent)})
+                log("PCSX2: BIOS aus", hit.parent)
+
+
+# -- PCSX2 2.8 (Flatpak, SDL3-Gamepad; inis/PCSX2.ini [Pad1], pcsx2/Input/SDLInputSource.cpp, SIO/Pad/PadDualshock2.cpp)
+PCSX2_INI = Path.home() / ".var/app/net.pcsx2.PCSX2/config/PCSX2/inis/PCSX2.ini"
+PCSX2_GC = {"a": "FaceSouth", "b": "FaceEast", "x": "FaceWest", "y": "FaceNorth", "back": "Back", "start": "Start",
+            "l3": "LeftStick", "r3": "RightStick", "lb": "LeftShoulder", "rb": "RightShoulder", "up": "DPadUp",
+            "down": "DPadDown", "left": "DPadLeft", "right": "DPadRight", "lt": "+LeftTrigger", "rt": "+RightTrigger"}
+
+
+def pcsx2_name(ctx, b):
+    """ConvertKeyToString: "SDL-0/FaceSouth", roh "SDL-0/JoyButton3", "SDL-0/+JoyAxis2", "SDL-0/Hat0North"."""
+    role = bind_role(b, ctx["roles"])
+    if role:
+        return f"SDL-0/{PCSX2_GC[GC_ROLE[role]]}"
+    raw = bind_raw(ctx, b)
+    if not raw:
+        return None
+    if raw[0] == "button":
+        return f"SDL-0/JoyButton{raw[1]}"
+    if raw[0] == "axis":
+        return f"SDL-0/{'+' if raw[2] > 0 else '-'}JoyAxis{raw[1]}"
+    return f"SDL-0/Hat0{DUCK_HAT[raw[1]]}"
+
+
+def pcsx2_ready():
+    """PCSX2 eingerichtet (PCSX2.ini da, Einrichtungsassistent durch)? Vorher behandelt PCSX2 die Datei als neu."""
+    ini = ini_read(PCSX2_INI)
+    return "Pad1" in ini and ini.get("UI", {}).get("SetupWizardIncomplete", "false").lower() != "true"
+
+
+def pcsx2_prepare(ctx):
+    if not pcsx2_ready():
+        log("PCSX2: noch nicht eingerichtet – Belegung beim naechsten Start")
+        return
+    wanted = {b: pcsx2_name(ctx, ctx["bmap"].get(b)) for b, _ in EMU_LAYOUTS["pcsx2"]["buttons"] if b not in EMU_ACTIONS}
+    wanted.update({"LLeft": "SDL-0/-LeftX", "LRight": "SDL-0/+LeftX", "LUp": "SDL-0/-LeftY", "LDown": "SDL-0/+LeftY",
+                   "RLeft": "SDL-0/-RightX", "RRight": "SDL-0/+RightX", "RUp": "SDL-0/-RightY",
+                   "RDown": "SDL-0/+RightY"})
+    is_sdl = lambda v: v.startswith("SDL-")
+    cur = ini_multi_get(PCSX2_INI, "Pad1", list(wanted), is_sdl)
+    if keymap_once("pcsx2", "pad", cur, wanted, ctx["custom"]):
+        ini_multi_set(PCSX2_INI, "Pad1", wanted, is_sdl)
+        log("PCSX2: Controller-Belegung", wanted)
+    hk = ini_read(PCSX2_INI).get("Hotkeys", {})
+    if not hk.get("HoldTurbo"):                   # Vorspulen halten (EMU_KEYS) – PCSX2 gibt dafuer nichts vor
+        ini_update(PCSX2_INI, "Hotkeys", {"HoldTurbo": "Keyboard/Tab"})
+
+
+# -- Rosalie's Mupen GUI 0.9 (Flatpak, SDL3; RMG/mupen64plus.cfg, RMG-Input/main.cpp, RMG-Core/Settings.cpp)
+RMG_CFG = Path.home() / ".var/app/com.github.Rosalie241.RMG/config/RMG/mupen64plus.cfg"
+RMG_SECTION = "Rosalie's Mupen GUI - Input Plugin Profile 0"
+RMG_KEYS = {"A": "A", "B": "B", "Z": "ZTrigger", "L": "LeftShoulder", "R": "RightShoulder", "Start": "Start",
+            "CUp": "CButtonUp", "CDown": "CButtonDown", "CLeft": "CButtonLeft", "CRight": "CButtonRight",
+            "Up": "DpadUp", "Down": "DpadDown", "Left": "DpadLeft", "Right": "DpadRight"}
+# SDL_GamepadButton bzw. SDL_GamepadAxis (SDL3, gleiche Nummern wie SDL2) und deren Namen
+SDL_GC_BUTTON = {"a": 0, "b": 1, "x": 2, "y": 3, "back": 4, "guide": 5, "start": 6, "l3": 7, "r3": 8, "lb": 9, "rb": 10,
+                 "up": 11, "down": 12, "left": 13, "right": 14}
+SDL_GC_BUTTON_NAME = {"a": "a", "b": "b", "x": "x", "y": "y", "back": "back", "start": "start", "l3": "leftstick",
+                      "r3": "rightstick", "lb": "leftshoulder", "rb": "rightshoulder", "up": "dpup", "down": "dpdown",
+                      "left": "dpleft", "right": "dpright"}
+SDL_GC_AXIS = {"lt": 4, "rt": 5}
+STICK_AXIS = {"rs_up": (3, 0), "rs_down": (3, 1), "rs_left": (2, 0), "rs_right": (2, 1)}   # (Achse, 1 = positiv)
+SDL_HAT_MASK = {"up": 1, "right": 2, "down": 4, "left": 8}
+
+
+def stick_role(b, roles):
+    return next((r for r in STICK_ROLES if roles.get(r) == b), "") if b else ""
+
+
+def rmg_mapping(ctx, b):
+    """-> (InputType, Name, Data, ExtraData) als Texte; InputType: 0 Gamepad-Taste, 1 Gamepad-Achse,
+    2 Joystick-Taste, 3 Joystick-Achse, 4 Joystick-Hat (RMG-Input common.hpp). Frei: alles leer."""
+    role = bind_role(b, ctx["roles"])
+    if role:
+        gc = GC_ROLE[role]
+        if gc in SDL_GC_AXIS:
+            return ("1", ("lefttrigger" if gc == "lt" else "righttrigger") + "+", str(SDL_GC_AXIS[gc]), "1")
+        return ("0", SDL_GC_BUTTON_NAME[gc], str(SDL_GC_BUTTON[gc]), "0")
+    st = stick_role(b, ctx["roles"])
+    if st:
+        ax, pos = STICK_AXIS[st]
+        return ("1", ("rightx" if ax == 2 else "righty") + ("+" if pos else "-"), str(ax), str(pos))
+    raw = bind_raw(ctx, b)
+    if not raw:
+        return ("", "", "", "")
+    if raw[0] == "button":
+        return ("2", f"button {raw[1]}", str(raw[1]), "0")
+    if raw[0] == "axis":
+        return ("3", f"axis {raw[1]}{'+' if raw[2] > 0 else '-'}", str(raw[1]), "1" if raw[2] > 0 else "0")
+    return ("4", f"hat 0 {raw[1]}", "0", str(SDL_HAT_MASK[raw[1]]))
+
+
+def m64_str(v):
+    return '"' + str(v).replace('"', "") + '"'
+
+
+def rmg_prepare(ctx):
+    sec = ini_read(RMG_CFG).get(RMG_SECTION, {})
+    wanted = {}
+    for b, key in RMG_KEYS.items():
+        t, name, data, extra = rmg_mapping(ctx, ctx["bmap"].get(b))
+        wanted.update({f"{key}_InputType": m64_str(t), f"{key}_Name": m64_str(name), f"{key}_Data": m64_str(data),
+                       f"{key}_ExtraData": m64_str(extra)})
+    for key, ax, pos in (("AnalogStickUp", 1, 0), ("AnalogStickDown", 1, 1), ("AnalogStickLeft", 0, 0),
+                         ("AnalogStickRight", 0, 1)):
+        wanted.update({f"{key}_InputType": '"1"', f"{key}_Name": m64_str(("leftx" if ax == 0 else "lefty") + "-+"[pos]),
+                       f"{key}_Data": m64_str(ax), f"{key}_ExtraData": m64_str(pos)})
+    cur = {k: sec[k] for k in wanted if k in sec}
+    # Ohne Abschnitt ist bei RMG kein Controller eingesteckt – dann alles anlegen ("Automatic": erstes Gamepad)
+    plugged = sec.get("PluggedIn", "False") == "True" and sec.get("DeviceType") in ("2", "4")
+    if keymap_once("rmg", "pad", cur, wanted, ctx["custom"] or not plugged):
+        base = {} if plugged else {"PluggedIn": "True", "DeviceName": '"Automatic"', "DeviceType": "2",
+                                   "DevicePath": '""', "DeviceSerial": '""', "Deadzone": "9", "Sensitivity": "100",
+                                   "Pak": "0", "RemoveDuplicateMappings": "True", "FilterEventsForButtons": "True",
+                                   "FilterEventsForAxis": "True"}
+        ini_update_spaced(RMG_CFG, RMG_SECTION, {**base, **wanted})
+        log("RMG: Controller-Belegung", {k: wanted[k] for k in wanted if k.endswith("_Name")})
+
+
+def ini_update_spaced(path, section, values):
+    """ini_update fuer Dateien im Stil "Schluessel = Wert" (mupen64plus.cfg): vorhandene Zeilen bleiben, wie sie sind."""
+    ini_update(path, section, values)
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    out, sec = [], None
+    for line in lines:
+        t = line.strip()
+        if t.startswith("[") and t.endswith("]"):
+            sec = t[1:-1]
+        elif sec == section and "=" in line and " = " not in line:
+            k, _, v = line.partition("=")
+            if k.strip() in values:
+                line = f"{k.strip()} = {v.strip()}"
+        out.append(line)
+    tmp = path.with_name(path.name + ".vs-tmp")
+    tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+# -- xemu 0.8 (Flatpak, SDL3-Gamepad; xemu.toml, config_spec.yml, ui/xemu-input.c) – auch BIOS-Pfade und Savestate-Taste
+XEMU_TOML = Path.home() / ".var/app/app.xemu.xemu/data/xemu/xemu/xemu.toml"
+XEMU_KEYS = {"A": "a", "B": "b", "X": "x", "Y": "y", "White": "lshoulder", "Black": "rshoulder", "Back": "back",
+             "Start": "start", "LS": "lstick_btn", "RS": "rstick_btn", "Up": "dpad_up", "Down": "dpad_down",
+             "Left": "dpad_left", "Right": "dpad_right"}
+XEMU_DEFAULT = {"a": 0, "b": 1, "x": 2, "y": 3, "back": 4, "guide": 5, "start": 6, "lstick_btn": 7, "rstick_btn": 8,
+                "lshoulder": 9, "rshoulder": 10, "dpad_up": 11, "dpad_down": 12, "dpad_left": 13, "dpad_right": 14,
+                "axis_left_x": 0, "axis_left_y": 1, "axis_right_x": 2, "axis_right_y": 3, "axis_trigger_left": 4,
+                "axis_trigger_right": 5}
+XEMU_SNAPSHOT = "VoidStation"
+
+
+def xemu_load():
+    import tomllib
+    try:
+        return tomllib.loads(XEMU_TOML.read_text(encoding="utf-8")) if XEMU_TOML.exists() else {}
+    except (OSError, ValueError) as e:
+        log("xemu.toml nicht lesbar:", e)
+        return None
+
+
+def xemu_files(root):
+    """Gesetzte und vorhandene Dateien aus [sys.files] -> {"mcpx", "flash", "hdd"}."""
+    f = ((root or {}).get("sys") or {}).get("files") or {}
+    out = {}
+    for k, key in (("mcpx", "bootrom_path"), ("flash", "flashrom_path"), ("hdd", "hdd_path")):
+        v = f.get(key)
+        if isinstance(v, str) and v and Path(v).is_file():
+            out[k] = v
+    return out
+
+
+def xemu_mapping(ctx):
+    """controller_mapping fuer den ersten Controller: Xbox-Taste -> SDL-Gamepad-Taste (-1 = frei). xemu kann nur
+    Gamepad-Tasten tauschen; LT/RT nur auf Trigger-Achsen."""
+    m = {}
+    for b, key in XEMU_KEYS.items():
+        bind = ctx["bmap"].get(b)
+        gc = GC_ROLE.get(bind_role(bind, ctx["roles"]), "")
+        if gc in SDL_GC_BUTTON:
+            m[key] = SDL_GC_BUTTON[gc]
+        else:
+            if bind:
+                log(f"xemu: {b} geht nur auf eine Controllertaste – bleibt frei")
+            m[key] = -1
+    for b, key, dflt in (("LT", "axis_trigger_left", 4), ("RT", "axis_trigger_right", 5)):
+        bind = ctx["bmap"].get(b)
+        gc = GC_ROLE.get(bind_role(bind, ctx["roles"]), "")
+        m[key] = SDL_GC_AXIS[gc] if gc in SDL_GC_AXIS else (-1 if not bind else dflt)
+    return m
+
+
+def xemu_prepare(ctx):
+    root = xemu_load()
+    if root is None:
+        return
+    changed = False
+    # BIOS-Dateien aus share/BIOS, wo xemu noch nichts (Vorhandenes) eingetragen hat
+    files = root.setdefault("sys", {}).setdefault("files", {})
+    have = xemu_files(root)
+    for k, key in (("mcpx", "bootrom_path"), ("flash", "flashrom_path"), ("hdd", "hdd_path")):
+        hit = (bios_find(k) or [None])[0]
+        if k not in have and hit:
+            files[key] = str(hit)
+            changed = True
+            log(f"xemu: {key} =", hit)
+    # Savestates: F5 auf einen Schnappschuss legen (F5 laden, Umschalt+F5 speichern, s. EMU_KEYS)
+    sc = root.setdefault("general", {}).setdefault("snapshots", {}).setdefault("shortcuts", {})
+    if not sc.get("f5"):
+        sc["f5"] = XEMU_SNAPSHOT
+        changed = True
+    guid = (ctx.get("sdl") or {}).get("guid", "")
+    if guid:
+        maps = root.setdefault("input", {}).setdefault("gamepad_mappings", [])
+        ent = next((m for m in maps if isinstance(m, dict) and m.get("gamepad_id") == guid), None)
+        cm = dict(XEMU_DEFAULT, **((ent or {}).get("controller_mapping") or {}))
+        wanted = xemu_mapping(ctx)
+        cur = {k: cm.get(k) for k in wanted}
+        stock = {k: XEMU_DEFAULT[k] for k in wanted}
+        if keymap_once("xemu", "pad", cur, wanted, ctx["custom"] or cur == stock):
+            if ent is None:
+                ent = {"gamepad_id": guid}
+                maps.append(ent)
+            ent.setdefault("controller_mapping", {}).update(wanted)
+            changed = True
+            log("xemu: Controller-Belegung", wanted)
+    if changed:
+        try:
+            text = toml_dump(root)
+        except ValueError as e:
+            log("xemu.toml: unbekannter Aufbau, bleibt:", e)
+            return
+        XEMU_TOML.parent.mkdir(parents=True, exist_ok=True)
+        tmp = XEMU_TOML.with_suffix(".vs-tmp")
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(XEMU_TOML)
+
+
+# -- Azahar 2126 (Flatpak, SDL2-GameController; azahar-emu/qt-config.ini [Controls] profiles\N\…, QSettings-Format)
+AZAHAR_INI = Path.home() / ".var/app/org.azahar_emu.Azahar/config/azahar-emu/qt-config.ini"
+AZAHAR_KEYS = {"A": "button_a", "B": "button_b", "X": "button_x", "Y": "button_y", "Up": "button_up",
+               "Down": "button_down", "Left": "button_left", "Right": "button_right", "L": "button_l", "R": "button_r",
+               "Start": "button_start", "Select": "button_select", "ZL": "button_zl", "ZR": "button_zr"}
+# Schnellspeichern/-laden und Turbo (EMU_KEYS): Azahar gibt keine Tasten vor
+AZAHAR_HOTKEYS = {"Quick Save": "Shift+F1", "Quick Load": "F1", "Toggle Turbo Mode": "F12"}
+
+
+def azahar_param(ctx, b):
+    """ParamPackage (Schluessel alphabetisch, wie Azahar es schreibt). Gamepad-Tasten fuer alle Controller
+    (maptype:all), rohe Tasten fuer genau diesen (guid+port)."""
+    role = bind_role(b, ctx["roles"])
+    if role:
+        gc = GC_ROLE[role]
+        if gc in SDL_GC_AXIS:
+            return f"api:controller,axis:{SDL_GC_AXIS[gc]},direction:+,engine:sdl,guid:0,maptype:all,port:0,threshold:0.5"
+        return f"api:controller,button:{SDL_GC_BUTTON[gc]},engine:sdl,guid:0,maptype:all,port:0"
+    raw = bind_raw(ctx, b)
+    guid = (ctx.get("sdl") or {}).get("guid", "")
+    if not raw or not guid:
+        return "code:0,engine:keyboard"            # frei (leer hiesse: Azahars Tastatur-Vorgabe)
+    if raw[0] == "button":
+        return f"button:{raw[1]},engine:sdl,guid:{guid},port:0"
+    if raw[0] == "axis":
+        return f"axis:{raw[1]},direction:{'+' if raw[2] > 0 else '-'},engine:sdl,guid:{guid},port:0,threshold:0.5"
+    return f"direction:{raw[1]},engine:sdl,guid:{guid},hat:0,port:0"
+
+
+def qt_unquote(v):
+    v = (v or "").strip()
+    return v[1:-1] if len(v) >= 2 and v[0] == v[-1] == '"' else v
+
+
+def azahar_prepare(ctx):
+    ini = ini_read(AZAHAR_INI)
+    ctl = ini.get("Controls", {})
+    try:
+        idx = int(qt_unquote(ctl.get("profile", "0")) or 0) + 1
+        size = int(qt_unquote(ctl.get("profiles\\size", "0")) or 0)
+    except ValueError:
+        idx, size = 1, 0
+    if idx > max(size, 1):
+        idx = 1
+    pre = f"profiles\\{idx}\\"
+    wanted = {pre + k: azahar_param(ctx, ctx["bmap"].get(b)) for b, k in AZAHAR_KEYS.items()}
+    wanted[pre + "circle_pad"] = "api:controller,axis_x:0,axis_y:1,deadzone:0.100000,engine:sdl,guid:0,maptype:all,port:0"
+    wanted[pre + "c_stick"] = "api:controller,axis_x:2,axis_y:3,deadzone:0.100000,engine:sdl,guid:0,maptype:all,port:0"
+    # Wert mit "\default=true" gilt als Vorgabe (Tastatur) – also nichts eingestellt
+    cur = {k: (None if ctl.get(k + "\\default", "false") == "true" else qt_unquote(ctl.get(k)) or None) for k in wanted}
+    values = {}
+    if keymap_once("azahar", "pad", cur, wanted, ctx["custom"]):
+        for k, v in wanted.items():
+            values[k] = f'"{v}"'
+            values[k + "\\default"] = "false"
+        if size < 1:
+            values.update({"profiles\\size": "1", pre + "name": "Default", pre + "name\\default": "false"})
+        values.update({pre + "input_maptype": "0", pre + "input_maptype\\default": "false"})
+    if values:
+        ini_update(AZAHAR_INI, "Controls", values)
+        log("Azahar: Controller-Belegung", {k[len(pre):]: v for k, v in wanted.items()})
+    sc = ini_read(AZAHAR_INI).get("Shortcuts", {})
+    fix = {}
+    for name, keyseq in AZAHAR_HOTKEYS.items():
+        k = "Main%20Window\\" + name.replace(" ", "%20") + "\\KeySeq"
+        if sc.get(k + "\\default", "true") == "true" or not qt_unquote(sc.get(k)):
+            fix.update({k: keyseq, k + "\\default": "false"})
+    if fix:
+        ini_update(AZAHAR_INI, "Shortcuts", fix)
+
+
+# -- Cemu 2.6 (Flatpak, SDL2-GameController; Cemu/controllerProfiles/controller0.xml, input/InputManager.cpp,
+#    input/emulated/VPADController.h, input/api/Controller.h)
+CEMU_PROFILE = Path.home() / ".var/app/info.cemu.Cemu/config/Cemu/controllerProfiles/controller0.xml"
+CEMU_VPAD = {"A": 1, "B": 2, "X": 3, "Y": 4, "L": 5, "R": 6, "ZL": 7, "ZR": 8, "Plus": 9, "Minus": 10, "Up": 11,
+             "Down": 12, "Left": 13, "Right": 14, "L3": 15, "R3": 16}
+CEMU_STICKS = {17: 45, 18: 39, 19: 44, 20: 38, 21: 47, 22: 41, 23: 46, 24: 40}   # Sticks: kAxis*/kRotation*
+CEMU_TRIGGER = {"lt": 42, "rt": 43}                                               # kTriggerXP / kTriggerYP
+
+
+def cemu_mapping(ctx):
+    """VPAD-Taste -> Cemu-Tastennummer (SDL-Gamepad-Taste n = kButton n). Rohe Tasten kennt Cemu so nicht -> frei."""
+    m = {}
+    for b, vp in CEMU_VPAD.items():
+        bind = ctx["bmap"].get(b)
+        gc = GC_ROLE.get(bind_role(bind, ctx["roles"]), "")
+        if gc in CEMU_TRIGGER:
+            m[vp] = CEMU_TRIGGER[gc]
+        elif gc in SDL_GC_BUTTON:
+            m[vp] = SDL_GC_BUTTON[gc]
+        elif bind:
+            log(f"Cemu: {b} geht nur auf eine Controllertaste – bleibt frei")
+    m.update(CEMU_STICKS)
+    return m
+
+
+def cemu_prepare(ctx):
+    import xml.etree.ElementTree as ET
+    guid = (ctx.get("sdl") or {}).get("guid", "")
+    root = None
+    if CEMU_PROFILE.exists():
+        try:
+            root = ET.parse(CEMU_PROFILE).getroot()
+        except (OSError, ET.ParseError) as e:
+            log("Cemu: controller0.xml nicht lesbar, bleibt:", e)
+            return
+        if (root.findtext("type") or "").strip() != "Wii U GamePad":
+            log("Cemu: anderer Controller-Typ eingestellt – Belegung bleibt")
+            return
+    ctl = None
+    if root is not None:
+        ctl = next((c for c in root.findall("controller") if (c.findtext("api") or "").strip() == "SDLController"), None)
+    wanted = cemu_mapping(ctx)
+    cur = {}
+    if ctl is not None:
+        for e in ctl.findall("mappings/entry"):
+            try:
+                cur[int(e.findtext("mapping"))] = int(e.findtext("button"))
+            except (TypeError, ValueError):
+                pass
+    stock = {1: 1, 2: 0, 3: 3, 4: 2, 5: 9, 6: 10, 7: 42, 8: 43, 9: 6, 10: 4, 11: 11, 12: 12, 13: 13, 14: 14, 15: 7, 16: 8,
+             **CEMU_STICKS}                         # Cemus eigene Vorgabe fuer SDL-Controller (VPADController.cpp)
+    if not keymap_once("cemu", "pad", {str(k): v for k, v in cur.items()}, {str(k): v for k, v in wanted.items()},
+                       ctx["custom"] or cur == stock):
+        return
+    if ctl is None and not guid:
+        log("Cemu: SDL kennt den Controller nicht – Belegung bleibt")
+        return
+    if root is None:
+        root = ET.Element("emulated_controller")
+        ET.SubElement(root, "type").text = "Wii U GamePad"
+    if ctl is None:                                # Tastatur o. Ae. bleibt daneben
+        ctl = ET.SubElement(root, "controller")
+        ET.SubElement(ctl, "api").text = "SDLController"
+        ET.SubElement(ctl, "uuid").text = f"0_{guid}"
+        ET.SubElement(ctl, "display_name").text = (ctx.get("sdl") or {}).get("gcname") or ctx["pad"]["name"]
+        for grp, dz in (("axis", "0.25"), ("rotation", "0.25"), ("trigger", "0.25")):
+            g = ET.SubElement(ctl, grp)
+            ET.SubElement(g, "deadzone").text = dz
+            ET.SubElement(g, "range").text = "1"
+    old = ctl.find("mappings")
+    if old is not None:
+        ctl.remove(old)
+    maps = ET.SubElement(ctl, "mappings")
+    for vp, btn in sorted(wanted.items()):
+        e = ET.SubElement(maps, "entry")
+        ET.SubElement(e, "mapping").text = str(vp)
+        ET.SubElement(e, "button").text = str(btn)
+    ET.indent(root, space="\t")
+    CEMU_PROFILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CEMU_PROFILE.with_suffix(".vs-tmp")
+    tmp.write_text('<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode") + "\n",
+                   encoding="utf-8")
+    tmp.replace(CEMU_PROFILE)
+    log("Cemu: Controller-Belegung", wanted)
+
+
+# -- MAME 0.282 (SDL2-GameController mit -joystickprovider sdlgame; ~/.mame/cfg/default.cfg, osd/modules/input/
+#    input_sdl.cpp, emu/inpttype.ipp, emu/input.cpp). Void startet MAME ueber /usr/bin/mame (Skript): beim allerersten
+#    Aufruf legt es nur ~/.mame samt mame.ini an und beendet sich – das erledigt VoidStation vorher (mame_setup).
+MAME_DIR = Path.home() / ".mame"
+MAME_CFG = MAME_DIR / "cfg" / "default.cfg"
+# Port -> Tastatur-/Maus-Vorgabe von MAME (inpttype.ipp), bleibt vor der Controllertaste stehen
+MAME_PORTS = {"Button1": ("P1_BUTTON1", "KEYCODE_LCONTROL OR MOUSECODE_1_BUTTON1 OR GUNCODE_1_BUTTON1"),
+              "Button2": ("P1_BUTTON2", "KEYCODE_LALT OR MOUSECODE_1_BUTTON3 OR GUNCODE_1_BUTTON2"),
+              "Button3": ("P1_BUTTON3", "KEYCODE_SPACE OR MOUSECODE_1_BUTTON2"),
+              "Button4": ("P1_BUTTON4", "KEYCODE_LSHIFT"), "Button5": ("P1_BUTTON5", "KEYCODE_Z"),
+              "Button6": ("P1_BUTTON6", "KEYCODE_X"), "Coin": ("COIN1", "KEYCODE_5"), "Start": ("START1", "KEYCODE_1"),
+              "Up": ("P1_JOYSTICK_UP", "KEYCODE_UP"), "Down": ("P1_JOYSTICK_DOWN", "KEYCODE_DOWN"),
+              "Left": ("P1_JOYSTICK_LEFT", "KEYCODE_LEFT"), "Right": ("P1_JOYSTICK_RIGHT", "KEYCODE_RIGHT")}
+MAME_STICK = {"Up": "JOYCODE_1_YAXIS_UP_SWITCH", "Down": "JOYCODE_1_YAXIS_DOWN_SWITCH",
+              "Left": "JOYCODE_1_XAXIS_LEFT_SWITCH", "Right": "JOYCODE_1_XAXIS_RIGHT_SWITCH"}
+
+
+def mame_items(sdl):
+    """SDL-Gamepad-Taste (GC_ROLE-Name) -> MAME-Eingabe. Nummeriert werden nur vorhandene Tasten, der Reihe nach
+    A, B, X, Y, LB, RB, (Trigger, wenn SDL sie als Taste meldet), L3, R3 – wie input_sdl.cpp; analoge Trigger sind
+    SLIDER1/2 (gedrueckt negativ)."""
+    btns, axes = (sdl or {}).get("buttons"), (sdl or {}).get("axes") or {}
+    have = (lambda n: btns.get(n) is not None) if isinstance(btns, dict) else (lambda n: True)
+    out, n = {}, 1
+    for name in ("a", "b", "x", "y", "lb", "rb", "lt", "rt", "l3", "r3"):
+        if name in ("lt", "rt"):
+            b = axes.get(name)
+            if b and "button" in b:
+                out[name], n = f"BUTTON{n}", n + 1
+            elif b is not None or not isinstance(btns, dict):
+                out[name] = "SLIDER1_NEG_SWITCH" if name == "lt" else "SLIDER2_NEG_SWITCH"
+        elif have(name):
+            out[name], n = f"BUTTON{n}", n + 1
+    out.update({"back": "SELECT", "start": "START", "up": "HAT1UP", "down": "HAT1DOWN", "left": "HAT1LEFT",
+                "right": "HAT1RIGHT"})
+    return out
+
+
+def mame_seqs(ctx):
+    items = mame_items(ctx.get("sdl"))
+    out = {}
+    for b, (port, kb) in MAME_PORTS.items():
+        bind = ctx["bmap"].get(b)
+        gc = GC_ROLE.get(bind_role(bind, ctx["roles"]), "")
+        seq = kb + (f" OR JOYCODE_1_{items[gc]}" if gc in items else "")
+        if bind and gc not in items:
+            log(f"MAME: {b} geht nur auf eine Controllertaste – bleibt frei")
+        if b in MAME_STICK:
+            seq += f" OR {MAME_STICK[b]}"         # linker Stick steuert immer mit
+        out[port] = seq
+    return out
+
+
+def mame_setup():
+    """Erster Start: mame.ini und Ordner anlegen lassen (das Skript von Void tut beim ersten Aufruf nur das)."""
+    if (MAME_DIR / "mame.ini").exists() or not shutil.which("mame"):
+        return
+    try:
+        subprocess.run(["mame"], cwd=str(Path.home()), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=60)
+        log("MAME: Grundeinstellung angelegt")
+    except (OSError, subprocess.SubprocessError) as e:
+        log("MAME: Grundeinstellung:", e)
+
+
+def mame_prepare(ctx):
+    import xml.etree.ElementTree as ET
+    mame_setup()
+    root = None
+    if MAME_CFG.exists():
+        try:
+            root = ET.parse(MAME_CFG).getroot()
+        except (OSError, ET.ParseError) as e:
+            log("MAME: default.cfg nicht lesbar, bleibt:", e)
+            return
+    wanted = mame_seqs(ctx)
+    inp = None
+    if root is not None:
+        sysn = next((x for x in root.findall("system") if x.get("name") == "default"), None)
+        inp = sysn.find("input") if sysn is not None else None
+    cur = {}
+    if inp is not None:
+        for port in inp.findall("port"):
+            if port.get("type") in wanted:
+                cur[port.get("type")] = " ".join((port.findtext("newseq") or "").split())
+    if not keymap_once("mame", "pad", cur, wanted, ctx["custom"]):
+        return
+    if root is None:
+        root = ET.Element("mameconfig", version="10")
+    sysn = next((x for x in root.findall("system") if x.get("name") == "default"), None)
+    if sysn is None:
+        sysn = ET.SubElement(root, "system", name="default")
+    inp = sysn.find("input")
+    if inp is None:
+        inp = ET.SubElement(sysn, "input")
+    for port in [x for x in inp.findall("port") if x.get("type") in wanted]:
+        inp.remove(port)
+    for t, seq in wanted.items():
+        port = ET.SubElement(inp, "port", type=t)
+        ET.SubElement(port, "newseq", type="standard").text = seq
+    ET.indent(root, space="    ")
+    MAME_CFG.parent.mkdir(parents=True, exist_ok=True)
+    tmp = MAME_CFG.with_suffix(".vs-tmp")
+    tmp.write_text('<?xml version="1.0"?>\n' + ET.tostring(root, encoding="unicode") + "\n", encoding="utf-8")
+    tmp.replace(MAME_CFG)
+    log("MAME: Controller-Belegung", wanted)
+
+
+MAME_NAMES = BASE / "cache" / "mame-names.json"
+
+
+def mame_names(sets):
+    """ROM-Set -> Spielname (mame -listfull), zwischengespeichert je MAME-Fassung. Unbekannte Sets fehlen einfach."""
+    exe = shutil.which("mame")
+    if not sets or not exe:
+        return {}
+    try:
+        stamp = str(Path("/usr/libexec/mame/mame").stat().st_mtime_ns)
+    except OSError:
+        stamp = exe
+    try:
+        cache = json.loads(MAME_NAMES.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
+    if cache.get("stamp") != stamp:
+        cache = {"stamp": stamp, "names": {}}
+    names = cache["names"]
+    todo = [x for x in sets if x not in names]
+    if todo:
+        r = run(["/usr/libexec/mame/mame" if Path("/usr/libexec/mame/mame").exists() else exe, "-listfull", *todo],
+                timeout=30)
+        for line in (r.stdout if r else "").splitlines()[1:]:
+            m = re.match(r'^(\S+)\s+"(.*)"\s*$', line)
+            if m:
+                names[m.group(1)] = m.group(2)
+        for x in todo:
+            names.setdefault(x, "")              # unbekannt: nicht jedes Mal neu fragen
+        try:
+            MAME_NAMES.parent.mkdir(parents=True, exist_ok=True)
+            MAME_NAMES.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+    return {k: v for k, v in names.items() if k in sets and v}
+
+
+# -- RetroArch 1.22 (udev-Joypad; ~/.config/retroarch/retroarch.cfg input_player1_*, input/drivers_joypad/udev_joypad.c)
+RETROARCH_CFG = Path.home() / ".config/retroarch/retroarch.cfg"
+RETROARCH_KEYS = {"B": "b", "A": "a", "Y": "y", "X": "x", "L": "l", "R": "r", "L2": "l2", "R2": "r2", "L3": "l3",
+                  "R3": "r3", "Start": "start", "Select": "select", "Up": "up", "Down": "down", "Left": "left",
+                  "Right": "right"}
+
+
+def retroarch_cfg_read(path=None):
+    out = {}
+    try:
+        for line in (path or RETROARCH_CFG).read_text(encoding="utf-8", errors="replace").splitlines():
+            k, sep, v = line.partition("=")
+            if sep and not k.strip().startswith("#"):
+                out[k.strip()] = v.strip().strip('"')
+    except OSError:
+        pass
+    return out
+
+
+def retroarch_cfg_write(values, path=None):
+    """Schluessel in retroarch.cfg setzen ("key = \\"wert\\""), Rest bleibt."""
+    path = path or RETROARCH_CFG
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    todo = dict(values)
+    for i, line in enumerate(lines):
+        k = line.partition("=")[0].strip()
+        if k in todo:
+            lines[i] = f'{k} = "{todo.pop(k)}"'
+    lines += [f'{k} = "{v}"' for k, v in todo.items()]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".vs-tmp")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def retroarch_indices(pad):
+    """(Tasten, Achsen) wie RetroArchs udev-Joypad: KEY_UP..KEY_DOWN, BTN_MISC.., dann der Rest; Achsen ohne Hats."""
+    from evdev import ecodes as E
+    keys = sorted(pad["keys"])
+    order = [k for k in keys if E.KEY_UP <= k <= E.KEY_DOWN] + [k for k in keys if k >= E.BTN_MISC] \
+        + [k for k in keys if k < E.KEY_UP] + [k for k in keys if E.KEY_DOWN < k < E.BTN_MISC]
+    axes = sorted(a for a in pad["axes"] if a < E.ABS_MISC and not E.ABS_HAT0X <= a <= E.ABS_HAT3Y)
+    return {k: i for i, k in enumerate(order)}, {a: i for i, a in enumerate(axes)}
+
+
+def retroarch_prepare(ctx):
+    cfg = retroarch_cfg_read()
+    if cfg.get("input_joypad_driver", "udev") == "udev":
+        btn, ax = retroarch_indices(ctx["pad"])
+    else:
+        btn, ax = ctx["btn"], ctx["ax"]
+    wanted = {}
+    for b, k in RETROARCH_KEYS.items():
+        bind = ctx["bmap"].get(b)
+        v_btn = v_ax = "nul"
+        if bind and "key" in bind and bind["key"] in btn:
+            v_btn = str(btn[bind["key"]])
+        elif bind and "abs" in bind and bind["abs"] in ax:
+            v_ax = f"{'+' if bind['dir'] > 0 else '-'}{ax[bind['abs']]}"
+        elif bind and "hat" in bind:
+            v_btn = "h0" + HAT_DIRS[(bind["hat"], bind["dir"])]
+        wanted[f"input_player1_{k}_btn"] = v_btn
+        wanted[f"input_player1_{k}_axis"] = v_ax
+    cur = {k: (None if cfg.get(k, "nul") == "nul" else cfg[k]) for k in wanted}
+    values = {}
+    if keymap_once("retroarch", "pad", cur, wanted, ctx["custom"]):
+        values.update(wanted)
+    if ctx["bmap"].get("rewind") and cfg.get("rewind_enable", "false") != "true":
+        values["rewind_enable"] = "true"           # Zurueckspulen belegt: in RetroArch einschalten
+    if values:
+        retroarch_cfg_write(values)
+        log("RetroArch: Controller-Belegung", {k: v for k, v in values.items() if k.endswith("_btn") and v != "nul"})
+
+
+def retroarch_dirs():
+    cfg = retroarch_cfg_read()
+    exp = lambda v: Path(os.path.expanduser(v.replace(":/", "~/.config/retroarch/", 1) if v.startswith(":/") else v))
+    cores = [exp(cfg["libretro_directory"])] if cfg.get("libretro_directory") not in (None, "", "default") else []
+    cores += [Path.home() / ".config/retroarch/cores", Path("/usr/lib/libretro")]
+    infos = [exp(cfg["libretro_info_path"])] if cfg.get("libretro_info_path") not in (None, "", "default") else []
+    infos += [Path.home() / ".config/retroarch/cores", Path.home() / ".config/retroarch/info",
+              Path("/usr/share/libretro/info")]
+    return cores, infos
+
+
+# Bevorzugte Kerne je Endung, wenn mehrere passen (sonst der erste nach Namen)
+RETROARCH_PREFER = ["mgba", "snes9x", "nestopia", "genesis_plus_gx", "picodrive", "mupen64plus_next", "pcsx_rearmed",
+                    "beetle_psx", "mednafen_pce_fast", "fbneo", "stella", "prosystem", "handy", "mednafen_ngp",
+                    "mednafen_wswan", "gambatte", "melonds", "ppsspp"]
+
+
+def retroarch_cores():
+    """Installierte Kerne -> Endungen aus ihren .info-Dateien (supported_extensions)."""
+    cores, infos = retroarch_dirs()
+    out = {}
+    for d in cores:
+        try:
+            for so in sorted(d.glob("*_libretro.so")):
+                out.setdefault(so, set())
+        except OSError:
+            pass
+    for so in out:
+        for d in infos:
+            info = d / (so.stem + ".info")
+            try:
+                m = re.search(r'^supported_extensions\s*=\s*"([^"]*)"', info.read_text(errors="replace"), re.M)
+            except OSError:
+                continue
+            if m:
+                out[so] = {"." + e.lower() for e in m.group(1).split("|") if e}
+                break
+    return out
+
+
+def retroarch_exts():
+    exts = set()
+    for e in retroarch_cores().values():
+        exts |= e
+    return exts
+
+
+def retroarch_core(target):
+    ext = target.suffix.lower()
+    cands = [so for so, e in retroarch_cores().items() if ext in e]
+    if not cands:
+        return None
+    rank = lambda so: next((i for i, p in enumerate(RETROARCH_PREFER) if so.stem == f"{p}_libretro"), 99)
+    return sorted(cands, key=lambda so: (rank(so), so.name))[0]
+
+
 KEYMAP_WRITERS = {"duckstation": duckstation_prepare, "snes9x": snes9x_prepare, "nestopia": nestopia_prepare,
                   "ppsspp": ppsspp_prepare, "melonds": melonds_prepare, "dolphin": dolphin_prepare,
-                  "flycast": flycast_prepare}
+                  "flycast": flycast_prepare, "pcsx2": pcsx2_prepare, "rmg": rmg_prepare, "xemu": xemu_prepare,
+                  "azahar": azahar_prepare, "cemu": cemu_prepare, "mame": mame_prepare, "retroarch": retroarch_prepare}
+# Hinweise der Tastenbelegung, die nur gelten, solange der Emulator noch nicht eingerichtet ist
+KEYMAP_NOTE_READY = {"duckstation": lambda: duck_ready(), "pcsx2": lambda: pcsx2_ready()}
 
 
 def keymap_prepare(tile):
@@ -6891,7 +7824,7 @@ def emu_front(tile):
     return bool(proc and act and any(int(w[0], 16) == act for w in APPS._windows_of(tile, proc)))
 
 
-EMU_HELD = set()                              # gerade gehaltene Tasten (keydown geschickt), werden sicher losgelassen
+EMU_HELD = set()                              # gerade gehaltene Tasten (keydown bzw. Umschalter an), werden sicher geloest
 
 
 def emu_action(action, down):
@@ -6902,14 +7835,20 @@ def emu_action(action, down):
     if not spec or not shutil.which("xdotool"):
         return
     how, key = spec
-    if how == "hold" and not down:
+    if how in ("hold", "toggle") and not down:
         if key in EMU_HELD:
             EMU_HELD.discard(key)
-            run(["xdotool", "keyup", key])
+            if how == "hold":
+                run(["xdotool", "keyup", key])
+            elif emu_front(tile):                 # Umschalter: zweiter Druck stellt zurueck
+                run(["xdotool", "key", "--clearmodifiers", key])
         return
     if not down or not emu_front(tile):
         return
     if how == "tap":
+        run(["xdotool", "key", "--clearmodifiers", key])
+    elif how == "toggle":
+        EMU_HELD.add(key)
         run(["xdotool", "key", "--clearmodifiers", key])
     else:
         EMU_HELD.add(key)
@@ -6921,6 +7860,11 @@ def emu_action(action, down):
 # Programm -> (Startoption, Taste zum Umschalten). Beide aus dem Quelltext der Programme: mGBA (commandline.c "-f",
 # Window.cpp Strg+F), DuckStation (qthost.cpp "-fullscreen", hotkeys.cpp F11).
 EMU_FULLSCREEN = {"mgba-qt": ("-f", "ctrl+f"), "duckstation": ("-fullscreen", "F11")}
+# Dasselbe je Kachel fuer Flatpaks (Programm ist dort "flatpak"): PCSX2 (QtHost.cpp "-fullscreen", Alt+Enter),
+# RMG (main.cpp "-f", Alt+Enter), xemu (QEMU "-full-screen", F11), Azahar (citra_qt.cpp "-f", F11), Cemu
+# (LaunchSettings.cpp "-f", MainWindow.cpp F11). Die Option steht vor der Spieldatei (und ROM_ARGS).
+EMU_FULLSCREEN_TILE = {"pcsx2": ("-fullscreen", "alt+Return"), "rmg": ("-f", "alt+Return"), "xemu": ("-full-screen", "F11"),
+                       "azahar": ("-f", "F11"), "cemu": ("-f", "F11")}
 # Emulatoren mit einem einzigen Fenster ohne eigene Vollbild-Startoption: Vollbild ueber den Fenstermanager
 EMU_WM_FULLSCREEN = {"snes9x", "nestopia", "melonds", "stella", "vice", "retroarch"}
 FS_HOLD = 0.8                                # L3 so lange halten -> Vollbild an/aus
@@ -6950,19 +7894,36 @@ def emu_prepare(tid, args):
         except Exception as e:  # noqa: BLE001 – Vorgaben duerfen den Start nie verhindern
             log("mGBA-Vorgaben:", e)
         env["SDL_JOYSTICK_HIDAPI"] = "0"
+    try:
+        bios_prepare(tid)
+    except Exception as e:  # noqa: BLE001
+        log(f"{tid}: BIOS:", e)
+    if tid == "mame" and "-joystickprovider" not in args:   # SDL-Gamepad-Namen wie in mame_items
+        args = [args[0], "-joystickprovider", "sdlgame"] + list(args[1:])
+    flat = args[:2] == ["flatpak", "run"]
     if tid in KEYMAP_WRITERS:
         try:
             keymap_prepare(tid)
         except Exception as e:  # noqa: BLE001 – die Belegung darf den Start nie verhindern
             log(f"{tid}: Controller-Belegung:", e)
         env["SDL_JOYSTICK_HIDAPI"] = "0"          # rohe Tastennummern wie in sdl_indices (s. SDL_PROBE)
-        if args[:2] == ["flatpak", "run"] and not any(str(a).startswith("--env=SDL_JOYSTICK_HIDAPI") for a in args):
+        if flat and not any(str(a).startswith("--env=SDL_JOYSTICK_HIDAPI") for a in args):
             args = ["flatpak", "run", "--env=SDL_JOYSTICK_HIDAPI=0"] + list(args[2:])
+    if flat and tid in EMU_LAYOUTS:
+        # Spiele und BIOS liegen in der Freigabe: manche Flatpaks sehen das Home gar nicht (RMG) oder nur lesend
+        # (xemu braucht das Festplatten-Image in share/BIOS zum Schreiben)
+        share = f"--filesystem={Path.home() / 'share'}"
+        if share not in args:
+            args = ["flatpak", "run", share] + list(args[2:])
     # Nur mit Spiel (aus der Spieleliste): "Emulator ohne Spiel starten" bleibt im Fenster, dort will man die Menues
     game = len(args) > 1 and Path(str(args[-1])).suffix.lower() in {e for x in ROMS.EXTENSIONS.values() for e in x}
     if game and emu_fullscreen_wanted(tid):
-        spec = EMU_FULLSCREEN.get(kind)
-        if spec:
+        spec = EMU_FULLSCREEN_TILE.get(tid) if flat else EMU_FULLSCREEN.get(kind)
+        if spec and flat:
+            if spec[0] not in args:                 # vor der Spieldatei samt ihrer Option (ROM_ARGS)
+                n = 1 + len(next((v for v in ROMS.ROM_ARGS.values() if list(args[-1 - len(v):-1]) == v), []))
+                args = list(args[:-n]) + [spec[0]] + list(args[-n:])
+        elif spec:
             if spec[0] not in args:
                 args = [args[0], spec[0]] + list(args[1:])
         elif tid in EMU_WM_FULLSCREEN:
@@ -6980,7 +7941,7 @@ def emu_toggle_fullscreen():
     act = active_window()
     if not proc or not act or not any(int(w[0], 16) == act for w in APPS._windows_of(tid, proc)):
         return
-    key = EMU_FULLSCREEN.get(APPS.kinds.get(tid, ""), (None, None))[1]
+    key = (EMU_FULLSCREEN_TILE.get(tid) or EMU_FULLSCREEN.get(APPS.kinds.get(tid, ""), (None, None)))[1]
     if key and shutil.which("xdotool"):
         run(["xdotool", "key", "--clearmodifiers", key])
     else:
@@ -7018,6 +7979,11 @@ class SaveBackup:
         ("PCSX2", H / ".var/app/net.pcsx2.PCSX2/config/PCSX2/memcards", False),
         ("PCSX2-Savestates", H / ".var/app/net.pcsx2.PCSX2/config/PCSX2/sstates", False),
         ("Flycast", H / ".var/app/org.flycast.Flycast/data/flycast", True),
+        ("RMG", H / ".var/app/com.github.Rosalie241.RMG/data/RMG/Save", False),           # Game/ und State/
+        ("Azahar-Savestates", H / ".var/app/org.azahar_emu.Azahar/data/azahar-emu/states", False),
+        ("Cemu", H / ".var/app/info.cemu.Cemu/data/Cemu/mlc01/usr/save", False),
+        ("MAME", H / ".mame/nvram", False),
+        ("MAME-Savestates", H / ".mame/sta", False),
         ("Mednafen", H / ".mednafen/sav", False),
         ("Mednafen-Savestates", H / ".mednafen/mcs", False),
         ("Nestopia", H / ".nestopia/save", False),
@@ -7191,7 +8157,8 @@ class RomCovers:
         "psx": "Sony - PlayStation", "psp": "Sony - PlayStation Portable", "nds": "Nintendo - Nintendo DS",
         "gamecube": "Nintendo - GameCube", "dreamcast": "Sega - Dreamcast", "n64": "Nintendo - Nintendo 64",
         "megadrive": "Sega - Mega Drive - Genesis", "genesis": "Sega - Mega Drive - Genesis",
-        "atari2600": "Atari - 2600", "c64": "Commodore - 64",
+        "atari2600": "Atari - 2600", "c64": "Commodore - 64", "ps2": "Sony - PlayStation 2", "xbox": "Microsoft - Xbox",
+        "3ds": "Nintendo - Nintendo 3DS",
     }
     BY_EXT = {".gba": "gba", ".gbc": "gbc", ".gb": "gb"}     # mGBA-Ordner enthalten alle drei
     IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
@@ -8904,7 +9871,8 @@ class Handler(BaseHTTPRequestHandler):
         """Tastenbelegung je Emulator: Taste abfragen (capture), belegen (set), zuruecksetzen (reset), abbrechen."""
         try:
             if rest == ["capture"]:
-                return self._json(200, PAD_CAPTURE.capture(str(b.get("path", "")), min(30.0, float(b.get("timeout") or 10))))
+                return self._json(200, PAD_CAPTURE.capture(str(b.get("path", "")), min(30.0, float(b.get("timeout") or 10)),
+                                                           bool(b.get("rstick"))))
             if rest == ["cancel"]:
                 PAD_CAPTURE.cancel()
                 return self._json(200, {"ok": True})
@@ -9077,7 +10045,7 @@ class Handler(BaseHTTPRequestHandler):
                 r["cover"] = ROM_COVERS.url(r)
             return self._json(200, {"system": ROMS.canonical_system(system), "folders": ROMS.folders(system),
                                     "count": len(roms), "roms": roms, "keymap": system in EMU_LAYOUTS,
-                                    "mute": emu_muted(system)})
+                                    "mute": emu_muted(system), "bios": bios_status(system)})
         if path == "/api/keymap":                  # Tastenbelegung eines Emulators (Konsole, Controller, Tasten)
             qs = urllib.parse.parse_qs(url.query)
             emu = qs.get("emu", [""])[0]

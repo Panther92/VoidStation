@@ -30,6 +30,14 @@ Layer {
             app.toast(Ui.t(j.mute ? "roms.muteOn" : "roms.muteOff", { name: rl.sysName }))
         }, function (e) { app.toast(Ui.t("common.failedMsg", { msg: e }), true) })
     }
+    // BIOS fehlt (DuckStation, PCSX2, xemu – launcher.py bios_status): was fehlt und wohin damit
+    function biosText() {
+        var b = romData && romData.bios
+        if (!b || b.ok) return ""
+        var what = (b.missing || []).map(function (m) { return Ui.t("roms.bios." + m) }).join(", ")
+        var t = Ui.t("roms.bios", { name: sysName, what: what, host: app.sett && app.sett.net ? app.sett.net.hostname : "voidstation" })
+        return t.replace(/\\/g, "\u2060\\\u2060")         // Pfad \\host\share\BIOS nicht umbrechen
+    }
     function focusFirst() { Qt.callLater(function () { var it = Nav.collect(trk); app.setFocus(it.length ? it[0] : startEmu, true) }) }
     function firstFocus() { var it = Nav.collect(trk); return it.length ? it[0] : startEmu }
     // Spiel starten: Liste zu (zurueck auf der Startseite steht die Kachel als laufend da), Startbild wie bei
@@ -62,6 +70,15 @@ Layer {
     Track {
         id: trk
         anchors.fill: parent
+        Group {
+            visible: rl.biosText() !== ""
+            title: Ui.t("roms.bios.title")
+            Txt {
+                width: Ui.screenW * 0.3
+                text: rl.biosText()
+                color: Ui.c.textDim; font.pixelSize: 16 * Ui.f; wrapMode: Text.Wrap; elide: Text.ElideNone; lineHeight: 1.5
+            }
+        }
         Group {
             visible: rl.roms.length > 0
             title: Ui.t("roms.count", { count: rl.roms.length })

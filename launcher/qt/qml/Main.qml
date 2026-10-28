@@ -355,7 +355,7 @@ Window {
         }
 
         // ------------------------------------------------------------ Programme
-        readonly property var emuSystems: ["gba", "snes", "snes9x", "nes", "nestopia", "psx", "duckstation", "psp", "ppsspp", "nds", "melonds", "dreamcast", "flycast", "gamecube", "dolphin", "c64", "vice", "atari2600", "stella"]
+        readonly property var emuSystems: ["gba", "snes", "snes9x", "nes", "nestopia", "psx", "duckstation", "psp", "ppsspp", "nds", "melonds", "dreamcast", "flycast", "gamecube", "dolphin", "c64", "vice", "atari2600", "stella", "ps2", "pcsx2", "n64", "rmg", "xbox", "xemu", "3ds", "azahar", "wiiu", "cemu", "mame", "dos", "dosbox", "scummvm", "retroarch"]
         function tileActivate(t, el) {
             if (t.type === "radio") return openLayer(radio)
             if (t.type === "settings") return openLayer(settings)

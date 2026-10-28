@@ -31,8 +31,11 @@ Layer {
     readonly property int cols: many ? 3 : 2
     readonly property real cellW: Ui.screenW * (many ? 0.17 : 0.23)
     readonly property real listW: cols * cellW + (cols - 1) * 8 * Ui.f
+    // Linke Spalte: mindestens so breit, dass die Erklaerung in wenigen Zeilen unter die Skizze passt
+    readonly property real leftW: Math.max(picW, Ui.screenW * 0.3)
+    // Skizze so gross, dass darunter Knopf und Erklaerung (mit Hinweisen des Emulators mehr) Platz haben
     readonly property real picW: Math.min(Ui.screenW * (many ? 0.3 : 0.36),
-                                          Math.max(Ui.screenW * 0.22, (stage.height - 230 * Ui.f) / pic.aspect))
+                                          Math.max(Ui.screenW * 0.22, (stage.height - (kd && kd.notes && kd.notes.length > 1 ? 300 : 250) * Ui.f) / pic.aspect))
     // Tasten, die ueberall gleich heissen, als Zeichen (Rest: Texte keymap.btn.*, sonst die Kennung)
     readonly property var symbols: ({ Cross: "✕", Circle: "○", Square: "□", Triangle: "△" })
 
@@ -118,7 +121,7 @@ Layer {
         var t = ++token
         secs = 10
         tick.restart()
-        Api.post("/api/keymap/capture", { path: padPath, timeout: 10 }, function (r) {
+        Api.post("/api/keymap/capture", { path: padPath, timeout: 10, rstick: !!(kd && kd.rstick) }, function (r) {
             if (t !== token || mode !== "learn") return
             if (!r || r.cancelled) return
             if (r.cancel) return stop(true)
@@ -183,7 +186,7 @@ Layer {
         // Konsole: Skizze, Abfrage, alle nacheinander / Standard
         SetGroup {
             availH: km.stage.height
-            maxW: km.picW
+            maxW: km.leftW
             title: km.kd ? km.kd.sub : ""
             ConsolePic {
                 id: pic
@@ -195,7 +198,7 @@ Layer {
             }
             Txt {
                 visible: km.mode === "learn"
-                width: km.picW
+                width: km.leftW
                 text: km.mode === "learn" ? Ui.t("keymap.press", { btn: km.btnText(km.cur) }) : ""
                 font.pixelSize: 22 * Ui.f
                 wrapMode: Text.Wrap
@@ -203,16 +206,16 @@ Layer {
             }
             Txt {
                 visible: km.mode === "learn"
-                width: km.picW
+                width: km.leftW
                 color: Ui.c.textDim
                 text: km.total > 1 ? Ui.t("keymap.step", { n: km.total - km.queue.length + 1, total: km.total, s: km.secs })
                                    : Ui.t("keymap.stepOne", { s: km.secs })
                 wrapMode: Text.Wrap
                 elide: Text.ElideNone
             }
-            Info { visible: !!km.kd && !km.kd.pad; width: km.picW; html: Ui.esc(Ui.t("keymap.noPad")) }
+            Info { visible: !!km.kd && !km.kd.pad; width: km.leftW; html: Ui.esc(Ui.t("keymap.noPad")) }
             SetRow {                                 // gewaehlte Taste: neu belegen / frei lassen
-                width: km.picW
+                width: km.leftW
                 visible: km.edit !== "" && !km.mode
                 label: km.edit ? Ui.t("keymap.editLabel", { btn: km.btnText(km.edit), key: km.ctrlText(km.btn(km.edit)) }) : ""
                 Pill { property string key: "kmrebind"; text: Ui.t("keymap.rebind"); onTriggered: km.learnOne(km.edit) }
@@ -220,14 +223,21 @@ Layer {
                 Pill { property string key: "kmeditback"; text: Ui.t("common.back"); onTriggered: km.closeEdit() }
             }
             SetRow {
-                width: km.picW
+                width: km.leftW
                 visible: !!km.kd && !!km.kd.pad && km.edit === ""
                 Pill { property string key: "kmall"; visible: !km.mode; text: Ui.t("keymap.all"); onTriggered: km.learnAll() }
                 Pill { property string key: "kmreset"; visible: !km.mode && !!km.kd && km.kd.custom; text: Ui.t("keymap.reset"); onTriggered: km.reset() }
                 Pill { property string key: "kmcancel"; visible: km.mode !== ""; text: Ui.t("common.cancel"); onTriggered: km.stop(false) }
             }
-            Info { visible: km.mode === "learn"; width: km.picW; html: Ui.t("keymap.learnHint") }
-            Info { visible: !km.mode && !km.edit && !!km.kd && !!km.kd.pad; width: km.picW; html: km.infoText() }
+            Info { visible: km.mode === "learn"; width: km.leftW; html: Ui.t("keymap.learnHint") }
+            // Erklaerung und Hinweise des Emulators: etwas kleiner, damit sie unter die Skizze passen
+            Info {
+                visible: !km.mode && !km.edit && !!km.kd && !!km.kd.pad
+                width: km.leftW
+                html: km.infoText()
+                font.pixelSize: 14 * Ui.f
+                lineHeight: 1.35
+            }
         }
         // Belegung: Konsolentaste -> Controllertaste; waehlen = nur diese Taste neu
         SetGroup {
