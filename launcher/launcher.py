@@ -5767,6 +5767,7 @@ has_path = hasattr(lib, "SDL_JoystickPathForIndex")
 if has_path:
     lib.SDL_JoystickPathForIndex.restype = ctypes.c_char_p
 lib.SDL_GameControllerOpen.restype = ctypes.c_void_p
+lib.SDL_GameControllerNameForIndex.restype = ctypes.c_char_p
 lib.SDL_GameControllerClose.argtypes = [ctypes.c_void_p]
 for f in ("SDL_GameControllerGetBindForButton", "SDL_GameControllerGetBindForAxis"):
     getattr(lib, f).restype = Bind
@@ -5784,6 +5785,7 @@ for i in range(lib.SDL_NumJoysticks()):
     d = {"index": i, "name": (lib.SDL_JoystickNameForIndex(i) or b"").decode("utf-8", "replace"),
          "path": (lib.SDL_JoystickPathForIndex(i) or b"").decode() if has_path else ""}
     if lib.SDL_IsGameController(i):
+        d["gcname"] = (lib.SDL_GameControllerNameForIndex(i) or b"").decode("utf-8", "replace")
         c = lib.SDL_GameControllerOpen(i)
         if c:
             d["buttons"] = {n: enc(lib.SDL_GameControllerGetBindForButton(c, k)) for n, k in BTN}
@@ -5925,15 +5927,55 @@ EMU_PADS = Path.home() / ".config/voidstation/emu-pads.json"
 PAD_ROLES = ["south", "east", "west", "north", "l1", "r1", "l2", "r2", "select", "start", "l3", "r3",
              "up", "down", "left", "right"]
 # Je Kachel: Skizze der Konsole ("console", gezeichnet in ConsolePic.qml) und Tasten als (Kennung, Vorgabe-Rolle) in
-# der Reihenfolge, in der "Alle nacheinander" fragt. Kennungen aus EMU_ACTIONS gibt es auf der Konsole nicht – die
-# erledigt VoidStation selbst (Tastendruck an den Emulator, s. emu_action); sie stehen neben der Skizze.
+# der Reihenfolge, in der "Alle nacheinander" fragt; Vorgabe-Rolle "" = frei. Konsolentasten liegen nach Lage
+# (Nintendo: A rechts, B unten; PlayStation: ✕ unten …). Kennungen aus EMU_ACTIONS gibt es auf der Konsole nicht – die
+# erledigt VoidStation selbst (Taste an den Emulator, EMU_KEYS); wo die Konsole alle Tasten des Controllers braucht,
+# sind sie anfangs frei. "notes": Hinweise der Oberflaeche (keymap.note.*). Analogsticks belegt VoidStation fest mit.
+_DPAD = [("Up", "up"), ("Down", "down"), ("Left", "left"), ("Right", "right")]
 EMU_LAYOUTS = {
     "gba": {"name": "mGBA", "sub": "Game Boy / Color / Advance", "console": "gba", "buttons": [
         ("A", "east"), ("B", "south"), ("L", "l1"), ("R", "r1"), ("Start", "start"), ("Select", "select"),
-        ("Up", "up"), ("Down", "down"), ("Left", "left"), ("Right", "right"),
-        ("save", "north"), ("load", "west"), ("rewind", "l2"), ("ff", "r2")]},
+        *_DPAD, ("save", "north"), ("load", "west"), ("rewind", "l2"), ("ff", "r2")]},
+    "nestopia": {"name": "Nestopia", "sub": "NES", "console": "nes", "buttons": [
+        ("A", "east"), ("B", "south"), ("Start", "start"), ("Select", "select"),
+        *_DPAD, ("save", "north"), ("load", "west"), ("ff", "r2")]},
+    "snes9x": {"name": "Snes9x", "sub": "Super Nintendo", "console": "snes", "buttons": [
+        ("A", "east"), ("B", "south"), ("X", "north"), ("Y", "west"), ("L", "l1"), ("R", "r1"),
+        ("Start", "start"), ("Select", "select"), *_DPAD, ("save", ""), ("load", ""), ("ff", "r2")]},
+    "melonds": {"name": "melonDS", "sub": "Nintendo DS", "console": "nds", "buttons": [
+        ("A", "east"), ("B", "south"), ("X", "north"), ("Y", "west"), ("L", "l1"), ("R", "r1"),
+        ("Start", "start"), ("Select", "select"), *_DPAD, ("save", ""), ("load", ""), ("ff", "r2")]},
+    "duckstation": {"name": "DuckStation", "sub": "PlayStation", "console": "psx", "notes": ["sticks", "duckstation"],
+                    "buttons": [
+        ("Cross", "south"), ("Circle", "east"), ("Square", "west"), ("Triangle", "north"),
+        ("L1", "l1"), ("R1", "r1"), ("L2", "l2"), ("R2", "r2"), ("L3", "l3"), ("R3", "r3"),
+        ("Start", "start"), ("Select", "select"), *_DPAD, ("save", ""), ("load", ""), ("ff", "")]},
+    "ppsspp": {"name": "PPSSPP", "sub": "PSP", "console": "psp", "notes": ["sticks"], "buttons": [
+        ("Cross", "south"), ("Circle", "east"), ("Square", "west"), ("Triangle", "north"), ("L", "l1"), ("R", "r1"),
+        ("Start", "start"), ("Select", "select"), *_DPAD, ("save", ""), ("load", ""), ("ff", "r2")]},
+    "dolphin": {"name": "Dolphin", "sub": "GameCube", "console": "gc", "notes": ["sticks"], "buttons": [
+        ("A", "south"), ("B", "west"), ("X", "east"), ("Y", "north"), ("Z", "r1"), ("L", "l2"), ("R", "r2"),
+        ("Start", "start"), *_DPAD, ("save", ""), ("load", ""), ("ff", "l1")]},
+    "flycast": {"name": "Flycast", "sub": "Dreamcast", "console": "dc", "notes": ["sticks", "flycast"], "buttons": [
+        ("A", "south"), ("B", "east"), ("X", "west"), ("Y", "north"), ("L", "l2"), ("R", "r2"),
+        ("Start", "start"), *_DPAD, ("ff", "r1")]},
 }
 EMU_ACTIONS = {"save", "load", "rewind", "ff"}
+# Was VoidStation fuer die Extras an das Fenster des Emulators schickt (tap = einmal, hold = solange gedrueckt).
+# Tasten aus dem Quelltext der Emulatoren bzw. von VoidStation gesetzt, wo der Emulator keine vorgibt (s. *_prepare):
+#   mGBA 0.10 Window.cpp · Snes9x 1.60 (keine Vorgabe) · Nestopia 1.53 inputmanager.cpp (F5/F7) · DuckStation
+#   hotkeys.cpp (F2/F1/Tab) · PPSSPP 1.20 (Speichern/Laden ohne Vorgabe, Tab) · melonDS 1.1 Window.cpp (Umschalt+F1/F1)
+#   · Dolphin 2609 HotkeyManager.cpp (Umschalt+F1/F1/Tab) · Flycast 2.7 keyboard_device.h (Leertaste)
+EMU_KEYS = {
+    "gba": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab"), "rewind": ("hold", "Scroll_Lock")},
+    "snes9x": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab")},
+    "nestopia": {"save": ("tap", "F5"), "load": ("tap", "F7"), "ff": ("hold", "Tab")},
+    "duckstation": {"save": ("tap", "F2"), "load": ("tap", "F1"), "ff": ("hold", "Tab")},
+    "ppsspp": {"save": ("tap", "F2"), "load": ("tap", "F4"), "ff": ("hold", "Tab")},
+    "melonds": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab")},
+    "dolphin": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab")},
+    "flycast": {"ff": ("hold", "space")},
+}
 EMU_PADS_LOCK = threading.Lock()
 # Controllertasten zum Anzeigen, je nach Bauart (Steuerkreuz: Pfeile, die Oberflaeche setzt "Kreuz" davor)
 ROLE_TEXT = {
@@ -6003,6 +6045,7 @@ def keymap_payload(emu, path=""):
     pads = gamepads()
     pad = next((p for p in pads if p["path"] == path), pads[0] if pads else None)
     out = {"emu": emu, "name": lay["name"], "sub": lay.get("sub", ""), "console": lay["console"],
+           "notes": [n for n in lay.get("notes", []) if n != "duckstation" or not duck_ready()],
            "pads": [{"path": p["path"], "name": p["name"]} for p in pads], "pad": None, "custom": False}
     roles, src, style, binds = {}, "", "xbox", {}
     if pad:
@@ -6212,9 +6255,8 @@ MGBA_DEFAULTS = {
     "suspendScreensaver": "1",
 }
 MGBA_KEYS = ["A", "B", "Select", "Start", "Right", "Left", "Up", "Down", "R", "L"]     # GBA-Tastennummern 0…9
-# Was VoidStation fuer mGBA selbst als Tastendruck schickt (mGBA-Vorgaben: Window.cpp; Zurueckspulen bekommt eine
-# Taste, die auf jedem Tastaturlayout gleich ist – die Vorgabe ` ist auf deutschen Tastaturen eine Tottaste)
-MGBA_ACTIONS = {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab"), "rewind": ("hold", "Scroll_Lock")}
+# Zurueckspulen bekommt in mGBA eine Taste, die auf jedem Tastaturlayout gleich ist (Vorgabe ` ist auf deutschen
+# Tastaturen eine Tottaste); was VoidStation schickt, steht in EMU_KEYS
 MGBA_REWIND_KEY = "ScrollLock"               # QKeySequence-Name fuer qt.ini [shortcutKey] holdRewind
 
 
@@ -6300,7 +6342,7 @@ def mgba_prepare():
             log(f"mGBA: Controller-Belegung fuer {pad['name']} ({src}{', eigene Tastenbelegung' if custom else ''}):", m)
         # Eingebaute Profile von mGBA (InputProfile.cpp) legen Kurzbefehle auf Controller-Tasten – gezaehlt wie unter
         # Windows/macOS. Beim PS4-Controller ("Wireless Controller") lag "Laden" auf ✕. Savestates und Spulen macht
-        # jetzt VoidStation (MGBA_ACTIONS, frei belegbar), deshalb alle vier abschalten – fuer den Namen von SDL und
+        # jetzt VoidStation (EMU_KEYS, frei belegbar), deshalb alle vier abschalten – fuer den Namen von SDL und
         # alle, unter denen mGBA schon ein Profil gespeichert hat. Nur, wo der Nutzer nichts eingestellt hat.
         names = {n for n in MGBA_BUILTIN_RE.findall("\n".join(
             s[len("gba.input-profile."):] for s in ini_read(MGBA_CONFIG) if s.startswith("gba.input-profile."))) if n}
@@ -6321,6 +6363,478 @@ def mgba_prepare():
             if keys.get("holdRewind") != MGBA_REWIND_KEY:
                 ini_update(MGBA_QT, "shortcutKey", {"holdRewind": MGBA_REWIND_KEY})
         emu_state_save(st)
+
+
+# ---- Tastenbelegung in die Emulatoren schreiben (vor jedem Start, emu_prepare) -------------------------------
+# Je Emulator das eigene Format, jeweils am Quelltext der installierten Fassung geprueft. Geschrieben wird
+#   * immer, wenn es in VoidStation eine eigene Belegung fuer den Controller gibt (sie ist ja so gewollt),
+#   * sonst die Vorgabe, aber nur, solange der Nutzer die Belegung im Emulator nicht selbst geaendert hat
+#     (keymap_once: verglichen mit dem, was VoidStation zuletzt geschrieben hat).
+# Rohe Tasten-/Achsennummern zaehlt VoidStation wie SDL unter Linux (sdl_indices); dafuer starten die Emulatoren
+# mit SDL_JOYSTICK_HIDAPI=0. Wo der Emulator SDL-Controllernamen versteht (DuckStation, PPSSPP, Dolphin), schreibt
+# VoidStation diese – dann ist die Zaehlung egal.
+GC_ROLE = {"south": "a", "east": "b", "west": "x", "north": "y", "l1": "lb", "r1": "rb", "l2": "lt", "r2": "rt",
+           "select": "back", "start": "start", "l3": "l3", "r3": "r3",
+           "up": "up", "down": "down", "left": "left", "right": "right"}
+HAT_DIRS = {("y", -1): "up", ("y", 1): "down", ("x", -1): "left", ("x", 1): "right"}
+
+
+def keymap_context(tile):
+    """Erster Controller mit Rollen und Belegung fuer `tile` -> dict oder None (kein Controller)."""
+    pads = gamepads()
+    if not pads:
+        return None
+    pad = pads[0]
+    probe = sdl_probe()
+    roles, src = pad_roles(pad, probe)
+    bmap, custom = emu_binds(tile, pad, roles=roles)
+    info = next((d for d in probe if d.get("path") == pad["path"]), None) or (probe[0] if len(probe) == 1 else {})
+    btn, ax = sdl_indices(pad)
+    return {"pad": pad, "roles": roles, "src": src, "bmap": bmap, "custom": custom, "sdl": info,
+            "index": int(info.get("index", 0) or 0), "btn": btn, "ax": ax}
+
+
+def bind_role(b, roles):
+    return next((r for r, x in roles.items() if x == b), "") if b else ""
+
+
+def bind_raw(ctx, b):
+    """Bindung -> ("button", n) | ("axis", n, ±1) | ("hat", Richtung) | None, gezaehlt wie SDL-Joysticks."""
+    if not b:
+        return None
+    if "key" in b and b["key"] in ctx["btn"]:
+        return ("button", ctx["btn"][b["key"]])
+    if "abs" in b and b["abs"] in ctx["ax"]:
+        return ("axis", ctx["ax"][b["abs"]], b["dir"])
+    if "hat" in b:
+        return ("hat", HAT_DIRS[(b["hat"], b["dir"])])
+    return None
+
+
+def stick_axes(ctx):
+    """SDL-Achsennummern der Sticks: {"lx", "ly", "rx", "ry"} (soweit vorhanden)."""
+    from evdev import ecodes as E
+    return {n: ctx["ax"][c] for n, c in (("lx", E.ABS_X), ("ly", E.ABS_Y), ("rx", E.ABS_RX), ("ry", E.ABS_RY))
+            if c in ctx["ax"]}
+
+
+def keymap_once(app, key, current, wanted, force):
+    """Belegung schreiben? force (eigene Belegung), nichts da, oder noch genau das, was VoidStation zuletzt schrieb.
+    Merkt sich das Geschriebene in emu-defaults.json. -> True, wenn geschrieben werden soll."""
+    st = emu_state_load()
+    last = st.get(app, {}).get(key)
+    empty = not any(v not in (None, "", "-1", -1, "Unset") for v in (current or {}).values())
+    if not (force or empty or current == last or current == wanted):
+        log(f"{app}: eigene Belegung im Emulator bleibt")
+        return False
+    st.setdefault(app, {})[key] = wanted
+    emu_state_save(st)
+    return True
+
+
+def ini_multi_set(path, section, wanted, drop):
+    """Abschnitt mit mehrfachen Schluesseln (DuckStation: "Cross = Keyboard/X" und "Cross = SDL-0/A"): fuer jeden
+    Schluessel aus `wanted` Zeilen entfernen, deren Wert drop(wert) erfuellt, und den neuen Wert (falls nicht None)
+    anhaengen. Alles andere bleibt, wie es ist."""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    head = f"[{section}]"
+    start = next((i for i, line in enumerate(lines) if line.strip() == head), None)
+    if start is None:
+        lines += ([""] if lines else []) + [head]
+        start = len(lines) - 1
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].strip().startswith("[")), len(lines))
+    body = []
+    for line in lines[start + 1:end]:
+        k, sep, v = line.partition("=")
+        if sep and k.strip() in wanted and drop(v.strip()):
+            continue
+        body.append(line)
+    while body and not body[-1].strip():
+        body.pop()
+    body += [f"{k} = {v}" for k, v in wanted.items() if v is not None]
+    new = lines[:start + 1] + body + ([""] if end < len(lines) else []) + lines[end:]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".vs-tmp")
+    tmp.write_text("\n".join(new) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def ini_multi_get(path, section, keys, keep):
+    """Werte mehrfacher Schluessel eines Abschnitts, die keep(wert) erfuellen -> {Schluessel: Wert | None}."""
+    out = {k: None for k in keys}
+    sec = None
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        t = line.strip()
+        if t.startswith("[") and t.endswith("]"):
+            sec = t[1:-1]
+        elif sec == section and "=" in t:
+            k, _, v = t.partition("=")
+            if k.strip() in out and keep(v.strip()):
+                out[k.strip()] = v.strip()
+    return out
+
+
+# -- DuckStation (AppImage, SDL3; settings.ini [Pad1], src/util/sdl_input_source.cpp, src/core/analog_controller.cpp)
+DUCK_INI = Path.home() / ".local/share/duckstation/settings.ini"
+DUCK_GC = {"a": "A", "b": "B", "x": "X", "y": "Y", "back": "Back", "start": "Start", "l3": "LeftStick",
+           "r3": "RightStick", "lb": "LeftShoulder", "rb": "RightShoulder", "up": "DPadUp", "down": "DPadDown",
+           "left": "DPadLeft", "right": "DPadRight", "lt": "+LeftTrigger", "rt": "+RightTrigger"}
+DUCK_HAT = {"up": "North", "right": "East", "down": "South", "left": "West"}
+
+
+def duck_name(ctx, b):
+    role = bind_role(b, ctx["roles"])
+    if role:
+        return f"SDL-0/{DUCK_GC[GC_ROLE[role]]}"
+    raw = bind_raw(ctx, b)
+    if not raw:
+        return None
+    if raw[0] == "button":
+        return f"SDL-0/Button{raw[1]}"
+    if raw[0] == "axis":
+        return f"SDL-0/{'+' if raw[2] > 0 else '-'}Axis{raw[1]}"
+    return f"SDL-0/Hat0{DUCK_HAT[raw[1]]}"
+
+
+def duck_ready():
+    """DuckStation schon eingerichtet (settings.ini mit [Pad1])? Vorher schreibt VoidStation nichts hinein."""
+    try:
+        return "[Pad1]" in DUCK_INI.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+
+
+def duckstation_prepare(ctx):
+    """[Pad1]: SDL-Belegung neben der Tastatur. Erst, wenn DuckStation einmal gelaufen ist (Einrichtungsassistent
+    legt settings.ini samt [Pad1] an) – vorher wuerde DuckStation die Datei als neu behandeln."""
+    if not duck_ready():
+        log("DuckStation: noch nicht eingerichtet – Belegung beim naechsten Start")
+        return
+    wanted = {b: duck_name(ctx, ctx["bmap"].get(b)) for b, _ in EMU_LAYOUTS["duckstation"]["buttons"]
+              if b not in EMU_ACTIONS}
+    wanted.update({"LLeft": "SDL-0/-LeftX", "LRight": "SDL-0/+LeftX", "LUp": "SDL-0/-LeftY",
+                   "LDown": "SDL-0/+LeftY", "RLeft": "SDL-0/-RightX", "RRight": "SDL-0/+RightX",
+                   "RUp": "SDL-0/-RightY", "RDown": "SDL-0/+RightY"})
+    is_sdl = lambda v: v.startswith("SDL-")
+    cur = ini_multi_get(DUCK_INI, "Pad1", list(wanted), is_sdl)
+    if keymap_once("duckstation", "pad", cur, wanted, ctx["custom"]):
+        ini_multi_set(DUCK_INI, "Pad1", wanted, is_sdl)
+        log("DuckStation: Controller-Belegung", wanted)
+
+
+# -- Snes9x 1.60 (GTK, SDL2-Joystick; snes9x.conf [Joypad 0], gtk_binding.cpp, gtk_control.cpp)
+def snes9x_conf():
+    legacy, new = Path.home() / ".snes9x", Path.home() / ".config/snes9x"
+    return (legacy if legacy.is_dir() and not new.is_dir() else new) / "snes9x.conf"
+
+
+def snes9x_value(ctx, b):
+    """Binding::to_string: "Joystick 1 Button 3", "Joystick 1 Axis 2 + 50%"; Steuerkreuz = Achsen hinter den echten
+    (num_axes + 2*hat: hoch +, runter −; num_axes + 2*hat + 1: links −, rechts +)."""
+    raw, dev = bind_raw(ctx, b), ctx["index"] + 1
+    if not raw:
+        return "Unset"
+    if raw[0] == "button":
+        return f"Joystick {dev} Button {raw[1]}"
+    if raw[0] == "axis":
+        return f"Joystick {dev} Axis {raw[1]} {'+' if raw[2] > 0 else '-'} 50%"
+    n = len(ctx["ax"])
+    axis, sign = {"up": (n, "+"), "down": (n, "-"), "left": (n + 1, "-"), "right": (n + 1, "+")}[raw[1]]
+    return f"Joystick {dev} Axis {axis} {sign} 50%"
+
+
+def snes9x_prepare(ctx):
+    path = snes9x_conf()
+    wanted = {b: snes9x_value(ctx, ctx["bmap"].get(b)) for b, _ in EMU_LAYOUTS["snes9x"]["buttons"]
+              if b not in EMU_ACTIONS}
+    cur = {k: v for k, v in ini_read(path).get("Joypad 0", {}).items() if k in wanted}
+    if keymap_once("snes9x", "pad", cur, wanted, ctx["custom"]):
+        ini_update(path, "Joypad 0", wanted)
+        log("Snes9x: Controller-Belegung", wanted)
+    # Tasten fuer die Extras (EMU_KEYS) – Snes9x gibt keine vor; nur, wo noch nichts eingestellt ist
+    sc = ini_read(path).get("Shortcuts", {})
+    fix = {k: v for k, v in (("QuickSave000", "Keyboard Shift+F1"), ("QuickLoad000", "Keyboard F1"),
+                             ("EmuTurbo", "Keyboard Tab")) if sc.get(k, "Unset") in ("", "Unset")}
+    if fix:
+        ini_update(path, "Shortcuts", fix)
+
+
+# -- Nestopia 1.53 (FLTK, SDL2-Joystick; input.conf [nespad1j], fltkui/inputmanager.cpp; mINI: Kleinschreibung)
+NESTOPIA_INPUT = Path.home() / ".config/nestopia/input.conf"
+
+
+def nestopia_value(ctx, b):
+    raw, port = bind_raw(ctx, b), ctx["index"]
+    if not raw:
+        return ""
+    if raw[0] == "button":
+        return f"j{port}b{raw[1]}"
+    if raw[0] == "axis":
+        return f"j{port}a{raw[1] * 2 + (1 if raw[2] > 0 else 0)}"
+    return f"j{port}h{['up', 'down', 'left', 'right'].index(raw[1])}"
+
+
+def nestopia_prepare(ctx):
+    wanted = {b.lower(): nestopia_value(ctx, ctx["bmap"].get(b)) for b, _ in EMU_LAYOUTS["nestopia"]["buttons"]
+              if b not in EMU_ACTIONS}
+    ini = ini_read(NESTOPIA_INPUT)
+    cur = {k: v for k, v in ini.get("nespad1j", {}).items() if k in wanted}
+    if keymap_once("nestopia", "pad", cur, wanted, ctx["custom"]):
+        ini_update(NESTOPIA_INPUT, "nespad1j", wanted)
+        log("Nestopia: Controller-Belegung", wanted)
+    # Vorspulen: Vorgabe ` ist auf deutschen Tastaturen eine Tottaste -> Tab (FLTK FL_Tab), nur ueber der Vorgabe
+    if ini.get("ui", {}).get("fastforward", "96") in ("", "96"):
+        ini_update(NESTOPIA_INPUT, "ui", {"fastforward": "65289"})
+
+
+# -- PPSSPP 1.20 (SDL2-GameController; PSP/SYSTEM/controls.ini [ControlMapping], Core/KeyMap.cpp, SDL/SDLJoystick.cpp)
+PPSSPP_CTRL = Path.home() / ".config/ppsspp/PSP/SYSTEM/controls.ini"
+PPSSPP_PAD = {"y": 188, "a": 189, "b": 190, "x": 191, "rb": 192, "lb": 193, "back": 196, "start": 197, "l3": 106,
+              "r3": 107, "up": 19, "down": 20, "left": 21, "right": 22, "lt": 4008, "rt": 4010}   # NKCODE / 4000+Achse*2
+# Vorgaben von PPSSPP (RestoreDefault: Tastatur QWERTY + DEFAULT_MAPPING_PAD), aus KeyMapDefaults.cpp erzeugt. Fehlt
+# ein Schluessel, sobald [ControlMapping] existiert, gilt er als unbelegt – deshalb beim ersten Mal alle schreiben.
+PPSSPP_DEFAULTS = {
+    "Up": "1-19,10-19", "Down": "1-20,10-20", "Left": "1-21,10-21", "Right": "1-22,10-22", "Circle": "1-52,10-190",
+    "Cross": "1-54,10-189", "Square": "1-29,10-191", "Triangle": "1-47,10-188", "Start": "1-62,10-197",
+    "Select": "1-50,1-66,10-196", "L": "1-45,10-194", "R": "1-51,10-195", "An.Up": "1-37,10-4003",
+    "An.Down": "1-39,10-4002", "An.Left": "1-38,10-4001", "An.Right": "1-40,10-4000", "Analog limiter": "1-60",
+    "RapidFire": "1-59", "Fast-forward": "1-61", "Pause": "1-111,10-109,10-104,10-4034", "Pause (no menu)": "1-138",
+    "SpeedToggle": "1-68", "Analog speed": "10-4036", "Rewind": "1-67", "Toggle Debugger": "1-142",
+}
+PPSSPP_KEYS = ["Cross", "Circle", "Square", "Triangle", "L", "R", "Start", "Select", "Up", "Down", "Left", "Right"]
+
+
+def ppsspp_prepare(ctx):
+    ini = ini_read(PPSSPP_CTRL)
+    has = "ControlMapping" in ini
+    sec = ini["ControlMapping"] if has else dict(PPSSPP_DEFAULTS)
+    pad_of = lambda v: ",".join(x.strip() for x in v.split(",") if x.strip().startswith("10-")) or None
+    wanted = {}
+    for b in PPSSPP_KEYS:
+        role = bind_role(ctx["bmap"].get(b), ctx["roles"])
+        wanted[b] = f"10-{PPSSPP_PAD[GC_ROLE[role]]}" if role else None
+    cur = {b: pad_of(sec.get(b, "")) for b in PPSSPP_KEYS}
+    stock = {b: pad_of(PPSSPP_DEFAULTS[b]) for b in PPSSPP_KEYS}
+    values = {}
+    # PPSSPPs eigene Vorgabe legt L/R auf Tasten, die SDL nie meldet -> die gilt nicht als eigene Einstellung
+    if keymap_once("ppsspp", "pad", cur, wanted, ctx["custom"] or cur == stock):
+        for b in PPSSPP_KEYS:
+            keep = [x.strip() for x in sec.get(b, "").split(",") if x.strip() and not x.strip().startswith("10-")]
+            values[b] = ",".join(keep + ([wanted[b]] if wanted[b] else []))
+    for k, code in (("Save State", "1-132"), ("Load State", "1-134")):   # F2 / F4 (EMU_KEYS), wo nichts belegt ist
+        if not sec.get(k, "").strip():
+            values[k] = code
+    if not has:
+        values = {**PPSSPP_DEFAULTS, **values}
+    if values:
+        ini_update(PPSSPP_CTRL, "ControlMapping", values)
+        log("PPSSPP: Controller-Belegung", {k: values[k] for k in values if k in PPSSPP_KEYS})
+
+
+# -- melonDS 1.1 (SDL2-Joystick; melonDS.toml [Instance0.Joystick], EmuInstanceInput.cpp)
+MELONDS_TOML = Path.home() / ".config/melonDS/melonDS.toml"
+MELONDS_HAT = {"up": 0x1, "right": 0x2, "down": 0x4, "left": 0x8}
+
+
+def melonds_value(ctx, b):
+    """Taste = Nummer; Steuerkreuz = 0x100 | Hat<<4 | Richtung; Achse = 0xFFFF | 0x10000 | Achse<<24 | Richtung<<20
+    (0 = positiv, 1 = negativ); -1 = frei."""
+    raw = bind_raw(ctx, b)
+    if not raw:
+        return -1
+    if raw[0] == "button":
+        return raw[1]
+    if raw[0] == "axis":
+        return 0xFFFF | 0x10000 | (raw[1] << 24) | ((0 if raw[2] > 0 else 1) << 20)
+    return 0x100 | MELONDS_HAT[raw[1]]
+
+
+def toml_dump(d):
+    """Kleiner TOML-Schreiber fuer melonDS.toml (Tabellen, Zahlen, Wahrheitswerte, Texte, Listen davon)."""
+    def key(k):
+        return k if re.fullmatch(r"[A-Za-z0-9_-]+", k) else json.dumps(k, ensure_ascii=False)
+
+    def val(v):
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, (int, float)):
+            return repr(v)
+        if isinstance(v, str):
+            return json.dumps(v, ensure_ascii=False)
+        if isinstance(v, list) and not any(isinstance(x, (dict, list)) for x in v):
+            return "[" + ", ".join(val(x) for x in v) + "]"
+        raise ValueError(f"TOML: {type(v)}")
+
+    out = []
+
+    def table(t, path):
+        scal = [(k, v) for k, v in t.items() if not isinstance(v, dict)]
+        subs = [(k, v) for k, v in t.items() if isinstance(v, dict)]
+        if path and (scal or not subs):
+            out.append("\n[" + ".".join(key(p) for p in path) + "]")
+        out.extend(f"{key(k)} = {val(v)}" for k, v in scal)
+        for k, v in subs:
+            table(v, path + [k])
+    table(d, [])
+    return "\n".join(out).lstrip("\n") + "\n"
+
+
+def melonds_prepare(ctx):
+    import tomllib
+    if not MELONDS_TOML.exists() and (MELONDS_TOML.parent / "melonDS.ini").exists():
+        return                                    # alte ini: melonDS uebernimmt sie selbst beim ersten Start
+    try:
+        root = tomllib.loads(MELONDS_TOML.read_text(encoding="utf-8")) if MELONDS_TOML.exists() else {}
+    except (OSError, ValueError) as e:
+        log("melonDS.toml nicht lesbar, Belegung bleibt:", e)
+        return
+    inst = root.setdefault("Instance0", {})
+    joy = inst.setdefault("Joystick", {})
+    wanted = {b: melonds_value(ctx, ctx["bmap"].get(b)) for b, _ in EMU_LAYOUTS["melonds"]["buttons"]
+              if b not in EMU_ACTIONS}
+    cur = {b: joy.get(b) for b in wanted if b in joy}
+    changed = False
+    if keymap_once("melonds", "pad", cur, wanted, ctx["custom"]):
+        joy.update(wanted)
+        inst["JoystickID"] = ctx["index"]
+        changed = True
+    kb = inst.setdefault("Keyboard", {})
+    if kb.get("HK_FastForward", -1) == -1:        # Vorspulen auf Tab (Qt::Key_Tab), wie in EMU_KEYS
+        kb["HK_FastForward"] = 0x01000001
+        changed = True
+    if changed:
+        try:
+            text = toml_dump(root)
+        except ValueError as e:                   # z. B. Tabellen-Listen: lieber nichts schreiben als zerstoeren
+            log("melonDS.toml: unbekannter Aufbau, Belegung bleibt:", e)
+            return
+        MELONDS_TOML.parent.mkdir(parents=True, exist_ok=True)
+        tmp = MELONDS_TOML.with_suffix(".vs-tmp")
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(MELONDS_TOML)
+        log("melonDS: Controller-Belegung", wanted)
+
+
+# -- Dolphin 2609 (SDL3-Gamepad; GCPadNew.ini [GCPad1], ControllerInterface/SDL/SDLGamepad.h, Core/HW/GCPadEmu.cpp)
+DOLPHIN_GC = {"a": "Button S", "b": "Button E", "x": "Button W", "y": "Button N", "back": "Back", "start": "Start",
+              "l3": "Thumb L", "r3": "Thumb R", "lb": "Shoulder L", "rb": "Shoulder R", "up": "Pad N",
+              "down": "Pad S", "left": "Pad W", "right": "Pad E", "lt": "Trigger L", "rt": "Trigger R"}
+
+
+def dolphin_dir():
+    legacy = Path.home() / ".dolphin-emu"
+    return legacy if legacy.is_dir() else Path.home() / ".config/dolphin-emu"
+
+
+def dolphin_expr(name):
+    """Wie MappingCommon::GetExpressionForControl: Namen mit Nicht-Buchstaben in Backticks."""
+    return name if name.isalpha() else f"`{name}`"
+
+
+def dolphin_prepare(ctx):
+    name = ctx["sdl"].get("gcname") or ctx["sdl"].get("name") or ""
+    if not name:
+        log("Dolphin: SDL kennt den Controller nicht – Belegung bleibt")
+        return
+    path = dolphin_dir() / "GCPadNew.ini"
+    m = {}
+    for b, _ in EMU_LAYOUTS["dolphin"]["buttons"]:
+        if b in EMU_ACTIONS:
+            continue
+        role = bind_role(ctx["bmap"].get(b), ctx["roles"])
+        m[b] = dolphin_expr(DOLPHIN_GC[GC_ROLE[role]]) if role else ""
+    wanted = {"Device": f"SDL/0/{name}"}
+    wanted.update({f"Buttons/{b}": m[b] for b in ("A", "B", "X", "Y", "Z", "Start")})
+    wanted.update({f"D-Pad/{b}": m[b] for b in ("Up", "Down", "Left", "Right")})
+    wanted.update({"Triggers/L": m["L"], "Triggers/R": m["R"], "Triggers/L-Analog": m["L"],
+                   "Triggers/R-Analog": m["R"]})
+    for grp, ax in (("Main Stick", "Left"), ("C-Stick", "Right")):   # SDLGamepad: Hochachsen umgedreht (Y+ = hoch)
+        wanted.update({f"{grp}/Up": f"`{ax} Y+`", f"{grp}/Down": f"`{ax} Y-`", f"{grp}/Left": f"`{ax} X-`",
+                       f"{grp}/Right": f"`{ax} X+`"})
+    cur = {k: v for k, v in ini_read(path).get("GCPad1", {}).items() if k in wanted}
+    if cur.get("Device", "").startswith(("XInput2/", "Keyboard")):
+        cur = {}                                  # Tastatur (Vorgabe von Dolphin) gilt als nichts eingestellt
+    if keymap_once("dolphin", "pad", cur, wanted, ctx["custom"]):
+        ini_update(path, "GCPad1", wanted)
+        log("Dolphin: Controller-Belegung", wanted)
+
+
+# -- Flycast 2.7 (Flatpak, SDL2-Joystick; mappings/SDL_<Name>.cfg, core/input/mapping.cpp, sdl/sdl.cpp)
+FLYCAST_MAPPINGS = Path.home() / ".var/app/org.flycast.Flycast/config/flycast/mappings"
+FLYCAST_KEYS = {"A": "btn_a", "B": "btn_b", "X": "btn_x", "Y": "btn_y", "Start": "btn_start",
+                "Up": "btn_dpad1_up", "Down": "btn_dpad1_down", "Left": "btn_dpad1_left", "Right": "btn_dpad1_right",
+                "L": "trigger_left", "R": "trigger_right"}
+
+
+def flycast_file(name):
+    """GamepadDevice::make_mapping_filename: "SDL_" + Name, Sonderzeichen -> "-"."""
+    return FLYCAST_MAPPINGS / ("SDL_" + re.sub(r'[/\\\\:?*|"<>]', "-", name) + ".cfg")
+
+
+def flycast_text(ctx, name):
+    dig, ana, trig = [], [], []
+    for b, opt in FLYCAST_KEYS.items():
+        raw = bind_raw(ctx, ctx["bmap"].get(b))
+        if not raw:
+            continue
+        if raw[0] == "button":
+            dig.append(f"{raw[1]}:{'btn_' + opt if opt.startswith('trigger') else opt}")
+        elif raw[0] == "hat":                     # sdl.cpp: (Hat + 1) << 8 | hoch 0, runter 1, links 2, rechts 3
+            dig.append(f"{(1 << 8) | ['up', 'down', 'left', 'right'].index(raw[1])}:"
+                       f"{'btn_' + opt if opt.startswith('trigger') else opt}")
+        elif opt.startswith("trigger"):
+            ana.append(f"{raw[1]}{'+' if raw[2] > 0 else '-'}:axis_{opt}")
+            trig.append(str(raw[1]))
+        else:                                     # Taste auf einer Achse kennt Flycast so nicht -> frei
+            log(f"Flycast: {b} auf einer Achse wird nicht unterstuetzt")
+    sel = ctx["roles"].get("select")              # Select oeffnet das Flycast-Menue (wie Flycasts eigene Vorgabe)
+    raw = bind_raw(ctx, sel)
+    if raw and raw[0] == "button" and not any(x.startswith(f"{raw[1]}:") for x in dig):
+        dig.append(f"{raw[1]}:btn_menu")
+    st = stick_axes(ctx)
+    if "lx" in st and "ly" in st:
+        ana += [f"{st['lx']}-:axis_left", f"{st['lx']}+:axis_right", f"{st['ly']}-:axis_up", f"{st['ly']}+:axis_down"]
+    lines = ["[emulator]", f"mapping_name = {name}", "dead_zone = 10", "saturation = 100", "rumble_power = 100",
+             "version = 4"] + ([f"triggers = {','.join(trig)}"] if trig else [])
+    lines += ["", "[digital]"] + [f"bind{i} = {x}" for i, x in enumerate(dig)]
+    lines += ["", "[analog]"] + [f"bind{i} = {x}" for i, x in enumerate(ana)]
+    return "\n".join(lines) + "\n"
+
+
+def flycast_prepare(ctx):
+    name = ctx["sdl"].get("name") or ctx["pad"]["name"]
+    path = flycast_file(name)
+    text = flycast_text(ctx, name)
+    cur = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+    if keymap_once("flycast", "pad", {"file": cur or None}, {"file": text}, ctx["custom"]):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        log("Flycast: Controller-Belegung", path.name)
+
+
+KEYMAP_WRITERS = {"duckstation": duckstation_prepare, "snes9x": snes9x_prepare, "nestopia": nestopia_prepare,
+                  "ppsspp": ppsspp_prepare, "melonds": melonds_prepare, "dolphin": dolphin_prepare,
+                  "flycast": flycast_prepare}
+
+
+def keymap_prepare(tile):
+    """Vor dem Start eines Emulators (ausser mGBA, s. mgba_prepare): Belegung in dessen Einstellungen schreiben."""
+    fn = KEYMAP_WRITERS.get(tile)
+    if not fn:
+        return
+    with EMU_LOCK:
+        ctx = keymap_context(tile)
+    if not ctx:
+        return
+    with EMU_LOCK:
+        fn(ctx)
 
 
 # ---- Ton aus je Emulator (Spieleliste: "Spiel stumm") ----------------------------------------------------------
@@ -6368,25 +6882,23 @@ def emu_mute_apply(tile):
         emu_state_save(st)
 
 
-def emu_front(kind):
-    """Kachel, wenn das aktive Fenster wirklich zum Programm `kind` gehoert (sonst None)."""
-    tid = APPS.front()
-    if not tid or APPS.kinds.get(tid) != kind:
-        return None
-    proc = APPS._get(tid)
+def emu_front(tile):
+    """True, wenn das aktive Fenster wirklich zur Kachel `tile` gehoert (laeuft und ist vorn)."""
+    if not tile or APPS.front() != tile:
+        return False
+    proc = APPS._get(tile)
     act = active_window()
-    if not proc or not act or not any(int(w[0], 16) == act for w in APPS._windows_of(tid, proc)):
-        return None
-    return tid
+    return bool(proc and act and any(int(w[0], 16) == act for w in APPS._windows_of(tile, proc)))
 
 
 EMU_HELD = set()                              # gerade gehaltene Tasten (keydown geschickt), werden sicher losgelassen
 
 
 def emu_action(action, down):
-    """Aktion aus der Emulator-Belegung (mGBA: speichern, laden, vor-/zurueckspulen). Nur, wenn mGBA vorn ist;
-    eine gehaltene Taste wird beim Loslassen immer freigegeben."""
-    spec = MGBA_ACTIONS.get(action)
+    """Extra aus der Tastenbelegung ("<Kachel>:<save|load|ff|rewind>"): Taste an den Emulator schicken (EMU_KEYS).
+    Nur, wenn genau dieser Emulator vorn ist; eine gehaltene Taste wird beim Loslassen immer freigegeben."""
+    tile, _, act = str(action).partition(":")
+    spec = EMU_KEYS.get(tile, {}).get(act)
     if not spec or not shutil.which("xdotool"):
         return
     how, key = spec
@@ -6395,14 +6907,14 @@ def emu_action(action, down):
             EMU_HELD.discard(key)
             run(["xdotool", "keyup", key])
         return
-    if not down or not emu_front("mgba-qt"):
+    if not down or not emu_front(tile):
         return
     if how == "tap":
         run(["xdotool", "key", "--clearmodifiers", key])
     else:
         EMU_HELD.add(key)
         run(["xdotool", "keydown", key])
-    log("mGBA:", action)
+    log(f"{tile}:", act)
 
 
 # ---- Vollbild ------------------------------------------------------------------------------------------------
@@ -6413,7 +6925,7 @@ EMU_FULLSCREEN = {"mgba-qt": ("-f", "ctrl+f"), "duckstation": ("-fullscreen", "F
 EMU_WM_FULLSCREEN = {"snes9x", "nestopia", "melonds", "stella", "vice", "retroarch"}
 FS_HOLD = 0.8                                # L3 so lange halten -> Vollbild an/aus
 SAVESTATE_HOLD = 0.5                         # Savestate speichern/laden erst nach so langem Halten (nicht aus Versehen)
-HOLD_ACTIONS = {"fullscreen": FS_HOLD, "save": SAVESTATE_HOLD, "load": SAVESTATE_HOLD}
+HOLD_ACTIONS = {"fullscreen": FS_HOLD, "save": SAVESTATE_HOLD, "load": SAVESTATE_HOLD}   # je Aktion (Kachel egal)
 
 
 def emu_kind(args):
@@ -6438,6 +6950,14 @@ def emu_prepare(tid, args):
         except Exception as e:  # noqa: BLE001 – Vorgaben duerfen den Start nie verhindern
             log("mGBA-Vorgaben:", e)
         env["SDL_JOYSTICK_HIDAPI"] = "0"
+    if tid in KEYMAP_WRITERS:
+        try:
+            keymap_prepare(tid)
+        except Exception as e:  # noqa: BLE001 – die Belegung darf den Start nie verhindern
+            log(f"{tid}: Controller-Belegung:", e)
+        env["SDL_JOYSTICK_HIDAPI"] = "0"          # rohe Tastennummern wie in sdl_indices (s. SDL_PROBE)
+        if args[:2] == ["flatpak", "run"] and not any(str(a).startswith("--env=SDL_JOYSTICK_HIDAPI") for a in args):
+            args = ["flatpak", "run", "--env=SDL_JOYSTICK_HIDAPI=0"] + list(args[2:])
     # Nur mit Spiel (aus der Spieleliste): "Emulator ohne Spiel starten" bleibt im Fenster, dort will man die Menues
     game = len(args) > 1 and Path(str(args[-1])).suffix.lower() in {e for x in ROMS.EXTENSIONS.values() for e in x}
     if game and emu_fullscreen_wanted(tid):
@@ -8993,11 +9513,12 @@ def gamepad_watcher():
     def actions_for(pad, probe):
         roles, src = pad_roles(pad, probe)
         out = [(roles["l3"], "fullscreen")] if roles.get("l3") else []
-        bmap, custom = emu_binds("gba", pad, roles=roles)
-        for btn in MGBA_ACTIONS:
-            if bmap.get(btn):
-                out.append((bmap[btn], btn))
-        return out, src + (" + eigene Tastenbelegung" if custom else "")
+        own = []
+        for tile, keys in EMU_KEYS.items():                    # Extras jedes Emulators; ausgeloest nur, wenn er vorn ist
+            bmap, custom = emu_binds(tile, pad, roles=roles)
+            own += [tile] if custom else []
+            out += [(bmap[a], f"{tile}:{a}") for a in keys if bmap.get(a)]
+        return out, src + (f" + eigene Tastenbelegung ({', '.join(own)})" if own else "")
 
     def pads_stamp():
         try:
@@ -9047,7 +9568,7 @@ def gamepad_watcher():
         if on == was:
             return
         state[k] = on
-        if action in HOLD_ACTIONS:                 # erst nach langem Halten (Vollbild, Savestates)
+        if action.rpartition(":")[2] in HOLD_ACTIONS:   # erst nach langem Halten (Vollbild, Savestates)
             if on:
                 hold_since[k] = ev_time
             else:
@@ -9087,7 +9608,7 @@ def gamepad_watcher():
                 sel.unregister(dev)
                 drop(dev.path)
         for k, t in list(hold_since.items()):
-            if k not in done and time.monotonic() - t >= HOLD_ACTIONS[k[1]]:
+            if k not in done and time.monotonic() - t >= HOLD_ACTIONS[k[1].rpartition(":")[2]]:
                 done.add(k)
                 fn, args = (emu_toggle_fullscreen, ()) if k[1] == "fullscreen" else (emu_action, (k[1], True))
                 threading.Thread(target=fn, args=args, daemon=True).start()

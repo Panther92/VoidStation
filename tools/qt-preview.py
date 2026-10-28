@@ -54,23 +54,27 @@ ROMS = [{"title": n, "name": n, "filename": n.lower().replace(" ", "-") + ".gba"
         ("Advance Wars", "Golden Sun", "Metroid Fusion", "Pokémon Smaragd", "Mario Kart", "Zelda Minish Cap", "F-Zero")]
 ROM_COVERS = Path(os.environ["VS_ROM_COVERS"]) if os.environ.get("VS_ROM_COVERS") else None
 # Tastenbelegung: Beispiel-Controller (PS4) und mGBA-Belegung wie im Launcher (EMU_LAYOUTS, keymap_payload)
-GBA_BUTTONS = [("A", "east"), ("B", "south"), ("L", "l1"), ("R", "r1"), ("Start", "start"), ("Select", "select"),
-               ("Up", "up"), ("Down", "down"), ("Left", "left"), ("Right", "right"),
-               ("save", "north"), ("load", "west"), ("rewind", "l2"), ("ff", "r2")]
+# Layouts wie im Launcher (EMU_LAYOUTS, dort gepflegt – hier nur ausgelesen, damit die Vorschau nicht abweicht)
+_src = (REPO / "launcher" / "launcher.py").read_text(encoding="utf-8")
+_ns = {}
+exec(_src[_src.index("_DPAD = ["):_src.index("EMU_ACTIONS = {")], _ns)
+EMU_LAYOUTS = _ns["EMU_LAYOUTS"]
 PS_TEXT = {"south": "✕", "east": "○", "west": "□", "north": "△", "l1": "L1", "r1": "R1", "l2": "L2", "r2": "R2",
            "select": "Share", "start": "Options", "l3": "L3", "r3": "R3", "up": "↑", "down": "↓", "left": "←", "right": "→"}
-CAPTURE_ROLES = ["south", "east", "l1", "r1", "start", "select", "up", "down", "left", "right", "north", "west", "l2", "r2"]
+CAPTURE_ROLES = ["south", "east", "west", "north", "l1", "r1", "l2", "r2", "start", "select", "up", "down", "left", "right",
+                 "l3", "r3"]
 KEYMAP = {"own": {}, "step": 0, "nopad": os.environ.get("VS_NO_PAD") == "1", "mute": False}
 
 
-def keymap_payload():
-    cur = {b: KEYMAP["own"].get(b, r) for b, r in GBA_BUTTONS}
+def keymap_payload(emu="gba"):
+    lay = EMU_LAYOUTS.get(emu) or EMU_LAYOUTS["gba"]
+    own = KEYMAP["own"].setdefault(emu, {})
+    cur = {b: own.get(b, r) for b, r in lay["buttons"]}
     pad = None if KEYMAP["nopad"] else {"path": "/dev/input/event21", "name": "Wireless Controller", "id": "054c:09cc", "src": "SDL"}
-    return {"emu": "gba", "name": "mGBA", "sub": "Game Boy / Color / Advance", "console": "gba",
-            "pads": [] if not pad else [{"path": pad["path"], "name": pad["name"]}], "pad": pad,
-            "custom": bool(KEYMAP["own"]),
+    return {"emu": emu, "name": lay["name"], "sub": lay.get("sub", ""), "console": lay["console"], "notes": lay.get("notes", []),
+            "pads": [] if not pad else [{"path": pad["path"], "name": pad["name"]}], "pad": pad, "custom": bool(own),
             "buttons": [{"id": b, "action": b in ("save", "load", "rewind", "ff"), "bind": {"role": cur[b]} if cur[b] else None,
-                         "role": cur[b] or "", "label": PS_TEXT.get(cur[b], ""), "custom": cur[b] != r} for b, r in GBA_BUTTONS]}
+                         "role": cur[b] or "", "label": PS_TEXT.get(cur[b], ""), "custom": cur[b] != r} for b, r in lay["buttons"]]}
 
 
 for _r in ROMS:                                   # wie der Launcher: Adresse immer da, 404 wenn es kein Bild gibt
@@ -79,7 +83,9 @@ for _r in ROMS:                                   # wie der Launcher: Adresse im
 
 TILES = json.loads(json.dumps(S.TILES))
 TILES["groups"].insert(1, {"name": "Spiele", "tiles": [
-    {"id": "gba", "label": "Game Boy Advance", "sub": "mGBA", "size": "wide", "color": "#2d3763", "icon": "handheld", "cmd": ["mgba-qt"]}]})
+    {"id": "gba", "label": "Game Boy Advance", "sub": "mGBA", "size": "wide", "color": "#2d3763", "icon": "handheld", "cmd": ["mgba-qt"]}]
+    + [{"id": t, "label": lay["sub"], "sub": lay["name"], "color": "#3a3157", "icon": "gamepad", "cmd": [t]}
+       for t, lay in EMU_LAYOUTS.items() if t != "gba"]})
 
 
 JOB = {}
@@ -336,9 +342,9 @@ class H(S.H):
             "/api/bluetooth/status": bt_status,
             "/api/wifi/scan": lambda: [{"ssid": "FRITZ!Box 7530", "signal": 72, "secure": True, "active": True},
                                        {"ssid": "Nachbar", "signal": 31, "secure": True, "active": False}],
-            "/api/keymap": keymap_payload,
+            "/api/keymap": lambda: keymap_payload(q.get("emu", ["gba"])[0]),
             "/api/roms": lambda: {"system": q.get("system", ["gba"])[0], "count": len(ROMS), "roms": ROMS,
-                                  "keymap": q.get("system", ["gba"])[0] == "gba",
+                                  "keymap": q.get("system", ["gba"])[0] in EMU_LAYOUTS,
                                   "mute": KEYMAP["mute"] if q.get("system", ["gba"])[0] == "gba" else None},
             "/api/install/probe": lambda: PROBE,
             "/api/install/status": lambda: dict(inst_status(), autostart=LIVE["on"] and INST.get("state") == "idle" and not INST.get("seen")),
@@ -433,17 +439,19 @@ class H(S.H):
             KEYMAP["step"] += 1
             return self.j({"bind": {"role": role}, "label": role})
         if p == "/api/keymap/set":
+            lay = dict(EMU_LAYOUTS[body.get("emu", "gba")]["buttons"])
+            own = KEYMAP["own"].setdefault(body.get("emu", "gba"), {})
             role = (body.get("bind") or {}).get("role")
-            cur = {b: KEYMAP["own"].get(b, r) for b, r in GBA_BUTTONS}
+            cur = {b: own.get(b, r) for b, r in lay.items()}
             swapped = [o for o, r in cur.items() if role and o != body["button"] and r == role]
             for o in swapped:
-                KEYMAP["own"][o] = cur[body["button"]]
-            KEYMAP["own"][body["button"]] = role
-            KEYMAP["own"] = {b: r for b, r in KEYMAP["own"].items() if r != dict(GBA_BUTTONS)[b]}
-            return self.j(dict(keymap_payload(), swapped=swapped))
+                own[o] = cur[body["button"]]
+            own[body["button"]] = role
+            KEYMAP["own"][body.get("emu", "gba")] = {b: r for b, r in own.items() if r != lay[b]}
+            return self.j(dict(keymap_payload(body.get("emu", "gba")), swapped=swapped))
         if p == "/api/keymap/reset":
-            KEYMAP["own"] = {}
-            return self.j(keymap_payload())
+            KEYMAP["own"][body.get("emu", "gba")] = {}
+            return self.j(keymap_payload(body.get("emu", "gba")))
         if p == "/api/roms/mute":
             KEYMAP["mute"] = bool(body.get("on"))
             return self.j({"mute": KEYMAP["mute"]})

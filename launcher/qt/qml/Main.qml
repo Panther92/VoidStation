@@ -366,7 +366,8 @@ Window {
             // Emulator laeuft schon (auch mit Spiel aus der Liste): zurueck dorthin statt Spieleliste / neuer Instanz
             if (emuSystems.indexOf(t.id) >= 0 && running.indexOf(t.id) < 0) {
                 return Api.get("/api/roms?system=" + encodeURIComponent(t.id), function (r) {
-                    if (r && (r.count > 0 || (r.roms && r.roms.length))) roms.openFor(t); else launch(t)
+                    // Spieleliste mit Spielen – oder ohne, wenn es dort die Tastenbelegung gibt
+                    if (r && (r.count > 0 || (r.roms && r.roms.length) || r.keymap)) roms.openFor(t); else launch(t)
                 }, function () { launch(t) })
             }
             launch(t)

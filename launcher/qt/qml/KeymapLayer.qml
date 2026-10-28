@@ -26,8 +26,15 @@ Layer {
     property string edit: ""                     // in der Liste gewaehlte Taste: neu belegen oder frei lassen?
     readonly property var keys: kd ? kd.buttons.filter(function (b) { return !b.action }) : []
     readonly property var extras: kd ? kd.buttons.filter(function (b) { return b.action }) : []
-    readonly property real picW: Math.min(Ui.screenW * 0.38, Math.max(Ui.screenW * 0.26, (stage.height - 230 * Ui.f) * 100 / 62))
-    readonly property real cellW: Ui.screenW * 0.22
+    // Viele Tasten (PlayStation-Pad …): drei Spalten und eine etwas kleinere Skizze
+    readonly property bool many: keys.length > 12
+    readonly property int cols: many ? 3 : 2
+    readonly property real cellW: Ui.screenW * (many ? 0.17 : 0.23)
+    readonly property real listW: cols * cellW + (cols - 1) * 8 * Ui.f
+    readonly property real picW: Math.min(Ui.screenW * (many ? 0.3 : 0.36),
+                                          Math.max(Ui.screenW * 0.22, (stage.height - 230 * Ui.f) / pic.aspect))
+    // Tasten, die ueberall gleich heissen, als Zeichen (Rest: Texte keymap.btn.*, sonst die Kennung)
+    readonly property var symbols: ({ Cross: "✕", Circle: "○", Square: "□", Triangle: "△" })
 
     function openFor(t) {
         tile = t
@@ -58,10 +65,16 @@ Layer {
         for (var p = Nav.current; p; p = p.parent) if (p === trk) inTrack = true
         if (!inTrack && it.length) app.setFocus(it[0], true)
     }
-    function btnText(id) { return Ui.t("keymap.btn." + id, null, id) }
+    function btnText(id) { return Ui.t("keymap.btn." + id, null, symbols[id] || id) }
+    function infoText() {
+        if (!kd) return ""
+        var t = Ui.t("keymap.info", { name: kd.name })
+        for (var i = 0; i < (kd.notes || []).length; i++) t += " " + Ui.t("keymap.note." + kd.notes[i])
+        return t
+    }
     function ctrlText(b) {
         if (!b || !b.label) return Ui.t("keymap.unset")
-        return ["up", "down", "left", "right"].indexOf(b.role) >= 0 ? Ui.t("keymap.dpad") + " " + b.label : b.label
+        return b.label                           // Steuerkreuz: nur der Pfeil (die Konsolentaste nennt "Kreuz" schon)
     }
     function btn(id) { return kd ? (kd.buttons.filter(function (b) { return b.id === id })[0] || null) : null }
     function handleBack() {
@@ -173,6 +186,7 @@ Layer {
             maxW: km.picW
             title: km.kd ? km.kd.sub : ""
             ConsolePic {
+                id: pic
                 width: km.picW
                 kind: km.kd ? km.kd.console : "gba"
                 cur: km.cur || km.edit
@@ -213,22 +227,23 @@ Layer {
                 Pill { property string key: "kmcancel"; visible: km.mode !== ""; text: Ui.t("common.cancel"); onTriggered: km.stop(false) }
             }
             Info { visible: km.mode === "learn"; width: km.picW; html: Ui.t("keymap.learnHint") }
-            Info { visible: !km.mode && !km.edit && !!km.kd && !!km.kd.pad; width: km.picW; html: Ui.t("keymap.info." + (km.tile ? km.tile.id : ""), null, "") }
+            Info { visible: !km.mode && !km.edit && !!km.kd && !!km.kd.pad; width: km.picW; html: km.infoText() }
         }
         // Belegung: Konsolentaste -> Controllertaste; waehlen = nur diese Taste neu
         SetGroup {
             visible: !!km.kd && !!km.kd.pad
             availH: km.stage.height
-            maxW: km.cellW * 2 + 8 * Ui.f
+            maxW: km.listW
             title: Ui.t("keymap.mapping")
             Grid {
-                columns: 2
+                columns: km.cols
                 spacing: 8 * Ui.f
                 Repeater {
                     model: km.keys
                     Pill {
                         property string key: "kmb" + modelData.id
                         width: km.cellW
+                        maxWidth: km.cellW
                         text: km.btnText(modelData.id) + "   →   " + km.ctrlText(modelData)
                         on: km.cur === modelData.id || km.edit === modelData.id
                         dim: !modelData.bind
@@ -237,7 +252,7 @@ Layer {
                     }
                 }
             }
-            Txt { text: Ui.t("keymap.extras"); color: Ui.c.textFaint; font.pixelSize: 14 * Ui.f; topPadding: 6 * Ui.f }
+            Txt { visible: km.extras.length > 0; text: Ui.t("keymap.extras"); color: Ui.c.textFaint; font.pixelSize: 14 * Ui.f; topPadding: 6 * Ui.f }
             Grid {
                 columns: 2
                 spacing: 8 * Ui.f
@@ -245,7 +260,8 @@ Layer {
                     model: km.extras
                     Pill {
                         property string key: "kmb" + modelData.id
-                        width: km.cellW
+                        width: (km.listW - 8 * Ui.f) / 2
+                        maxWidth: (km.listW - 8 * Ui.f) / 2
                         text: km.btnText(modelData.id) + "   →   " + km.ctrlText(modelData)
                         on: km.cur === modelData.id || km.edit === modelData.id
                         dim: !modelData.bind
@@ -255,7 +271,7 @@ Layer {
                 }
             }
             SetRow {
-                width: km.cellW * 2 + 8 * Ui.f
+                width: km.listW
                 visible: !!km.kd && km.kd.pads.length > 1
                 label: Ui.t("keymap.pads")
                 Repeater {
