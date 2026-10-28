@@ -245,7 +245,7 @@
       "id": "duckstation",
       "name": "DuckStation",
       "cat": "Emulatoren",
-      "desc": "PlayStation 1. Sehr genau und schnell, braucht ein BIOS aus der eigenen Konsole im Ordner share/BIOS.",
+      "desc": "PlayStation 1. Sehr genau und schnell, braucht ein BIOS aus der eigenen Konsole im Ordner share/ROMs/psx/bios.",
       "source": {
         "type": "appimage",
         "url": "https://github.com/stenzek/duckstation/releases/download/latest/DuckStation-x64.AppImage"
@@ -265,7 +265,7 @@
       "id": "pcsx2",
       "name": "PCSX2",
       "cat": "Emulatoren",
-      "desc": "PlayStation 2. Braucht ein BIOS aus der eigenen Konsole (Ordner share/BIOS) und einen kräftigeren Rechner – auf schwacher Hardware laufen nur leichte Spiele flüssig.",
+      "desc": "PlayStation 2. Braucht ein BIOS aus der eigenen Konsole (Ordner share/ROMs/ps2/bios) und einen kräftigeren Rechner – auf schwacher Hardware laufen nur leichte Spiele flüssig.",
       "source": {
         "type": "flatpak",
         "ref": "net.pcsx2.PCSX2"
@@ -496,7 +496,7 @@
       "id": "xemu",
       "name": "xemu",
       "cat": "Emulatoren",
-      "desc": "Original-Xbox. Braucht MCPX-Boot-ROM, BIOS und Festplatten-Image aus der eigenen Konsole im Ordner share/BIOS.",
+      "desc": "Original-Xbox. Braucht MCPX-Boot-ROM, BIOS und Festplatten-Image aus der eigenen Konsole im Ordner share/ROMs/xbox/bios.",
       "source": {
         "type": "flatpak",
         "ref": "app.xemu.xemu"

@@ -30,13 +30,14 @@ Layer {
             app.toast(Ui.t(j.mute ? "roms.muteOn" : "roms.muteOff", { name: rl.sysName }))
         }, function (e) { app.toast(Ui.t("common.failedMsg", { msg: e }), true) })
     }
-    // BIOS fehlt (DuckStation, PCSX2, xemu – launcher.py bios_status): was fehlt und wohin damit
+    // BIOS fehlt (DuckStation, PCSX2, xemu – launcher.py bios_status): was fehlt und wohin damit (share/ROMs/<folder>/bios)
     function biosText() {
         var b = romData && romData.bios
         if (!b || b.ok) return ""
         var what = (b.missing || []).map(function (m) { return Ui.t("roms.bios." + m) }).join(", ")
-        var t = Ui.t("roms.bios", { name: sysName, what: what, host: app.sett && app.sett.net ? app.sett.net.hostname : "voidstation" })
-        return t.replace(/\\/g, "\u2060\\\u2060")         // Pfad \\host\share\BIOS nicht umbrechen
+        var t = Ui.t("roms.bios", { name: sysName, what: what, folder: b.folder || "",
+                                    host: app.sett && app.sett.net ? app.sett.net.hostname : "voidstation" })
+        return t.replace(/\\/g, "\u2060\\\u2060")         // Pfad \\host\share\ROMs\psx\bios nicht umbrechen
     }
     function focusFirst() { Qt.callLater(function () { var it = Nav.collect(trk); app.setFocus(it.length ? it[0] : startEmu, true) }) }
     function firstFocus() { var it = Nav.collect(trk); return it.length ? it[0] : startEmu }

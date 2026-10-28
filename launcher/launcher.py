@@ -37,6 +37,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
+import zlib
 from html import unescape as html_unescape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -838,7 +839,7 @@ DOSBOX_LANG = {"de": "de", "en": "en", "es": "es", "fr": "fr", "it": "it", "nl":
 # X-Tastaturbelegung -> DOS-Tastaturcode (FreeDOS KEYB); unbekannt -> auto
 DOSBOX_KEYB = {"de": "gr", "at": "gr", "ch": "sg", "us": "us", "gb": "uk", "fr": "fr", "it": "it", "es": "sp",
                "nl": "nl", "be": "be", "pl": "pl", "hu": "hu", "ru": "ru", "ua": "ur", "gr": "gk", "br": "br",
-               "pt": "po", "dk": "dk", "se": "sv", "no": "no", "fi": "su", "cz": "cz", "sk": "sl", "tr": "tr"}
+               "pt": "po", "dk": "dk", "se": "sv", "no": "no", "fi": "su", "cz": "cz", "sk": "sk", "tr": "tr"}
 DOSBOX_PRIMARY = """# DOSBox Staging – Grundeinstellung von VoidStation
 # Angelegt beim ersten Start ueber die Kachel. Die Datei gehoert jetzt dir: Aenderungen bleiben erhalten,
 # VoidStation schreibt sie nicht wieder ueber. Geloescht wird sie beim naechsten Start neu angelegt.
@@ -925,26 +926,42 @@ def dosbox_prepare(args):
     if str(vs_conf) not in args:
         args = [args[0], "--conf", str(vs_conf)] + list(args[1:])
     if own_conf:
-        args = list(args) + ["--conf", str(own_conf)]
+        # Eigene .conf (z. B. von GOG) mountet meist relativ ("mount c ."): DOSBox loest das gegen das
+        # Arbeitsverzeichnis auf – also das der .conf, nicht das Home, aus dem VoidStation startet
+        args = list(args) + ["--working-dir", str(own_conf.parent), "--conf", str(own_conf)]
     return args
 
 
+DOS_83 = re.compile(r"[A-Z0-9!#$%&'()@^_`{}~-]{1,8}(\.[A-Z0-9!#$%&'()@^_`{}~-]{1,3})?")
+
+
 def dosbox_game_lines(game, root):
-    """[autoexec]-Zeilen: Laufwerk C: und ggf. Spiel starten, danach DOSBox beenden. Ein Spiel-Ordner (bzw. der Ordner
-    einer Spieldatei) wird selbst zu C: – so stoeren lange Ordnernamen nicht (DOS kennt nur 8.3) und das Spiel findet
-    seine Dateien wie von der Diskette gewohnt. Ordner: genau eine Start-Datei darin (.bat vor .exe/.com, ohne
-    Installations-/Einrichtungsprogramme) – sonst nur C: und die Eingabe dem Spieler ueberlassen."""
+    """[autoexec]-Zeilen: Laufwerk C: und ggf. Spiel starten, danach DOSBox beenden.
+    C: ist wie beim Start ohne Spiel die ganze Freigabe share/ROMs/dos – ein Spiel, das man in DOSBox selbst
+    installiert hat (INSTALL.EXE nach C:\\SPIEL), findet so seine Pfade wieder. Nur ein Ordner, dessen Name kein
+    DOS-Name ist (laenger als 8.3, Leerzeichen …), wird selbst zu C: – solche Ordner kommen vom PC und waeren unter
+    DOS nur als SPIEL~1 erreichbar. Ordner: genau eine Start-Datei darin (.bat vor .exe/.com, ohne
+    Installations-/Einrichtungsprogramme) mit DOS-Namen – sonst nur C: und die Eingabe dem Spieler ueberlassen.
+    Vorher wird C: freigegeben: Eine aeltere Grundeinstellung mountet C: oft schon selbst ([autoexec] beider Dateien
+    werden aneinandergehaengt), dann schlug unser mount fehl und das Spiel startete nicht."""
+    head = "mount -u c > nul\n"
     if game is None:
-        return f'mount c "{root}"\nc:\n'
+        return head + f'mount c "{root}"\nc:\n'
+    cd = ""
     if game.is_dir():
         files = sorted(f for f in game.iterdir() if f.is_file() and f.suffix.lower() in (".bat", ".exe", ".com")
                        and not re.match(r"(install|setup|config|setsound|uninst)", f.stem, re.I))
         bats = [f for f in files if f.suffix.lower() == ".bat"]
         pick = bats[0] if len(bats) == 1 else files[0] if len(files) == 1 else None
-        mount = game
+        if game.resolve().parent == root.resolve() and DOS_83.fullmatch(game.name.upper()):
+            mount, cd = root, f"cd \\{game.name.upper()}\n"
+        else:
+            mount = game
     else:
         pick, mount = game, game.parent
-    out = f'mount c "{mount}"\nc:\n'
+    out = head + f'mount c "{mount}"\nc:\n' + cd
+    if pick is not None and not DOS_83.fullmatch(pick.name.upper()):
+        pick = None                               # langer Name: unter DOS nicht aufrufbar – nicht starten und beenden
     if pick is not None:
         out += ("call " if pick.suffix.lower() == ".bat" else "") + pick.name + "\nexit\n"
     return out
@@ -5635,7 +5652,7 @@ class ROMManager:
         roms = []
         try:
             for item in sorted(sys_dir.iterdir()):
-                if dirs and item.is_dir() and not item.name.startswith("."):
+                if dirs and item.is_dir() and not item.name.startswith(".") and item.name.casefold() != "bios":
                     roms.append({"id": hashlib.sha1(str(item).encode()).hexdigest()[:10], "name": item.name,
                                  "filename": item.name, "system": folder, "folder": folder, "size": "", "bytes": 0,
                                  "dir": True})
@@ -6991,27 +7008,77 @@ def flycast_prepare(ctx):
         log("Flycast: Controller-Belegung", path.name)
 
 
-# -- BIOS: Dateien aus der Freigabe share/BIOS (vom PC aus befuellt). VoidStation sucht dort (auch in Unterordnern) und
-# stellt den Emulator darauf ein, solange dessen eigener Ordner bzw. Pfad nichts Brauchbares enthaelt. Erkannt wird
-# an der Groesse, wie in den Emulatoren selbst: PlayStation 512 KiB (DuckStation bios.h), PlayStation 2 4–8 MiB
-# (PCSX2 BiosTools.cpp), Xbox: MCPX-Boot-ROM 512 Byte, Flash-BIOS 256 KiB oder 1 MiB, Festplatte als .qcow2 (xemu).
-BIOS_DIR = Path.home() / "share" / "BIOS"
-BIOS_KINDS = {
-    "psx": lambda f, n: n == 0x80000,
-    "ps2": lambda f, n: 4 << 20 <= n <= 8 << 20 and f.suffix.lower() not in (".qcow2", ".iso", ".chd"),
-    "mcpx": lambda f, n: n == 512,
-    "flash": lambda f, n: n in (0x40000, 0x100000),
-    "hdd": lambda f, n: f.suffix.lower() == ".qcow2",
+# -- BIOS: je System ein eigener Ordner share/ROMs/<system>/bios, vom PC aus befuellt. Jeder Emulator liest nur
+# seinen Ordner – so kommen sich gleich grosse Dateien verschiedener Konsolen nicht in die Quere (Saturn- und
+# PS1-BIOS haben beide 512 KiB, die DS-Firmware so viel wie ein Xbox-Flash). VoidStation stellt den Emulator vor dem
+# Start darauf ein, solange er in seinem eigenen Ordner bzw. Pfad nichts Brauchbares findet. Erkannt wird wie in den
+# Emulatoren selbst, der Name ist egal (ausser bei Flycast):
+#   PlayStation 512 KiB (DuckStation bios.h) · PlayStation 2 4–8 MiB (PCSX2 BiosTools.cpp) · Xbox: MCPX-Boot-ROM
+#   512 Byte, Flash-BIOS 256 KiB oder 1 MiB, Festplatte .qcow2 (xemu) · Dreamcast: dc_boot.bin bzw. dc_bios.bin
+#   (Flycast 2.7 sucht nur nach dem Namen, nvmem.cpp) · DS: ARM9 4 KiB, ARM7 16 KiB, Firmware 128/256/512 KiB
+#   (melonDS 1.1 verifyDSBIOS/verifyDSFirmware) · GBA 16 KiB mit Sprungtabelle (mGBA GBAIsBIOS) · Game Boy (Color)
+#   Boot-ROMs nach CRC32 (mGBA GBIsBIOS).
+# In jedem Ordner liegt ein Hinweis in der Sprache der Oberflaeche, ob das BIOS noetig oder optional ist (bios_sync).
+ROMS_DIR = Path.home() / "share" / "ROMs"
+BIOS_OLD = Path.home() / "share" / "BIOS"        # bis Oktober 2026 ein gemeinsamer Ordner – bios_migrate raeumt ihn auf
+BIOS_SYSTEMS = {"psx": True, "ps2": True, "xbox": True,                       # Ordner -> Pflicht?
+                "dreamcast": False, "nds": False, "gba": False, "gbc": False}
+BIOS_NOT = {".txt", ".md", ".nfo", ".url", ".htm", ".html", ".pdf", ".jpg", ".jpeg", ".png", ".ini", ".cfg", ".zip",
+            ".7z", ".rar"}                       # Hinweise und Beiwerk zaehlen nie als BIOS (z. B. 512-Byte-Textdatei)
+GB_BOOT = {0xC2F5CC97: "gb", 0x59C8598E: "gb", 0xE6920754: "gb", 0xEC8A83B9: "sgb", 0x53D0DD63: "sgb",
+           0x41884E46: "gbc", 0xE8EF5318: "gbc", 0xE95DC95D: "gbc", 0xFFD6B0F1: "gbc", 0x570337EA: "gbc"}
+
+
+def _gba_bios(f):
+    """mGBA GBAIsBIOS: die ersten 7 Woerter sind ARM-Sprungbefehle (…xx 00 EA)."""
+    try:
+        with open(f, "rb") as fh:
+            t = fh.read(28)
+    except OSError:
+        return False
+    return len(t) == 28 and all(t[4 * i + 3] == 0xEA and t[4 * i + 2] == 0 for i in range(7))
+
+
+def _gb_boot(f, n):
+    """Game-Boy-Boot-ROM nach CRC32 wie mGBA: "gb" (DMG/MGB), "sgb" oder "gbc" (CGB/AGB), sonst None."""
+    if not 0 < n <= 0x4000:
+        return None
+    try:
+        return GB_BOOT.get(zlib.crc32(f.read_bytes()) & 0xFFFFFFFF)
+    except OSError:
+        return None
+
+
+BIOS_KINDS = {  # Art -> (Ordner unter share/ROMs, Test(Datei, Groesse))
+    "psx": ("psx", lambda f, n: n == 0x80000),
+    "ps2": ("ps2", lambda f, n: 4 << 20 <= n <= 8 << 20 and f.suffix.lower() not in (".qcow2", ".iso", ".chd")),
+    "mcpx": ("xbox", lambda f, n: n == 512),
+    "flash": ("xbox", lambda f, n: n in (0x40000, 0x100000)),
+    "hdd": ("xbox", lambda f, n: f.suffix.lower() == ".qcow2"),
+    "dc": ("dreamcast", lambda f, n: f.name in ("dc_boot.bin", "dc_bios.bin")),
+    "bios9": ("nds", lambda f, n: n == 0x1000),
+    "bios7": ("nds", lambda f, n: n == 0x4000),
+    "firmware": ("nds", lambda f, n: n in (0x20000, 0x40000, 0x80000)),
+    "gba": ("gba", lambda f, n: n == 0x4000 and _gba_bios(f)),
+    "gb": ("gbc", lambda f, n: _gb_boot(f, n) == "gb"),
+    "sgb": ("gbc", lambda f, n: _gb_boot(f, n) == "sgb"),
+    "gbc": ("gbc", lambda f, n: _gb_boot(f, n) == "gbc"),
 }
 
 
+def bios_dir(system):
+    return ROMS_DIR / system / "bios"
+
+
 def bios_find(kind, root=None, deep=True):
-    """Dateien einer Art in share/BIOS (bzw. root), mit Unterordnern (2 Ebenen), sortiert: oben vor tief, nach Name."""
-    root = Path(root) if root else BIOS_DIR
+    """Dateien einer Art im bios-Ordner ihres Systems (bzw. root), mit einer Ebene Unterordnern; oben vor tief,
+    nach Name."""
+    system, test = BIOS_KINDS[kind]
+    root = Path(root) if root else bios_dir(system)
     out = []
     try:
         level = [root]
-        for depth in range(3 if deep else 1):
+        for _ in range(2 if deep else 1):
             nxt = []
             for d in level:
                 for f in sorted(d.iterdir(), key=lambda x: x.name.casefold()):
@@ -7019,7 +7086,7 @@ def bios_find(kind, root=None, deep=True):
                         continue
                     if f.is_dir():
                         nxt.append(f)
-                    elif f.is_file() and BIOS_KINDS[kind](f, f.stat().st_size):
+                    elif f.is_file() and f.suffix.lower() not in BIOS_NOT and test(f, f.stat().st_size):
                         out.append(f)
             level = nxt
     except OSError:
@@ -7045,36 +7112,211 @@ def _pcsx2_bios_dir():
 
 
 def bios_status(tile):
-    """Fuer die Spieleliste: {"ok": bool, "missing": [Art …]} – None, wenn der Emulator kein BIOS braucht."""
+    """Fuer die Spieleliste: {"ok", "missing": [Art …], "folder"} – None, wenn der Emulator kein BIOS braucht
+    (optionale BIOS-Dateien melden nichts: es fehlt ja nichts)."""
+    tile = {v: k for k, v in ROMS.TILE_TO_SYSTEM.items()}.get(tile, tile)      # auch Ordnername erlaubt
     if tile == "duckstation":
         ok = bios_dir_has("psx", _duck_bios_dir()) or bios_dir_has("ps2", _duck_bios_dir()) or bool(bios_find("psx"))
-        return {"ok": ok, "missing": [] if ok else ["bios"]}
+        return {"ok": ok, "missing": [] if ok else ["bios"], "folder": "psx"}
     if tile == "pcsx2":
         ok = bios_dir_has("ps2", _pcsx2_bios_dir()) or bool(bios_find("ps2"))
-        return {"ok": ok, "missing": [] if ok else ["bios"]}
+        return {"ok": ok, "missing": [] if ok else ["bios"], "folder": "ps2"}
     if tile == "xemu":
         files = xemu_files(xemu_load())
         miss = [k for k in ("mcpx", "flash", "hdd") if not files.get(k) and not bios_find(k)]
-        return {"ok": not miss, "missing": miss}
+        return {"ok": not miss, "missing": miss, "folder": "xbox"}
     return None
 
 
 def bios_prepare(tile):
-    """Vor dem Start: Emulator auf share/BIOS stellen, wenn er selbst nichts findet (DuckStation, PCSX2)."""
-    if tile == "duckstation" and duck_ready():
-        cur = _duck_bios_dir()
-        if not (bios_dir_has("psx", cur) or bios_dir_has("ps2", cur)):
-            hit = (bios_find("psx") or [None])[0]
-            if hit:
-                ini_update(DUCK_INI, "BIOS", {"SearchDirectory": str(hit.parent)})
-                log("DuckStation: BIOS aus", hit.parent)
-    if tile == "pcsx2" and pcsx2_ready():
-        cur = _pcsx2_bios_dir()
-        if not bios_dir_has("ps2", cur):
-            hit = (bios_find("ps2") or [None])[0]
-            if hit:
-                ini_update(PCSX2_INI, "Folders", {"Bios": str(hit.parent)})
-                log("PCSX2: BIOS aus", hit.parent)
+    """Vor dem Start: Emulator auf seinen bios-Ordner stellen, wenn er selbst nichts findet."""
+    with EMU_LOCK:
+        if tile == "duckstation" and duck_ready():
+            cur = _duck_bios_dir()
+            if not (bios_dir_has("psx", cur) or bios_dir_has("ps2", cur)):
+                hit = (bios_find("psx") or [None])[0]
+                if hit:
+                    ini_update(DUCK_INI, "BIOS", {"SearchDirectory": str(hit.parent)})
+                    log("DuckStation: BIOS aus", hit.parent)
+        elif tile == "pcsx2" and pcsx2_ready():
+            cur = _pcsx2_bios_dir()
+            if not bios_dir_has("ps2", cur):
+                hit = (bios_find("ps2") or [None])[0]
+                if hit:
+                    ini_update(PCSX2_INI, "Folders", {"Bios": str(hit.parent)})
+                    log("PCSX2: BIOS aus", hit.parent)
+        elif tile == "xemu":
+            xemu_bios()
+        elif tile == "gba":
+            mgba_bios()
+        elif tile == "melonds":
+            melonds_bios()
+        elif tile == "flycast":
+            flycast_bios()
+
+
+# mGBA 0.10: [ports.qt] gba.bios / gb.bios / sgb.bios / gbc.bios (SettingsView.cpp), Rueckfall <config>/<art>_bios.bin
+# (gba/core.c, gb/core.c). Ob das Startlogo laeuft ("useBios", "skipBios"), bleibt mGBAs Sache.
+MGBA_BIOS = {"gba": "gba.bios", "gb": "gb.bios", "sgb": "sgb.bios", "gbc": "gbc.bios"}
+
+
+def mgba_bios():
+    cur = ini_read(MGBA_CONFIG).get("ports.qt", {})
+    todo = {}
+    for kind, key in MGBA_BIOS.items():
+        if cur.get(key) and Path(cur[key]).is_file():
+            continue                                  # in mGBA eingestellt (oder schon von VoidStation) und da
+        if (MGBA_CONFIG.parent / f"{kind}_bios.bin").is_file():
+            continue                                  # mGBAs eigener Ordner
+        hit = (bios_find(kind) or [None])[0]
+        if hit:
+            todo[key] = str(hit)
+    if todo:
+        ini_update(MGBA_CONFIG, "ports.qt", todo)
+        log("mGBA: BIOS", todo)
+
+
+# melonDS 1.1: [Emu] ExternalBIOSEnable, [DS] BIOS9Path/BIOS7Path/FirmwarePath (Config.cpp). Mit eigenem BIOS braucht
+# melonDS alle drei, sonst startet es gar nicht (verifySetup) – deshalb nur einschalten, wenn alle drei da sind, und
+# wieder aus, wenn VoidStation es eingeschaltet hatte und sie fehlen. Selbst in melonDS eingerichtet: bleibt.
+def melonds_bios():
+    import tomllib
+    if not MELONDS_TOML.exists() and (MELONDS_TOML.parent / "melonDS.ini").exists():
+        return                                        # alte ini: melonDS uebernimmt sie selbst beim ersten Start
+    try:
+        root = tomllib.loads(MELONDS_TOML.read_text(encoding="utf-8")) if MELONDS_TOML.exists() else {}
+    except (OSError, ValueError) as e:
+        log("melonDS.toml nicht lesbar, BIOS bleibt:", e)
+        return
+    emu, ds = root.setdefault("Emu", {}), root.setdefault("DS", {})
+    st = emu_state_load()
+    mine = bool(st.get("melonds", {}).get("bios"))
+    hits = {k: (bios_find(k) or [None])[0] for k in ("bios9", "bios7", "firmware")}
+    changed = False
+    if all(hits.values()):
+        if emu.get("ExternalBIOSEnable") and not mine:
+            return                                    # in melonDS selbst eingerichtet
+        want = {"BIOS9Path": str(hits["bios9"]), "BIOS7Path": str(hits["bios7"]),
+                "FirmwarePath": str(hits["firmware"])}
+        if any(ds.get(k) != v for k, v in want.items()) or emu.get("ExternalBIOSEnable") is not True:
+            ds.update(want)
+            emu["ExternalBIOSEnable"] = True
+            changed = True
+            log("melonDS: BIOS und Firmware", want)
+        st.setdefault("melonds", {})["bios"] = True
+    elif mine:
+        emu["ExternalBIOSEnable"] = False             # Dateien weg: zurueck zum eingebauten BIOS
+        st.setdefault("melonds", {}).pop("bios", None)
+        changed = True
+        log("melonDS: BIOS-Dateien fehlen – eingebautes BIOS")
+    if not changed:
+        emu_state_save(st)
+        return
+    try:
+        text = toml_dump(root)
+    except ValueError as e:
+        log("melonDS.toml: unbekannter Aufbau, BIOS bleibt:", e)
+        return
+    MELONDS_TOML.parent.mkdir(parents=True, exist_ok=True)
+    tmp = MELONDS_TOML.with_suffix(".vs-tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(MELONDS_TOML)
+    emu_state_save(st)
+
+
+# Flycast 2.7: emu.cfg [config] Dreamcast.BiosPath (Liste mit ";", option.h), sucht dort zuerst dc_boot.bin bzw.
+# dc_bios.bin (oslib.cpp findFlash) – nur im Ordner selbst, nicht darunter.
+FLYCAST_CFG = Path.home() / ".var/app/org.flycast.Flycast/config/flycast/emu.cfg"
+
+
+def flycast_bios():
+    d = bios_dir("dreamcast")
+    if not bios_find("dc", deep=False):
+        return
+    cur = ini_read(FLYCAST_CFG).get("config", {}).get("Dreamcast.BiosPath", "")
+    if str(d) in [p.strip().strip('"') for p in cur.split(";")]:
+        return
+    ini_update_spaced(FLYCAST_CFG, "config", {"Dreamcast.BiosPath": f"{cur};{d}" if cur else str(d)})
+    log("Flycast: BIOS-Ordner", d)
+
+
+def bios_migrate():
+    """Alter gemeinsamer Ordner share/BIOS: PlayStation-, PS2- und Xbox-Dateien (mehr stand dort nie beschrieben) und
+    Dreamcast-BIOS nach Namen in den Ordner ihres Systems verschieben. Was nicht eindeutig ist, bleibt liegen; ein
+    leerer Ordner verschwindet. Die Emulatoren stellt bios_prepare beim naechsten Start auf den neuen Ort."""
+    if not BIOS_OLD.is_dir():
+        return
+    for kind in ("psx", "ps2", "mcpx", "flash", "hdd", "dc"):
+        for f in bios_find(kind, BIOS_OLD):
+            if kind == "flash" and "firm" in f.name.lower():
+                continue                              # 256 KiB: eher DS-Firmware – lieber liegen lassen
+            dest = bios_dir(BIOS_KINDS[kind][0])
+            try:
+                dest.mkdir(parents=True, exist_ok=True)
+                t = dest / f.name
+                if t.exists():
+                    if t.stat().st_size == f.stat().st_size and t.read_bytes() == f.read_bytes():
+                        f.unlink()
+                    continue
+                shutil.move(str(f), str(t))
+                log("BIOS verschoben:", f, "->", t)
+            except OSError as e:
+                log("BIOS nicht verschoben:", f, e)
+    for d in sorted((p for p in BIOS_OLD.rglob("*") if p.is_dir()), key=lambda p: -len(p.parts)) + [BIOS_OLD]:
+        try:
+            d.rmdir()                                 # nur, wenn leer
+        except OSError:
+            pass
+
+
+_I18N = {}
+
+
+def i18n_text(key, lang):
+    """Text aus web/i18n wie in der Oberflaeche: Sprache, dann Englisch, dann Deutsch."""
+    for l in (lang, "en", "de"):
+        if l not in _I18N:
+            try:
+                _I18N[l] = json.loads((WEB / "i18n" / f"{l}.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                _I18N[l] = {}
+        if key in _I18N[l]:
+            return _I18N[l][key]
+    return ""
+
+
+BIOS_SYNC_LOCK = threading.Lock()
+
+
+def bios_sync():
+    """Beim Start und nach einem Sprachwechsel: alten Ordner share/BIOS aufloesen, je System einen bios-Ordner mit
+    Hinweis anlegen ("BIOS noetig – LIESMICH.txt" bzw. "BIOS optional – …", in der Sprache der Oberflaeche). Fassungen
+    in anderen Sprachen raeumt er weg; andere Dateien im Ordner bleiben unberuehrt."""
+    with BIOS_SYNC_LOCK:
+        try:
+            bios_migrate()
+        except Exception as e:  # noqa: BLE001 – darf den Start nie stoeren
+            log("BIOS: alter Ordner:", e)
+        lang = ui_lang()
+        names = {i18n_text(f"bios.file.{k}", l["id"]) for l in LANGS for k in ("req", "opt")} - {""}
+        for system, req in BIOS_SYSTEMS.items():
+            if not (ROMS_DIR / system).is_dir():
+                continue
+            d = bios_dir(system)
+            name = i18n_text("bios.file." + ("req" if req else "opt"), lang)
+            body = i18n_text(f"bios.readme.{system}", lang)
+            if not name or not body:
+                continue
+            data = (body.replace("\r\n", "\n").replace("\n", "\r\n") + "\r\n").encode("utf-8")   # auch fuer Windows
+            try:
+                d.mkdir(exist_ok=True)
+                for old in names - {name}:
+                    (d / old).unlink(missing_ok=True)
+                f = d / name
+                if not f.exists() or f.read_bytes() != data:
+                    f.write_bytes(data)
+            except OSError as e:
+                log(f"BIOS-Hinweis {system}:", e)
 
 
 # -- PCSX2 2.8 (Flatpak, SDL3-Gamepad; inis/PCSX2.ini [Pad1], pcsx2/Input/SDLInputSource.cpp, SIO/Pad/PadDualshock2.cpp)
@@ -7273,15 +7515,6 @@ def xemu_prepare(ctx):
     if root is None:
         return
     changed = False
-    # BIOS-Dateien aus share/BIOS, wo xemu noch nichts (Vorhandenes) eingetragen hat
-    files = root.setdefault("sys", {}).setdefault("files", {})
-    have = xemu_files(root)
-    for k, key in (("mcpx", "bootrom_path"), ("flash", "flashrom_path"), ("hdd", "hdd_path")):
-        hit = (bios_find(k) or [None])[0]
-        if k not in have and hit:
-            files[key] = str(hit)
-            changed = True
-            log(f"xemu: {key} =", hit)
     # Savestates: F5 auf einen Schnappschuss legen (F5 laden, Umschalt+F5 speichern, s. EMU_KEYS)
     sc = root.setdefault("general", {}).setdefault("snapshots", {}).setdefault("shortcuts", {})
     if not sc.get("f5"):
@@ -7303,15 +7536,38 @@ def xemu_prepare(ctx):
             changed = True
             log("xemu: Controller-Belegung", wanted)
     if changed:
-        try:
-            text = toml_dump(root)
-        except ValueError as e:
-            log("xemu.toml: unbekannter Aufbau, bleibt:", e)
-            return
-        XEMU_TOML.parent.mkdir(parents=True, exist_ok=True)
-        tmp = XEMU_TOML.with_suffix(".vs-tmp")
-        tmp.write_text(text, encoding="utf-8")
-        tmp.replace(XEMU_TOML)
+        xemu_save(root)
+
+
+def xemu_save(root):
+    try:
+        text = toml_dump(root)
+    except ValueError as e:
+        log("xemu.toml: unbekannter Aufbau, bleibt:", e)
+        return
+    XEMU_TOML.parent.mkdir(parents=True, exist_ok=True)
+    tmp = XEMU_TOML.with_suffix(".vs-tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(XEMU_TOML)
+
+
+def xemu_bios():
+    """BIOS-Dateien aus share/ROMs/xbox/bios, wo xemu noch nichts (Vorhandenes) eingetragen hat – auch ohne
+    Controller (die Belegung schreibt xemu_prepare nur mit einem)."""
+    root = xemu_load()
+    if root is None:
+        return
+    files = root.setdefault("sys", {}).setdefault("files", {})
+    have = xemu_files(root)
+    changed = False
+    for k, key in (("mcpx", "bootrom_path"), ("flash", "flashrom_path"), ("hdd", "hdd_path")):
+        hit = (bios_find(k) or [None])[0]
+        if k not in have and hit:
+            files[key] = str(hit)
+            changed = True
+            log(f"xemu: {key} =", hit)
+    if changed:
+        xemu_save(root)
 
 
 # -- Azahar 2126 (Flatpak, SDL2-GameController; azahar-emu/qt-config.ini [Controls] profiles\N\…, QSettings-Format)
@@ -7911,7 +8167,7 @@ def emu_prepare(tid, args):
             args = ["flatpak", "run", "--env=SDL_JOYSTICK_HIDAPI=0"] + list(args[2:])
     if flat and tid in EMU_LAYOUTS:
         # Spiele und BIOS liegen in der Freigabe: manche Flatpaks sehen das Home gar nicht (RMG) oder nur lesend
-        # (xemu braucht das Festplatten-Image in share/BIOS zum Schreiben)
+        # (xemu braucht das Festplatten-Image in share/ROMs/xbox/bios zum Schreiben)
         share = f"--filesystem={Path.home() / 'share'}"
         if share not in args:
             args = ["flatpak", "run", share] + list(args[2:])
@@ -10272,6 +10528,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(400, {"error": "unbekannte Sprache"})
                 s = settings_load(); s["lang"] = lang; settings_save(s)
                 log("Sprache:", lang)
+                threading.Thread(target=bios_sync, daemon=True).start()      # Hinweise in den bios-Ordnern
                 return self._json(200, {"lang": lang})
             if parts == ["api", "settings", "scale"]:
                 val = float(self._body().get("scale", 1.75))
@@ -10632,6 +10889,7 @@ def main():
     threading.Thread(target=resume_watcher, daemon=True).start()
     BLUETOOTH.start()                               # Kopplungs-Agent (BlueZ ueber D-Bus)
     threading.Thread(target=AUDIO_WATCH.run, daemon=True).start()   # neue Kopfhoerer, HDMI-Vorgabe Stereo
+    threading.Thread(target=bios_sync, daemon=True).start()         # bios-Ordner je System samt Hinweis
     if not LIVE:                                    # im Live-System gibt es keine Updates
         threading.Thread(target=updates_background_check, daemon=True).start()
         threading.Thread(target=kernel_autopurge, daemon=True).start()
