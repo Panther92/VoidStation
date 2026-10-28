@@ -935,24 +935,77 @@ def dosbox_prepare(args):
 DOS_83 = re.compile(r"[A-Z0-9!#$%&'()@^_`{}~-]{1,8}(\.[A-Z0-9!#$%&'()@^_`{}~-]{1,3})?")
 
 
+# Programme in Spielordnern, die nie das Spiel selbst sind: Installation/Einrichtung, DOS-Extender, Packer, Intros …
+DOS_HELPERS = re.compile(r"(install|setup|config|setsound|setsnd|sndsetup|soundset|sound$|uninst|dos4gw|dos32a|cwsdpmi|"
+                         r"pmodew|dpmi|pkunzip|pkzip|unzip|lha$|arj$|intro|readme|liesmich|catalog|order|help$|info$|"
+                         r"drivers?$|ipxsetup|sersetup|crack|trainer)", re.I)
+
+
+def dosbox_start_file(game):
+    """Start-Datei eines Spielordners -> (Datei, Argumente) oder (None, ""). Der Reihe nach:
+      1. start.txt im Ordner: erste Zeile = Start-Datei, ggf. mit Argumenten (z. B. "MTV.EXE" oder "GAME /nosound")
+      2. genau eine .bat (ohne Hilfsprogramme) bzw. genau eine .exe/.com
+      3. mehrere: die eine, deren Name zum Ordnernamen passt (DOOM/DOOM.EXE, mad-tv/MTV.EXE, monkey2/MONKEY2.EXE)
+    Sonst nichts – lieber an der Eingabe stehen als das Falsche starten."""
+    try:
+        entries = [f for f in game.iterdir() if f.is_file()]
+    except OSError:
+        return None, ""
+    by_name = {f.name.upper(): f for f in entries}
+    st = next((f for f in entries if f.name.lower() == "start.txt"), None)
+    if st:
+        try:
+            line = next((l.strip() for l in st.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()), "")
+        except OSError:
+            line = ""
+        name, _, rest = line.partition(" ")
+        name = name.upper()
+        cand = [name] if "." in name else [name + ext for ext in (".BAT", ".EXE", ".COM")]
+        hit = next((by_name[c] for c in cand if c in by_name), None)
+        if hit:
+            return hit, re.sub(r"[\r\n&|<>]", "", rest).strip()
+        log("DOSBox: start.txt nennt keine vorhandene Datei:", line)
+    files = sorted((f for f in entries if f.suffix.lower() in (".bat", ".exe", ".com")
+                    and not DOS_HELPERS.match(f.stem)), key=lambda f: f.name.upper())
+    bats = [f for f in files if f.suffix.lower() == ".bat"]
+    if len(bats) == 1:
+        return bats[0], ""
+    if len(files) == 1:
+        return files[0], ""
+    # Name passt zum Ordner: gleich, Anfang des einen ist der andere, oder Kuerzel (Buchstaben der Reihe nach)
+    alnum = lambda t: re.sub(r"[^a-z0-9]", "", t.lower())
+    folder = alnum(game.name)
+
+    def fits(f):
+        stem = alnum(f.stem)
+        if not stem or not folder:
+            return False
+        if stem == folder or folder.startswith(stem) or stem.startswith(folder):
+            return True
+        it = iter(folder)
+        return len(stem) >= 2 and stem[0] == folder[0] and all(c in it for c in stem)
+    pool = bats or files
+    match = [f for f in pool if fits(f)]
+    if len(match) == 1:
+        return match[0], ""
+    return None, ""
+
+
 def dosbox_game_lines(game, root):
     """[autoexec]-Zeilen: Laufwerk C: und ggf. Spiel starten, danach DOSBox beenden.
     C: ist wie beim Start ohne Spiel die ganze Freigabe share/ROMs/dos – ein Spiel, das man in DOSBox selbst
     installiert hat (INSTALL.EXE nach C:\\SPIEL), findet so seine Pfade wieder. Nur ein Ordner, dessen Name kein
     DOS-Name ist (laenger als 8.3, Leerzeichen …), wird selbst zu C: – solche Ordner kommen vom PC und waeren unter
-    DOS nur als SPIEL~1 erreichbar. Ordner: genau eine Start-Datei darin (.bat vor .exe/.com, ohne
-    Installations-/Einrichtungsprogramme) mit DOS-Namen – sonst nur C: und die Eingabe dem Spieler ueberlassen.
+    DOS nur als SPIEL~1 erreichbar. Start-Datei im Ordner: dosbox_start_file; findet sie keine eindeutige (oder hat
+    die einen langen Namen), bleibt es bei C: und der Eingabe.
     Vorher wird C: freigegeben: Eine aeltere Grundeinstellung mountet C: oft schon selbst ([autoexec] beider Dateien
     werden aneinandergehaengt), dann schlug unser mount fehl und das Spiel startete nicht."""
     head = "mount -u c > nul\n"
     if game is None:
         return head + f'mount c "{root}"\nc:\n'
-    cd = ""
+    cd, args = "", ""
     if game.is_dir():
-        files = sorted(f for f in game.iterdir() if f.is_file() and f.suffix.lower() in (".bat", ".exe", ".com")
-                       and not re.match(r"(install|setup|config|setsound|uninst)", f.stem, re.I))
-        bats = [f for f in files if f.suffix.lower() == ".bat"]
-        pick = bats[0] if len(bats) == 1 else files[0] if len(files) == 1 else None
+        pick, args = dosbox_start_file(game)
         if game.resolve().parent == root.resolve() and DOS_83.fullmatch(game.name.upper()):
             mount, cd = root, f"cd \\{game.name.upper()}\n"
         else:
@@ -963,7 +1016,9 @@ def dosbox_game_lines(game, root):
     if pick is not None and not DOS_83.fullmatch(pick.name.upper()):
         pick = None                               # langer Name: unter DOS nicht aufrufbar – nicht starten und beenden
     if pick is not None:
-        out += ("call " if pick.suffix.lower() == ".bat" else "") + pick.name + "\nexit\n"
+        out += ("call " if pick.suffix.lower() == ".bat" else "") + pick.name + (f" {args}" if args else "") + "\nexit\n"
+    else:
+        log("DOSBox: keine eindeutige Start-Datei in", game, "– bleibt an der Eingabe (start.txt hilft)")
     return out
 
 
