@@ -2872,8 +2872,14 @@ class MediaLib:
         2. Cover des Ordners – ausser der Ordner mischt verschiedene Alben
         3. online gefundenes Cover zu Interpret + Album bzw. Interpret + Titel (Zwischenspeicher, gilt fuer alle
            Titel desselben Albums) – nur mit online=True wird gesucht (Hintergrund, CoverFetcher)
+        Vor allem anderen: ein gleichnamiges Bild neben dem Titel ("Interpret - Titel.jpg") – fuer Titel, die keine Suche
+        findet oder bei denen sie danebenliegt.
         Rueckgabe (Pfad oder None, fertig): fertig=False heisst, eine Suche im Netz koennte noch etwas bringen."""
         st = p.stat()
+        for ext in (".jpg", ".jpeg", ".png", ".webp", ".JPG", ".PNG"):
+            side = p.with_suffix(ext)
+            if side.is_file():
+                return self._art_found(p, st, side)
         key = hashlib.sha1(f"art:{p}:{int(st.st_mtime)}:{st.st_size}".encode()).hexdigest()
         out, none, wide = self.THUMBS / f"{key}.jpg", self.THUMBS / f"{key}.none", self.THUMBS / f"{key}.wide"
         if not out.exists() and not none.exists():
@@ -2979,7 +2985,13 @@ class MediaLib:
         add = {k: v for k, v in add.items() if v and k not in have}
         if cover is None and not add:
             return False
-        ours = set(filter(None, (tags.get("voidstation") or "").split(","))) | set(add) | ({"cover"} if cover is not None else set())
+        ours = self._marker(tags)
+        ours.update({k: self._fp(v) for k, v in add.items()})
+        if cover is not None:
+            try:
+                ours["cover"] = self._fp_bytes(cover.read_bytes())
+            except OSError:
+                ours["cover"] = None
         args = []
         if cover is not None:
             args += ["-i", str(cover), "-map", "0:a", "-map", "1:0", "-disposition:v:0", "attached_pic",
@@ -2988,7 +3000,9 @@ class MediaLib:
             args += ["-map", "0"]
         for k, v in add.items():
             args += ["-metadata", f"{k}={v}"]
-        args += ["-metadata", "VOIDSTATION=" + ",".join(sorted(ours))]   # was von VoidStation stammt (Cover neu suchen)
+        # was von VoidStation stammt, je mit Fingerabdruck des Werts – "Cover neu suchen" nimmt nur heraus, was noch so
+        # in der Datei steht; von Hand Korrigiertes (EasyTAG & Co.) bleibt
+        args += ["-metadata", "VOIDSTATION=" + ",".join(k + (f":{h}" if h else "") for k, h in sorted(ours.items()))]
         if not self._rewrite(p, args):
             return False
         parts = (["Cover"] if cover is not None else []) + ([", ".join(add)] if add else [])
@@ -3038,13 +3052,57 @@ class MediaLib:
         self.tags_cache.pop(str(p), None)
         return True
 
+    @staticmethod
+    def _fp(v):
+        return hashlib.sha1(str(v).strip().encode("utf-8")).hexdigest()[:10]
+
+    @staticmethod
+    def _fp_bytes(b):
+        return hashlib.sha1(b).hexdigest()[:10]
+
+    @staticmethod
+    def _marker(tags):
+        """Kennzeichen VOIDSTATION -> {Tag: Fingerabdruck}; Fassungen bis Oktober 2026 ohne Fingerabdruck -> None."""
+        out = {}
+        for item in filter(None, (tags.get("voidstation") or "").split(",")):
+            k, _, h = item.partition(":")
+            out[k.strip()] = h.strip() or None
+        return out
+
+    @staticmethod
+    def _pic_raw(p):
+        """Eingebettetes Bild so, wie es in der Datei steckt (ohne Umrechnen) – fuer den Vergleich mit dem, was
+        VoidStation hineingeschrieben hat."""
+        ff = shutil.which("ffmpeg")
+        if not ff:
+            return None
+        try:
+            r = subprocess.run([ff, "-v", "error", "-i", str(p), "-map", "0:v:0", "-c", "copy", "-f", "image2pipe", "-"],
+                               capture_output=True, timeout=20, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return r.stdout if r.returncode == 0 and r.stdout else None
+
     def reset_art(self, p):
         """Cover neu suchen: Was VoidStation selbst in die Datei geschrieben hat (Kennzeichen VOIDSTATION; bei
         Dateien aus der ersten Fassung ohne Kennzeichen: Tags, die genau der damals gefundenen Aufnahme entsprechen),
         wieder herausnehmen und Zwischenspeicher wie "nichts gefunden" fuer diesen Titel vergessen."""
         tags = COVERS._tags(p)
-        ours = set(filter(None, (tags.get("voidstation") or "").split(",")))
-        if not ours and COVERS._embedded(p):           # erste Fassung schrieb immer Cover + Tags zusammen
+        marker = self._marker(tags)
+        ours = set()
+        for k, h in marker.items():
+            if h is None:                              # Kennzeichen ohne Fingerabdruck (aeltere Fassung): wie bisher
+                ours.add(k)
+            elif k == "cover":
+                raw = self._pic_raw(p)
+                if raw is not None and self._fp_bytes(raw) == h:
+                    ours.add(k)
+            elif tags.get(k) and self._fp(tags[k]) == h:
+                ours.add(k)                            # steht noch so drin, wie VoidStation es schrieb
+        kept = set(marker) - ours
+        if kept:
+            log("Cover neu suchen:", p.name, "– von Hand geaendert, bleibt:", ", ".join(sorted(kept)))
+        if not marker and COVERS._embedded(p):         # erste Fassung schrieb immer Cover + Tags zusammen
             for c in COVERS.track_caches(p, tags):
                 try:
                     meta = json.loads(c.with_suffix(".json").read_text(encoding="utf-8"))
@@ -3061,7 +3119,7 @@ class MediaLib:
         orig = {k: v for k, v in tags.items() if k not in ours}
         for c in set(COVERS.track_caches(p, tags)) | set(COVERS.track_caches(p, orig)):
             COVERS.forget(c)
-        if ours and p.suffix.lower() in EMBED_EXT and os.access(p.parent, os.W_OK):
+        if (ours or marker) and p.suffix.lower() in EMBED_EXT and os.access(p.parent, os.W_OK):
             args = ["-map", "0:a" if "cover" in ours else "0"]
             for k in sorted(ours - {"cover"}):
                 args += ["-metadata", f"{k}="]
@@ -3877,6 +3935,10 @@ class CoverFetcher:
         for r in d.get("results") or []:
             got = r.get("trackName") if title else r.get("collectionName")
             sn = max(sim(name, got), sim(name, self._clean(got or "")))
+            fa, fb = self._fold(name), self._fold(got)
+            if artist and fa and fb and min(len(fa.split()), len(fb.split())) >= 2 and (
+                    f" {fa} " in f" {fb} " or f" {fb} " in f" {fa} "):
+                sn = max(sn, 0.85)                     # "Stay With Me" in "真夜中のドア〜stay with me"
             if not artist:
                 if sn >= 0.9:
                     best = r
