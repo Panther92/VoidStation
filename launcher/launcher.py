@@ -3159,6 +3159,36 @@ class MediaLib:
         stem = name.rsplit(".", 1)[0] if "." in name else name
         return re.sub(r"[._]+", " ", stem).strip() or name
 
+    def display_name(self, p, tags):
+        """Anzeige eines Musiktitels -> (Titel, Interpret): Titel- und Interpret-Tag, wenn sie zusammenpassen; steckt
+        im Titel-Tag "Interpret - Titel" (YouTube, Kanal als Interpret) oder fehlt er, der bereinigte Titel bzw.
+        Dateiname als Ganzes, ohne Interpret ("Fat_Larry_s_Band_-_Act…" -> "Fat Larry's Band - Act Like You Know")."""
+        t = (tags.get("title") or "").strip().lstrip("-–— ").strip()
+        a = (tags.get("artist") or tags.get("album_artist") or tags.get("albumartist") or "").strip()
+        if t and not COVERS.SEP.search(t):
+            return t, a
+        return COVERS._clean(t or self.title(p.name), tail=False) or t or p.stem, ""
+
+    def _audio_names(self, items):
+        """Titel und Interpret aus den Tags fuer die Kacheln und "Danach" (sonst stand dort der Dateiname). Tags
+        werden je Datei einmal gelesen (bis zu 6 parallel) und bis zur naechsten Aenderung der Datei gemerkt."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        def one(e):
+            try:
+                pth = Path(e["path"])
+                title, artist = self.display_name(pth, self.track_tags(pth))
+            except Exception:  # noqa: BLE001 – lieber Dateiname als gar keine Liste
+                return
+            if title:
+                e["title"] = title
+            if artist:
+                e["sub"] = artist
+        if not items:
+            return
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            list(ex.map(one, items))
+
     def resume_load(self):
         try:
             d = json.loads(RESUME.read_text(encoding="utf-8"))
@@ -3262,6 +3292,7 @@ class MediaLib:
         if p.parent == self.share().resolve():
             parent = ""                              # ~/share/Videos und ~/share/Musik: zurueck zur Startseite
         audio = sum(1 for f in files if f["kind"] == "audio")
+        self._audio_names([f for f in files if f["kind"] == "audio"][:800])
         # Cover automatisch laden: dieser Ordner (hat er Musik) und die Unterordner ohne Bild
         pending = 0
         if COVERS.auto():
