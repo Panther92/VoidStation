@@ -7430,7 +7430,9 @@ def _gb_boot(f, n):
 
 BIOS_KINDS = {  # Art -> (Ordner unter share/ROMs, Test(Datei, Groesse))
     "psx": ("psx", lambda f, n: n == 0x80000),
-    "ps2": ("ps2", lambda f, n: 4 << 20 <= n <= 8 << 20 and f.suffix.lower() not in (".qcow2", ".iso", ".chd")),
+    # PS2: Hauptteil (.bin, vom Dumper oft .ROM0); .rom1/.rom2/.erom (DVD-Player usw.) laedt PCSX2 selbst dazu
+    "ps2": ("ps2", lambda f, n: 4 << 20 <= n <= 8 << 20 and f.suffix.lower() not in (
+        ".qcow2", ".iso", ".chd", ".rom1", ".rom2", ".erom", ".diff", ".mec", ".nvm")),
     "mcpx": ("xbox", lambda f, n: n == 512),
     "flash": ("xbox", lambda f, n: n in (0x40000, 0x100000)),
     "hdd": ("xbox", lambda f, n: f.suffix.lower() == ".qcow2"),
@@ -7524,6 +7526,14 @@ def bios_prepare(tile):
                 if hit:
                     ini_update(PCSX2_INI, "Folders", {"Bios": str(hit.parent)})
                     log("PCSX2: BIOS aus", hit.parent)
+                    cur = hit.parent
+            # Gewaehltes BIOS ([Filenames] BIOS): fehlt es oder liegt es nicht im Ordner (Einrichtung ohne BIOS
+            # abgeschlossen, Datei umbenannt), das erste aus dem Ordner nehmen
+            name = ini_read(PCSX2_INI).get("Filenames", {}).get("BIOS", "")
+            have = bios_find("ps2", cur, deep=False) if Path(cur).is_dir() else []
+            if have and not any(f.name == name for f in have):
+                ini_update(PCSX2_INI, "Filenames", {"BIOS": have[0].name})
+                log("PCSX2: BIOS-Datei", have[0].name)
         elif tile == "xemu":
             xemu_bios()
         elif tile == "gba":
