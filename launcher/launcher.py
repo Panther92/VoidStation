@@ -5707,7 +5707,7 @@ class ROMManager:
         roms = []
         try:
             for item in sorted(sys_dir.iterdir()):
-                if dirs and item.is_dir() and not item.name.startswith(".") and item.name.casefold() != "bios":
+                if dirs and item.is_dir() and not item.name.startswith(".") and item.name.casefold() not in ("bios", "cover"):
                     roms.append({"id": hashlib.sha1(str(item).encode()).hexdigest()[:10], "name": item.name,
                                  "filename": item.name, "system": folder, "folder": folder, "size": "", "bytes": 0,
                                  "dir": True})
@@ -8470,6 +8470,7 @@ class RomCovers:
         "megadrive": "Sega - Mega Drive - Genesis", "genesis": "Sega - Mega Drive - Genesis",
         "atari2600": "Atari - 2600", "c64": "Commodore - 64", "ps2": "Sony - PlayStation 2", "xbox": "Microsoft - Xbox",
         "3ds": "Nintendo - Nintendo 3DS",
+        "dos": "DOS", "scummvm": "ScummVM", "mame": "MAME",
     }
     BY_EXT = {".gba": "gba", ".gbc": "gbc", ".gb": "gb"}     # mGBA-Ordner enthalten alle drei
     IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
@@ -8512,7 +8513,23 @@ class RomCovers:
                 p = d / (stem + ext)
                 if p.is_file():
                     return p
+        game = base / filename                    # DOS/ScummVM: Spiel = Ordner – Bild auch darin (cover.jpg …)
+        if folder in ROMS.DIR_SYSTEMS and game.is_dir():
+            for n in ("cover", "folder", "box", "boxart", "front"):
+                for ext in self.IMG_EXT:
+                    for cand in (n + ext, n.upper() + ext.upper()):
+                        p = game / cand
+                        if p.is_file():
+                            return p
         return None
+
+    def lookup_name(self, folder, filename):
+        """Name, unter dem das Spiel gesucht wird: Dateiname ohne Endung, Ordnername bei DOS/ScummVM, bei MAME der
+        Spieltitel statt des Set-Namens (libretro-thumbnails/MAME ist nach Titeln benannt: "Street Fighter II_ …")."""
+        stem = filename if folder in ROMS.DIR_SYSTEMS else Path(filename).stem
+        if folder == "mame":
+            stem = mame_names([stem]).get(stem) or stem
+        return stem
 
     def url(self, rom):
         """Adresse fuer die Oberflaeche; ?v= wechselt, sobald ein Bild da ist (sonst haelt Qt das alte Ergebnis)."""
@@ -8662,7 +8679,7 @@ class RomCovers:
         if folder not in ROMS.EXTENSIONS or os.path.basename(filename) != filename:
             return None
         rom = (ROMS.rom_dir / folder / filename)
-        if not rom.is_file():
+        if not (rom.is_file() or (folder in ROMS.DIR_SYSTEMS and rom.is_dir())):
             return None
         own = self.own_image(folder, filename)
         if own or not self.enabled():
@@ -8678,7 +8695,7 @@ class RomCovers:
         lst = self._load_list(system)
         if not lst:
             return None                              # offline – naechstes Mal wieder versuchen
-        name = self._pick(lst, Path(filename).stem)
+        name = self._pick(lst, self.lookup_name(folder, filename))
         data = self._download(system, name) if name else None
         if not data:
             if not name:                             # nichts Passendes: 14 Tage Ruhe; Downloadfehler: bald wieder
