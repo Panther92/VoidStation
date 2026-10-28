@@ -7475,8 +7475,16 @@ def bios_find(kind, root=None, deep=True):
     return out
 
 
+def portal_path(p):
+    """Pfad aus dem Dokumenten-Portal (Dateidialog eines Flatpaks: <Laufzeitordner>/doc/<id>/…)? Von aussen erreichbar,
+    im Flatpak aber nicht (VoidStation hat einen eigenen Laufzeitordner) – solche Pfade gelten als nicht gesetzt."""
+    s = str(p)
+    roots = {os.environ.get("XDG_RUNTIME_DIR", ""), f"/run/user/{os.getuid()}", f"/tmp/voidstation-runtime-{os.getuid()}"}
+    return any(r and s.startswith(r.rstrip("/") + "/doc/") for r in roots) or s.startswith("/run/flatpak/doc/")
+
+
 def bios_dir_has(kind, d):
-    return bool(d) and Path(d).is_dir() and bool(bios_find(kind, d, deep=False))
+    return bool(d) and not portal_path(d) and Path(d).is_dir() and bool(bios_find(kind, d, deep=False))
 
 
 # Je Kachel: was gebraucht wird und wo der Emulator gerade sucht (Ordner bzw. Datei je Art)
@@ -7874,7 +7882,7 @@ def xemu_files(root):
     out = {}
     for k, key in (("mcpx", "bootrom_path"), ("flash", "flashrom_path"), ("hdd", "hdd_path")):
         v = f.get(key)
-        if isinstance(v, str) and v and Path(v).is_file():
+        if isinstance(v, str) and v and not portal_path(v) and Path(v).is_file():
             out[k] = v
     return out
 
