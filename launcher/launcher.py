@@ -2875,7 +2875,7 @@ class MediaLib:
         Rueckgabe (Pfad oder None, fertig): fertig=False heisst, eine Suche im Netz koennte noch etwas bringen."""
         st = p.stat()
         key = hashlib.sha1(f"art:{p}:{int(st.st_mtime)}:{st.st_size}".encode()).hexdigest()
-        out, none = self.THUMBS / f"{key}.jpg", self.THUMBS / f"{key}.none"
+        out, none, wide = self.THUMBS / f"{key}.jpg", self.THUMBS / f"{key}.none", self.THUMBS / f"{key}.wide"
         if not out.exists() and not none.exists():
             self.THUMBS.mkdir(parents=True, exist_ok=True)
             with self.sem:
@@ -2883,6 +2883,8 @@ class MediaLib:
                     img = COVERS._embedded(p)
                     try:
                         if img:
+                            if self._pic_wide(p):
+                                wide.touch()
                             tmp = out.with_name(f"{key}.{threading.get_ident()}.tmp.jpg")
                             tmp.write_bytes(img)
                             tmp.replace(out)
@@ -2890,8 +2892,25 @@ class MediaLib:
                             none.touch()
                     except OSError:
                         pass
-        if out.exists():
+        if out.exists() and not wide.exists():
             return self._art_found(p, st, out)
+        # Eingebettet ist nur ein Standbild aus einem Video (YouTube: 16:9 oder 4:3) – lieber das echte Cover suchen
+        # und das Standbild nur nehmen, wenn es keins gibt (bis dahin zeigt die Kachel es schon)
+        still = out if out.exists() else None
+        if still is not None:
+            ac = COVERS.track_cache(p, self.track_tags(p, st))
+            if ac is None:
+                return self._art_found(p, st, still)
+            if ac.is_file():
+                return self._art_found(p, st, ac)
+            if COVERS.track_missed(ac):
+                return self._art_found(p, st, still)
+            if online:
+                ok = COVERS.fetch_track(p, self.track_tags(p, st), ac)
+                if ok is None:
+                    return still, False
+                return self._art_found(p, st, ac if ok else still)
+            return still, False
         if not self.mixed(p.parent):
             c = self.own_cover(p.parent)
             if c is not None:
@@ -2909,6 +2928,17 @@ class MediaLib:
                 return None, False
             return self._art_found(p, st, ac if ok else None)
         return None, False
+
+    @staticmethod
+    def _pic_wide(p):
+        """Ist das eingebettete Bild deutlich breiter als hoch (Video-Standbild statt Plattencover)?"""
+        r = run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0",
+                 str(p)], timeout=15)
+        try:
+            w, h = (int(x) for x in (r.stdout.strip().split(",")[:2] if r and r.returncode == 0 else ()))
+        except ValueError:
+            return False
+        return h > 0 and w / h >= 1.25
 
     def _art_found(self, p, st, f):
         try:
@@ -2928,7 +2958,7 @@ class MediaLib:
         if not ff or not fp:
             return False
         st = p.stat()
-        if cover is not None and cover.parent == self.THUMBS:  # Bild steckt schon in der Datei
+        if cover is not None and (cover.parent == self.THUMBS or COVERS._embedded(p)):   # schon ein Bild in der Datei
             cover = None
         tags = self.track_tags(p, st)
         have = {k for k, v in tags.items() if v}
@@ -3057,9 +3087,9 @@ class MediaLib:
         if not p or not p.is_file() or p.suffix.lower() not in AUDIO_EXT:
             return None
         f, final = self.art_file(p)
+        if not final:
+            COVERS.add_track(p)
         if f is None:
-            if not final:
-                COVERS.add_track(p)
             return None
         try:
             return f.read_bytes(), MIME.get(f.suffix.lower(), "image/jpeg")
@@ -3274,18 +3304,25 @@ MEDIA = MediaLib()
 # ---------------------------------------------------------------------------
 #  Album-Cover automatisch laden (wie der Scraper in Batocera)
 # ---------------------------------------------------------------------------
+class MbBusy(Exception):
+    """MusicBrainz drosselt oder ist ueberlastet (503) – spaeter nochmal, nicht als "nichts gefunden" merken."""
+
+
 class CoverFetcher:
     """Fuer Musik-Ordner ohne Bild ein Cover besorgen, im Hintergrund, nacheinander:
     1. eingebettetes Bild der ersten Datei (ffmpeg) – ohne Internet
     2. Interpret + Album aus den Tags (ffprobe), sonst aus den Ordnernamen ("Interpret/Album" oder "Interpret - Album")
-    3. MusicBrainz-Suche (Release-Group) -> Cover Art Archive (front-500)
+    3. MusicBrainz-Suche (Release-Group) -> Cover Art Archive (front-500), sonst iTunes-Suche (Bild 600x600)
     Gespeichert als cover.jpg im Ordner (sehen auch andere Player); ist der Ordner schreibgeschuetzt (USB-Stick,
     Freigabe), im Zwischenspeicher ~/.cache/voidstation/covers. Nichts gefunden: 30 Tage lang nicht erneut fragen.
-    MusicBrainz erlaubt eine Anfrage pro Sekunde und verlangt einen erkennbaren User-Agent."""
+    MusicBrainz erlaubt eine Anfrage pro Sekunde und verlangt einen erkennbaren User-Agent; antwortet es mit 503
+    (ueberlastet bzw. zu viele Anfragen), wird kurz gewartet und nach drei Fehlschlaegen 15 Minuten nur iTunes
+    gefragt. iTunes vertraegt etwa 20 Anfragen pro Minute."""
     CACHE = Path.home() / ".cache" / "voidstation" / "covers"
     MISSES = CACHE / "misses.json"
     MB = os.environ.get("VS_MB_URL", "https://musicbrainz.org/ws/2/")
     CAA = os.environ.get("VS_CAA_URL", "https://coverartarchive.org/")
+    ITUNES = os.environ.get("VS_ITUNES_URL", "https://itunes.apple.com/search")
     UA = {"User-Agent": "VoidStation/2026 ( https://voidstation.de )", "Accept": "application/json"}
 
     def __init__(self):
@@ -3296,6 +3333,10 @@ class CoverFetcher:
         self.current = None
         self.stats = {"done": 0, "found": 0, "total": 0}
         self.last_mb = 0.0
+        self.mb_lock = threading.Lock()                # MusicBrainz: hoechstens eine Anfrage je Sekunde, nie parallel
+        self.mb_fails, self.mb_pause = 0, 0.0          # 503 hintereinander, Pause bis
+        self.last_it = 0.0
+        self.counted = set()                           # Titel, die in der Anzeige "n von m" mitzaehlen (Alle Cover laden)
         self.offline = False                           # letzte Suche scheiterte am Netz (dann nicht als "nichts da" merken)
         self.last_meta = None                          # Angaben zur zuletzt gefundenen Aufnahme
         self.misses = None
@@ -3369,12 +3410,16 @@ class CoverFetcher:
             self._start()
         return 1
 
-    def add_track(self, path, force=False):
-        """Titel vormerken: eingebettetes Bild pruefen, sonst Cover zu Interpret + Album (oder Titel) im Netz suchen."""
+    def add_track(self, path, force=False, count=False):
+        """Titel vormerken: eingebettetes Bild pruefen, sonst Cover zu Interpret + Album (oder Titel) im Netz suchen.
+        count: zaehlt in der Anzeige mit (Alle Cover laden, gemischter Ordner)."""
         if not force and not self.auto():
             return 0
         path = str(path)
         with self.lock:
+            if count and path not in self.counted:
+                self.counted.add(path)
+                self.stats["total"] += 1
             if path in self.tqueued:
                 return 0
             self.tqueued.add(path)
@@ -3390,12 +3435,13 @@ class CoverFetcher:
     def scan(self, root):
         """Ganze Sammlung (z. B. share/Musik) durchgehen – auch Ordner, fuer die es zuletzt nichts gab."""
         with self.lock:
-            self.stats = {"done": 0, "found": 0, "total": len(self.queue)}
+            self.stats = {"done": 0, "found": 0, "total": len(self.queue) + len(self.counted)}
         n, t = 0, 0
         for d in MEDIA._preorder(Path(root)):
             n += self.add(d, force=True)
             if self.embed():                           # Cover/Tags auch in Dateien von Ordnern, die schon ein Bild haben
-                t += sum(self.add_track(f, force=True) for f in self._audio_files(d) if f.suffix.lower() in EMBED_EXT)
+                t += sum(self.add_track(f, force=True, count=True) for f in self._audio_files(d)
+                         if f.suffix.lower() in EMBED_EXT)
         log(f"Cover: {n} Ordner ohne Bild vorgemerkt" + (f", {t} Titel fuer Cover/Tags in den Dateien" if t else ""))
         return n
 
@@ -3421,6 +3467,7 @@ class CoverFetcher:
                 self.current = (self.tqueue if track else self.queue).pop(0)
             if track:
                 p = Path(self.current)
+                f = None
                 try:
                     with self.lock:
                         fresh = str(p) in self.refresh
@@ -3435,6 +3482,10 @@ class CoverFetcher:
                     log("Cover:", p.name, e)
                 with self.lock:
                     self.tqueued.discard(str(p))
+                    if str(p) in self.counted:
+                        self.counted.discard(str(p))
+                        self.stats["done"] += 1
+                        self.stats["found"] += 1 if f is not None else 0
                 continue
             folder = Path(self.current)
             try:
@@ -3456,7 +3507,7 @@ class CoverFetcher:
             return False
         if MEDIA.mixed(folder):                        # verschiedene Alben: jeder Titel zeigt sein eigenes Bild
             self._miss(folder)
-            n = sum(self.add_track(f, force=True) for f in files[:400] if MEDIA.art_pending(f))
+            n = sum(self.add_track(f, force=True, count=True) for f in files[:400] if MEDIA.art_pending(f))
             log(f"Cover: gemischter Ordner, kein gemeinsames Cover – {folder.name} ({n} Titel einzeln)")
             return False
         img = self._embedded(files[0])
@@ -3464,8 +3515,14 @@ class CoverFetcher:
         self.offline = False
         if not img:
             artist, album = self._names(folder, files[0])
+            artist, album = self._main_artist(self._clean(artist)), self._clean(album, tail=False)
             img = self._online(artist, album) if album else None
             source = f"MusicBrainz ({artist} – {album})"
+            if not img and album:
+                mb_off = self.offline
+                img, _meta = self._itunes(artist, "", album)
+                source = f"iTunes ({artist} – {album})"
+                self.offline = self.offline and not img
         if not img:
             if self.offline:                           # kein Netz: beim naechsten Oeffnen nochmal versuchen
                 return False
@@ -3522,13 +3579,32 @@ class CoverFetcher:
         return artist, album
 
     def _mb_get(self, path):
-        wait = 1.1 - (time.time() - self.last_mb)
-        if wait > 0:
-            time.sleep(wait)
-        self.last_mb = time.time()
-        req = urllib.request.Request(self.MB + path, headers=self.UA)
-        with urllib.request.urlopen(req, timeout=15) as r:
-            return json.loads(r.read().decode("utf-8"))
+        """Eine Anfrage an MusicBrainz – nie parallel, hoechstens eine je Sekunde. 503/429 (Drossel bzw. Ueberlast):
+        zweimal mit Pause wiederholen; dreimal hintereinander erfolglos -> 15 Minuten keine Anfragen (MbBusy)."""
+        with self.mb_lock:
+            if time.time() < self.mb_pause:
+                raise MbBusy("MusicBrainz pausiert")
+            for attempt in range(3):
+                wait = 1.1 - (time.time() - self.last_mb)
+                if wait > 0:
+                    time.sleep(wait)
+                self.last_mb = time.time()
+                try:
+                    req = urllib.request.Request(self.MB + path, headers=self.UA)
+                    with urllib.request.urlopen(req, timeout=15) as r:
+                        data = json.loads(r.read().decode("utf-8"))
+                    self.mb_fails = 0
+                    return data
+                except urllib.error.HTTPError as e:
+                    if e.code not in (429, 503):
+                        raise
+                    if attempt < 2:
+                        time.sleep(2 + 3 * attempt)
+            self.mb_fails += 1
+            if self.mb_fails >= 3:
+                self.mb_pause, self.mb_fails = time.time() + 900, 0
+                log("Cover: MusicBrainz ueberlastet – 15 Minuten Pause, bis dahin nur iTunes")
+            raise MbBusy("MusicBrainz antwortet 503")
 
     @staticmethod
     def _q(s):
@@ -3539,7 +3615,8 @@ class CoverFetcher:
         try:
             d = self._mb_get("release-group/?fmt=json&limit=5&query=" + urllib.parse.quote(q))
         except Exception as e:  # noqa: BLE001
-            log("Cover: MusicBrainz nicht erreichbar:", e)
+            if not isinstance(e, MbBusy):
+                log("Cover: MusicBrainz nicht erreichbar:", e)
             self.offline = True
             return None
         for g in (d.get("release-groups") or [])[:5]:
@@ -3563,36 +3640,113 @@ class CoverFetcher:
     def _norm(x):
         return re.sub(r"\s+", " ", JUNK.sub("", x or "")).strip().casefold()
 
-    def _track_names(self, p, tags):
-        """Interpret, Album, Titel aus den Tags; fehlen sie, aus dem Dateinamen ("01 - Interpret - Titel")."""
-        artist = tags.get("album_artist") or tags.get("albumartist") or tags.get("artist") or ""
-        album, title = tags.get("album") or "", tags.get("title") or ""
-        if not artist or not title:
-            stem = re.sub(r"^\d{1,3}[\s._-]+", "", p.stem).strip()
-            if " - " in stem:
-                a, t = stem.split(" - ", 1)
-                artist, title = artist or a.strip(), title or t.strip()
-        # "feat." und Zusaetze helfen der Suche nicht
-        artist = re.split(r"\s+(?:feat\.?|ft\.?|featuring)\s+", artist, maxsplit=1, flags=re.I)[0].strip()
-        return artist, JUNK.sub("", album).strip(), JUNK.sub("", title).strip()
+    # ---- Namen fuer die Suche: aus Tags und Dateinamen, auch von YouTube-Downloads ----
+    # Zusaetze, die der Suche nur schaden: in Klammern (alles mit diesen Woertern), am Ende ohne Klammern
+    BRACKET_JUNK = re.compile(
+        r"\s*[\(\[\{][^\)\]\}]*\b(?:official|offizielle?s?|lyrics?|audio|video|hd|hq|4k|visuali[sz]er|clip|videoclip|"
+        r"remaster(?:ed|is[eé])?|explicit|live|feat\.?|ft\.?|featuring|mix|edit|version|anniversary|mash ?up|cover|"
+        r"performance|full|original|edition|deluxe|expanded|bonus)\b[^\)\]\}]*[\)\]\}]", re.I)
+    TAIL_JUNK = re.compile(
+        r"\s+(?:(?:official\s+)?(?:music\s+|lyrics?\s+)?(?:video|audio)\b|lyrics?\b|clip officiel\b|live\s+(?:at|in|from|\d)|"
+        r"live performance\b|remaster(?:ed|is[eé])?\b|(?:original\s+|extended\s+|radio\s+|club\s+)+(?:mix|edit|version)\b|"
+        r"extended\b|cover by\b|feat\.?\s|ft\.?\s|featuring\b|full original\b|\d+k\)?$|"
+        r"[-–—]\s.*\b(?:mash ?up|remix|mix|edit|version|live)\b).*$", re.I)
+    CONTRACTIONS = re.compile(r"\b([A-Za-z]+) (s|t|m|d|ll|re|ve)\b")       # "Larry s", "Don t", "I m" (Apostroph fiel weg)
+
+    @classmethod
+    def _clean(cls, s, tail=True):
+        """Titel bzw. Interpret fuer die Suche: Unterstriche, Emojis, Zusaetze wie "(Lyrics)", "Official Video",
+        "Live at …", "Remastered 1996", "-(115k)" weg; verlorene Apostrophe zurueck ("Larry s" -> "Larry's")."""
+        s = unicodedata.normalize("NFKC", s or "").replace("_", " ")
+        s = re.sub(r"[\U0001F000-\U0001FFFF☀-➿️]", "", s)
+        s = re.sub(r"-?\(\d+k\)$", "", s.strip())                            # "-(115k)" vom Downloader
+        for _ in range(3):
+            s = cls.BRACKET_JUNK.sub("", s)
+        s = JUNK.sub("", s)
+        if tail:
+            s = cls.TAIL_JUNK.sub("", s)
+        s = cls.CONTRACTIONS.sub(lambda m: f"{m.group(1)}'{m.group(2)}"
+                                 if m.group(2) != "s" or m.group(1).lower() not in ("a", "i") else m.group(0), s)
+        s = re.sub(r"\s+", " ", s).strip(" -–—|·:,")
+        return s
 
     @staticmethod
-    def _guess_text(p, tags):
-        """Ohne Interpret: der Dateiname (ohne Titelnummer, Zusaetze) als Ganzes, z. B. "Beck loser"."""
-        stem = re.sub(r"^\d{1,3}[\s._-]+", "", p.stem).replace("_", " ")
-        stem = re.sub(r"\s+", " ", JUNK.sub("", stem)).strip()
-        if len(stem.split()) >= 2:
-            return stem
-        return JUNK.sub("", tags.get("title") or "").strip()
+    def _main_artist(a):
+        """Erster Interpret: "Eurythmics, Annie Lennox …" -> Eurythmics, "Bananarama / Shocking Blue" -> Bananarama,
+        "X feat. Y" -> X; "Ray Parker, Jr." bleibt."""
+        a = unicodedata.normalize("NFKC", a or "").strip()
+        a = re.split(r"\s+(?:feat\.?|ft\.?|featuring|x|vs\.?)\s+|\s*/\s*|\s+&\s+|,(?!\s*(?:jr|sr)\b)", a,
+                     maxsplit=1, flags=re.I)[0]
+        return a.strip()
+
+    @staticmethod
+    def _fold(x):
+        return re.sub(r"[^a-z0-9]+", " ", tv_fold(x or "")).strip()
+
+    SEP = re.compile(r"\s+[-–—]\s+|(?<=\w)[-–—]\s+")       # "A - B", "A – B", "Prince- Purple Rain"
+
+    def _track_cands(self, p, tags):
+        """Moegliche (Interpret, Album, Titel) fuer die Suche, beste zuerst. Tags gehen vor; steckt im Titel-Tag
+        "Interpret - Titel" (YouTube: der Kanal steht dann oft als Interpret drin, z. B. "7clouds"), zaehlt das.
+        Ist unklar, was Interpret und was Titel ist ("Royals - Lorde"), kommen beide Reihenfolgen. Ohne Tags: der
+        Dateiname ("01 - Interpret - Titel", "Interpret_-_Titel")."""
+        tag_artist = tags.get("album_artist") or tags.get("albumartist") or tags.get("artist") or ""
+        album = self._clean(tags.get("album") or "", tail=False)
+        raw_title = (tags.get("title") or "").strip().lstrip("-–— ").strip()
+        out = []
+
+        def add(a, t, alb=album):
+            a, t = self._main_artist(self._clean(a)), self._clean(t)
+            if t and (a, alb, t) not in out:
+                out.append((a, alb, t))
+
+        def split(text):
+            parts = self.SEP.split(self._clean(text, tail=False), maxsplit=1)
+            return [x.strip() for x in parts] if len(parts) == 2 and all(x.strip() for x in parts) else None
+
+        parts = split(raw_title) if raw_title else None
+        if parts:
+            fa = self._fold(self._main_artist(tag_artist))
+            l, r = parts
+            if fa and fa == self._fold(r) or (fa and self._fold(r).startswith(fa) and not self._fold(l).startswith(fa)):
+                add(r, l)                                    # "Royals - Lorde" mit Interpret Lorde
+            elif fa and (fa == self._fold(l) or self._fold(l).startswith(fa)):
+                add(l, r)
+            else:                                            # Interpret-Tag ist der Kanal: Titel-Tag entscheidet
+                add(l, r, "")
+                add(r, l, "")
+        elif raw_title and tag_artist:
+            add(tag_artist, raw_title)
+        if not out:                                          # Dateiname
+            stem = re.sub(r"^\d{1,3}[\s._-]+", "", p.stem.replace("_", " ")).strip()
+            parts = split(stem)
+            if parts:
+                add(parts[0], parts[1], album)
+                add(parts[1], parts[0], album)
+            elif tag_artist:
+                add(tag_artist, raw_title or stem)
+            else:
+                add("", raw_title or stem)
+        return out
+
+    def _track_names(self, p, tags):
+        """Interpret, Album, Titel – die wahrscheinlichste Lesart (_track_cands)."""
+        c = self._track_cands(p, tags)
+        return c[0] if c else ("", "", "")
+
+    def _guess_text(self, p, tags):
+        """Ohne Interpret: der bereinigte Dateiname bzw. Titel als Ganzes, z. B. "Beck loser"."""
+        _a, _al, t = self._track_names(p, tags)
+        return t
 
     def track_cache(self, p, tags):
         """Datei im Zwischenspeicher fuer das Cover dieses Titels – gemeinsam fuer alle Titel eines Albums."""
         artist, album, title = self._track_names(p, tags)
-        if not artist:                                 # nur ein Dateiname wie "Beck loser": raten (fetch_track)
+        if not artist:                                 # nur ein Dateiname wie "Beck loser" oder "Funkytown": raten
             text = self._guess_text(p, tags)
-            if len(text.split()) < 2:
+            if not text:
                 return None
-            return self.CACHE / ("t-" + hashlib.sha1(f"guess|{self._norm(text)}".encode()).hexdigest()[:16] + ".jpg")
+            return self._guess_cache(p, tags)
         if not (album or title):
             return None
         key = f"album|{self._norm(artist)}|{self._norm(album)}" if album else f"title|{self._norm(artist)}|{self._norm(title)}"
@@ -3640,23 +3794,40 @@ class CoverFetcher:
         return self._recent_miss(cache.name)
 
     def fetch_track(self, p, tags, cache):
+        """Cover fuer einen Titel suchen: je Lesart (_track_cands) MusicBrainz (Album, dann Aufnahme), ohne Interpret
+        Raten aus dem Dateinamen; zuletzt iTunes (findet auch "Funkytown" allein). Rueckgabe True/False, None = kein
+        Netz bzw. MusicBrainz ueberlastet (spaeter nochmal, nicht als "nichts gefunden" merken)."""
         if cache.is_file():                            # inzwischen von einem anderen Titel desselben Albums geholt
             return True
-        artist, album, title = self._track_names(p, tags)
-        img, via = None, ""
-        self.offline = False
-        meta = None
-        if not artist:
-            text = self._guess_text(p, tags)
-            img, via = self._online_guess(text), text
-            meta = self.last_meta if img else None
-        elif album:
-            img, via = self._online(artist, album), f"{artist} – {album}"
-        if not img and artist and title:
-            img, via = self._online_recording(artist, title), f"{artist} – {title}"
-            meta = self.last_meta if img else None
+        cands = self._track_cands(p, tags)
+        img, via, meta = None, "", None
+        mb_off = False
+        for artist, album, title in cands[:3]:
+            self.offline = False
+            if not artist:
+                if len(title.split()) >= 2:
+                    img, via = self._online_guess(title), f"MusicBrainz ({title})"
+                    meta = self.last_meta if img else None
+            else:
+                if album:
+                    img, via = self._online(artist, album), f"MusicBrainz ({artist} – {album})"
+                if not img and title and not self.offline:
+                    img, via = self._online_recording(artist, title), f"MusicBrainz ({artist} – {title})"
+                    meta = self.last_meta if img else None
+            mb_off = mb_off or self.offline
+            if img:
+                break
         if not img:
-            if self.offline:                           # kein Netz: None = spaeter nochmal
+            self.offline = False
+            for artist, album, title in cands[:2]:
+                img, meta = self._itunes(artist, title, album)
+                if img:
+                    via = f"iTunes ({artist + ' – ' if artist else ''}{title or album})"
+                    break
+                if self.offline:
+                    break
+        if not img:
+            if mb_off or self.offline:                 # kein Netz/ueberlastet: None = spaeter nochmal
                 return None
             self._miss(cache.name)
             log("Cover: nichts gefunden fuer", p.name)
@@ -3671,8 +3842,67 @@ class CoverFetcher:
         except OSError as e:
             log("Cover: Zwischenspeicher nicht beschreibbar:", e)
             return False
-        log("Cover:", p.name, "<- MusicBrainz (" + via + ")")
+        log("Cover:", p.name, "<-", via)
         return True
+
+    def _itunes(self, artist, title, album=""):
+        """iTunes-Suche (Lied, ohne Titel: Album) -> (Bild 600x600, Angaben) oder (None, None). Passt nur, was im
+        Titel (bzw. Album) fast genau und beim Interpreten aehnlich ist; ohne Interpret zaehlt allein der Titel, und
+        es gilt der erste Treffer (iTunes sortiert nach Bekanntheit: "Funkytown" -> Lipps Inc.)."""
+        import difflib
+        entity, name = ("song", title) if title else ("album", album)
+        if not name:
+            return None, None
+        term = urllib.parse.urlencode({"term": f"{artist} {name}".strip(), "entity": entity, "limit": "10",
+                                       "media": "music"})
+        with self.mb_lock:                             # gleiche Warteschlange wie MusicBrainz, ~20 Anfragen/Minute
+            wait = 3.1 - (time.time() - self.last_it)
+            if wait > 0:
+                time.sleep(wait)
+            self.last_it = time.time()
+            try:
+                req = urllib.request.Request(self.ITUNES + "?" + term, headers={"User-Agent": self.UA["User-Agent"]})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    d = json.loads(r.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                log("Cover: iTunes:", e)
+                self.offline = self.offline or e.code in (403, 429, 503)
+                return None, None
+            except Exception as e:  # noqa: BLE001
+                log("Cover: iTunes nicht erreichbar:", e)
+                self.offline = True
+                return None, None
+        sim = lambda x, y: difflib.SequenceMatcher(None, self._fold(x), self._fold(y)).ratio()    # noqa: E731
+        best, best_score = None, 0.0
+        for r in d.get("results") or []:
+            got = r.get("trackName") if title else r.get("collectionName")
+            sn = max(sim(name, got), sim(name, self._clean(got or "")))
+            if not artist:
+                if sn >= 0.9:
+                    best = r
+                    break
+                continue
+            sa = max(sim(artist, r.get("artistName")), 1.0 if self._artist_fits(r.get("artistName") or "", artist) else 0.0)
+            score = sn * 0.65 + sa * 0.35
+            if sn >= 0.8 and sa >= 0.6 and score > best_score:
+                best, best_score = r, score
+        url = (best or {}).get("artworkUrl100") or ""
+        if not url:
+            return None, None
+        url = re.sub(r"/\d+x\d+(bb)?\.(jpg|png)$", r"/600x600bb.jpg", url)
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": self.UA["User-Agent"]}),
+                                        timeout=20) as r:
+                data = r.read()
+        except Exception as e:  # noqa: BLE001
+            log("Cover: iTunes-Bild:", e)
+            return None, None
+        if len(data) < 1000:
+            return None, None
+        meta = {"title": best.get("trackName") or "", "artist": best.get("artistName") or "",
+                "album": best.get("collectionName") or "", "date": (best.get("releaseDate") or "")[:4],
+                "track": str(best.get("trackNumber") or "")} if title else None
+        return data, meta
 
     def _caa(self, gid):
         try:
@@ -3726,7 +3956,8 @@ class CoverFetcher:
         try:
             d = self._mb_get("recording/?fmt=json&limit=8&query=" + urllib.parse.quote(q))
         except Exception as e:  # noqa: BLE001
-            log("Cover: MusicBrainz nicht erreichbar:", e)
+            if not isinstance(e, MbBusy):
+                log("Cover: MusicBrainz nicht erreichbar:", e)
             self.offline = True
             return None
 
