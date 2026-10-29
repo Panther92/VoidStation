@@ -14,7 +14,7 @@ Rectangle {
     readonly property var js: app.jobState && app.jobState.action === "update" ? app.jobState : null
     readonly property var steps: js && js.steps ? js.steps : []
     z: 41
-    color: "#2c5680"                           // ruhiges Blau (Rot wirkte zu alarmierend)
+    color: "#3a3f46"                           // Grau der Kachel "Einstellungen" (ruhig, Rot wirkte zu alarmierend)
     opacity: shown ? 1 : 0
     visible: opacity > 0
     Behavior on opacity { NumberAnimation { duration: 250 } }
