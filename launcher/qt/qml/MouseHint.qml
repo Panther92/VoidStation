@@ -49,7 +49,8 @@ Window {
         }
         Txt {
             anchors.verticalCenter: parent.verticalCenter
-            text: Ui.t(mh.on ? "pad.mouseOn" : "pad.mouseOff")
+            text: Ui.keys(Ui.t(mh.on ? "pad.mouseOn" : "pad.mouseOff"), Ui.c.textPrimary, 16 * Ui.f)
+            textFormat: Text.StyledText
             font.pixelSize: 16 * Ui.f
             elide: Text.ElideNone
         }

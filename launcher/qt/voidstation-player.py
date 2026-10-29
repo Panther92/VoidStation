@@ -975,8 +975,7 @@ class PlayerApp:
         self.vs._engine = self.engine
         self.pad = Gamepad()
         self.pump = PadPump(self.pad, self._pad_active)
-        self.pump.key.connect(self.vs.padKey)
-        self.pump.connected.connect(self.vs.padConnected)
+        self.vs.attach_pump(self.pump)
         self.server = None
         self.rates = None
 

@@ -315,7 +315,7 @@
       "cmd": [
         "mgba-qt"
       ],
-      "mouse": true,
+      "mouse": false,
       "tile": {
         "group": "Spiele",
         "size": "wide",

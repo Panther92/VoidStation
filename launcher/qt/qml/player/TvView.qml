@@ -390,7 +390,7 @@ Item {
             textFormat: Text.StyledText
             elide: Text.ElideNone
             font.pixelSize: 18 * Ui.f
-            text: String(Ui.t("player.tv.exitHint")).replace(/<b>(.*?)<\/b>/g, "<b>$1</b>")
+            text: Ui.keys(Ui.t("player.tv.exitHint"), Ui.c.textPrimary, 18 * Ui.f)
         }
     }
 

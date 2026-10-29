@@ -13,8 +13,8 @@ Item {
     property var list: hintsFor(app.layerName)
     readonly property bool noteOn: !!app.updInfo && ["home", "radio", "tv", "apps", "settings"].indexOf(app.layerName) >= 0
 
-    function b(s) {           // <b>…</b> wie im Web: halbfett in der Zweitfarbe
-        return String(s).replace(/<b>(.*?)<\/b>/g, "<b><font color='" + Ui.c.textSecondary + "'>$1</font></b>")
+    function b(s) {           // <b>…</b>: Controller-Symbole bzw. halbfett in der Zweitfarbe (Ui.keys)
+        return Ui.keys(s, Ui.c.textSecondary, 14 * Ui.f)
     }
     function hintsFor(l) {
         var T = Ui.t, h
@@ -68,7 +68,8 @@ Item {
             Glyph { name: "updwarn"; width: 18 * Ui.f; height: width; anchors.verticalCenter: parent.verticalCenter }
             Txt { text: app.updInfo ? app.updNoteText(app.updInfo) : ""; color: Ui.c.statusWarnText; font.weight: Font.DemiBold; font.pixelSize: 14 * Ui.f
                   anchors.verticalCenter: parent.verticalCenter; elide: Text.ElideNone }
-            Txt { text: Ui.t("upd.noteKey"); color: Ui.c.textSecondary; font.pixelSize: 14 * Ui.f; anchors.verticalCenter: parent.verticalCenter; elide: Text.ElideNone }
+            Txt { text: Ui.keys("<b>" + Ui.t("upd.noteKey") + "</b>", Ui.c.textSecondary, 14 * Ui.f); textFormat: Text.StyledText
+                  color: Ui.c.textSecondary; font.pixelSize: 14 * Ui.f; anchors.verticalCenter: parent.verticalCenter; elide: Text.ElideNone }
         }
         MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: app.openUpdate() }
     }

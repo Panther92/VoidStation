@@ -147,7 +147,7 @@ Rectangle {
         anchors.bottom: parent.bottom; anchors.bottomMargin: us.height * 0.06
         anchors.horizontalCenter: parent.horizontalCenter
         visible: !us.finished
-        text: Ui.t("upd.bgKey")
+        text: Ui.keys(Ui.t("upd.bgKey"), Ui.c.tileText, 12 * Ui.f)
         textFormat: Text.StyledText
         color: Ui.c.tileSub
         font.pixelSize: 12 * Ui.f

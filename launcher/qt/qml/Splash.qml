@@ -46,7 +46,7 @@ Rectangle {
     Txt {
         anchors.bottom: parent.bottom; anchors.bottomMargin: sp.height * 0.06
         anchors.horizontalCenter: parent.horizontalCenter
-        text: String(Ui.t("splash.key")).replace(/<b>(.*?)<\/b>/g, "<b>$1</b>")
+        text: Ui.keys(Ui.t("splash.key"), Ui.c.textSecondary, 12 * Ui.f)
         textFormat: Text.StyledText
         color: Ui.c.textFaint
         font.pixelSize: 12 * Ui.f

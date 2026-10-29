@@ -4531,9 +4531,9 @@ def app_supported(a):
 
 
 def pad_mouse_default(tile_id):
-    """Controller als Maus (Startseite: rechter Stick, R2/L2) im Programm dieser Kachel von selbst an?
+    """Controller als Maus (Startseite: rechter Stick, A/B bzw. ✕/○ klicken) im Programm dieser Kachel von selbst an?
     Vorrang: "mouse" an der Kachel (tiles.json), dann im Katalog; Spiele und Emulatoren (Gruppe "Spiele") aus,
-    weil dort rechter Stick und Schultertasten zum Spiel gehoeren – R3 schaltet trotzdem um. Sonst an."""
+    weil dort Sticks und Tasten zum Spiel gehoeren – R3 schaltet trotzdem um. Sonst an."""
     if not tile_id:
         return True
     if tile_id in ("tv", "media", "ytlight") and PLAYERS.active(tile_id):   # eigener Player: komplett mit dem Controller bedienbar
@@ -6748,6 +6748,9 @@ ROLE_TEXT = {
            "select": "Share", "start": "Options", "l3": "L3", "r3": "R3"},
     "xbox": {"south": "A", "east": "B", "west": "X", "north": "Y", "l1": "LB", "r1": "RB", "l2": "LT", "r2": "RT",
              "select": "Back", "start": "Start", "l3": "LS", "r3": "RS"},
+    # Nintendo: Tasten nach Lage belegt (hid-nintendo: untere Taste = BTN_SOUTH, beschriftet B)
+    "nintendo": {"south": "B", "east": "A", "west": "Y", "north": "X", "l1": "L", "r1": "R", "l2": "ZL", "r2": "ZR",
+                 "select": "−", "start": "+", "l3": "LS", "r3": "RS"},
 }
 DPAD_TEXT = {"up": "↑", "down": "↓", "left": "←", "right": "→"}
 
@@ -6783,9 +6786,15 @@ def valid_bind(b):
     return None
 
 
-def pad_style(name):
-    """Beschriftung der Controllertasten: PlayStation-Symbole oder Xbox-Buchstaben."""
-    return "ps" if re.search(r"sony|playstation|wireless controller|dualsense|dualshock|ps[345]", name or "", re.I) else "xbox"
+def pad_style(name, pid=""):
+    """Beschriftung der Controllertasten: PlayStation-Symbole, Nintendo- oder Xbox-Buchstaben (wie
+    vscommon.pad_style der Qt-Oberflaeche; pid = "vendor:product")."""
+    vendor = str(pid).split(":")[0].lower()
+    if vendor == "057e" or re.search(r"nintendo|pro controller|joy-?con|\bswitch\b", name or "", re.I):
+        return "nintendo"
+    if vendor == "054c" or re.search(r"sony|playstation|wireless controller|dualsense|dualshock|\bps[345]\b", name or "", re.I):
+        return "ps"
+    return "xbox"
 
 
 def emu_binds(emu, pad, probe=None, roles=None):
@@ -6817,7 +6826,7 @@ def keymap_payload(emu, path=""):
     roles, src, style, binds = {}, "", "xbox", {}
     if pad:
         roles, src = pad_roles(pad, sdl_probe())
-        style = pad_style(pad["name"])
+        style = pad_style(pad["name"], pad.get("id", ""))
         binds, out["custom"] = emu_binds(emu, pad, roles=roles)
         out["pad"] = {"path": pad["path"], "name": pad["name"], "id": pad["id"], "src": src}
     btns = []

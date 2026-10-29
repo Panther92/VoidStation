@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Hinweiszeile: welche Taste was tut ("<b>A</b> Info" – Taste halbfett in der Zweitfarbe, wie auf der Startseite)
+// Hinweiszeile: welche Taste was tut ("<b>A</b> Info" – mit Controller als Tasten-Symbol, sonst halbfett, wie auf der Startseite)
 import QtQuick
 import VS
 
@@ -8,7 +8,7 @@ Flow {
     property var list: []
     property color textColor: Ui.c.textFaint
     spacing: 24 * Ui.f
-    function b(s) { return String(s).replace(/<b>(.*?)<\/b>/g, "<b><font color='" + Ui.c.textSecondary + "'>$1</font></b>") }
+    function b(s) { return Ui.keys(s, Ui.c.textSecondary, 14 * Ui.f) }       // Controller-Symbole bzw. halbfett
     Repeater {
         model: h.list
         Txt {

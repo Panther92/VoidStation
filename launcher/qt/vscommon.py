@@ -19,7 +19,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from PySide6.QtCore import Property, QObject, QTimer, Signal, Slot
+from PySide6.QtCore import Property, QEvent, QObject, QTimer, Signal, Slot
 from PySide6.QtGui import QGuiApplication
 
 T0 = time.monotonic()
@@ -120,6 +120,107 @@ def theme_tokens(name):
 
 
 # ---------------------------------------------------------------------------
+#  Bauart des Controllers: welche Beschriftung tragen die Tasten?
+# ---------------------------------------------------------------------------
+PAD_STYLES = ("xbox", "ps", "nintendo")
+_RE_NINTENDO = re.compile(r"nintendo|pro controller|joy-?con|\bswitch\b", re.I)
+_RE_PS = re.compile(r"sony|playstation|wireless controller|dualsense|dualshock|\bps[345]\b", re.I)
+
+
+def pad_style(name, vendor=0):
+    """xbox (A/B/X/Y, LB/RB, LT/RT – auch alle Pads ohne eigene Beschriftung), ps (✕ ○ □ △, L1/R1, L2/R2) oder
+    nintendo (B/A/Y/X, L/R, ZL/ZR). Erkennung ueber die USB-Herstellerkennung, sonst ueber den Geraetenamen.
+    Die Tasten selbst bleiben nach Lage belegt (Linux-Gamepad-Norm: BTN_SOUTH = untere Taste): auf einem
+    Nintendo-Pad ist "a" (bestaetigen) also die untere Taste mit der Aufschrift B – genau das zeigen die Hinweise."""
+    if vendor == 0x057e or _RE_NINTENDO.search(name or ""):
+        return "nintendo"
+    if vendor == 0x054c or _RE_PS.search(name or ""):
+        return "ps"
+    return "xbox"
+
+
+# Aufschriften je Bauart (Rolle wie in Gamepad.KEYS: a = untere Taste, b = rechte, x = linke, y = obere)
+PAD_LABELS = {
+    "xbox": {"a": "A", "b": "B", "x": "X", "y": "Y", "lb": "LB", "rb": "RB", "lt": "LT", "rt": "RT",
+             "l3": "LS", "r3": "RS"},
+    "ps": {"lb": "L1", "rb": "R1", "lt": "L2", "rt": "R2", "l3": "L3", "r3": "R3"},
+    "nintendo": {"a": "B", "b": "A", "x": "Y", "y": "X", "lb": "L", "rb": "R", "lt": "ZL", "rt": "ZR",
+                 "l3": "LS", "r3": "RS"},
+}
+
+
+# Tasten wie auf aktuellen Controllern: dunkler Koerper, helle Aufschrift; die vier Haupttasten in ihren
+# Originalfarben (entschieden 29.10.2026). Nintendo-Pads sind einfarbig, darum dort hell.
+KEY_FILL = "#2f343a"                # Tastenkoerper (auch auf hellen Themes und auf dem grauen Update-Bildschirm)
+KEY_EDGE = "#565c64"                # feiner Rand, damit die Taste auf dunklem Grund nicht verschwindet
+KEY_TEXT = "#e4e4e1"
+PAD_COLORS = {
+    "xbox": {"a": "#6cc644", "b": "#ef4f45", "x": "#4a95ec", "y": "#f4c430"},
+    "ps": {"a": "#8db0ee", "b": "#f06464", "x": "#e996d4", "y": "#46cdae"},   # ✕ blau, ○ rot, □ rosa, △ gruen
+    "nintendo": {},
+}
+
+
+def pad_glyph_svg(role, style, h):
+    """Tasten-Symbol als SVG in genau h Pixel Hoehe (scharf, ohne Skalieren): dunkle Taste, farbige bzw. helle
+    Aufschrift. Keine Markenlogos: Guide ist ein Haus, bei PlayStation die Aufschrift "PS".
+    -> (svg, Breite in Pixeln)"""
+    style = style if style in PAD_STYLES else "xbox"
+    lc = PAD_COLORS[style].get(role, KEY_TEXT)
+    font = 'font-family="Noto Sans, DejaVu Sans, sans-serif" font-weight="bold" text-anchor="middle"'
+    lab = PAD_LABELS[style].get(role, "")
+    K = f'fill="{KEY_FILL}" stroke="{KEY_EDGE}" stroke-width="1"'         # Tastenkoerper
+    L = f'fill="{lc}"'                                                     # Aufschrift
+
+    def S(sw=2.2):                                                         # Linie in der Aufschrift-Farbe
+        return (f'fill="none" stroke="{lc}" stroke-width="{sw}" stroke-linecap="round" stroke-linejoin="round"')
+    if role in ("a", "b", "x", "y"):
+        vw, body = 24, f'<circle cx="12" cy="12" r="11" {K}/>'
+        if style == "ps":
+            body += {"a": f'<path d="M8 8 L16 16 M16 8 L8 16" {S()}/>',
+                     "b": f'<circle cx="12" cy="12" r="4.6" {S()}/>',
+                     "x": f'<rect x="7.8" y="7.8" width="8.4" height="8.4" {S()}/>',
+                     "y": f'<path d="M12 6.9 L17.2 15.9 H6.8 Z" {S()}/>'}[role]
+        else:
+            body += f'<text x="12" y="17" font-size="14" {font} {L}>{lab}</text>'
+    elif role in ("lb", "rb"):
+        vw = 34
+        body = (f'<rect x="1" y="4" width="32" height="16" rx="8" {K}/>'
+                f'<text x="17" y="16" font-size="11" {font} {L}>{lab}</text>')
+    elif role in ("lt", "rt"):
+        vw = 32
+        body = (f'<path d="M2 21 V11 Q2 3 10 3 H22 Q30 3 30 11 V21 Z" {K}/>'
+                f'<text x="16" y="16.5" font-size="11" {font} {L}>{lab}</text>')
+    elif role in ("start", "select"):
+        vw, body = 24, f'<circle cx="12" cy="12" r="10" {K}/>'
+        if style == "nintendo":
+            body += f'<path d="{"M7.5 12 H16.5 M12 7.5 V16.5" if role == "start" else "M7.5 12 H16.5"}" {S()}/>'
+        elif role == "start":
+            body += f'<path d="M7.5 8.5 H16.5 M7.5 12 H16.5 M7.5 15.5 H16.5" {S(1.8)}/>'
+        elif style == "ps":                                   # Create/Share: Pfeil nach oben aus einer Schale
+            body += f'<path d="M12 6.8 V13.5 M9.2 9.4 L12 6.6 L14.8 9.4 M7.5 13 V16.5 H16.5 V13" {S(1.8)}/>'
+        else:                                                 # View: zwei uebereinanderliegende Fenster
+            body += (f'<rect x="6.5" y="7" width="7.5" height="6" rx="1" {S(1.6)}/>'
+                     f'<rect x="10" y="11" width="7.5" height="6" rx="1" fill="{KEY_FILL}" stroke="{lc}" stroke-width="1.6"/>')
+    elif role == "guide":
+        vw, body = 24, f'<circle cx="12" cy="12" r="11" {K}/>'
+        if style == "ps":
+            body += f'<text x="12" y="15.8" font-size="10" {font} {L}>PS</text>'
+        else:
+            body += f'<path d="M6.8 11.6 L12 7 L17.2 11.6 M8.4 10.4 V16.8 H15.6 V10.4" {S(1.9)}/>'
+    elif role in ("l3", "r3"):                                # Stick: Taste mit Ring
+        vw = 24
+        body = (f'<circle cx="12" cy="12" r="11" {K}/>'
+                f'<circle cx="12" cy="12" r="8.3" fill="none" stroke="{KEY_EDGE}" stroke-width="1.2"/>'
+                f'<text x="12" y="15.6" font-size="9" {font} {L}>{lab}</text>')
+    else:
+        return "", 0
+    w = max(1, round(h * vw / 24))
+    svg = (f'<svg xmlns="http://www.w3.org/2000/svg" width="{w}" height="{h}" viewBox="0 0 {vw} 24">{body}</svg>')
+    return svg, w
+
+
+# ---------------------------------------------------------------------------
 #  Gamepad (evdev): Zustand im Lese-Thread, Tastendruecke + Wiederholung im Qt-Thread
 # ---------------------------------------------------------------------------
 class Gamepad:
@@ -135,7 +236,22 @@ class Gamepad:
     JOY = {288: "a", 289: "b", 290: "x", 291: "y", 292: "lb", 293: "rb", 294: "select", 295: "start"}
     # Arcade-Sticks u. ae. mit Tasten ab BTN_0
     MISC = {256: "a", 257: "b", 258: "x", 259: "y", 260: "lb", 261: "rb", 262: "select", 263: "start"}
-    OVERRIDE = Path.home() / ".config/voidstation/pads.json"   # {"<Geraetename oder vid:pid>": {"<Code>": "a", …}}
+    # {"<Geraetename oder vid:pid>": {"<Code>": "a", …, "style": "ps"}} – eigene Belegung bzw. Bauart (Beschriftung)
+    OVERRIDE = Path.home() / ".config/voidstation/pads.json"
+
+    @classmethod
+    def style_of(cls, dev):
+        """Bauart (xbox/ps/nintendo) eines Controllers; pads.json kann sie mit "style" festlegen."""
+        info = dev.info
+        try:
+            own = json.loads(cls.OVERRIDE.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            own = {}
+        for i in (dev.name, f"{info.vendor:04x}:{info.product:04x}"):
+            ent = own.get(i) if isinstance(own, dict) else None
+            if isinstance(ent, dict) and ent.get("style") in PAD_STYLES:
+                return ent["style"]
+        return pad_style(dev.name, info.vendor)
 
     @classmethod
     def keymap(cls, dev, keys, abs_codes):
@@ -170,6 +286,8 @@ class Gamepad:
         self.raw = {}              # (geraet, "rx"/"ry"/"ly"/"r3") -> Stick -1…1 bzw. gedrueckt (Controller-Maus)
         self.rx_dev = set()        # Geraete mit eigenem rechten Stick (ABS_RX/RY)
         self.generic = set()       # einfache USB-Pads (Tasten ab BTN_TRIGGER, R3 = BTN_BASE6)
+        self.styles = {}           # geraet -> Bauart (xbox/ps/nintendo)
+        self.last_style = ""       # Bauart des zuletzt benutzten Controllers
         try:
             import evdev  # noqa: F401
         except ImportError:
@@ -184,14 +302,25 @@ class Gamepad:
     def _set(self, dev, key, on):
         with self.lock:
             self.state[(dev, key)] = on
+            if on:
+                self.last_style = self.styles.get(dev, self.last_style)
+
+    def style(self):
+        """Bauart fuer die Tasten-Hinweise: die des zuletzt benutzten Controllers, "" = keiner angeschlossen."""
+        with self.lock:
+            if not self.styles:
+                return ""
+            if self.last_style not in self.styles.values():          # zuletzt benutzter wurde abgezogen
+                self.last_style = next(iter(self.styles.values()))
+            return self.last_style
 
     def _raw(self, dev, key, val):
         with self.lock:
             self.raw[(dev, key)] = val
 
     def mouse_state(self):
-        """Fuer die Controller-Maus: staerkster Ausschlag je Achse ueber alle Controller, R3, LT/RT."""
-        out = {"rx": 0.0, "ry": 0.0, "ly": 0.0, "r3": False, "lt": False, "rt": False}
+        """Fuer die Controller-Maus: staerkster Ausschlag je Achse ueber alle Controller, R3, untere/rechte Taste."""
+        out = {"rx": 0.0, "ry": 0.0, "ly": 0.0, "r3": False, "a": False, "b": False}
         with self.lock:
             for (_d, k), v in self.raw.items():
                 if k == "r3":
@@ -199,7 +328,7 @@ class Gamepad:
                 elif abs(v) > abs(out[k]):
                     out[k] = v
             for (_d, k), v in self.state.items():
-                if k in ("lt", "rt") and v:
+                if k in ("a", "b") and v:
                     out[k] = True
         return out
 
@@ -232,10 +361,14 @@ class Gamepad:
                             self.rx_dev.add(path)
                         if kmap.get(296) == "select":
                             self.generic.add(path)
+                        style = self.style_of(dev)
                         sel.register(dev, selectors.EVENT_READ)
                         with self.lock:
                             self.names.append(dev.name)
-                        log("Controller:", dev.name)
+                            self.styles[path] = style
+                            if not self.last_style:
+                                self.last_style = style
+                        log("Controller:", dev.name, f"({style})")
                     except OSError:
                         pass
             for key, _ in sel.select(timeout=1):
@@ -254,6 +387,7 @@ class Gamepad:
                     sel.unregister(dev)
                     known.pop(dev.path, None)
                     with self.lock:
+                        self.styles.pop(dev.path, None)
                         for k in [k for k in self.state if k[0] == dev.path]:
                             del self.state[k]
                         for k in [k for k in self.raw if k[0] == dev.path]:
@@ -290,11 +424,13 @@ class Gamepad:
 class PadPump(QObject):
     """Fragt den Gamepad-Zustand ab (60 Hz) und meldet Druecke wie im Web: 380 ms bis zur Wiederholung, dann alle 140 ms."""
     key = Signal(str)
+    style = Signal(str)            # Bauart des Controllers fuer die Tasten-Hinweise ("" = keiner angeschlossen)
     connected = Signal(str)
 
     def __init__(self, pad, active=None):
         super().__init__()
         self.pad, self.held, self.next = pad, {}, {}
+        self.last_style = None
         # Wann gehoert der Controller diesem Programm? Standard: eines seiner Fenster ist vorn
         self.active = active or (lambda: QGuiApplication.focusWindow() is not None)
         self.t = QTimer(self)
@@ -306,6 +442,10 @@ class PadPump(QObject):
             names, self.pad.names = self.pad.names, []
         for n in names:
             self.connected.emit(n.split("(")[0].strip())
+        st = self.pad.style()
+        if st != self.last_style:
+            self.last_style = st
+            self.style.emit(st)
         if not self.active():                          # nicht vorn: Controller gehoert dem anderen Programm
             self.held = {}
             return
@@ -337,6 +477,7 @@ class VsBase(QObject):
     stringsChanged = Signal()
     padKey = Signal(str)
     padConnected = Signal(str)
+    padStyleChanged = Signal()
 
     def __init__(self):
         super().__init__()
@@ -347,7 +488,77 @@ class VsBase(QObject):
         self._de = self._load_lang("de")
         self._set_lang("de")
         self._icons = {}
+        self._glyphs = {}
         self.pad = None
+        self._pad_style = ""         # Bauart des zuletzt benutzten Controllers, "" = keiner angeschlossen
+        self._force_style = os.environ.get("VS_PAD_STYLE", "")   # Tests: so tun, als steckte dieser Controller
+        if self._force_style in PAD_STYLES:
+            self._pad_style = self._force_style
+        self._kbd = False            # zuletzt die Tastatur benutzt: Hinweise wie bisher (Tastatur + Controller)
+        self._watched = set()
+        self._watch = QTimer(self)
+        self._watch.timeout.connect(self._watch_windows)
+        self._watch.start(2000)
+        QTimer.singleShot(0, self._watch_windows)
+
+    # ---- Controller oder Tastatur? (Tasten-Hinweise passen sich an) ----
+    def attach_pump(self, pump):
+        """Controller-Tasten weiterreichen und merken, welche Bauart zuletzt benutzt wurde."""
+        pump.key.connect(self._pad_used)
+        pump.key.connect(self.padKey)
+        pump.connected.connect(self.padConnected)
+        pump.style.connect(self._set_pad_style)
+
+    def _effective_style(self):
+        return "" if self._kbd else self._pad_style
+
+    def _set_pad_style(self, st):
+        before = self._effective_style()
+        if self._force_style in PAD_STYLES:
+            st = self._force_style
+        self._pad_style = st if st in PAD_STYLES else ""
+        if not self._pad_style:
+            self._kbd = False                       # ohne Controller: Hinweise ohnehin wie bisher
+        if self._effective_style() != before:
+            self.padStyleChanged.emit()
+
+    def _pad_used(self, _key):
+        if self._kbd:
+            self._kbd = False
+            if self._pad_style:
+                self.padStyleChanged.emit()
+
+    def _watch_windows(self):
+        """Tastendruecke an allen Fenstern dieses Programms bemerken (auch in Eingabefeldern, die sie selbst
+        verbrauchen) – nur die Fenster, nicht die ganze Anwendung, damit nicht jedes Ereignis durch Python laeuft."""
+        for w in QGuiApplication.topLevelWindows():
+            if id(w) not in self._watched:
+                self._watched.add(id(w))
+                w.installEventFilter(self)
+
+    def eventFilter(self, obj, ev):  # noqa: N802 (Qt-Name)
+        if ev.type() == QEvent.KeyPress and not self._kbd:
+            if not ev.isAutoRepeat():
+                self._kbd = True
+                if self._pad_style:
+                    self.padStyleChanged.emit()
+        return False
+
+    def _get_pad_style(self):
+        return self._effective_style()
+
+    padStyle = Property(str, _get_pad_style, notify=padStyleChanged)
+
+    @Slot(str, int, result="QVariantMap")
+    def keyGlyph(self, role, h):
+        """Tasten-Symbol der aktuellen Bauart: {src: data-URL, w, h}; leer, wenn es die Taste nicht gibt."""
+        style = self._pad_style or "xbox"
+        key = (role, style, h)
+        if key not in self._glyphs:
+            svg, w = pad_glyph_svg(role, style, max(8, int(h)))
+            self._glyphs[key] = ({"src": "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode(),
+                                  "w": w, "h": max(8, int(h))} if svg else {})
+        return self._glyphs[key]
 
     # ---- HTTP (in Threads, Antwort per Signal) ----
     @Slot(int, str, str, str)

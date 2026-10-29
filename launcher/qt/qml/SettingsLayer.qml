@@ -838,7 +838,7 @@ Layer {
                     Pill { property string key: "pm" + modelData; text: Ui.t(modelData ? "common.on" : "common.off"); on: !!s.sett && !!s.sett.padmouse === modelData; onTriggered: s.setPadMouse(modelData) }
                 }
             }
-            Info { html: Ui.esc(Ui.t("settings.padMouseHint")) }
+            Info { html: Ui.keys(Ui.t("settings.padMouseHint"), Ui.c.textPrimary, 16 * Ui.f) }
         }
         SetGroup {
             visible: s.cat === "system" && !!s.sett && (s.sett.frontends || []).length > 1; availH: s.colH; title: Ui.t("settings.frontend")

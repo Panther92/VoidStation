@@ -1108,7 +1108,8 @@ Layer {
                         width: il.iu * 2.6; topPadding: 10 * Ui.f; font.pixelSize: 14 * Ui.f; color: Ui.c.textDim; wrapMode: Text.WordWrap; elide: Text.ElideNone; lineHeight: 1.4
                         textFormat: Text.StyledText
                         text: "<font color='" + Ui.c.textFaint + "'>" + Ui.esc(Ui.t("inst.goodToKnow")) + "</font> "
-                              + Ui.t(["inst.tip1", "inst.tip2", "inst.tip3", "inst.tip4"][Math.floor(il.tipN / 8)], { host: Ui.esc(il.host) })
+                              + Ui.keys(Ui.t(["inst.tip1", "inst.tip2", "inst.tip3", "inst.tip4"][Math.floor(il.tipN / 8)], { host: Ui.esc(il.host) }),
+                                        Ui.c.textSecondary, 14 * Ui.f)
                     }
                     Txt {
                         width: il.iu * 2.6; font.pixelSize: 14 * Ui.f; color: Ui.c.textDim; wrapMode: Text.WordWrap; elide: Text.ElideNone; lineHeight: 1.4
