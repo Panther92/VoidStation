@@ -14,7 +14,7 @@ Rectangle {
     readonly property var js: app.jobState && app.jobState.action === "update" ? app.jobState : null
     readonly property var steps: js && js.steps ? js.steps : []
     z: 41
-    color: "#6e2b3c"                           // Farbe der Kachel "Updates" in den Einstellungen
+    color: "#2c5680"                           // ruhiges Blau (Rot wirkte zu alarmierend)
     opacity: shown ? 1 : 0
     visible: opacity > 0
     Behavior on opacity { NumberAnimation { duration: 250 } }
