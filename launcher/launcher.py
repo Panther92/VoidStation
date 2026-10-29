@@ -5625,11 +5625,18 @@ def _desktop_entry(path):
     return e
 
 
+def _bin_key(path):
+    """Vergleichsschluessel fuer Programme: der Dateiname – ausser bei entpackten AppImages, die alle "AppRun"
+    heissen; dort zaehlt der ganze Pfad (sonst verschwindet jedes selbst entpackte AppImage aus der Liste)."""
+    p = os.path.expanduser(str(path))
+    return p if Path(p).name == "AppRun" else Path(p).name
+
+
 def local_apps():
     """Programme mit .desktop-Datei, die weder im Katalog noch als eigene Kachel vorkommen."""
     lang = ui_lang().replace("-", "_")               # .desktop-Schluessel: Name[pt_BR], Name[fr]
     cat = catalog()
-    known_bins = {Path(str(a["cmd"][0])).name for a in cat["apps"] if isinstance(a.get("cmd"), list) and a["cmd"]}
+    known_bins = {_bin_key(a["cmd"][0]) for a in cat["apps"] if isinstance(a.get("cmd"), list) and a["cmd"]}
     known_bins |= {a["source"].get("pkg") for a in cat["apps"] if a["source"].get("pkg")}
     for a in cat["apps"]:                            # "for b in A B; do …" -> A und B
         m = re.match(r"for b in ([^;]+);", a.get("cmd")) if isinstance(a.get("cmd"), str) else None
@@ -5637,7 +5644,7 @@ def local_apps():
     known_bins.discard("flatpak")                    # Flatpaks werden ueber ihre ID erkannt, nicht ueber "flatpak run"
     known_refs = {r for a in cat["apps"] for r in (a["source"].get("ref"), a["source"].get("was_flatpak")) if r}
     tiles = {t.get("id"): t for g in load_config().get("groups", []) for t in g.get("tiles", [])}
-    tile_bins = {Path(str(t["cmd"][0])).name for t in tiles.values() if isinstance(t.get("cmd"), list) and t["cmd"]}
+    tile_bins = {_bin_key(t["cmd"][0]) for t in tiles.values() if isinstance(t.get("cmd"), list) and t["cmd"]}
     out, seen = [], set()
     for d in DESKTOP_DIRS:
         for f in sorted(d.glob("*.desktop")) if d.is_dir() else []:
@@ -5655,7 +5662,7 @@ def local_apps():
                 continue
             if not args or args[0] == "env" and len(args) < 2:
                 continue
-            binary = Path(args[0]).name
+            binary = _bin_key(args[0])
             if e.get("TryExec") and not shutil.which(e["TryExec"]):
                 continue
             if not (shutil.which(args[0]) or Path(args[0]).exists()):
