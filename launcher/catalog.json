@@ -267,13 +267,15 @@
       "cat": "Emulatoren",
       "desc": "PlayStation 2. Braucht ein BIOS aus der eigenen Konsole (Ordner share/ROMs/ps2/bios) und einen kräftigeren Rechner – auf schwacher Hardware laufen nur leichte Spiele flüssig.",
       "source": {
-        "type": "flatpak",
-        "ref": "net.pcsx2.PCSX2"
+        "type": "appimage",
+        "gh": "PCSX2/pcsx2",
+        "assets": [
+          "pcsx2-{tag}-linux-appimage-x64-Qt.AppImage"
+        ],
+        "was_flatpak": "net.pcsx2.PCSX2"
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "net.pcsx2.PCSX2"
+        "~/.local/share/voidstation/apps/pcsx2/AppRun"
       ],
       "tile": {
         "group": "Spiele",
@@ -369,13 +371,15 @@
       "cat": "Emulatoren",
       "desc": "Nintendo 64 – moderne Oberfläche für Mupen64Plus, gut mit dem Controller bedienbar.",
       "source": {
-        "type": "flatpak",
-        "ref": "com.github.Rosalie241.RMG"
+        "type": "appimage",
+        "gh": "Rosalie241/RMG",
+        "assets": [
+          "RMG-Portable-Linux64-{tag}.AppImage"
+        ],
+        "was_flatpak": "com.github.Rosalie241.RMG"
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "com.github.Rosalie241.RMG"
+        "~/.local/share/voidstation/apps/rmg/AppRun"
       ],
       "tile": {
         "group": "Spiele",
@@ -412,13 +416,15 @@
       "cat": "Emulatoren",
       "desc": "Nintendo 3DS (Nachfolger von Citra und Lime3DS). Spiele müssen entschlüsselt sein.",
       "source": {
-        "type": "flatpak",
-        "ref": "org.azahar_emu.Azahar"
+        "type": "appimage",
+        "gh": "azahar-emu/azahar",
+        "assets": [
+          "azahar.AppImage"
+        ],
+        "was_flatpak": "org.azahar_emu.Azahar"
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "org.azahar_emu.Azahar"
+        "~/.local/share/voidstation/apps/azahar/AppRun"
       ],
       "tile": {
         "group": "Spiele",
@@ -434,13 +440,16 @@
       "cat": "Emulatoren",
       "desc": "Sega Dreamcast, Naomi und Atomiswave.",
       "source": {
-        "type": "flatpak",
-        "ref": "org.flycast.Flycast"
+        "type": "appimage",
+        "gh": "flyinghead/flycast",
+        "assets": [
+          "flycast-x86_64-{ver}.AppImage",
+          "flycast-x86_64.AppImage"
+        ],
+        "was_flatpak": "org.flycast.Flycast"
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "org.flycast.Flycast"
+        "~/.local/share/voidstation/apps/flycast/AppRun"
       ],
       "tile": {
         "group": "Spiele",
@@ -476,13 +485,15 @@
       "cat": "Emulatoren",
       "desc": "Wii U. Anspruchsvoll – braucht Vulkan und eine kräftige Grafik; auf schwacher Hardware eher zum Ausprobieren.",
       "source": {
-        "type": "flatpak",
-        "ref": "info.cemu.Cemu"
+        "type": "appimage",
+        "gh": "cemu-project/Cemu",
+        "assets": [
+          "Cemu-{ver}-x86_64.AppImage"
+        ],
+        "was_flatpak": "info.cemu.Cemu"
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "info.cemu.Cemu"
+        "~/.local/share/voidstation/apps/cemu/AppRun"
       ],
       "tile": {
         "group": "Spiele",
@@ -498,13 +509,15 @@
       "cat": "Emulatoren",
       "desc": "Original-Xbox. Braucht MCPX-Boot-ROM, BIOS und Festplatten-Image aus der eigenen Konsole im Ordner share/ROMs/xbox/bios.",
       "source": {
-        "type": "flatpak",
-        "ref": "app.xemu.xemu"
+        "type": "appimage",
+        "gh": "xemu-project/xemu",
+        "assets": [
+          "xemu-{ver}-x86_64.AppImage"
+        ],
+        "was_flatpak": "app.xemu.xemu"
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "app.xemu.xemu"
+        "~/.local/share/voidstation/apps/xemu/AppRun"
       ],
       "tile": {
         "group": "Spiele",

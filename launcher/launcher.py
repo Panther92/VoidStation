@@ -38,7 +38,7 @@ import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 import zlib
-from html import unescape as html_unescape
+from html import escape as html_escape, unescape as html_unescape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -4595,8 +4595,8 @@ def app_installed_in(a, pkgs, fps, tiles):
         return s["pkg"] in pkgs
     if s["type"] == "flatpak":
         return s["ref"] in fps
-    if s["type"] == "appimage":
-        return (APPDIR / a["id"] / "AppRun").exists()
+    if s["type"] == "appimage":                            # oder noch als frueheres Flatpak (Wechsel beim naechsten Update)
+        return (APPDIR / a["id"] / "AppRun").exists() or bool(s.get("was_flatpak") and s["was_flatpak"] in fps)
     if s["type"] in ("web", "builtin"):                    # builtin: im Player eingebaut (YouTube Light) – nur die Kachel
         return a["id"] in tiles
     return False
@@ -4611,10 +4611,19 @@ def app_installed(a):
         r = run(["flatpak", "info", "--user", s["ref"]])
         return bool(r and r.returncode == 0)
     if s["type"] == "appimage":
-        return (APPDIR / a["id"] / "AppRun").exists()
+        return (APPDIR / a["id"] / "AppRun").exists() or legacy_flatpak(a)
     if s["type"] in ("web", "builtin"):
         return a["id"] in tile_ids()
     return False
+
+
+def legacy_flatpak(a):
+    """Ist von dieser App (heute AppImage) noch die fruehere Flatpak-Fassung installiert?"""
+    ref = a["source"].get("was_flatpak")
+    if not ref or not shutil.which("flatpak"):
+        return False
+    r = run(["flatpak", "info", "--user", ref])
+    return bool(r and r.returncode == 0)
 
 
 def app_cmd(a):
@@ -5000,16 +5009,23 @@ class Jobs:
             target = APPDIR / a["id"] if s["type"] == "appimage" else BASE / "profiles" / a["id"]
             shutil.rmtree(target, ignore_errors=True)
             self._log(f"entfernt: {target}")
+            if s["type"] == "appimage" and legacy_flatpak(a):
+                self._run(["flatpak", "uninstall", "--user", "-y", "--noninteractive", s["was_flatpak"]])
             return True
         return False
 
     def _appimage(self, a):
         APPDIR.mkdir(parents=True, exist_ok=True)
         img = APPDIR / f"{a['id']}.AppImage"
-        self._log(f"Lade {a['source']['url']}")
-        req = urllib.request.Request(a["source"]["url"], headers=UA)
+        try:
+            url = appimage_url(a)
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Download-Adresse nicht gefunden: {e}")
+            return False
+        self._log(f"Lade {url}")
+        req = urllib.request.Request(url, headers=UA)
         with urllib.request.urlopen(req, timeout=60) as r, open(img, "wb") as f:
-            stamp = asset_stamp(r.headers)
+            stamp = url if a["source"].get("gh") else asset_stamp(r.headers)
             total = int(r.headers.get("Content-Length") or 0)
             done, last = 0, 0
             while True:
@@ -5043,7 +5059,39 @@ class Jobs:
         except OSError:
             pass
         self._log("installiert nach " + str(dest))
+        if a["source"].get("was_flatpak"):
+            self._from_flatpak(a)
         return True
+
+    def _from_flatpak(self, a):
+        """Wechsel Flatpak -> AppImage: Einstellungen, Spielstaende und Zwischenspeicher uebernehmen (nur, wo das
+        AppImage noch nichts hat), Kachel umstellen, Flatpak entfernen – seine Daten unter ~/.var/app bleiben als
+        Sicherung liegen."""
+        ref = a["source"]["was_flatpak"]
+        for src, dst in emu_dirs(a["id"]):
+            if src.is_dir() and not dst.exists():
+                try:
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copytree(src, dst, symlinks=True)
+                    self._log(f"übernommen: {src} -> {dst}")
+                except OSError as e:
+                    self._log(f"nicht übernommen: {src} ({e})")
+        emu_paths_refresh()
+        c = load_config()
+        changed = False
+        for g in c.get("groups", []):
+            for t in g.get("tiles", []):
+                cmd = t.get("cmd")
+                if t.get("id") == a["id"] and isinstance(cmd, list) and ref in cmd:
+                    t["cmd"] = app_cmd(a)
+                    changed = True
+        if changed:
+            config_save(c)
+            self._log("Kachel startet jetzt das AppImage")
+        if legacy_flatpak(a):
+            if self._run(["flatpak", "uninstall", "--user", "-y", "--noninteractive", ref]) == 0:
+                self._run(["flatpak", "uninstall", "--user", "-y", "--noninteractive", "--unused"])
+                self._log(f"Flatpak {ref} entfernt (Daten bleiben unter ~/.var/app/{ref})")
 
 
 # ---------------------------------------------------------------------------
@@ -5295,11 +5343,50 @@ def appimage_stampfile(a):
     return APPDIR / f".{a['id']}.stamp"
 
 
+_AI_URL = {}                                           # App -> (Zeitpunkt, Adresse der neuesten Ausgabe)
+
+
+def appimage_url(a):
+    """Download-Adresse: feste "url" (DuckStation: immer Tag "latest"), sonst die neueste Ausgabe auf GitHub –
+    /releases/latest leitet auf /releases/tag/<tag> um, daraus und den Mustern in "assets" ({tag}, {ver} = Tag ohne
+    fuehrendes v) wird der Dateiname; es gilt das erste Muster, das es gibt. Ohne GitHub-API (keine Anfragegrenze)."""
+    s = a["source"]
+    if s.get("url"):
+        return s["url"]
+    hit = _AI_URL.get(a["id"])
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    req = urllib.request.Request(f"https://github.com/{s['gh']}/releases/latest", headers=UA, method="HEAD")
+    with urllib.request.urlopen(req, timeout=20) as r:
+        final = r.geturl()
+    m = re.search(r"/releases/tag/([^/?#]+)", final)
+    if not m:
+        raise RuntimeError(f"{a['name']}: keine Ausgabe auf GitHub gefunden")
+    tag = urllib.parse.unquote(m.group(1))
+    ver = tag[1:] if tag[:1] in "vV" and tag[1:2].isdigit() else tag
+    for tpl in s.get("assets", []):
+        url = (f"https://github.com/{s['gh']}/releases/download/{urllib.parse.quote(tag)}/"
+               + urllib.parse.quote(tpl.format(tag=tag, ver=ver)))
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=UA, method="HEAD"), timeout=20):
+                pass
+        except urllib.error.HTTPError as e:
+            if e.code == 404:
+                continue
+            raise
+        _AI_URL[a["id"]] = (time.time(), url)
+        return url
+    raise RuntimeError(f"{a['name']}: kein passendes AppImage in {tag}")
+
+
 def appimage_outdated(a):
     try:
-        req = urllib.request.Request(a["source"]["url"], headers=UA, method="HEAD")
-        with urllib.request.urlopen(req, timeout=20) as r:
-            remote = asset_stamp(r.headers)
+        if a["source"].get("gh"):                      # GitHub-Ausgabe: die Adresse enthaelt die Version
+            remote = appimage_url(a)
+        else:
+            req = urllib.request.Request(a["source"]["url"], headers=UA, method="HEAD")
+            with urllib.request.urlopen(req, timeout=20) as r:
+                remote = asset_stamp(r.headers)
     except Exception:  # noqa: BLE001
         return False
     try:
@@ -5337,8 +5424,15 @@ def _sys_check(sync, logf=None):
                 res["flatpak"] = [x.strip() for x in f.stdout.splitlines() if x.strip()]
         apps = catalog()["apps"]
         for a in apps:
-            if a["source"]["type"] == "appimage" and app_installed(a) and appimage_outdated(a):
+            if a["source"]["type"] != "appimage":
+                continue
+            if (APPDIR / a["id"] / "AppRun").exists():
+                if appimage_outdated(a):
+                    res["appimage"].append(a["id"])
+            elif legacy_flatpak(a):                    # noch das Flatpak: Wechsel aufs AppImage beim Update
                 res["appimage"].append(a["id"])
+                if logf:
+                    logf(f"{a['name']}: Wechsel von Flatpak auf AppImage steht an")
         if any("proton-ge" in a["source"].get("addons", []) and app_installed(a) for a in apps):
             try:
                 tag = proton_latest()["tag_name"]
@@ -5541,7 +5635,7 @@ def local_apps():
         m = re.match(r"for b in ([^;]+);", a.get("cmd")) if isinstance(a.get("cmd"), str) else None
         known_bins |= set(m.group(1).split()) if m else set()
     known_bins.discard("flatpak")                    # Flatpaks werden ueber ihre ID erkannt, nicht ueber "flatpak run"
-    known_refs = {a["source"]["ref"] for a in cat["apps"] if a["source"].get("ref")}
+    known_refs = {r for a in cat["apps"] for r in (a["source"].get("ref"), a["source"].get("was_flatpak")) if r}
     tiles = {t.get("id"): t for g in load_config().get("groups", []) for t in g.get("tiles", [])}
     tile_bins = {Path(str(t["cmd"][0])).name for t in tiles.values() if isinstance(t.get("cmd"), list) and t["cmd"]}
     out, seen = [], set()
@@ -6001,7 +6095,7 @@ class ROMManager:
         "psx": ["~/.local/share/voidstation/apps/duckstation/AppRun"],
         "psp": ["PPSSPPSDL", "ppsspp", "PPSSPPQt"],   # erster vorhandener
         "nds": ["melonDS"],
-        "dreamcast": ["flatpak", "run", "org.flycast.Flycast"],
+        "dreamcast": ["~/.local/share/voidstation/apps/flycast/AppRun"],
         "gamecube": ["dolphin-emu"],
         "megadrive": ["mednafen"],
         "genesis": ["mednafen"],
@@ -6599,6 +6693,7 @@ def emu_binds(emu, pad, probe=None, roles=None):
 
 def keymap_payload(emu, path=""):
     """Fuer die Seite "Tastenbelegung": Konsole, Controller, je Konsolentaste die Controllertaste."""
+    emu_paths_refresh()
     lay = EMU_LAYOUTS[emu]
     pads = gamepads()
     pad = next((p for p in pads if p["path"] == path), pads[0] if pads else None)
@@ -7504,6 +7599,7 @@ def bios_status(tile):
     """Fuer die Spieleliste: {"ok", "missing": [Art …], "folder"} – None, wenn der Emulator kein BIOS braucht
     (optionale BIOS-Dateien melden nichts: es fehlt ja nichts)."""
     tile = {v: k for k, v in ROMS.TILE_TO_SYSTEM.items()}.get(tile, tile)      # auch Ordnername erlaubt
+    emu_paths_refresh()
     if tile == "duckstation":
         ok = bios_dir_has("psx", _duck_bios_dir()) or bios_dir_has("ps2", _duck_bios_dir()) or bool(bios_find("psx"))
         return {"ok": ok, "missing": [] if ok else ["bios"], "folder": "psx"}
@@ -8402,6 +8498,56 @@ def retroarch_core(target):
     return sorted(cands, key=lambda so: (rank(so), so.name))[0]
 
 
+# ---- Flatpak oder AppImage: wo die Emulatoren ihre Einstellungen haben ---------------------------------------
+# Seit Oktober 2026 kommen PCSX2, xemu, Flycast, Azahar, Cemu und RMG als AppImage (entpackt unter apps/<id>, wie
+# DuckStation): ohne Sandbox, ohne Dokumenten-Portal, Dateidialoge wie gewohnt. Ein frueher installiertes Flatpak laeuft
+# weiter, bis das naechste Update wechselt (_from_flatpak kopiert die Ordner). Die Pfade der Belegungs- und BIOS-
+# Funktionen richten sich danach, welche Fassung gerade installiert ist (emu_paths_refresh).
+_H = Path.home()
+_FP = _H / ".var/app"
+EMU_DIRS = {  # Kachel -> [(Ordner im Flatpak, Ordner beim AppImage)], der erste traegt die Einstellungsdatei
+    "pcsx2": [(_FP / "net.pcsx2.PCSX2/config/PCSX2", _H / ".config/PCSX2")],
+    "xemu": [(_FP / "app.xemu.xemu/data/xemu", _H / ".local/share/xemu")],
+    "flycast": [(_FP / "org.flycast.Flycast/config/flycast", _H / ".config/flycast"),
+                (_FP / "org.flycast.Flycast/data/flycast", _H / ".local/share/flycast")],
+    "azahar": [(_FP / "org.azahar_emu.Azahar/config/azahar-emu", _H / ".config/azahar-emu"),
+               (_FP / "org.azahar_emu.Azahar/data/azahar-emu", _H / ".local/share/azahar-emu")],
+    "cemu": [(_FP / "info.cemu.Cemu/config/Cemu", _H / ".config/Cemu"), (_FP / "info.cemu.Cemu/data/Cemu", _H / ".local/share/Cemu"),
+             (_FP / "info.cemu.Cemu/cache/Cemu", _H / ".cache/Cemu")],
+    "rmg": [(_FP / "com.github.Rosalie241.RMG/config/RMG", _H / ".config/RMG"),
+            (_FP / "com.github.Rosalie241.RMG/data/RMG", _H / ".local/share/RMG"),
+            (_FP / "com.github.Rosalie241.RMG/cache/RMG", _H / ".cache/RMG")],
+}
+
+
+def emu_dirs(tid):
+    return EMU_DIRS.get(tid, [])
+
+
+def emu_native(tid):
+    """Laeuft die Kachel als AppImage (entpackt)? Sonst (noch) als Flatpak."""
+    return (APPDIR / tid / "AppRun").exists()
+
+
+def emu_dir(tid, i=0):
+    fp, nat = EMU_DIRS[tid][i]
+    return nat if emu_native(tid) else fp
+
+
+def emu_paths_refresh():
+    global PCSX2_INI, RMG_CFG, XEMU_TOML, AZAHAR_INI, CEMU_PROFILE, FLYCAST_MAPPINGS, FLYCAST_CFG
+    PCSX2_INI = emu_dir("pcsx2") / "inis/PCSX2.ini"
+    RMG_CFG = emu_dir("rmg") / "mupen64plus.cfg"
+    XEMU_TOML = emu_dir("xemu") / "xemu/xemu.toml"
+    AZAHAR_INI = emu_dir("azahar") / "qt-config.ini"
+    CEMU_PROFILE = emu_dir("cemu") / "controllerProfiles/controller0.xml"
+    FLYCAST_MAPPINGS = emu_dir("flycast") / "mappings"
+    FLYCAST_CFG = emu_dir("flycast") / "emu.cfg"
+
+
+emu_paths_refresh()
+
+
 KEYMAP_WRITERS = {"duckstation": duckstation_prepare, "snes9x": snes9x_prepare, "nestopia": nestopia_prepare,
                   "ppsspp": ppsspp_prepare, "melonds": melonds_prepare, "dolphin": dolphin_prepare,
                   "flycast": flycast_prepare, "pcsx2": pcsx2_prepare, "rmg": rmg_prepare, "xemu": xemu_prepare,
@@ -8537,10 +8683,119 @@ def emu_fullscreen_wanted(tid):
     return bool(settings_load().get("emu_fullscreen", True))
 
 
+# ---- Einrichtungsassistenten vorwegnehmen ------------------------------------------------------------------
+# PCSX2 und DuckStation schreiben beim allerersten Start sofort ihre Standardeinstellungen (QtHost::InitializeConfig,
+# Core::InitializeBaseSettingsLayer) und zeigen erst danach den Assistenten, solange ein Merkzeichen
+# (SetupWizardIncomplete) gesetzt ist. VoidStation startet das Programm deshalb einmal unsichtbar
+# (QT_QPA_PLATFORM=offscreen, Rueckfall xcb), wartet auf die Datei, beendet es und traegt ein, was der Assistent
+# abfragt: Merkzeichen aus, Spieleordner; BIOS und Controller setzen bios_prepare und die Belegung wie bei jedem
+# Start. Cemu (wxWidgets) zeigt "Getting started", solange settings.xml fehlt – die legt VoidStation selbst an.
+def _first_run_patch_pcsx2(ini):
+    cur = ini_read(ini)
+    ini_update(ini, "UI", {"SetupWizardIncomplete": "false"})
+    gl = cur.get("GameList", {})
+    if not gl.get("Paths") and not gl.get("RecursivePaths"):
+        ini_update(ini, "GameList", {"RecursivePaths": str(ROMS.rom_dir / "ps2")})
+
+
+def _first_run_patch_duck(ini):
+    cur = ini_read(ini)
+    ini_update(ini, "Main", {"SetupWizardIncomplete": "false"})
+    gl = cur.get("GameList", {})
+    if not gl.get("Paths") and not gl.get("RecursivePaths"):
+        ini_update(ini, "GameList", {"RecursivePaths": str(ROMS.rom_dir / "psx")})
+
+
+FIRST_RUN = {  # Kachel -> (Einstellungsdatei, Abschnitt mit dem Merkzeichen, Eintragen)
+    "pcsx2": (lambda: PCSX2_INI, "UI", _first_run_patch_pcsx2),
+    "duckstation": (lambda: DUCK_INI, "Main", _first_run_patch_duck),
+}
+
+
+def _first_run_pass(args, ini):
+    """Das Programm unsichtbar starten, bis seine Einstellungsdatei samt Controller-Abschnitt steht (hoechstens 20 s)."""
+    flat = args[:2] == ["flatpak", "run"]
+    plat = "QT_QPA_PLATFORM=offscreen;xcb"
+    if flat:
+        ref = next((a for a in args[2:] if not str(a).startswith("-")), None)
+        if not ref:
+            return False
+        cmd = ["flatpak", "run", f"--env={plat}", ref]
+    else:
+        cmd = [args[0]]
+    env = app_env()
+    env["QT_QPA_PLATFORM"] = "offscreen;xcb"
+    log("Erster Start ohne Assistent:", " ".join(map(str, cmd)))
+    try:
+        proc = subprocess.Popen(cmd, cwd=str(Path.home()), env=env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as e:
+        log("Erster Start:", e)
+        return False
+    ok, last, t0 = False, None, time.monotonic()
+    while time.monotonic() - t0 < 20 and proc.poll() is None:
+        time.sleep(0.25)
+        try:
+            text = ini.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "[Pad1]" in text:
+            if text == last:                       # zweimal gleich: fertig geschrieben
+                ok = True
+                break
+            last = text
+    for sig, wait in ((signal.SIGTERM, 3), (signal.SIGKILL, 2)):
+        if proc.poll() is not None:
+            break
+        try:
+            os.killpg(proc.pid, sig)
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=wait)
+        except subprocess.TimeoutExpired:
+            pass
+    return ok or ini.exists()
+
+
+def first_run(tid, args):
+    if tid == "cemu":
+        f = emu_dir("cemu") / "settings.xml"
+        if not f.exists():                          # ohne settings.xml zeigt Cemu "Getting started" (CemuApp.cpp)
+            f.parent.mkdir(parents=True, exist_ok=True)
+            games = ROMS.rom_dir / "wiiu"
+            f.write_text('<?xml version="1.0" encoding="UTF-8"?>\n<content>\n    <GamePaths>\n'
+                         f'        <Entry>{html_escape(str(games))}</Entry>\n    </GamePaths>\n</content>\n',
+                         encoding="utf-8")
+            log("Cemu: Einstellungen angelegt (ohne Assistent), Spiele aus", games)
+        return
+    spec = FIRST_RUN.get(tid)
+    if not spec:
+        return
+    ini, section, patch = spec[0](), spec[1], spec[2]
+    if not ini.exists():
+        with EMU_LOCK:
+            if not ini.exists() and not _first_run_pass(args, ini):
+                log(f"{tid}: unsichtbarer erster Start ohne Ergebnis – der Assistent erscheint wie gewohnt")
+                return
+    sec = ini_read(ini).get(section, {})
+    flag = sec.get("SetupWizardIncomplete", "").strip().lower()
+    # DuckStation zeigt den Assistenten auch, wenn weder das Merkzeichen noch SettingsVersion da ist (dsqthost.cpp)
+    if flag in ("true", "1") or (tid == "duckstation" and "SetupWizardIncomplete" not in sec
+                                 and "SettingsVersion" not in sec):
+        patch(ini)
+        log(f"{tid}: Einrichtungsassistent uebersprungen")
+
+
 def emu_prepare(tid, args):
     """Vor dem Start: Vorgaben schreiben, Vollbild-Option einsetzen. -> (args, Umgebung, Vollbild ueber Fenstermanager)"""
+    emu_paths_refresh()
     kind = emu_kind(args)
     env, wm_fs = {}, False
+    try:
+        first_run(tid, args)
+    except Exception as e:  # noqa: BLE001 – darf den Start nie verhindern
+        log(f"{tid}: erster Start:", e)
     if kind == "mgba-qt":
         try:
             mgba_prepare()
@@ -8554,6 +8809,15 @@ def emu_prepare(tid, args):
     if tid == "mame" and "-joystickprovider" not in args:   # SDL-Gamepad-Namen wie in mame_items
         args = [args[0], "-joystickprovider", "sdlgame"] + list(args[1:])
     flat = args[:2] == ["flatpak", "run"]
+    if flat:
+        # Dateidialoge (Dokumenten-Portal) liefern Pfade unter <Laufzeitordner>/doc/… – VoidStation hat einen eigenen
+        # Laufzeitordner, den das Flatpak nicht kennt (es bekommt das Portal nur unter /run/user/<uid>/doc). Den Ordner
+        # unter seinem Namen freigeben, damit gewaehlte Dateien und Ordner im Programm auch ankommen.
+        rt = os.environ.get("XDG_RUNTIME_DIR", "")
+        if rt and rt.rstrip("/") != f"/run/user/{os.getuid()}" and os.path.ismount(os.path.join(rt, "doc")):
+            opt = f"--filesystem={os.path.join(rt, 'doc')}"
+            if opt not in args:
+                args = ["flatpak", "run", opt] + list(args[2:])
     if tid in KEYMAP_WRITERS:
         try:
             keymap_prepare(tid)
@@ -8571,7 +8835,8 @@ def emu_prepare(tid, args):
     # Nur mit Spiel (aus der Spieleliste): "Emulator ohne Spiel starten" bleibt im Fenster, dort will man die Menues
     game = len(args) > 1 and Path(str(args[-1])).suffix.lower() in {e for x in ROMS.EXTENSIONS.values() for e in x}
     if game and emu_fullscreen_wanted(tid):
-        spec = EMU_FULLSCREEN_TILE.get(tid) if flat else EMU_FULLSCREEN.get(kind)
+        spec = EMU_FULLSCREEN_TILE.get(tid) if (flat or kind == tid) else None
+        spec = spec or EMU_FULLSCREEN.get(kind)
         if spec and flat:
             if spec[0] not in args:                 # vor der Spieldatei samt ihrer Option (ROM_ARGS)
                 n = 1 + len(next((v for v in ROMS.ROM_ARGS.values() if list(args[-1 - len(v):-1]) == v), []))
@@ -8629,7 +8894,13 @@ class SaveBackup:
         ("Dolphin-Savestates", H / ".local/share/dolphin-emu/StateSaves", False),
         ("RetroArch", H / ".config/retroarch/saves", False),
         ("RetroArch-Savestates", H / ".config/retroarch/states", False),
-        ("PCSX2", H / ".var/app/net.pcsx2.PCSX2/config/PCSX2/memcards", False),
+        ("PCSX2", H / ".config/PCSX2/memcards", False),                       # AppImage
+        ("PCSX2-Savestates", H / ".config/PCSX2/sstates", False),
+        ("Flycast", H / ".local/share/flycast", True),
+        ("RMG", H / ".local/share/RMG/Save", False),
+        ("Azahar-Savestates", H / ".local/share/azahar-emu/states", False),
+        ("Cemu", H / ".local/share/Cemu/mlc01/usr/save", False),
+        ("PCSX2", H / ".var/app/net.pcsx2.PCSX2/config/PCSX2/memcards", False),     # Flatpak (bis zum Wechsel)
         ("PCSX2-Savestates", H / ".var/app/net.pcsx2.PCSX2/config/PCSX2/sstates", False),
         ("Flycast", H / ".var/app/org.flycast.Flycast/data/flycast", True),
         ("RMG", H / ".var/app/com.github.Rosalie241.RMG/data/RMG/Save", False),           # Game/ und State/
