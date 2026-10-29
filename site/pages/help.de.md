@@ -67,6 +67,27 @@ Nein, nur auf 64-Bit-PCs (x86_64). Ein gebrauchter Mini-PC oder Büro-PC ist ide
 
 Ja: Die Live-ISO installiert neben Windows (im UEFI-Modus). Vorher in Windows den Schnellstart ausschalten und Windows herunterfahren statt in den Ruhezustand zu schicken. Beim Start erscheint dann ein kurzes Auswahlmenü.
 
+### Eigene Programme als Kachel {#eigene-programme}
+
+Programme, die du selbst installiert hast, erscheinen im AppCenter unter **Installiert → Auf diesem Gerät**. Dort legt **Kachel anlegen** eine Kachel an – Spiele landen in der Gruppe *Spiele*, alles andere unter *Programme*. Void-Pakete und Flatpaks bringen den nötigen Starteintrag (eine `.desktop`-Datei) selbst mit und tauchen dort von allein auf.
+
+Ein **AppImage** braucht diesen Eintrag noch. Datei in die Freigabe legen, dann im Terminal (Name, Kurzname `ID` ohne Leerzeichen und Dateiname anpassen):
+
+```
+NAME="Mein Programm"; ID=meinprogramm
+FILE=~/share/MeinProgramm-x86_64.AppImage
+
+mkdir -p ~/Apps ~/.local/bin ~/.local/share/applications && cd ~/Apps
+chmod +x "$FILE" && "$FILE" --appimage-extract
+rm -rf "$ID" && mv squashfs-root "$ID"
+printf '#!/bin/sh\nexec "%s" "$@"\n' "$HOME/Apps/$ID/AppRun" > ~/.local/bin/$ID
+chmod +x ~/.local/bin/$ID
+printf '[Desktop Entry]\nType=Application\nName=%s\nExec=%s\nCategories=Utility;\n' \
+  "$NAME" "$HOME/.local/bin/$ID" > ~/.local/share/applications/$ID.desktop
+```
+
+Für ein Spiel `Categories=Game;` statt `Utility;` eintragen. Durch das Entpacken braucht das AppImage kein FUSE. Updates bekommen solche Programme nicht über VoidStation: neue Datei holen und die Befehle noch einmal ausführen.
+
 ### Die Oberfläche startet nicht – was nun?
 
 Nach zwei Fehlstarts installiert VoidStation den Grafik-Server XLibre einmal neu. Klappt es dann immer noch nicht, erscheint eine Rettungskonsole. Dort hilft `sudo /usr/local/sbin/voidstation-pkg xserver status`.

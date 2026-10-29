@@ -67,6 +67,27 @@ No, only on 64-bit PCs (x86_64). A used mini PC or office PC is ideal.
 
 Yes: the live ISO installs next to Windows (in UEFI mode). Turn off Fast Startup in Windows first and shut Windows down instead of hibernating it. A short boot menu then appears at startup.
 
+### Adding your own programs as tiles {#own-programs}
+
+Programs you installed yourself show up in the AppCenter under **Installed → On this device**. **Add tile** gives them a tile – games go into the *Games* group, everything else into *Programs*. Void packages and Flatpaks bring the launcher entry they need (a `.desktop` file) with them and appear there by themselves.
+
+An **AppImage** still needs that entry. Put the file into the shared folder, then in the terminal (adjust the name, the short `ID` without spaces and the file name):
+
+```
+NAME="My Program"; ID=myprogram
+FILE=~/share/MyProgram-x86_64.AppImage
+
+mkdir -p ~/Apps ~/.local/bin ~/.local/share/applications && cd ~/Apps
+chmod +x "$FILE" && "$FILE" --appimage-extract
+rm -rf "$ID" && mv squashfs-root "$ID"
+printf '#!/bin/sh\nexec "%s" "$@"\n' "$HOME/Apps/$ID/AppRun" > ~/.local/bin/$ID
+chmod +x ~/.local/bin/$ID
+printf '[Desktop Entry]\nType=Application\nName=%s\nExec=%s\nCategories=Utility;\n' \
+  "$NAME" "$HOME/.local/bin/$ID" > ~/.local/share/applications/$ID.desktop
+```
+
+For a game, use `Categories=Game;` instead of `Utility;`. Extracting the AppImage means it doesn't need FUSE. VoidStation doesn't update such programs: get the new file and run the commands again.
+
 ### The interface doesn't start – what now?
 
 After two failed starts, VoidStation reinstalls the XLibre display server once. If it still fails, a rescue console appears. `sudo /usr/local/sbin/voidstation-pkg xserver status` helps there.
