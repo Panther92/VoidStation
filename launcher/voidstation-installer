@@ -1081,14 +1081,15 @@ class Run:
             pass
         if chroot(["id", "tv"], check=False).returncode == 0 and login != "tv":
             chroot(["userdel", "-r", "tv"], check=False)
-        # Nur fuer den Stick: GParted, Startbild (Plymouth) – und der NVIDIA-Treiber, wenn der Stick nicht
-        # ueber "NVIDIA only" laeuft (mit ihm gehen dkms, gcc und die Kernel-Header, sonst je Kernel-Update ein Modulbau)
+        # Nur fuer den Stick: GParted – und der NVIDIA-Treiber, wenn der Stick nicht ueber "NVIDIA only" laeuft
+        # (mit ihm gehen dkms, gcc und die Kernel-Header, sonst je Kernel-Update ein Modulbau).
+        # Das Startbild (Plymouth) bleibt seit 2026.11 drin; install.sh richtet es fuer das installierte System
+        # ein (voidstation-splash: anderes Initramfs, eigene Core-Services statt 99-voidstation-live.sh).
         nv = nvidia_active()
-        drop = [p for p in ("gparted", "plymouth") + (() if nv else ("nvidia",))
+        drop = [p for p in ("gparted",) + (() if nv else ("nvidia",))
                 if chroot(["xbps-query", p], check=False).returncode == 0]
         if drop:
             chroot(["xbps-remove", "-Ry"] + drop, check=False)
-        shutil.rmtree(T / "usr/share/plymouth/themes/voidstation", ignore_errors=True)
         # Treiberwahl des Sticks aufloesen: mit NVIDIA gilt wieder die Sperre fuer nouveau aus dem Paket
         # (/usr/lib/modprobe.d/nvidia.conf), nvidia_drm laedt beim Start mit Kernel-Modesetting
         (T / "etc/modprobe.d/nvidia.conf").unlink(missing_ok=True)
@@ -1321,6 +1322,11 @@ class Run:
             for f in ("etc/kernel.d/post-install/40-voidstation-esp", "etc/kernel.d/post-install/60-voidstation-bootorder",
                       "etc/kernel.d/post-remove/40-voidstation-esp"):
                 (T / f).unlink(missing_ok=True)
+        # Startbild: "splash" auch in die gerade geschriebene EFISTUB-Befehlszeile (GRUB hat install.sh schon);
+        # das Initramfs entsteht gleich unten, deshalb hier nur einrichten (Rueckgabe 2 = Initramfs folgt)
+        splash = T / "usr/local/sbin/voidstation-splash"
+        if splash.exists():
+            chroot(["env", "VOIDSTATION_CHROOT=1", "/usr/local/sbin/voidstation-splash", "setup"], check=False)
         self.progress("boot", 0.15)
         # GRUB
         bootx = None
@@ -1364,12 +1370,15 @@ class Run:
         tmpl = T / "usr/local/share/voidstation/dracut-voidstation.conf"   # von install.sh (launcher/dracut-voidstation.conf)
         (dc / "10-voidstation.conf").write_text(tmpl.read_text() if tmpl.exists() else
                                                 '# VoidStation: Initramfs fuer jede Hardware\nhostonly="no"\n'
-                                                'omit_dracutmodules+=" drm plymouth "\n')
+                                                'omit_drivers+=" amdgpu radeon nouveau nova_core nova_drm i915 xe '
+                                                'nvidia nvidia_drm nvidia_modeset nvidia_uvm "\n')
         for kv in kvers:
             pkg = "linux" + ".".join(kv.split(".")[:2])
             r = chroot(["xbps-reconfigure", "-f", pkg], check=False)
             if r.returncode != 0 or not (T / f"boot/initramfs-{kv}.img").exists():
                 chroot(["dracut", "--no-hostonly", "--force", f"/boot/initramfs-{kv}.img", kv])
+        if (T / "usr/local/sbin/voidstation-splash").exists():
+            chroot(["/usr/local/sbin/voidstation-splash", "stamp"], check=False)   # Startbild steckt im Initramfs
         if use_stub:
             # meist schon per Kernel-Hook erledigt; noetig, wenn oben nur dracut lief
             chroot(["/usr/local/sbin/voidstation-efistub"], check=False)

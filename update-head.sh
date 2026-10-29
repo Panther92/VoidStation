@@ -56,6 +56,8 @@ for p in curl elogind xrdb pulseaudio-utils xdotool mpv python3-mpv ffmpegthumbn
          wireless-regdb bash-completion; do
   xbps-query "$p" >/dev/null 2>&1 || MISSING="$MISSING $p"
 done
+# Startbild beim Hochfahren (s. voidstation-splash) – nur 64 Bit
+[ "$(xbps-uhelper arch 2>/dev/null)" = x86_64 ] && ! xbps-query plymouth >/dev/null 2>&1 && MISSING="$MISSING plymouth"
 if [ -n "$MISSING" ]; then xbps-install -Sy $MISSING || warn "Paketinstallation fehlgeschlagen"; else echo "alles da"; fi
 # 32-Bit-Rechner (experimentell): 2D-Treiber fuer die alte Grafik nachholen (Xv fuer den Player, s. install.sh)
 if [ "$(xbps-uhelper arch 2>/dev/null)" = i686 ]; then
@@ -365,10 +367,15 @@ fi
 # Vorher: Eintrag je Kernelversion (manche Firmware startete weiter den alten Kernel) und
 # ~240 MB Initramfs je Kernel auf der 512-MB-EFI-Partition.
 install -o root -g root -m 755 "$TV/voidstation-efistub" /usr/local/sbin/voidstation-efistub
+install -o root -g root -m 755 "$TV/voidstation-splash" /usr/local/sbin/voidstation-splash
+install -o root -g root -m 644 "$TV/dracut-voidstation.conf" /usr/local/share/voidstation/dracut-voidstation.conf
 KCHANGED=0
+# Initramfs-Vorgabe von VoidStation (vom Installer bzw. aus 0.14.2) auf den neuen Stand bringen:
+# kleines Initramfs ohne Grafiktreiber; seit 2026.11 darf das Startbild (Plymouth) mit hinein
 DCONF=/etc/dracut.conf.d/10-voidstation.conf
-if [ -f "$DCONF" ] && grep -q '^hostonly="no"' "$DCONF" && ! grep -q 'omit_dracutmodules' "$DCONF"; then
-  say "Kernel-Start: kleineres Initramfs (ohne Grafiktreiber)"
+if [ -f "$DCONF" ] && grep -q '^hostonly="no"' "$DCONF" && grep -q 'VoidStation' "$DCONF" \
+   && ! cmp -s "$TV/dracut-voidstation.conf" "$DCONF"; then
+  say "Kernel-Start: Initramfs-Vorgabe erneuert (ohne Grafiktreiber, mit Startbild)"
   install -m 644 "$TV/dracut-voidstation.conf" "$DCONF"
   KCHANGED=1
 fi
@@ -390,14 +397,25 @@ if [ -f /etc/kernel.d/post-install/40-voidstation-esp ] && [ ! -f /etc/default/v
     warn "EFI-Partition unter /boot/efi nicht gefunden – Umstellung uebersprungen"
   fi
 fi
+# Startbild beim Hochfahren (Plymouth): Theme, Kernel-Befehlszeile ("splash"), Ende vor X.
+# Meldet 2, wenn das Initramfs neu gebaut werden muss – das passiert dann hier zusammen mit dem Rest.
+say "Startbild beim Hochfahren"
+SPL=0
+/usr/local/sbin/voidstation-splash setup --no-rebuild --theme "$TV/plymouth" || SPL=$?
+case "$SPL" in
+  0) ;;
+  2) [ "$KCHANGED" = 0 ] && KCHANGED=3 ;;
+  *) warn "Startbild nicht vollstaendig eingerichtet (sudo voidstation-splash status)" ;;
+esac
 if [ "$KCHANGED" != 0 ]; then
   [ -f /etc/default/voidstation-efistub ] && /usr/local/sbin/voidstation-efistub --setup >/dev/null
   # Initramfs des neuesten Kernels neu bauen; der Hook legt ihn danach auf die EFI-Partition
   UKV="$(ls /boot/vmlinuz-* 2>/dev/null | sed 's|.*/vmlinuz-||' | sort -V | tail -1)"
   if [ -n "$UKV" ]; then
     echo "Initramfs fuer Kernel $UKV wird neu erzeugt (dauert etwas) ..."
-    if xbps-reconfigure -f "linux$(echo "$UKV" | cut -d. -f1-2)" >/dev/null 2>&1; then
+    if xbps-reconfigure -f "linux$(echo "$UKV" | cut -d. -f1-2)" >/dev/null 2>&1 && [ -s "/boot/initramfs-$UKV.img" ]; then
       echo "Initramfs: $(( $(stat -c %s "/boot/initramfs-$UKV.img" 2>/dev/null || echo 0) / 1048576 )) MB"
+      /usr/local/sbin/voidstation-splash stamp
     else
       warn "Kernel-Neukonfiguration fehlgeschlagen"
     fi

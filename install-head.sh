@@ -72,6 +72,9 @@ PKGS="xinit xauth xset xrandr xprop setxkbmap $GPU_PKGS \
   pipewire wireplumber alsa-utils bluez libspa-bluetooth \
   noto-fonts-ttf noto-fonts-emoji noto-fonts-cjk dejavu-fonts-ttf \
   NetworkManager wireless-regdb chrony htop nano fastfetch mousepad bash-completion"
+# Startbild beim Hochfahren (VoidStation-Logo statt Textmeldungen, s. voidstation-splash) – nur 64 Bit,
+# die 32-Bit-Variante laesst es weg (Startzeit und RAM auf alten Rechnern)
+[ "$(xbps-uhelper arch 2>/dev/null)" = x86_64 ] && PKGS="$PKGS plymouth"
 MISSING=""
 for p in $PKGS; do
   xbps-query "$p" >/dev/null 2>&1 && continue
@@ -342,6 +345,7 @@ install -d -o root -g root -m 755 /usr/local/share/voidstation
 # Kernel-Start: EFISTUB-Helfer und Initramfs-Vorgabe (nutzt der Installer des Live-Sticks)
 install -o root -g root -m 755 "$TV/voidstation-efistub" /usr/local/sbin/voidstation-efistub
 install -o root -g root -m 644 "$TV/dracut-voidstation.conf" /usr/local/share/voidstation/dracut-voidstation.conf
+install -o root -g root -m 755 "$TV/voidstation-splash" /usr/local/sbin/voidstation-splash
 python3 - "$TV/catalog.json" "$(xbps-uhelper arch 2>/dev/null)" > /usr/local/share/voidstation/allowed-packages <<'PYEOF'
 import json, sys
 c = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -373,6 +377,20 @@ if [ -n "$SIGNERS" ]; then
   printf '%s\n' "$SIGNERS" > /usr/local/share/voidstation/allowed_signers
   chmod 644 /usr/local/share/voidstation/allowed_signers
   echo "Signaturpruefung fuer Updates aktiv"
+fi
+
+# ---------------------------------------------------------------------
+# Startbild (Plymouth): Theme, Kernel-Befehlszeile ("splash"), Initramfs. Im chroot des Installers baut der
+# Installer das Initramfs danach selbst (Rueckgabe 2), beim ISO-Bau richtet build-iso.sh das Live-Startbild ein.
+if [ "$LIVE" != 1 ]; then
+  say "Extra: Startbild beim Hochfahren"
+  SPL=0
+  VOIDSTATION_CHROOT="$CHROOT" /usr/local/sbin/voidstation-splash setup --theme "$TV/plymouth" || SPL=$?
+  case "$SPL" in
+    0) ;;
+    2) echo "Startbild eingerichtet, Initramfs folgt" ;;
+    *) warn "Startbild nicht vollstaendig eingerichtet (sudo voidstation-splash status)" ;;
+  esac
 fi
 
 # ---------------------------------------------------------------------

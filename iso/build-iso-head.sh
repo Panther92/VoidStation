@@ -136,7 +136,7 @@ eval "$(sed -n '/^PKGS="/,/"$/p' "$SRC/install.sh" | head -20)"
 # nvidia = NVIDIA-Treiber (nonfree, offene Kernel-Module per DKMS, GeForce GTX 16xx / RTX 20xx und neuer);
 #          bringt dkms, gcc und die Kernel-Header mit. Der Installer entfernt das alles wieder, wenn der Stick
 #          nicht ueber "NVIDIA only" gestartet wurde.
-# plymouth = Startbild mit Logo (nur auf dem Stick, der Installer entfernt es)
+# plymouth = Startbild mit Logo (Stick und installiertes System; dort richtet es voidstation-splash ein)
 # i686 (experimentell): ohne NVIDIA (kein 32-Bit-Treiber), ohne Plymouth (spart Zeit und RAM beim Start
 # auf alten Rechnern) und ohne GRUB fuer 64-Bit-UEFI – 32-Bit-Rechner starten praktisch immer per BIOS.
 LIVE_PKGS="$PKGS void-repo-nonfree intel-ucode xlibre-minimal linux-firmware grub efibootmgr dracut sudo \

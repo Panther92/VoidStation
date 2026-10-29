@@ -25,8 +25,9 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
 (cd launcher && tar --owner=0 --group=0 --sort=name --mtime='2026-01-01' \
    --exclude='*.pyc' --exclude=__pycache__ -czf "$tmp/payload.tgz" \
-   launcher.py voidstation-shell.py tiles.json catalog.json voidstation-pkg voidstation-efistub dracut-voidstation.conf \
-   home.sh vsctl xstart sysfix.sh web qt openbox firefox shell)
+   launcher.py voidstation-shell.py tiles.json catalog.json voidstation-pkg voidstation-efistub voidstation-splash \
+   dracut-voidstation.conf home.sh vsctl xstart sysfix.sh web qt openbox firefox shell \
+   -C ../iso/art plymouth)                         # Startbild (Theme) fuer installierte Geraete, s. voidstation-splash
 
 URL="$(head -n1 update-url)"
 case "$URL" in https://*) ;; *) echo "update-url muss mit https:// beginnen" >&2; exit 1 ;; esac
