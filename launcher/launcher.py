@@ -4722,21 +4722,77 @@ def proton_installed():
 class Jobs:
     """Genau ein Installations-/Update-Auftrag gleichzeitig, mit Protokoll fuer die Oberflaeche."""
 
+    UPDATE_LOG = BASE / "logs" / "update.log"      # ganzes Protokoll des letzten Update-Laufs (davor: .1)
+
     def __init__(self):
         self.lock = threading.Lock()
         self.job = None
+        self._logf = None
 
     def current(self):
         with self.lock:
-            return dict(self.job) if self.job else None
+            if not self.job:
+                return None
+            j = dict(self.job)
+            j["steps"] = [dict(x) for x in self.job.get("steps") or []]
+            return j
 
     def _log(self, line):
         line = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line).rstrip()
         if not line:
             return
+        if line.startswith("@vs "):                  # Steuerzeile fuer die Oberflaeche (voidstation-pkg), nicht ins Protokoll
+            return self._marker(line[4:].strip())
+        if line == "Signatur geprueft: ok":          # aeltere voidstation-pkg ohne Steuerzeile
+            self._marker("verified")
         with self.lock:
             self.job["log"] = (self.job["log"] + [line])[-60:]
-            self.job["n"] += 1                       # laufende Zeilennummer (fuer "vsctl update")
+            self.job["n"] += 1                       # laufende Zeilennummer (fuer "vsctl update -v")
+            f = self._logf
+        if f:
+            try:
+                f.write(line + "\n")
+                f.flush()
+            except (OSError, ValueError):
+                pass
+
+    # ---- Fortschritt des Update-Auftrags fuer den Vollbild-Bildschirm und "vsctl update":
+    #   steps = [{"id": "apps"|"load"|"setup", "state": "wait"|"run"|"done"|"fail", "n": <Pakete>}]
+    #   apps = Void-Pakete, Flatpaks, AppImages, Proton-GE · load = neue VoidStation-Version laden und
+    #   Signatur pruefen · setup = update.sh richtet sie ein. Was nichts zu tun hat, fehlt in der Liste.
+    def _step(self, sid, state):
+        with self.lock:
+            for x in self.job.get("steps") or []:
+                if x["id"] == sid:
+                    x["state"] = state
+
+    def _step_state(self, sid):
+        with self.lock:
+            return next((x["state"] for x in self.job.get("steps") or [] if x["id"] == sid), None)
+
+    def _marker(self, m):
+        if m == "verified" and self._step_state("load") == "run":
+            self._step("load", "done")
+            self._step("setup", "run")
+
+    def _open_log(self):
+        try:
+            self.UPDATE_LOG.parent.mkdir(parents=True, exist_ok=True)
+            if self.UPDATE_LOG.exists():
+                self.UPDATE_LOG.replace(self.UPDATE_LOG.with_name("update.log.1"))
+            self._logf = open(self.UPDATE_LOG, "w", encoding="utf-8")
+            self._logf.write(f"VoidStation-Update {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        except OSError as e:
+            log("update.log:", e)
+            self._logf = None
+
+    def _close_log(self):
+        f, self._logf = self._logf, None
+        if f:
+            try:
+                f.close()
+            except OSError:
+                pass
 
     def _run(self, args, cwd=None):
         self._log("$ " + " ".join(args))
@@ -4759,7 +4815,8 @@ class Jobs:
             name = app["name"] if app else "Updates"
             self.job = {"action": action, "app": app["id"] if app else None,
                         "name": name, "state": "running", "reboot": False,
-                        "log": [], "n": 0, "started": time.time(), "result": None}
+                        "log": [], "n": 0, "started": time.time(), "result": None,
+                        "steps": [], "from": None, "to": None}
         threading.Thread(target=self._work, args=(action, app), daemon=True).start()
 
     def _finish(self, ok, result=None, reboot=False):
@@ -4769,7 +4826,7 @@ class Jobs:
             self.job["reboot"] = bool(reboot)
 
     def _selfupdate(self):
-        ok = self._run(["sudo", "-n", PKG_HELPER, "selfupdate"]) == 0
+        ok = self._run(["sudo", "-n", PKG_HELPER, "selfupdate", "--markers"]) == 0
         _VCACHE["t"] = 0.0
         return ok
 
@@ -4788,7 +4845,11 @@ class Jobs:
                         tile_remove(a["id"])
                     self._finish(ok)
                 elif action == "update":
-                    ok, result, reboot = self._update_all()
+                    self._open_log()
+                    try:
+                        ok, result, reboot = self._update_all()
+                    finally:
+                        self._close_log()
                     self._finish(ok, result, reboot)
                 if action in ("install", "remove"):
                     _sys_check(sync=False)           # Paketstand hat sich geaendert
@@ -4809,29 +4870,48 @@ class Jobs:
         s = dict(_SCACHE)
         vs = vs_update_status(force=True)
         ok, done = True, []
-        if s["pkgs"] or s["error"]:
-            self._log(f"== Void-Pakete: {len(s['pkgs'])} ==")
-            if self._run(["sudo", "-n", PKG_HELPER, "update"]) == 0:
-                done.append("system")
+        flat = bool(s["flatpak"] and shutil_which("flatpak"))
+        imgs = [app for app in catalog()["apps"] if app["id"] in s["appimage"]]
+        apps = bool(s["pkgs"] or s["error"] or flat or imgs or s["proton"])
+        steps = [{"id": "apps", "state": "wait",
+                  "n": len(s["pkgs"]) + (len(s["flatpak"]) if flat else 0) + len(imgs) + (1 if s["proton"] else 0)}] if apps else []
+        if vs["available"]:
+            steps += [{"id": "load", "state": "wait"}, {"id": "setup", "state": "wait"}]
+        with self.lock:
+            self.job.update(steps=steps, **({"from": vs["local"], "to": vs["remote"]} if vs["available"] else {}))
+        if apps:
+            self._step("apps", "run")
+            ok_apps = True
+            if s["pkgs"] or s["error"]:
+                self._log(f"== Void-Pakete: {len(s['pkgs'])} ==")
+                if self._run(["sudo", "-n", PKG_HELPER, "update"]) == 0:
+                    done.append("system")
+                else:
+                    ok_apps = False
             else:
-                ok = False
+                self._log("Void-Pakete: aktuell")
+            if flat:
+                self._log(f"== Flatpak: {len(s['flatpak'])} ==")
+                ok_apps = self._run(["flatpak", "update", "--user", "-y", "--noninteractive"]) == 0 and ok_apps
+            for app in imgs:
+                self._log(f"== {app['name']} (AppImage) ==")
+                ok_apps = self._appimage(app) and ok_apps
+            if s["proton"]:
+                self._log(f"== Proton-GE {s['proton']} ==")
+                ok_apps = self._proton_ge() and ok_apps
+            self._step("apps", "done" if ok_apps else "fail")
+            ok = ok_apps
         else:
             self._log("Void-Pakete: aktuell")
-        if s["flatpak"] and shutil_which("flatpak"):
-            self._log(f"== Flatpak: {len(s['flatpak'])} ==")
-            ok = self._run(["flatpak", "update", "--user", "-y", "--noninteractive"]) == 0 and ok
-        for app in catalog()["apps"]:
-            if app["id"] in s["appimage"]:
-                self._log(f"== {app['name']} (AppImage) ==")
-                ok = self._appimage(app) and ok
-        if s["proton"]:
-            self._log(f"== Proton-GE {s['proton']} ==")
-            ok = self._proton_ge() and ok
         if vs["available"]:
             self._log(f"== VoidStation {vs['remote']} ==")
+            self._step("load", "run")
             if self._selfupdate():
+                self._step("load", "done")           # falls die Steuerzeile fehlte
+                self._step("setup", "done")
                 done.append("voidstation")
             else:
+                self._step("load" if self._step_state("load") == "run" else "setup", "fail")
                 ok = False
         else:
             self._log("VoidStation: aktuell")

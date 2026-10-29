@@ -237,6 +237,11 @@ Window {
 
         Keys.onPressed: function (e) {
             var k = e.key
+            if (updScreen.shown) {                // Updates im Vollbild: nur Esc / B (im Hintergrund weiter)
+                if (k === Qt.Key_Escape || k === Qt.Key_Backspace || k === Qt.Key_Back) updScreen.toBackground()
+                e.accepted = true
+                return
+            }
             if (layerName === "osk" && osk.key(e)) { e.accepted = true; return }
             if (layerRoot.keyFilter && layerRoot.keyFilter(e)) { e.accepted = true; return }
             if ((k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Space) && !e.isAutoRepeat) keyHeld = true
@@ -258,6 +263,7 @@ Window {
         Connections {
             target: vs
             function onPadKey(k) {
+                if (updScreen.shown) { if (k === "b") updScreen.toBackground(); return }
                 if (app.layerName === "osk") return osk.pad(k)
                 if (app.layerRoot.padFilter && app.layerRoot.padFilter(k)) return
                 if (k === "a") app.activate()
@@ -500,7 +506,10 @@ Window {
             Api.post("/api/apps/" + action, a ? { id: a.id } : null, function (j) { jobState = j; watchJob() },
                      function (e) { toast(e, true) })
         }
-        function watchJob() { jobBand.watch() }
+        function watchJob() {
+            if (jobState && jobState.action === "update" && jobState.state === "running") updScreen.open()   // Updates: Vollbild
+            jobBand.watch()
+        }
 
         function openOsk(field) { osk.openFor(field) }
         function dialog(title, text, buttons) { adlg.openDlg(title, text, buttons) }
@@ -615,6 +624,7 @@ Window {
         MouseHint { id: mouseHint }
         Osk { id: osk; anchors.fill: parent }
         Splash { id: splash; anchors.fill: parent; tile: app.splashTile }
+        UpdateScreen { id: updScreen; anchors.fill: parent }
         Toast { id: toastBox }
         LoadSplash { id: loadSplash; anchors.fill: parent; done: !!app.cfg && app.shown }
     }

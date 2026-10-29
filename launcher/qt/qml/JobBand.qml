@@ -6,11 +6,12 @@ import VS
 Rectangle {
     id: jb
     property bool shown: false
+    property bool upd: false                    // Update-Auftrag: laufender Schritt statt Protokollzeilen
     z: 35
     width: parent.width
     height: col.implicitHeight + 28 * Ui.f
     y: parent.height - height
-    visible: shown
+    visible: shown && !updScreen.shown          // Updates: erst im Hintergrund (Esc / B im Vollbild)
     color: Ui.c.surfaceBase
     Rectangle { width: parent.width; height: 1; color: Ui.c.divider }
     Column {
@@ -26,8 +27,8 @@ Rectangle {
         Text {
             id: logText
             width: parent.width
-            font.family: "DejaVu Sans Mono"
-            font.pixelSize: 12.5 * Ui.f
+            font.family: jb.upd ? Ui.font : "DejaVu Sans Mono"
+            font.pixelSize: (jb.upd ? 14 : 12.5) * Ui.f
             color: Ui.c.textDim
             wrapMode: Text.WrapAnywhere
             maximumLineCount: 6
@@ -53,24 +54,51 @@ Rectangle {
                      : (js.action === "install" || js.action === "remove") ? Ui.t("job." + js.action, { name: name }) : name
             title.text = what + Ui.t(js.state === "running" ? "job.running" : js.state === "done" ? "job.done" : "job.failed")
             spin.visible = js.state === "running"
-            logText.text = (js.log || []).slice(-6).join("\n")
+            var upd = js.action === "update", r = js.result
+            jb.upd = upd
+            // Updates: statt Protokollzeilen nur der laufende Schritt (das Protokoll steht in logs/update.log)
+            logText.text = upd ? (js.state === "running" ? updScreen.current() : "") : (js.log || []).slice(-6).join("\n")
             if (js.state === "running") return
             poll.stop()
-            var upd = js.action === "update", r = js.result
-            if (upd && r && r.busy) app.toast(Ui.t("upd.xbpsBusy"), true)
-            else if (upd) app.toast(Ui.t(js.state === "done" ? "upd.toastDone" : "upd.toastFailed"), js.state !== "done")
-            else app.toast(js.state === "done" ? Ui.t("job.toastDone", { name: name }) + (r && typeof r === "string" ? " – " + r : "")
-                                              : Ui.t("job.toastFailed", { name: name }), js.state !== "done")
-            hideLater.interval = js.state === "done" ? 2500 : 9000
-            hideLater.restart()
             app.load()
             if (apps.open) apps.load()
             if (settings.open) { settings.refreshVs(false); settings.load() }
+            if (upd) {
+                hideLater.interval = 300
+                hideLater.restart()
+                updScreen.finish(function () { jb.updateDone(js) })
+                return
+            }
+            app.toast(js.state === "done" ? Ui.t("job.toastDone", { name: name }) + (r && typeof r === "string" ? " – " + r : "")
+                                         : Ui.t("job.toastFailed", { name: name }), js.state !== "done")
+            hideLater.interval = js.state === "done" ? 2500 : 9000
+            hideLater.restart()
             if (js.reboot) {
                 var rb = { kernel: !!(r && r.kernel) }
                 Qt.callLater(function () { app.rebootPrompt(rb) })
             } else if (js.state === "done" && js.action === "install" && typeof js.result === "string")
                 app.dialog(Ui.t("apps.isInstalled", { name: name }), Ui.t("app." + js.app + ".note", null, js.result), [[Ui.t("common.ok")]])
         })
+    }
+    // Ende des Update-Auftrags (nach dem Vollbild): Neustart-Frage, Fehler mit Protokoll oder kurzer Hinweis
+    function updateDone(js) {
+        var r = js.result
+        if (r && r.busy) return app.toast(Ui.t("upd.xbpsBusy"), true)
+        if (js.state !== "done") {
+            var step = updScreen.failedStep()
+            var btns = [[Ui.t("upd.showLog"), function () { Qt.callLater(function () { jb.showLog(js) }) }]]
+            if (js.reboot) btns.push([Ui.t("upd.rebootNow"), function () { app.power("reboot") }])   // ein Teil kam trotzdem an
+            btns.push([Ui.t("common.close")])
+            app.dialog(Ui.t("upd.failTitle"), step ? Ui.t("upd.failText", { step: step }) : Ui.t("upd.toastFailed"), btns)
+        } else if (js.reboot) {
+            app.rebootPrompt({ kernel: !!(r && r.kernel) })
+        } else {
+            app.toast(Ui.t(js.steps && js.steps.length ? "upd.toastDone" : "upd.upToDate"))
+        }
+    }
+    function showLog(js) {
+        var lines = (js.log || []).slice(-40).join("\n")
+        app.dialog(Ui.t("upd.logTitle"), lines + "\n\n" + Ui.t("upd.logFile", { path: "~/.local/share/voidstation/logs/update.log" }),
+                   [[Ui.t("common.close")]])
     }
 }

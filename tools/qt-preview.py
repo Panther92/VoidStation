@@ -227,6 +227,23 @@ def tv_list(q):
 
 
 def job():
+    if JOB.get("action") == "update" and JOB.get("state") == "running":
+        # Updates wie launcher.py (Jobs._update_all): Schritte nacheinander, ~1,5 s je Schritt.
+        # VS_UPD_JOB=fail: das Einrichten scheitert · VS_UPD_JOB=slow: jeder Schritt 6 s (fuer Bildschirmfotos)
+        mode = os.environ.get("VS_UPD_JOB", "")
+        t = (time.time() - JOB["t0"]) / (4.0 if mode == "slow" else 1.0)
+        if t >= 1:
+            JOB.update(steps=[{"id": "apps", "state": "wait", "n": 12}, {"id": "load", "state": "wait"}, {"id": "setup", "state": "wait"}],
+                       **{"from": "0.12.1", "to": "0.13.0"})
+            for i, x in enumerate(JOB["steps"]):
+                x["state"] = "done" if t >= 2.5 + 1.5 * i else "run" if t >= 1 + 1.5 * i else "wait"
+        if t >= 5.5:
+            if mode == "fail":
+                JOB["steps"][-1]["state"] = "fail"
+            JOB.update(state="error" if mode == "fail" else "done", reboot=mode != "fail", result={"done": ["voidstation"], "kernel": False})
+        JOB["log"] = [f"Zeile {k}" for k in range(int(t * 10))][-60:]
+        JOB["n"] = len(JOB["log"])
+        return JOB
     if JOB.get("state") == "running":
         JOB["n"] = JOB.get("n", 0) + 1
         JOB["log"].append(f"Schritt {JOB['n']} …")
@@ -552,7 +569,7 @@ class H(S.H):
         if p in ("/api/apps/install", "/api/apps/remove", "/api/apps/update"):
             JOB.clear()
             JOB.update({"state": "running", "action": p.rsplit("/", 1)[1], "name": body.get("id", ""), "app": body.get("id"),
-                        "log": ["xbps-install -Sy …"], "n": 0})
+                        "log": ["xbps-install -Sy …"], "n": 0, "t0": time.time(), "steps": [], "from": None, "to": None})
             return self.j(JOB)
         if p == "/api/install/start":
             INST.clear()

@@ -61,6 +61,8 @@ selfupdate() {
   else
     echo "Hinweis: noch kein Signaturschluessel hinterlegt – Update ohne Signaturpruefung"
   fi
+  # Steuerzeile fuer den Launcher (selfupdate --markers): geladen und geprueft, jetzt wird eingerichtet
+  [ "${1:-}" = --markers ] && echo "@vs verified"
   VSUSER="$user" SUDO_USER="$user" VOIDSTATION_NONINTERACTIVE=1 bash "$tmp/update.sh" </dev/null
   rc=$?
   rm -rf "$tmp"
@@ -390,7 +392,7 @@ main() {
       esac
       ;;
     selfupdate)
-      selfupdate
+      selfupdate "${1:-}"
       ;;
     xserver)                                # Grafik-Server: nur XLibre
       case "$1" in
@@ -435,7 +437,7 @@ main() {
       esac
       ;;
     *)
-      echo "Benutzung: voidstation-pkg install|remove|markauto <paket>... | sync | update | check [--nosync] | mirror status|auto | selfupdate | kernelpurge | channel stable|main|auto | xserver ensure|repair|status | ssh on|off|status | bluetooth on|off|status | suspend"
+      echo "Benutzung: voidstation-pkg install|remove|markauto <paket>... | sync | update | check [--nosync] | mirror status|auto | selfupdate [--markers] | kernelpurge | channel stable|main|auto | xserver ensure|repair|status | ssh on|off|status | bluetooth on|off|status | suspend"
       return 2
       ;;
   esac

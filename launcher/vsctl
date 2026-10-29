@@ -3,7 +3,8 @@
 # vsctl launch <id>     -> Kachel starten (id aus tiles.json)
 # vsctl status          -> was laeuft gerade?
 # vsctl update          -> alle Updates wie Einstellungen → Updates: Void-Pakete (inkl. Kernel),
-#                          Flatpak, AppImages, Proton-GE und VoidStation selbst; Protokoll laeuft mit
+#                          Flatpak, AppImages, Proton-GE und VoidStation selbst; zeigt die Schritte,
+#                          "vsctl update -v" das ganze Protokoll (steht auch in logs/update.log)
 # vsctl version         -> installierte VoidStation-Version, Build und Update-Kanal
 # vsctl channel [testing|stable] -> Update-Kanal zeigen bzw. wechseln. Testing (Entwicklerstand) gibt es
 #                          seit 2026.11 nur noch hier, mit Rueckfrage – nicht mehr im Installer/in den Einstellungen
@@ -19,7 +20,7 @@ vsctl – VoidStation von der Kommandozeile steuern
   vsctl home           laufendes Programm schließen, zurück zur Startseite
   vsctl launch <id>    Kachel starten (IDs: Tab-Taste nach "vsctl launch")
   vsctl status         was läuft gerade?
-  vsctl update         alle Updates wie Einstellungen → Updates (mit Protokoll)
+  vsctl update         alle Updates wie Einstellungen → Updates (-v: mit Protokoll)
   vsctl version        installierte Version, Build und Update-Kanal
   vsctl channel        Update-Kanal zeigen (testing | stable: wechseln)
 EOF
@@ -97,26 +98,87 @@ update() {
     sudo -n /usr/local/sbin/voidstation-pkg update && sudo -n /usr/local/sbin/voidstation-pkg selfupdate
     return $?
   fi
-  curl -fsS -X POST -H 'X-TV: 1' "$URL/apps/update" >/dev/null || { echo "Es läuft schon ein Auftrag." >&2; return 1; }
-  python3 - "$URL" <<'PYEOF'
+  # Wie das Vollbild am Fernseher: nur die Schritte, das ganze Protokoll steht in logs/update.log.
+  # -v / --verbose: Protokoll wie frueher mitlaufen lassen.
+  python3 - "$URL" "$TV" "${1:-}" <<'PYEOF'
 import json, sys, time, urllib.request
-url, seen = sys.argv[1], 0
+from pathlib import Path
+url, tv, verbose = sys.argv[1], Path(sys.argv[2]), sys.argv[3] in ("-v", "--verbose")
+def get(path, data=None):
+    req = urllib.request.Request(url + path, data=data, headers={"X-TV": "1"} if data is not None else {},
+                                 method="POST" if data is not None else "GET")
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.load(r)
+# Texte wie die Oberflaeche: Sprache -> Englisch -> Deutsch
+try:
+    lang = get("/settings").get("lang") or "de"
+except (OSError, ValueError):
+    lang = "de"
+texts = {}
+for l in ("de", "en", lang):
+    try:
+        texts.update(json.loads((tv / "web" / "i18n" / f"{l}.json").read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        pass
+def T(key, **kw):
+    s = texts.get(key, key)
+    for k, v in kw.items():
+        s = s.replace("{" + k + "}", str(v))
+    return s
+def label(st):
+    past = st["state"] == "done"
+    base = T({"apps": "upd.stepApps", "load": "upd.stepLoad"}.get(st["id"], "upd.stepSetup") + ("" if past else "Run"))
+    if st["id"] == "apps" and st.get("n"):
+        base += " (" + (T("upd.onePkg") if st["n"] == 1 else T("upd.nPkgs", n=st["n"])) + ")"
+    return base
+try:
+    get("/apps/update", b"")
+except OSError:
+    print(T("upd.cliBusy"), file=sys.stderr)
+    sys.exit(1)
+tty = sys.stdout.isatty()
+seen, head, shown, live = 0, False, {}, None    # live: Schritt, dessen Zeile gerade "laeuft" (nur im Terminal)
 while True:
     time.sleep(1)
     try:
-        with urllib.request.urlopen(url + "/apps/job", timeout=10) as r:
-            j = json.load(r)
-    except OSError:
+        j = get("/apps/job")
+    except (OSError, ValueError):
         continue
-    n, lines = j.get("n", 0), j.get("log", [])
-    for line in lines[max(0, len(lines) - (n - seen)):]:
-        print(line, flush=True)
-    seen = n
+    if verbose:
+        n, lines = j.get("n", 0), j.get("log", [])
+        for line in lines[max(0, len(lines) - (n - seen)):]:
+            print(line, flush=True)
+        seen = n
+    steps = j.get("steps") or []
+    if not verbose and not head and steps:
+        head = True
+        print(f"VoidStation {j.get('from') or '–'} → {j['to']}" if j.get("to") else T("job.update"), flush=True)
+    if not verbose:
+        for st in steps:
+            state = st["state"]
+            if shown.get(st["id"]) == state:
+                continue
+            if state in ("done", "fail"):
+                mark = "✓" if state == "done" else "✗"
+                print(("\r\033[K" if tty and live == st["id"] else "") + f"  {mark} {label(st)}", flush=True)
+                live = None
+            elif state == "run" and tty:
+                print(f"  ⋯ {label(st)}", end="", flush=True)
+                live = st["id"]
+            shown[st["id"]] = state
     if j.get("state") != "running":
-        print("\nFertig." if j.get("state") == "done" else "\nNicht alles hat geklappt (siehe oben).")
+        if live:
+            print()
+        ok = j.get("state") == "done"
+        if not steps and ok and not j.get("reboot"):
+            print(T("upd.upToDate"))
+            sys.exit(0)
+        print("\n" + (T("upd.cliDone") if ok else T("upd.failTitle") + "."))
         if j.get("reboot"):
-            print("Neustart nötig:  sudo reboot")
-        sys.exit(0 if j.get("state") == "done" else 1)
+            print(T("upd.cliReboot") + "  sudo reboot")
+        if not ok and not verbose:
+            print(T("upd.logFile", path="~/.local/share/voidstation/logs/update.log"))
+        sys.exit(0 if ok else 1)
 PYEOF
 }
 
@@ -124,7 +186,7 @@ case "$1" in
   home)   curl -fsS -X POST -H 'X-TV: 1' "$URL/home" ;;
   launch) curl -fsS -X POST -H 'X-TV: 1' "$URL/launch/$2" ;;
   status) curl -fsS "$URL/status" ;;
-  update) update; exit $? ;;
+  update) update "$2"; exit $? ;;
   version|--version|-V) version; exit $? ;;
   channel) shift; channel "$@"; exit $? ;;
   ""|help|-h|--help) usage; exit 0 ;;

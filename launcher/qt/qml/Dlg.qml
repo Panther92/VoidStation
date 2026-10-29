@@ -34,7 +34,7 @@ Rectangle {
         if (m) app.setFocus(m, true)
         else { var it = Nav.collect(app.layerRoot); if (it.length) app.setFocus(it[0], true) }
     }
-    function scrollText(dir) { body.flickBy(-dir * body.height * 0.6) }
+    function scrollText(dir) { body.flickBy(dir * body.height * 0.6) }      // dir 1 = weiter nach unten (▼, Rad runter)
 
     Rectangle {
         id: band
