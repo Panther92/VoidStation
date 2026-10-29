@@ -8,8 +8,9 @@ Void Linux as a TV station: a dark tile interface in the style of Windows 8, con
 It runs on Openbox; the start screen is a dedicated Python + Qt 6 program that draws straight on the GPU.
 The installer in the live system is Qt as well. The previous web interface (WebKitGTK) remains available as a fallback (Settings → System → Interface).
 
-**Features:** YouTube (Firefox in kiosk mode), radio with search and favorites, TV channels from around the world (iptv-org),
-emulators, an AppCenter for optional apps (xbps, Flatpak, AppImage, web), settings (language, scaling, resolution,
+**Features:** YouTube (Firefox in kiosk mode), radio with search and favorites, TV channels from around the world (iptv-org) in its own player
+(switch channels in the picture, channel list, program info), **Videos & Music** (library for the share and USB drives with covers,
+continue watching, repeat/shuffle, “Find music” with downloads including tags and cover), emulators, an AppCenter for optional apps (xbps, Flatpak, AppImage, web), settings (language, scaling, resolution,
 audio output, Wi-Fi, Bluetooth, mouse pointer), a Samba share `\\<hostname>\share`, several apps side by side with switching.
 Interface in **English or German**, plus eleven machine-translated languages: Español, Français, Italiano, Latviešu, Magyar,
 Nederlands, Polski, Português (Brasil), Ελληνικά, Русский, Українська (Settings → Language). The installer is English/German only for now.
@@ -24,9 +25,19 @@ Remote access via SSH can be switched on and off under Settings → System.
 |---|---|---|
 | ![TV](docs/screenshots/en/2-fernsehen.webp) | ![AppCenter](docs/screenshots/en/3-appcenter.webp) | ![Radio](docs/screenshots/en/4-radio.webp) |
 
+| TV player | Videos | Music |
+|---|---|---|
+| ![TV player](docs/screenshots/en/7-tv-player.webp) | ![Video](docs/screenshots/en/12-video.webp) | ![Music](docs/screenshots/en/9-musik.webp) |
+
+| Library | Find music | Sound |
+|---|---|---|
+| ![Library](docs/screenshots/en/8-mediathek.webp) | ![Find music](docs/screenshots/en/10-musik-suchen.webp) | ![Sound](docs/screenshots/en/11-ton.webp) |
+
 | Installer | Installer: target SSD |
 |---|---|
 | ![Installer](docs/screenshots/en/5-installer.webp) | ![Target SSD](docs/screenshots/en/6-ziel-ssd.webp) |
+
+Picture in the TV player and in “Videos”: “Big Buck Bunny” © Blender Foundation | [peach.blender.org](https://peach.blender.org), [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/). Everything else in the screenshots is sample data.
 
 ## Installation
 
@@ -44,7 +55,7 @@ VoidStation is installed **exclusively from the live ISO**:
 
 ## Live ISO with installer
 
-The live ISO is a complete VoidStation to try out (YouTube, TV, radio, VLC) with the **Install VoidStation** tile.
+The live ISO is a complete VoidStation to try out (YouTube, TV, radio, Videos & Music) with the **Install VoidStation** tile.
 The installer uses the same tile design, in English or German, and copies the live system to the SSD –
 it doesn't need internet for that.
 
@@ -105,8 +116,9 @@ updates only the Void packages – that still works, and VoidStation notices it 
 the display, after a new kernel “Restart required” appears at the bottom right). VoidStation itself is not an
 xbps package and only comes via the button or `vsctl update`.
 
-**Channels:** *Stable* (branch `stable`, default) or *Testing* (branch `main`, new versions first) –
-switchable under Settings → Updates → Update channel.
+**Channels:** *Stable* (branch `stable`) for every device, and *Testing* (branch `main`), the development state –
+new versions first, untested. Since 2026.11 the installer and the settings no longer offer Testing; testers switch
+in the terminal with `vsctl channel testing` (back with `vsctl channel stable`).
 Every version released to *Stable* is tagged `v<version>` and listed under
 [Releases](https://github.com/Panther92/VoidStation/releases) – with a link to its live ISO, if that version has one.
 
@@ -129,8 +141,12 @@ the device with the ISO.
 | Next / previous group | RT / LT | PgDn / PgUp | arrows at the top right |
 | Volume down / up | LB / RB | − / + | |
 | Open update (when shown at the bottom right) | Select | U | click the hint |
-| Power off | Start | – | ⏻ at the top right |
-| Back to the start screen (from any program) | Guide / Home | Win | |
+| Power off, sleep | Start | – | ⏻ at the top right |
+| Back to the start screen (from any program) | Guide / Home | Win | bottom right corner, then **Start screen** |
+| Close a program (from inside it) | | | bottom right corner, then **Close app** |
+
+In programs like Firefox, the right stick moves the mouse pointer (R2 click, L2 right click, R3 on/off).
+Keys in the TV player and in “Videos & Music”: see the [help page](https://voidstation.de/en/help/#tv).
 
 The arrows at the top right appear as soon as a page is wider than the screen; the bright dot shows the current group.
 When updates are waiting (or a restart is needed after a new kernel), a yellow hint appears at the bottom right.
@@ -152,7 +168,7 @@ wrong placeholders. Installer texts (`inst.*`) are not translated yet.
   (Qt date patterns), `fmt.clock` (`12`/`24`), `fmt.pct`; country names for the TV filter as `region.XX`.
 
 - Choosing the language: Settings → Language. Without a choice, the session's `LANG` applies (`fr_FR…` → French, `pt_BR…` → Portuguese (Brazil), unknown → German).
-- Programs started from tiles get `LANG`/`LANGUAGE` of the chosen language (VLC, PCManFM, GTK/Qt); Firefox profiles get
+- Programs started from tiles get `LANG`/`LANGUAGE` of the chosen language (PCManFM, GTK/Qt); Firefox profiles get
   `intl.locale.requested` and `intl.accept_languages` before every start. Programs with their own language setting (Steam, Kodi) keep it.
 - Tiles: German default names (e.g. “Fernsehen”) are translated via `labels` in each language file; your own names stay as they are.
   Your own tiles can be bilingual too: `"label": {"de": "Fernsehen", "en": "TV"}`.
@@ -210,7 +226,7 @@ VoidStation picks up new CSS files in the theme folder automatically and offers 
 | Path | Contents |
 |---|---|
 | `launcher/launcher.py` | Backend: HTTP API on 127.0.0.1:8765, starting/switching apps, radio, TV, AppCenter, settings |
-| `launcher/qt/` | Start screen and installer (Python + Qt 6): `voidstation-home.py` (window, gamepad, texts, colors), `qml/` (interface), `icons.py` |
+| `launcher/qt/` | Start screen, player and installer (Python + Qt 6): `voidstation-home.py` (window, gamepad, texts, colors), `voidstation-player.py` (TV, Videos & Music via libmpv), `vscommon.py` (shared code), `qml/` (interface), `icons.py` |
 | `launcher/web/index.html` | Web interface (tiles, radio, TV, AppCenter, settings, installer) – fallback if Qt doesn't start |
 | `launcher/web/themes/` | Themes as modular CSS files (`default-dark`, `default-light`, `high-contrast`, `nord`) – apply to both interfaces |
 | `launcher/web/i18n/` | Texts of both interfaces, one file per language (`de.json`, `en.json`, …) |
