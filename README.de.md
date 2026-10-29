@@ -117,8 +117,9 @@ aktualisiert nur die Void-Pakete – das geht weiterhin, VoidStation erkennt es 
 der Anzeige, nach einem neuen Kernel steht „Neustart nötig“ unten rechts). VoidStation selbst ist kein
 xbps-Paket und kommt nur über den Knopf bzw. `vsctl update`.
 
-**Kanäle:** *Stable* (Zweig `stable`, Standard) oder *Testing* (Zweig `main`, neue Versionen zuerst) –
-umschaltbar unter Einstellungen → Updates → Update-Kanal.
+**Kanäle:** *Stable* (Zweig `stable`) für alle Geräte und *Testing* (Zweig `main`), der Entwicklerstand –
+neue Versionen zuerst, ungeprüft. Seit 2026.11 bieten Installer und Einstellungen Testing nicht mehr an; Tester
+wechseln im Terminal mit `vsctl channel testing` (zurück mit `vsctl channel stable`).
 Jede für *Stable* freigegebene Version bekommt den Tag `v<version>` und steht unter
 [Releases](https://github.com/Panther92/VoidStation/releases) – mit Link zur Live-ISO, falls es für diese Version eine gibt.
 

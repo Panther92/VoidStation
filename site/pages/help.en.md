@@ -104,7 +104,7 @@ Under *Download → Find music* you search for and download music. The first tim
 
 - Devices check shortly after startup and then every six hours. A yellow notice at the bottom right announces a new VoidStation version right away.
 - Plain system updates are only flagged once the system hasn't been updated for 30, 60 or 90 days (Settings → Updates, default 90).
-- **Update channel:** *Stable* for everyone, or *Testing* if you want new versions first.
+- **Update channel:** every device gets *Stable*. If you want to report bugs, switch to the development state *Testing* in the terminal with `vsctl channel testing` (new versions first, untested); back with `vsctl channel stable` – updates resume once Stable is newer.
 - In the terminal, `vsctl update` does the same as the button. `sudo xbps-install -Su` updates only the Void packages – VoidStation notices that.
 
 ## Shared folder: files from your PC {#share}

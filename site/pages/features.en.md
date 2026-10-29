@@ -85,7 +85,7 @@ Native Void packages come first; Flatpak or AppImage only where no Void package 
 
 - One button for everything: Void packages including the kernel, Flatpaks, AppImages, Proton-GE and VoidStation itself
 - VoidStation updates are signed – devices only install what the publisher has signed
-- Channels **Stable** (for everyone) and **Testing** (new versions first)
+- Every device gets **Stable**; anyone who wants to report bugs can switch to the development state **Testing** in the terminal (`vsctl channel testing`)
 - No daily nagging: plain system updates are only flagged after 30, 60 or 90 days; a restart is only requested when it is needed
 
 ## Under the hood {#technology}

@@ -104,7 +104,7 @@ Unter *Herunterladen → Musik suchen* findest und lädst du Musik. Beim ersten 
 
 - Die Geräte schauen kurz nach dem Start und dann alle sechs Stunden selbst nach. Eine neue VoidStation-Version meldet ein gelber Hinweis unten rechts sofort.
 - Reine Systemupdates meldet der Hinweis erst, wenn das System seit 30, 60 oder 90 Tagen nicht aktualisiert wurde (Einstellungen → Updates, Standard 90).
-- **Update-Kanal:** *Stable* für alle oder *Testing*, wenn du neue Versionen zuerst haben möchtest.
+- **Update-Kanal:** Alle Geräte bekommen *Stable*. Wer Fehler melden möchte, wechselt im Terminal mit `vsctl channel testing` auf den Entwicklerstand *Testing* (neue Versionen zuerst, ungeprüft); zurück mit `vsctl channel stable` – Updates kommen dann wieder, sobald Stable neuer ist.
 - Im Terminal macht `vsctl update` dasselbe wie der Knopf. `sudo xbps-install -Su` aktualisiert nur die Void-Pakete – VoidStation erkennt das.
 
 ## Freigabe: Dateien vom PC {#freigabe}

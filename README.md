@@ -116,8 +116,9 @@ updates only the Void packages – that still works, and VoidStation notices it 
 the display, after a new kernel “Restart required” appears at the bottom right). VoidStation itself is not an
 xbps package and only comes via the button or `vsctl update`.
 
-**Channels:** *Stable* (branch `stable`, default) or *Testing* (branch `main`, new versions first) –
-switchable under Settings → Updates → Update channel.
+**Channels:** *Stable* (branch `stable`) for every device, and *Testing* (branch `main`), the development state –
+new versions first, untested. Since 2026.11 the installer and the settings no longer offer Testing; testers switch
+in the terminal with `vsctl channel testing` (back with `vsctl channel stable`).
 Every version released to *Stable* is tagged `v<version>` and listed under
 [Releases](https://github.com/Panther92/VoidStation/releases) – with a link to its live ISO, if that version has one.
 
