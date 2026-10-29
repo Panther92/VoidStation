@@ -701,6 +701,7 @@ SYSUPD_DAYS = (30, 60, 90)                  # Erinnerung an Systemupdates (ohne 
 LANG_TABLE = [  # (id, Name, Locale, Firefox-Sprache)
     ("de", "Deutsch", "de_DE", "de"),
     ("en", "English", "en_US", "en-US"),
+    ("cs", "Čeština", "cs_CZ", "cs"),
     ("es", "Español", "es_ES", "es-ES"),
     ("fr", "Français", "fr_FR", "fr"),
     ("it", "Italiano", "it_IT", "it"),
@@ -709,6 +710,7 @@ LANG_TABLE = [  # (id, Name, Locale, Firefox-Sprache)
     ("nl", "Nederlands", "nl_NL", "nl"),
     ("pl", "Polski", "pl_PL", "pl"),
     ("pt-BR", "Português (Brasil)", "pt_BR", "pt-BR"),
+    ("sk", "Slovenčina", "sk_SK", "sk"),
     ("el", "Ελληνικά", "el_GR", "el"),
     ("ru", "Русский", "ru_RU", "ru"),
     ("uk", "Українська", "uk_UA", "uk"),
