@@ -4,13 +4,14 @@
 #  VoidStation: Startbild beim Hochfahren (Plymouth, Theme "voidstation") auf installierten Geraeten
 #
 #  Ablauf beim Start:
-#   1. Initramfs: Plymouth zeichnet das Logo ueber den Bildschirmspeicher der Firmware (efifb). Die grossen
-#      Grafiktreiber (amdgpu, i915, nouveau, nvidia …) sind absichtlich nicht im Initramfs (Platz auf der
-#      EFI-Partition, s. dracut-voidstation.conf) – das Logo steht trotzdem sofort, ohne Textmeldungen.
-#   2. Nach udev (Core-Service 02-voidstation-splash.sh): Der richtige Treiber hat den Bildschirm
-#      uebernommen. Plymouth 22.02 (Void) kann einen neuen Bildschirm im laufenden Skript-Theme nicht
-#      uebernehmen (kam erst 2023) – darum startet es hier einmal frisch auf dem neuen Treiber.
-#   3. Vor Stufe 2 (Core-Service 99-voidstation-splash.sh): Plymouth endet, das Logo bleibt stehen,
+#   1. Initramfs: Plymouth startet und faengt sofort die Konsolenausgabe ab (keine Textmeldungen mehr).
+#      Die grossen Grafiktreiber (amdgpu, i915, nouveau, nvidia …) sind absichtlich nicht im Initramfs
+#      (Platz auf der EFI-Partition, s. dracut-voidstation.conf) – Plymouth wartet deshalb bis zu 15 s
+#      (DeviceTimeout) auf den Grafiktreiber, den udev im System laedt, und zeichnet dann gleich in voller
+#      Aufloesung. Den Bildschirmspeicher der Firmware (efifb) nimmt es bewusst nicht: Plymouth 22.02 (Void)
+#      kann im Skript-Theme keinen spaeter erkannten Bildschirm uebernehmen, beim Wechsel efifb -> amdgpu
+#      waere das Bild weg. Mit DeviceTimeout=0 blieb plymouthd auf dem NiPoGi ausserdem je 30 s haengen.
+#   2. Vor Stufe 2 (Core-Service 99-voidstation-splash.sh): Plymouth endet, das Logo bleibt stehen,
 #      bis X und die Startseite (gleiches Logo) uebernehmen.
 #
 #  Aufruf (root):
@@ -21,7 +22,7 @@
 #    voidstation-splash off | on     Startbild ab- bzw. wieder einschalten (bleibt bei Updates so)
 #    voidstation-splash status       Stand anzeigen
 #    voidstation-splash stamp        Stand als "im Initramfs" vermerken (nach einem Neubau von aussen)
-#    voidstation-splash boot-drm | boot-quit   nur fuer die Core-Services beim Start
+#    voidstation-splash boot-quit    nur fuer den Core-Service beim Start
 #  Nur x86_64 bekommt Plymouth (die 32-Bit-ISO laesst es weg); ohne das Paket tut setup nichts.
 # =====================================================================
 R="${VS_SPLASH_ROOT:-}"                       # nur fuer Tests: anderes Wurzelverzeichnis
@@ -37,8 +38,7 @@ BUILT="$VSD/splash-built"
 EFICONF="$R/etc/default/voidstation-efistub"
 GRUBDEF="$R/etc/default/grub"
 CHROOT="${VOIDSTATION_CHROOT:-0}"
-# Grafiktreiber, die nicht im Initramfs stecken (omit_drivers in dracut-voidstation.conf): haengt der
-# Bildschirm nach udev an einem davon, zeichnete Plymouth bis dahin auf efifb und muss neu starten
+# Grafiktreiber, die nicht ins Initramfs kommen (wie omit_drivers in dracut-voidstation.conf)
 LATE_DRIVERS="amdgpu radeon nouveau i915 xe nvidia nova_drm"
 
 say()  { printf '%s\n' "$*"; }
@@ -103,34 +103,10 @@ state_sum() {
 enabled() { have_plymouth && [ -s "$THEME_DIR/$THEME.plymouth" ] && [ ! -e "$OFF" ]; }
 
 # ---------------------------------------------------------------------
-# Beim Start (aus den Core-Services, als root, Wurzel noch schreibgeschuetzt)
-boot_drm() {
-  grep -qw splash /proc/cmdline 2>/dev/null || return 0
-  command -v plymouthd >/dev/null 2>&1 || return 0
-  late=0; card=0
-  for c in /sys/class/drm/card[0-9]*; do
-    [ -e "$c/device/driver" ] || continue
-    card=1
-    d="$(basename "$(readlink "$c/device/driver")")"
-    for l in $LATE_DRIVERS; do [ "$d" = "$l" ] && late=1; done
-  done
-  [ "$card" = 1 ] || return 0                    # kein Grafiktreiber: Plymouth bleibt, wie es ist
-  if plymouth --ping 2>/dev/null; then
-    [ "$late" = 1 ] || return 0                  # zeichnet schon auf dem richtigen Treiber
-    timeout 5 plymouth quit --retain-splash 2>/dev/null || pkill -x plymouthd 2>/dev/null
-    i=0
-    while plymouth --ping 2>/dev/null && [ "$i" -lt 30 ]; do sleep 0.1; i=$((i + 1)); done
-  fi
-  # Konsole leeren und Schreibmarke aus – falls zwischen den beiden Plymouth kurz Text zu sehen ist
-  printf '\033[2J\033[H\033[?25l' > /dev/console 2>/dev/null
-  mkdir -p /run/plymouth
-  plymouthd --mode=boot --pid-file=/run/plymouth/pid 2>/dev/null && plymouth show-splash 2>/dev/null
-  return 0
-}
-
+# Beim Start (aus dem Core-Service, als root)
 boot_quit() {
   command -v plymouth >/dev/null 2>&1 || return 0
-  plymouth --ping 2>/dev/null || return 0
+  timeout 3 plymouth --ping 2>/dev/null || return 0
   # --retain-splash: das Logo bleibt stehen, bis X uebernimmt (sonst kurz die Textkonsole)
   timeout 5 plymouth quit --retain-splash 2>/dev/null || pkill -x plymouthd 2>/dev/null
   return 0
@@ -139,12 +115,7 @@ boot_quit() {
 # ---------------------------------------------------------------------
 write_core_services() {
   mkdir -p "$CORE_DIR"
-  put "$CORE_DIR/02-voidstation-splash.sh" <<'EOF'
-# SPDX-License-Identifier: GPL-3.0-or-later
-# VoidStation (runit core-service, nach udev): Startbild auf den richtigen Grafiktreiber holen.
-# Bis hierher zeichnet Plymouth ueber den Bildschirmspeicher der Firmware (efifb), s. voidstation-splash.
-[ -x /usr/local/sbin/voidstation-splash ] && /usr/local/sbin/voidstation-splash boot-drm
-EOF
+  rm -f "$CORE_DIR/02-voidstation-splash.sh"        # gab es nur in 0520408 (zweites Plymouth nach udev)
   put "$CORE_DIR/99-voidstation-splash.sh" <<'EOF'
 # SPDX-License-Identifier: GPL-3.0-or-later
 # VoidStation (runit core-service, zuletzt): Startbild beenden, bevor X startet – sonst haelt es den Bildschirm.
@@ -234,15 +205,14 @@ setup() {
       warn "Theme fehlt in $theme_src"
     fi
   fi
-  # DeviceTimeout=0: nicht auf einen Grafiktreiber warten, sofort den Bildschirmspeicher der Firmware nehmen
-  # (der richtige Treiber kommt erst nach dem Initramfs, s. boot-drm)
+  # DeviceTimeout=15: auf den Grafiktreiber warten (laedt erst nach dem Initramfs), nicht efifb nehmen (s. oben)
   mkdir -p "${PCONF%/*}"
   put "$PCONF" <<EOF || true
 # VoidStation: Startbild (Theme in $THEME_DIR, Einrichtung: voidstation-splash)
 [Daemon]
 Theme=$THEME
 ShowDelay=0
-DeviceTimeout=0
+DeviceTimeout=15
 EOF
   if enabled; then on=1; else on=0; fi
   # Initramfs: Mit Plymouth zieht dracut das Modul "drm" mit – ohne die Zeile hier samt aller Grafiktreiber
@@ -296,8 +266,10 @@ status() {
   [ -f "$GRUBDEF" ] && say "GRUB-Befehlszeile:    $(getval "$GRUBDEF" GRUB_CMDLINE_LINUX_DEFAULT)"
   say "Laufender Start:      $(cat /proc/cmdline 2>/dev/null)"
   kv="$(newest_kernel)"
-  if [ -n "$kv" ] && command -v lsinitrd >/dev/null 2>&1; then
-    if lsinitrd "/boot/initramfs-$kv.img" 2>/dev/null | grep -q 'bin/plymouthd$'; then
+  if [ -n "$kv" ] && [ "$(id -u)" != 0 ]; then
+    say "Initramfs ($kv): nur mit sudo pruefbar (sudo voidstation-splash status)"
+  elif [ -n "$kv" ] && command -v lsinitrd >/dev/null 2>&1; then
+    if lsinitrd -m "/boot/initramfs-$kv.img" 2>/dev/null | grep -qx plymouth; then
       say "Initramfs ($kv): mit Plymouth"
     else
       say "Initramfs ($kv): ohne Plymouth"
@@ -320,7 +292,7 @@ case "$cmd" in
              rm -f "$OFF"; setup; exit $? ;;
   stamp)     need_root stamp; stamp; exit $? ;;
   status)    status ;;
-  boot-drm)  boot_drm ;;
+  boot-drm)  ;;                                    # alter Core-Service aus 0520408, bis setup ihn entfernt
   boot-quit) boot_quit ;;
   *) echo "Aufruf: voidstation-splash setup [--theme DIR] [--no-rebuild] | on | off | status | stamp"; exit 1 ;;
 esac
