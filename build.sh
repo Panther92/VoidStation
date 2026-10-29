@@ -154,10 +154,12 @@ VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["vers
 b64() { printf '%s' "$1" | base64 -w0; }
 V_B64="$(base64 -w0 < "$tmp/version.json")"
 S_B64="$(b64 "$SIGNERS")"
-subst() {
-  sed -e "s|__VS_VERSION__|$BUILD|g" -e "s|__VS_UPDATE_URL__|$URL|g" \
-      -e "s|__VS_VERSION_B64__|$V_B64|g" -e "s|__VS_SIGNERS_B64__|$S_B64|g" "$1"
-}
+# Ersetzungen als sed-Skript in einer Datei: version.json (mit Changelog-Verlauf) ist base64 laenger als
+# 128 KiB – mehr nimmt Linux fuer ein einzelnes Programm-Argument nicht an ("Argument list too long").
+# printf ist eingebaut, kennt die Grenze also nicht.
+printf 's|__VS_VERSION__|%s|g\ns|__VS_UPDATE_URL__|%s|g\ns|__VS_VERSION_B64__|%s|g\ns|__VS_SIGNERS_B64__|%s|g\n' \
+  "$BUILD" "$URL" "$V_B64" "$S_B64" > "$tmp/subst.sed"
+subst() { sed -f "$tmp/subst.sed" "$1"; }
 { subst install-head.sh; base64 -w 76 "$tmp/payload.tgz"; } > "$OUT/install.sh"
 { subst update-head.sh;  base64 -w 76 "$tmp/payload.tgz"; } > "$OUT/update.sh"
 cp "$tmp/version.json" "$OUT/version.json"
