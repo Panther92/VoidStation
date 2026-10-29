@@ -13,6 +13,7 @@
 ALLOW=/usr/local/share/voidstation/allowed-packages
 URLFILE=/usr/local/share/voidstation/update-url
 CHANNELFILE=/usr/local/share/voidstation/channel
+OPTINFILE=/usr/local/share/voidstation/testing-optin  # Testing bewusst gewaehlt (vsctl channel testing)
 SIGNERS=/usr/local/share/voidstation/allowed_signers
 XCHOICE=/usr/local/share/voidstation/xserver         # frueher: Wahl XLibre/X.Org (wird entfernt)
 XLIBRE_REPO=https://github.com/xlibre-void/xlibre/releases/latest/download
@@ -412,12 +413,29 @@ main() {
     kernelpurge)                            # alte Kernel weg, wenn der neueste laeuft
       kernel_purge
       ;;
-    channel)                                # Update-Kanal waehlen: stable (Standard) oder main (Test)
-      case "$1" in stable|main) echo "$1" > "$CHANNELFILE"; chmod 644 "$CHANNELFILE"; echo "Kanal: $1" ;;
-        *) echo "Kanal muss stable oder main sein"; return 2 ;; esac
+    channel)
+      # Update-Kanal: stable (Standard) | main (Testing = Entwicklerstand, seit 2026.11 nur noch auf Wunsch
+      # per "vsctl channel testing", mit Markierung) | auto (Launcher: Geraete, die Testing frueher im
+      # Installer oder in den Einstellungen gewaehlt haben, kehren ohne Markierung zu Stable zurueck)
+      case "$1" in
+        main)
+          echo main > "$CHANNELFILE"; : > "$OPTINFILE"; chmod 644 "$CHANNELFILE" "$OPTINFILE"
+          echo "Kanal: main (Testing, auf Wunsch)" ;;
+        stable)
+          echo stable > "$CHANNELFILE"; rm -f "$OPTINFILE"; chmod 644 "$CHANNELFILE"
+          echo "Kanal: stable" ;;
+        auto)
+          if [ -e "$OPTINFILE" ]; then
+            echo "Kanal: main (Testing auf Wunsch, bleibt)"
+          else
+            echo stable > "$CHANNELFILE"; chmod 644 "$CHANNELFILE"
+            echo "Kanal: stable"
+          fi ;;
+        *) echo "Kanal muss stable, main oder auto sein"; return 2 ;;
+      esac
       ;;
     *)
-      echo "Benutzung: voidstation-pkg install|remove|markauto <paket>... | sync | update | check [--nosync] | mirror status|auto | selfupdate | kernelpurge | channel stable|main | xserver ensure|repair|status | ssh on|off|status | bluetooth on|off|status | suspend"
+      echo "Benutzung: voidstation-pkg install|remove|markauto <paket>... | sync | update | check [--nosync] | mirror status|auto | selfupdate | kernelpurge | channel stable|main|auto | xserver ensure|repair|status | ssh on|off|status | bluetooth on|off|status | suspend"
       return 2
       ;;
   esac

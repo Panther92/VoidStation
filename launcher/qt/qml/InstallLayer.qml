@@ -34,7 +34,7 @@ Layer {
     property string keymap: "de"
     property string lang: "de"
     property string tz: "Europe/Berlin"
-    property string channel: "stable"
+    property string channel: "stable"         // seit 2026.11 immer Stable (Testing nur noch per vsctl channel testing)
     property bool wifi: false
     property bool share: true
     property bool favs: false
@@ -332,7 +332,6 @@ Layer {
         function st(k, v, desc, key, nav) { return { kind: "set", size: "wide", color: "#23272c", k: k, v: v, desc: desc, key: key, act: nav === false ? "" : "toggle", nav: nav !== false } }
         var out = [
             { kind: "set", size: "wide", color: "#23272c", k: T("inst.hostname"), v: host, desc: T("inst.hostSub", { host: host }), key: "host", act: "host" },
-            st(T("inst.channel"), chName(), T(channel === "main" ? "inst.chTestSub" : "inst.chStableSub"), "ch"),
             ws.length ? st(T("inst.wifiTake"), wifi ? ws[0] : T("common.off"), wifi ? T("inst.wifiSub") : T("inst.wifiOffSub"), "wifi") : null,
             st(T("inst.share"), T(share ? "common.on" : "common.off"), T("inst.shareSub"), "share"),
             st(T("inst.language"), lang === "en" ? "English" : "Deutsch", T("inst.langSub"), "lang"),
@@ -345,8 +344,7 @@ Layer {
         return out.filter(function (x) { return !!x })
     }
     function toggle(k) {
-        if (k === "ch") channel = channel === "main" ? "stable" : "main"
-        else if (k === "wifi") wifi = !wifi
+        if (k === "wifi") wifi = !wifi
         else if (k === "share") share = !share
         else if (k === "lang") lang = lang === "en" ? "de" : "en"
         else if (k === "tz") tz = tzs[(tzs.indexOf(tz) + 1) % tzs.length]

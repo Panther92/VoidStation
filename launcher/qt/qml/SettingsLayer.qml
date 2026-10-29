@@ -138,7 +138,8 @@ Layer {
         var st = Ui.esc(Ui.t("upd.searching"))
         if (vsState) st = vsState.available ? "<b>" + Ui.esc(Ui.t("upd.available", { version: vsState.remote })) + "</b>"
                                             : Ui.esc(vsState.remote ? Ui.t("upd.current") : vsNoRemote(vsState))
-        var ch = vsState ? " · " + Ui.esc(Ui.t("upd.channel", { channel: chLabel(vsState) })) : ""
+        // Kanal nur nennen, wenn er nicht Stable ist (Testing gibt es seit 2026.11 nur noch auf Wunsch)
+        var ch = vsState && vsState.channel === "main" ? " · " + Ui.esc(Ui.t("upd.channel", { channel: chLabel(vsState) })) : ""
         return "VoidStation " + Ui.esc(vsVersion()) + ch + "<br>" + st
     }
     function sysInfo() {
@@ -240,9 +241,12 @@ Layer {
             updShow(seq)
         })
     }
-    function setChannel(ch) {
-        if (ch === "main" && !(vsState && vsState.channel === "main")) app.toast(Ui.t("channel.testWarn"))
-        Api.post("/api/selfupdate/channel", { channel: ch }, function (j) { update(function () { vsState = j }) }, fail)
+    // Nur noch der Rueckweg zu Stable; Testing waehlt man im Terminal (vsctl channel testing)
+    function toStable() {
+        Api.post("/api/selfupdate/channel", { channel: "stable" }, function (j) {
+            update(function () { vsState = j })
+            app.toast(Ui.t("channel.toStableDone"))
+        }, fail)
     }
     function setSysDays(d) {
         if (sett.sysupd_days === d) return
@@ -796,12 +800,15 @@ Layer {
             }
         }
         SetGroup {
-            visible: s.cat === "updates" && !!s.sett && !s.sett.live; availH: s.colH; title: Ui.t("settings.channel")
+            // Kanal: keine Wahl mehr (seit 2026.11). Steht das Geraet auf Testing, steht das hier – mit Rueckweg.
+            id: chGroup
+            property bool testing: !!(s.vsState && s.vsState.channel === "main")
+            visible: s.cat === "updates" && !!s.sett && !s.sett.live; availH: s.colH
+            title: Ui.t(testing ? "settings.channel" : "settings.sysRemindTitle")
+            Info { visible: chGroup.testing; html: Ui.esc(Ui.t("channel.testingInfo")) }
             SetRow {
-                Repeater {
-                    model: [["stable", "channel.stable"], ["main", "channel.main"]]
-                    Pill { property string key: "ch" + modelData[0]; text: Ui.t(modelData[1]); on: ((s.vsState && s.vsState.channel) || "stable") === modelData[0]; onTriggered: s.setChannel(modelData[0]) }
-                }
+                visible: chGroup.testing
+                Pill { property string key: "chstable"; text: Ui.t("channel.toStable"); onTriggered: s.toStable() }
             }
             SetRow {
                 label: Ui.t("settings.sysRemind")

@@ -1692,14 +1692,15 @@ const SET_PAGES = {
     if (vsState?.reboot && (vsState.reboot.kernel || vsState.reboot.voidstation)) {
       const rb = pill(esc(T('upd.rebootNow')), () => power('reboot')); rb.dataset.key = 'updreboot'; rvs.appendChild(rb);
     }
-    const cch = col(tr, T('settings.channel'));
-    const rch = row(cch);
-    const cur = (vsState && vsState.channel) || 'stable';
-    for (const [id, lab] of [['stable', T('channel.stable')], ['main', T('channel.main')]]) {
-      const b = pill(lab, () => setChannel(id), cur === id); b.dataset.key = 'ch' + id; rch.appendChild(b);
+    // Kanal: keine Wahl mehr (seit 2026.11). Steht das Geraet auf Testing, steht das hier – mit Rueckweg zu Stable.
+    const testing = vsState?.channel === 'main';
+    const cch = col(tr, T(testing ? 'settings.channel' : 'settings.sysRemindTitle'));
+    if (testing) {
+      const ti = document.createElement('div'); ti.className = 'info'; ti.textContent = T('channel.testingInfo'); cch.appendChild(ti);
+      const b = pill(esc(T('channel.toStable')), toStable); b.dataset.key = 'chstable'; row(cch).appendChild(b);
     }
     // Reine Systemupdates erst nach dieser Frist melden (VoidStation-Updates immer sofort, Systemupdates fahren dann mit)
-    const cd = cch;                                         // gleiche Spalte wie der Kanal: passt auch bei 720p auf eine Seite
+    const cd = cch;                                         // gleiche Spalte wie der Kanalhinweis: passt auch bei 720p auf eine Seite
     const rd = row(cd, T('settings.sysRemind'));
     for (const d of sett.sysupd_choices || [30, 60, 90]) {
       const b = pill(esc(T('settings.days', { n: d })), () => setSysDays(d), (sett.sysupd_days || 90) === d); b.dataset.key = 'sd' + d; rd.appendChild(b);
@@ -1770,7 +1771,8 @@ function showVs() {
   let st = esc(T('upd.searching'));
   if (vsState) st = vsState.available ? `<b>${esc(T('upd.available', { version: vsState.remote }))}</b>`
     : esc(vsState.remote ? T('upd.current') : vsNoRemote(vsState));
-  const ch = vsState ? ` · ${esc(T('upd.channel', { channel: chLabel(vsState) }))}` : '';
+  // Kanal nur nennen, wenn er nicht Stable ist (Testing gibt es seit 2026.11 nur noch auf Wunsch)
+  const ch = vsState?.channel === 'main' ? ` · ${esc(T('upd.channel', { channel: chLabel(vsState) }))}` : '';
   el.innerHTML = `VoidStation ${esc(ver)}${ch}<br>${st}`;
   const si = $('#sysInfo'); if (!si || !vsState?.system) return;
   const y = vsState.system, sum = sysSummary(vsState);
@@ -1797,9 +1799,10 @@ async function setFrontend(fe) {
   catch (e) { return toast(T('common.failedMsg', { msg: e.message }), true); }
   renderSettings();
 }
-async function setChannel(ch) {
-  if (ch === 'main' && !(vsState && vsState.channel === 'main')) toast(T('channel.testWarn'));
-  try { vsState = await api('/api/selfupdate/channel', { channel: ch }); } catch (e) { return toast(T('common.failedMsg', { msg: e.message }), true); }
+// Nur noch der Rueckweg zu Stable; Testing waehlt man im Terminal (vsctl channel testing)
+async function toStable() {
+  try { vsState = await api('/api/selfupdate/channel', { channel: 'stable' }); } catch (e) { return toast(T('common.failedMsg', { msg: e.message }), true); }
+  toast(T('channel.toStableDone'));
   renderSettings();
 }
 async function setSysDays(d) {
@@ -3026,7 +3029,6 @@ function rDevice() {
   const favN = (p.favs?.radio || 0) + (p.favs?.tv || 0);
   const tiles = [
     stile(T('inst.hostname'), I.host, T('inst.hostSub', { host: I.host }), () => { I.hostEdit = null; instGo('host'); }, 'host'),
-    stile(T('inst.channel'), T('channel.' + (I.channel === 'main' ? 'main' : 'stable')), T(I.channel === 'main' ? 'inst.chTestSub' : 'inst.chStableSub'), () => { I.channel = I.channel === 'main' ? 'stable' : 'main'; rDevice(); }, 'ch'),
     ws.length ? stile(T('inst.wifiTake'), I.wifi ? ws[0] : T('common.off'), I.wifi ? T('inst.wifiSub') : T('inst.wifiOffSub'), () => { I.wifi = !I.wifi; rDevice(); }, 'wifi') : null,
     stile(T('inst.share'), T(I.share ? 'common.on' : 'common.off'), T('inst.shareSub'), () => { I.share = !I.share; rDevice(); }, 'share'),
     stile(T('inst.language'), I.lang === 'en' ? 'English' : 'Deutsch', T('inst.langSub'), () => { I.lang = I.lang === 'en' ? 'de' : 'en'; rDevice(); }, 'lang'),

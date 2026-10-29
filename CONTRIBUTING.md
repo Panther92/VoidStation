@@ -19,7 +19,7 @@ Security problems please **don't** report in a public issue – see [SECURITY.md
 
 | Branch | Update channel | Contents |
 |---|---|---|
-| `main` | *Testing* | the next version – **all pull requests go here** |
+| `main` | *Testing* (only on request: `vsctl channel testing`) | the next version – **all pull requests go here** |
 | `stable` | *Stable* (default on devices) | what every device gets; only the maintainer releases here (`vspub --release` / `--hotfix`) |
 
 Devices download their updates straight from these branches (`update-url`), so both names are part of the
@@ -43,7 +43,8 @@ before the monthly release train takes them to *Stable* – see [RELEASING.md](R
 4. Try it out:
    - Qt interface without a Void system: `python3 tools/qt-preview.py` (needs `pip install PySide6-Essentials`),
      installer with `--live` (plus `--fail` for the error page, `--bios` for BIOS mode).
-   - On a VoidStation device: put it on the *Testing* channel or copy the changed files over SSH.
+   - On a VoidStation device: switch it to the *Testing* channel in the terminal (`vsctl channel testing`) or
+     copy the changed files over SSH.
 5. Open the pull request against `main` and describe what changed and how you tested it.
    Screenshots help a lot for anything visible.
 

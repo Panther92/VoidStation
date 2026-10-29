@@ -299,8 +299,8 @@ def inst_status():
 
 # Einstellungen → Updates: ?force=1 stoesst wie auf dem Geraet eine Paketpruefung "im Hintergrund" an, die hier
 # VS_UPD_CHECK Sekunden dauert (Standard 4). VS_UPD=sys -> kein VoidStation-Update, Systemupdates erst nach der Pruefung
-# (die Oberflaeche wartet); VS_UPD=none -> nichts zu tun.
-UPD = {"until": 0.0, "done": False}
+# (die Oberflaeche wartet); VS_UPD=none -> nichts zu tun. VS_CHANNEL=main -> Geraet steht auf Testing.
+UPD = {"until": 0.0, "done": False, "channel": os.environ.get("VS_CHANNEL", "stable")}
 
 
 def updates(q):
@@ -315,8 +315,9 @@ def updates(q):
     pkgs = ["linux6.18", "mesa", "firefox", "mpv"] if UPD["done"] and mode != "none" else (["mesa"] if vs else [])
     system = {"count": len(pkgs), "pkgs": pkgs, "kernel": "6.18.59_1" if "linux6.18" in pkgs else None, "flatpak": 0,
               "appimage": [], "proton": None, "checked": True, "due": False, "due_at": 0, "checking": checking}
-    return {"local": "0.12.1", "remote": "0.13.0", "available": vs, "any": bool(vs or pkgs), "channel": "stable",
-            "channel_label": "Stable", "changes": [{"version": "0.13.0", "changes": ["Neue Qt-Startseite"],
+    ch = UPD["channel"] if UPD["channel"] in ("stable", "main") else "stable"
+    return {"local": "0.12.1", "remote": "0.13.0", "available": vs, "any": bool(vs or pkgs), "channel": ch,
+            "channel_label": {"stable": "Stable", "main": "Testing"}[ch], "changes": [{"version": "0.13.0", "changes": ["Neue Qt-Startseite"],
                                                      "changes_en": ["New Qt start page"]}] if vs else [],
             "system": system, "reboot": {}}
 
@@ -442,6 +443,10 @@ class H(S.H):
         n = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(n) or b"{}") if n else {}
         st = STATE
+        if p == "/api/selfupdate/channel":         # wie launcher.py: nur noch zurueck zu Stable
+            if body.get("channel") == "stable":
+                UPD["channel"] = "stable"
+            return self.j(updates({}))
         if p == "/api/keymap/capture":            # Vorschau: jede "Taste" nach 0,6 s, der Reihe nach
             time.sleep(0.6)
             role = CAPTURE_ROLES[KEYMAP["step"] % len(CAPTURE_ROLES)]

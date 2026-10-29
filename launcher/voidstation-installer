@@ -1223,7 +1223,7 @@ class Run:
                         os.chmod(dst / f.name, 0o600)
         ch = T / "usr/local/share/voidstation/channel"
         ch.parent.mkdir(parents=True, exist_ok=True)
-        ch.write_text(("main" if c.get("channel") == "main" else "stable") + "\n")
+        ch.write_text("stable\n")              # seit 2026.11 immer Stable; Testing nur noch per "vsctl channel testing"
         os.chmod(ch, 0o644)
         self.progress("configure", 1)
 

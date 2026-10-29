@@ -5100,6 +5100,7 @@ class Jobs:
 URLFILE = Path("/usr/local/share/voidstation/update-url")
 CHANNELFILE = Path("/usr/local/share/voidstation/channel")
 CHANNELS = {"stable": "Stable", "main": "Testing"}
+OPTINFILE = Path("/usr/local/share/voidstation/testing-optin")   # Testing bewusst gewaehlt (vsctl channel testing)
 _VCACHE = {"t": 0.0, "remote": None, "error": None, "key": None}
 
 
@@ -5150,6 +5151,29 @@ def _fetch_remote(base):
     return {"version": None, "build": b, "history": []}
 
 
+def vs_channel_migrate():
+    """Seit 2026.11 gibt es Testing nur noch auf Wunsch (vsctl channel testing, Markierung testing-optin).
+    Geraete, die Testing frueher im Installer oder in den Einstellungen gewaehlt haben, wechseln zu Stable,
+    sobald Stable neuer ist als ihr eigener Stand – nie auf einen aelteren Stand. True = Kanal umgestellt."""
+    if LIVE or vs_channel() != "main" or OPTINFILE.exists():
+        return False
+    try:
+        tmpl = URLFILE.read_text().split()[0].rstrip("/")
+        stable = _fetch_remote(tmpl.replace("{channel}", "stable"))
+    except Exception:  # noqa: BLE001 – naechste Pruefung versucht es wieder
+        return False
+    lv, sv = vtuple(vs_version().get("version")), vtuple(stable.get("version"))
+    if not (lv and sv and sv > lv):
+        return False
+    r = run(["sudo", "-n", PKG_HELPER, "channel", "auto"], timeout=20)
+    if not r or r.returncode != 0 or vs_channel() != "stable":
+        log("Kanal: Wechsel zu Stable fehlgeschlagen:", ((r.stdout + r.stderr).strip() if r else "Zeitueberschreitung")[-200:])
+        return False
+    log(f"Kanal: Testing -> Stable (Stable {stable.get('version')} ist neuer als {vs_version().get('version')};"
+        " Testing gibt es nur noch auf Wunsch: vsctl channel testing)")
+    return True
+
+
 def vs_update_status(force=False):
     """Vergleicht die eigene Version mit dem Update-Kanal (hoechstens alle 10 min neu)."""
     try:
@@ -5161,6 +5185,8 @@ def vs_update_status(force=False):
             # ohne Netz gar nicht erst versuchen; naechster Aufruf prueft wieder (kein 10-min-Zwischenspeicher)
             _VCACHE.update(error="offline")
             return vs_state()
+        if vs_channel_migrate():
+            base = vs_update_base()
         try:
             _VCACHE.update(remote=_fetch_remote(base), error=None)
         except Exception as e:  # noqa: BLE001
@@ -11173,9 +11199,10 @@ class Handler(BaseHTTPRequestHandler):
                 log("Fernzugriff (SSH):", "an" if on else "aus")
                 return self._json(200, {"ssh": ssh_state()})
             if parts == ["api", "selfupdate", "channel"]:
+                # Seit 2026.11 nur noch zurueck zu Stable; Testing gibt es nur im Terminal (vsctl channel testing)
                 ch = str(self._body().get("channel", ""))
-                if ch not in CHANNELS:
-                    return self._json(400, {"error": "unbekannter Kanal"})
+                if ch != "stable":
+                    return self._json(400, {"error": "Testing nur noch im Terminal: vsctl channel testing"})
                 r = subprocess.run(["sudo", "-n", PKG_HELPER, "channel", ch], capture_output=True, text=True, timeout=20)
                 if r.returncode != 0:
                     return self._json(500, {"error": (r.stdout + r.stderr).strip() or "fehlgeschlagen"})

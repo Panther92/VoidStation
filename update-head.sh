@@ -339,8 +339,18 @@ chmod 644 /usr/local/share/voidstation/allowed-packages
 echo "$(wc -l < /usr/local/share/voidstation/allowed-packages) Pakete freigegeben"
 printf '%s\n' "__VS_UPDATE_URL__" > /usr/local/share/voidstation/update-url
 chmod 644 /usr/local/share/voidstation/update-url
-# Update-Kanal (stable = fuer alle, main = Test); bestehende Wahl bleibt
+# Update-Kanal (stable = fuer alle, main = Testing); bestehende Wahl bleibt
 [ -s /usr/local/share/voidstation/channel ] || echo stable > /usr/local/share/voidstation/channel
+# Seit 2026.11 gibt es Testing nur noch auf Wunsch (vsctl channel testing, Markierung testing-optin).
+# Wer Testing frueher im Installer oder in den Einstellungen gewaehlt hat, kehrt mit dem ersten freigegebenen
+# Stand auf main (Version ohne "+testing" = gleich Stable) zu Stable zurueck – ohne Downgrade. Spaetere Faelle
+# erledigt der Launcher, sobald Stable neuer ist als der eigene Stand.
+VSVER="$(echo '__VS_VERSION_B64__' | base64 -d 2>/dev/null | sed -n 's/^{"version": "\([^"]*\)".*/\1/p')"
+if [ "$(head -n1 /usr/local/share/voidstation/channel)" = main ] && [ ! -e /usr/local/share/voidstation/testing-optin ] \
+   && [ -n "$VSVER" ] && [ "${VSVER#*+testing}" = "$VSVER" ]; then
+  echo stable > /usr/local/share/voidstation/channel
+  echo "Update-Kanal: Stable (Testing gibt es nur noch auf Wunsch: vsctl channel testing)"
+fi
 chmod 644 /usr/local/share/voidstation/channel
 # Signaturschluessel: danach werden nur noch signierte Updates installiert
 SIGNERS="$(echo '__VS_SIGNERS_B64__' | base64 -d 2>/dev/null || true)"

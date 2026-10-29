@@ -5,6 +5,8 @@
 # vsctl update          -> alle Updates wie Einstellungen → Updates: Void-Pakete (inkl. Kernel),
 #                          Flatpak, AppImages, Proton-GE und VoidStation selbst; Protokoll laeuft mit
 # vsctl version         -> installierte VoidStation-Version, Build und Update-Kanal
+# vsctl channel [testing|stable] -> Update-Kanal zeigen bzw. wechseln. Testing (Entwicklerstand) gibt es
+#                          seit 2026.11 nur noch hier, mit Rueckfrage – nicht mehr im Installer/in den Einstellungen
 # vsctl / vsctl help    -> diese Uebersicht
 # Tab-Vervollstaendigung (Befehle, Kachel-IDs): /etc/bash/bashrc.d/voidstation.sh
 URL=http://127.0.0.1:8765/api
@@ -19,7 +21,57 @@ vsctl – VoidStation von der Kommandozeile steuern
   vsctl status         was läuft gerade?
   vsctl update         alle Updates wie Einstellungen → Updates (mit Protokoll)
   vsctl version        installierte Version, Build und Update-Kanal
+  vsctl channel        Update-Kanal zeigen (testing | stable: wechseln)
 EOF
+}
+
+# Update-Kanal zeigen/wechseln. Testing = Entwicklerstand (Zweig main): neue Versionen sofort, ungeprueft.
+# Rueckweg "vsctl channel stable": Updates kommen dann erst wieder, wenn Stable neuer ist (kein Downgrade).
+# Meldungen deutsch oder englisch (Spracheinstellung), weil Tester auch aus dem Ausland kommen.
+channel() {
+  case "${LANGUAGE:-${LANG:-}}" in de*) de=1 ;; *) de= ;; esac
+  msg() { if [ -n "$de" ]; then printf '%s\n' "$1"; else printf '%s\n' "$2"; fi; }
+  cur="$(head -n1 /usr/local/share/voidstation/channel 2>/dev/null)"
+  [ "$cur" = main ] || cur=stable
+  case "$1" in
+    "")
+      if [ "$cur" = main ]; then msg "Update-Kanal: Testing (Entwicklerstand)" "Update channel: Testing (development builds)"
+      else msg "Update-Kanal: Stable" "Update channel: Stable"; fi
+      return 0 ;;
+    testing|main)
+      if [ -e /etc/voidstation-live ]; then msg "Im Live-System gibt es keine Updates." "The live system has no updates."; return 1; fi
+      if [ "$cur" = main ] && [ -e /usr/local/share/voidstation/testing-optin ]; then
+        msg "Update-Kanal ist schon Testing." "Update channel is already Testing."; return 0
+      fi
+      msg "Testing ist der Entwicklerstand von VoidStation:" "Testing is the development state of VoidStation:"
+      msg "  • neue Versionen kommen sofort und ungeprüft – sie können Fehler enthalten" \
+          "  • new versions arrive right away, untested – they may contain bugs"
+      msg "  • gedacht für Tester, die Fehler melden: github.com/Panther92/VoidStation/issues" \
+          "  • meant for testers who report bugs: github.com/Panther92/VoidStation/issues"
+      msg "  • zurück mit \"vsctl channel stable\" – Updates kommen dann erst wieder, wenn Stable neuer ist" \
+          "  • go back with \"vsctl channel stable\" – updates resume once Stable is newer"
+      if [ "$2" != --yes ]; then
+        if [ ! -t 0 ]; then
+          msg "Abgebrochen (ohne Terminal: vsctl channel testing --yes)." "Cancelled (without a terminal: vsctl channel testing --yes)."
+          return 1
+        fi
+        if [ -n "$de" ]; then printf 'Zum Bestätigen "testing" eintippen: '; else printf 'Type "testing" to confirm: '; fi
+        read -r answer
+        if [ "$answer" != testing ]; then msg "Abgebrochen – nichts geändert." "Cancelled – nothing changed."; return 1; fi
+      fi
+      sudo -n /usr/local/sbin/voidstation-pkg channel main >/dev/null || { msg "Wechsel fehlgeschlagen." "Switching failed."; return 1; }
+      msg "Update-Kanal: Testing. Neue Versionen erscheinen wie gewohnt unter Einstellungen → Updates." \
+          "Update channel: Testing. New versions show up as usual under Settings → Updates." ;;
+    stable)
+      sudo -n /usr/local/sbin/voidstation-pkg channel stable >/dev/null || { msg "Wechsel fehlgeschlagen." "Switching failed."; return 1; }
+      if [ "$cur" = main ]; then
+        msg "Update-Kanal: Stable. Das nächste Update kommt mit der nächsten Stable-Version, die neuer ist als dein Stand." \
+            "Update channel: Stable. The next update arrives with the next Stable release newer than yours."
+      else msg "Update-Kanal: Stable" "Update channel: Stable"; fi ;;
+    *)
+      msg "Benutzung: vsctl channel [testing|stable]" "Usage: vsctl channel [testing|stable]"; return 2 ;;
+  esac
+  curl -fsS -o /dev/null "$URL/updates?force=1" 2>/dev/null || true   # Hinweis auf der Startseite gleich anpassen
 }
 
 version() {
@@ -74,6 +126,7 @@ case "$1" in
   status) curl -fsS "$URL/status" ;;
   update) update; exit $? ;;
   version|--version|-V) version; exit $? ;;
+  channel) shift; channel "$@"; exit $? ;;
   ""|help|-h|--help) usage; exit 0 ;;
   *) echo "vsctl: unbekannter Befehl \"$1\"" >&2; usage >&2; exit 1 ;;
 esac

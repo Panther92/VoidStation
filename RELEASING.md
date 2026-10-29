@@ -42,6 +42,17 @@ build if the English section is missing, if `Testing` is not at the top or if ve
 | `main` | *Testing* | everything merged – new features land here first |
 | `stable` | *Stable* (default) | released versions only; written by `vspub --release` / `--hotfix`, never by hand |
 
+**Testing only on request (since 2026.11).** The installer and the settings no longer offer a choice; every
+installation runs on Stable. Testing is for the reference devices and for testers who report bugs, and is turned
+on in the terminal of the device: `vsctl channel testing` (asks for confirmation, writes the marker
+`/usr/local/share/voidstation/testing-optin`), back with `vsctl channel stable` – updates then resume once Stable
+is newer than the device (`vs_state()` never offers an older version).
+
+Devices that picked Testing earlier in the installer or the settings have no marker and return to Stable by
+themselves: the update script does it as soon as `main` is at a released state (version without `+testing`,
+i.e. right after a release), the launcher as soon as Stable is newer than the device. For the reference devices
+this means: after a release they are on Stable too – put them back with `vsctl channel testing`.
+
 ## Who writes what
 
 Only `vspub` on the publisher's machine builds and signs `dist/` – so code reaches `main` only through `vspub`.
@@ -73,6 +84,13 @@ Once a month – usually on the first weekend – *Stable* is updated:
 3. **No blockers:** an open bug that came in with one of the changes stops that change (release an older state
    with `vspub --release <commit>` or fix it first).
 4. **Nothing ripe, no train.** No empty releases just because of the calendar.
+
+**One-off exception for 2026.11** (decided on 29 Oct 2026): this train takes *everything* up to 6 Nov, so that
+every device – Testing included – ends up on the same state; that is what lets former Testing devices return to
+Stable without a downgrade. To keep the risk small: feature freeze on 3 Nov (only fixes after that), the
+checklist also covers everything that came after 23 Oct, and the week until the ISO is the buffer for a
+`2026.11.1` hotfix. Released with `vspub --release HEAD` (it warns about the young commits and asks).
+From 2026.12 on the 14 days apply again.
 
 ```sh
 vspub --status            # what's in Testing, since when, what is ripe?
