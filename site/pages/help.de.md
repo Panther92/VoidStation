@@ -107,6 +107,14 @@ Unter *Herunterladen → Musik suchen* findest und lädst du Musik. Beim ersten 
 - **Update-Kanal:** Alle Geräte bekommen *Stable*. Wer Fehler melden möchte, wechselt im Terminal mit `vsctl channel testing` auf den Entwicklerstand *Testing* (neue Versionen zuerst, ungeprüft); zurück mit `vsctl channel stable` – Updates kommen dann wieder, sobald Stable neuer ist.
 - Im Terminal macht `vsctl update` dasselbe wie der Knopf. `sudo xbps-install -Su` aktualisiert nur die Void-Pakete – VoidStation erkennt das.
 
+## Netzwerk {#netzwerk}
+
+Einstellungen → Netzwerk zeigt, welche Verbindungen stehen; ✓ markiert die, über die das Internet gerade läuft.
+
+- **WLAN verbinden und wechseln:** *Netze suchen*, dann ein Netz wählen. Das Passwort fragt VoidStation nur beim ersten Mal ab; danach genügt ein Klick, auch zum Wechseln zwischen zwei Netzen. Passt das gespeicherte Passwort nicht mehr, kommt die Abfrage von selbst.
+- **Trennen:** *„Name“ trennen* oder ein Klick auf das verbundene Netz. Das WLAN bleibt aus, bis du wieder ein Netz wählst oder neu startest, das Passwort bleibt gespeichert. Das Kabel trennst und verbindest du unter *Verbindung*.
+- **Internet bevorzugt über:** Sind Kabel und WLAN gleichzeitig verbunden, läuft das Internet über die gewählte Verbindung, praktisch etwa, wenn der Kabelanschluss streikt und ein Handy-Hotspot einspringt. Freigabe und Fernzugriff bleiben über beide erreichbar. Die Wahl erscheint nur auf Geräten mit Kabel- und WLAN-Anschluss.
+
 ## Freigabe: Dateien vom PC {#freigabe}
 
 Jede VoidStation hat eine Windows-Freigabe. Am PC im Explorer `\\<rechnername>\share` eingeben (z. B. `\\wohnzimmer\share`) und mit Benutzername und Passwort aus der Installation anmelden. Dort hinein gehören Filme, Musik, Bilder und Spiele: Videos nach `share/Videos` und Musik nach `share/Musik` (beides zeigt die Kachel *Videos & Musik*), Spiele nach `share/ROMs/<System>`.

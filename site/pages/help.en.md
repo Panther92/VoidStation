@@ -107,6 +107,14 @@ Under *Download → Find music* you search for and download music. The first tim
 - **Update channel:** every device gets *Stable*. If you want to report bugs, switch to the development state *Testing* in the terminal with `vsctl channel testing` (new versions first, untested); back with `vsctl channel stable` – updates resume once Stable is newer.
 - In the terminal, `vsctl update` does the same as the button. `sudo xbps-install -Su` updates only the Void packages – VoidStation notices that.
 
+## Network {#network}
+
+Settings → Network shows your active connections; ✓ marks the one currently carrying the internet.
+
+- **Connect and switch Wi-Fi:** *Find networks*, then pick one. VoidStation asks for the password only the first time; after that one click is enough, also for switching between two networks. If the saved password no longer fits, it asks by itself.
+- **Disconnect:** *Disconnect “name”* or click the connected network. Wi-Fi stays off until you pick a network or restart, and the password stays saved. The cable is disconnected and connected under *Connection*.
+- **Prefer for internet:** If cable and Wi-Fi are connected at the same time, the internet runs over the one you chose, handy when the wired line acts up and a phone hotspot steps in. The shared folder and remote access stay reachable over both. The choice only appears on devices with both a wired and a Wi-Fi port.
+
 ## Shared folder: files from your PC {#share}
 
 Every VoidStation has a Windows share. On your PC, type `\\<hostname>\share` into Explorer (e.g. `\\livingroom\share`) and log in with the user name and password from the installation. Movies, music, pictures and games go in there: videos into `share/Videos` and music into `share/Musik` (both show up in the *Videos & Music* tile), games into `share/ROMs/<system>`.
