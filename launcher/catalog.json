@@ -267,8 +267,13 @@
         },
         "dl": "https://dl.discordapp.net/apps/linux/{ver}/discord-{ver}.tar.gz",
         "strip": 1,
-        "run": "Discord",
+        "run": [
+          "discord",
+          "Discord"
+        ],
+        "shell": true,
         "chromium": true,
+        "self_update": true,
         "host_pkgs": [
           "gtk+3",
           "nss",
@@ -283,13 +288,15 @@
           "libcxx",
           "libatomic",
           "dbus-glib",
-          "xdg-utils"
+          "xdg-utils",
+          "zenity"
         ],
         "json_set": [
           {
             "path": "~/.config/discord/settings.json",
             "values": {
-              "SKIP_HOST_UPDATE": true
+              "SKIP_HOST_UPDATE": false,
+              "SKIP_MODULE_UPDATE": false
             }
           }
         ],

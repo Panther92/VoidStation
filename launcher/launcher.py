@@ -5849,6 +5849,8 @@ def archive_format(a, url):
 
 
 def appimage_outdated(a):
+    if a["source"].get("self_update"):                 # aktualisiert sich selbst (Discord: Client in ~/.config/discord)
+        return False
     try:
         if a["source"].get("url"):                     # feste Adresse: Vergleich ueber ETag/Last-Modified/Groesse
             req = urllib.request.Request(a["source"]["url"], headers=UA, method="HEAD")
@@ -6007,9 +6009,10 @@ def app_launcher(root, a):
         if not lp.exists() and not lp.is_symlink():
             os.symlink(target, lp)
     sandbox = ('NS=\nunshare -Ur true 2>/dev/null || NS=--no-sandbox\n' if s.get("chromium") else "")
+    shell = "sh " if s.get("shell") else ""           # Startskript ohne #!-Zeile (Discord)
     script = ("#!/bin/sh\n# von VoidStation angelegt – startet " + a["name"] + "\n"
               'HERE=$(dirname "$(readlink -f "$0")")\n' + sandbox +
-              f'exec "$HERE/{exe}"' + (" $NS" if sandbox else "") + ' "$@"\n')
+              f'exec {shell}"$HERE/{exe}"' + (" $NS" if sandbox else "") + ' "$@"\n')
     (root / "AppRun").write_text(script)
     (root / "AppRun").chmod(0o755)
 
