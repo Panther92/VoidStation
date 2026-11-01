@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Radio: Favoriten, Vorschlaege, Sendersuche (radio-browser.info), laeuft im Hintergrund weiter
+// Radio: Favoriten, beliebte Sender des eigenen Landes, Sendersuche (radio-browser.info), laeuft im Hintergrund weiter
+// Das Land kommt vom Launcher (region: Sprache der Installation + Zeitzone), die Liste von /api/radio/popular
 import QtQuick
 import VS
 
@@ -10,13 +11,20 @@ Layer {
     track: trk
     property var results: null
     property string lastQuery: ""
+    property var popular: []                  // meistgehoerte Sender des Landes
+    property string popCountry: ""
+    readonly property var suggestions: app.cfg ? (app.cfg.radio_suggestions || []) : []   // nur noch, wenn in tiles.json eingetragen
     readonly property var station: app.radioState.station
     readonly property bool isFav: !!station && favIndex(station.url) >= 0
     readonly property var fit: Ui.fitRows(stage.height - 18 * Ui.f * 1.36 - 14 * Ui.f - 4, Ui.u * 0.8, Ui.gap, 3)
     readonly property real cell: Ui.u * 0.8 * fit.k
 
     function favIndex(url) { for (var i = 0; i < app.favs.length; i++) if (app.favs[i].url === url) return i; return -1 }
-    onOpened: app.refreshVolume()
+    onOpened: { app.refreshVolume(); loadPopular() }
+    function loadPopular() {
+        if (popular.length) return
+        Api.get("/api/radio/popular", function (j) { popCountry = j.country || ""; popular = j.stations || [] }, function () {})
+    }
     function firstFocus() {
         var it = Nav.collect(trk)
         for (var i = 0; i < it.length; i++) if (it[i].st && station && it[i].st.url === station.url) return it[i]
@@ -92,8 +100,18 @@ Layer {
             }
         }
         Group {
+            visible: !r.results && r.popular.length > 0
+            title: Ui.t("radio.popular", { country: Ui.regionName(r.popCountry) })
+            TileGrid {
+                items: r.results ? [] : r.popular
+                rows: r.fit.n
+                cellW: r.cell; cellH: r.cell
+                delegate: stationDelegate
+            }
+        }
+        Group {
             visible: !r.results
-            title: app.favs.length ? Ui.t("radio.search") : Ui.t("radio.suggestions")
+            title: app.favs.length || !r.suggestions.length ? Ui.t("radio.search") : Ui.t("radio.suggestions")
             Column {
                 spacing: 14 * Ui.f
                 Txt {
@@ -109,7 +127,7 @@ Layer {
                     width: Ui.screenW * 0.44
                     spacing: Ui.gap
                     Repeater {
-                        model: app.cfg ? (app.cfg.radio_suggestions || []) : []
+                        model: r.suggestions
                         Pill { text: modelData; onTriggered: { search.value = modelData; r.doSearch(modelData) } }
                     }
                 }

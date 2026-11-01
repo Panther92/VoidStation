@@ -646,6 +646,43 @@ def radio_search(query):
     raise RuntimeError(f"Senderverzeichnis nicht erreichbar ({last})")
 
 
+
+_POPULAR = {}                                   # Land -> (Zeitpunkt, Sender); 6 h zwischenspeichern
+
+
+def radio_popular(cc, limit=24):
+    """Meistgehoerte Sender eines Landes (radio-browser.info, nach Klicks) – Vorschlaege im Radio."""
+    cc = (cc or "").upper()
+    if not re.fullmatch(r"[A-Z]{2}", cc):
+        return []
+    hit = _POPULAR.get(cc)
+    if hit and time.time() - hit[0] < 6 * 3600:
+        return hit[1]
+    params = urllib.parse.urlencode({"countrycode": cc, "limit": limit * 2, "hidebroken": "true",
+                                     "order": "clickcount", "reverse": "true"})
+    last = None
+    for host in RADIO_SERVERS:
+        try:
+            req = urllib.request.Request(f"https://{host}/json/stations/search?{params}",
+                                         headers={"User-Agent": "VoidStation/2.0"})
+            with urllib.request.urlopen(req, timeout=6) as r:
+                items = json.load(r)
+            out, seen = [], set()
+            for i in items:
+                url = i.get("url_resolved") or i.get("url")
+                name = (i.get("name") or "").strip()
+                if not url or not name or name.lower() in seen:     # gleicher Sender mehrfach (andere Bitrate)
+                    continue
+                seen.add(name.lower())
+                out.append({"name": name, "url": url, "favicon": i.get("favicon") or "", "country": cc,
+                            "tags": (i.get("tags") or "")[:60]})
+            out = out[:limit]
+            _POPULAR[cc] = (time.time(), out)
+            return out
+        except Exception as e:  # noqa: BLE001
+            last = e
+    raise RuntimeError(f"Senderverzeichnis nicht erreichbar ({last})")
+
 def favs_load():
     try:
         return json.loads(FAVS.read_text(encoding="utf-8"))
@@ -765,6 +802,75 @@ def ui_lang(s=None):
             return cand
     return "de"
 
+
+
+# Land fuer Radio und Fernsehen ("region" in settings.json, ISO-Code wie DE). Vorgabe: das Land der Sprache, in der
+# VoidStation installiert wurde. Je Sprache die Laender, in denen sie zu Hause ist – das erste ist der Standard; liegt die
+# Zeitzone in einem der anderen, gilt dieses (de + Europe/Vienna -> AT, fr + Europe/Brussels -> BE, en + Europe/London -> GB).
+LANG_REGIONS = {
+    "de": ["DE", "AT", "CH", "LU", "LI", "BE"], "en": ["US", "GB", "CA", "IE", "AU", "NZ", "ZA", "IN", "MT"],
+    "cs": ["CZ"], "sk": ["SK"], "fr": ["FR", "BE", "CH", "LU", "CA", "MC"],
+    "es": ["ES", "MX", "AR", "CO", "CL", "PE", "VE", "UY"], "it": ["IT", "CH", "SM"], "lv": ["LV"], "hu": ["HU"],
+    "nl": ["NL", "BE"], "pl": ["PL"], "pt-BR": ["BR", "PT"], "el": ["GR", "CY"], "ru": ["RU", "BY", "KZ"], "uk": ["UA"],
+}
+# Schnellwahl der Laender im Fernsehen je Sprache (das eigene Land kommt immer zuerst), der Rest unter "Weitere Laender"
+TV_QUICK = {
+    "de": ["DE", "AT", "CH"], "en": ["US", "GB", "CA"], "cs": ["CZ", "SK", "AT"], "sk": ["SK", "CZ", "HU"],
+    "fr": ["FR", "BE", "CH"], "es": ["ES", "MX", "AR"], "it": ["IT", "CH", "SM"], "lv": ["LV", "LT", "EE"],
+    "hu": ["HU", "AT", "SK"], "nl": ["NL", "BE", "DE"], "pl": ["PL", "DE", "CZ"], "pt-BR": ["BR", "PT"],
+    "el": ["GR", "CY"], "ru": ["RU", "BY", "KZ"], "uk": ["UA", "PL"],
+}
+
+
+def tz_current():
+    """Zeitzone des Systems (Ziel von /etc/localtime, z. B. Europe/Berlin), sonst ''."""
+    try:
+        t = os.readlink("/etc/localtime")
+    except OSError:
+        return ""
+    return t.split("zoneinfo/", 1)[1] if "zoneinfo/" in t else ""
+
+
+_TZ_CC = None
+
+
+def tz_country(tz):
+    """Land einer Zeitzone laut zone.tab (Europe/Vienna -> AT), sonst ''."""
+    global _TZ_CC
+    if _TZ_CC is None:
+        _TZ_CC = {}
+        try:
+            for line in Path("/usr/share/zoneinfo/zone.tab").read_text(encoding="utf-8").splitlines():
+                f = line.split("\t")
+                if len(f) >= 3 and not line.startswith("#"):
+                    _TZ_CC[f[2]] = f[0]
+        except OSError:
+            pass
+        _TZ_CC.setdefault("Europe/Kyiv", "UA")                # aeltere tzdata kennt nur Europe/Kiev
+    return _TZ_CC.get(tz or "", "")
+
+
+def region_for(lang, tz=""):
+    """Vorgabe-Land fuer eine Sprache: das Land der Zeitzone, wenn die Sprache dort zu Hause ist, sonst das erste."""
+    cands = LANG_REGIONS.get(lang) or LANG_REGIONS["de"]
+    cc = tz_country(tz)
+    return cc if cc in cands else cands[0]
+
+
+def region(s=None):
+    """Land fuer Radio und Fernsehen: Einstellung (setzt der Installer), sonst aus Sprache und Zeitzone."""
+    s = s or settings_load()
+    r = s.get("region")
+    if isinstance(r, str) and re.fullmatch(r"[A-Z]{2}", r):
+        return r
+    return region_for(ui_lang(s), tz_current())
+
+
+def region_quick(s=None):
+    """Schnellwahl der Laender im Fernsehen: eigenes Land zuerst, dann die uebrigen der Sprache (3 Stueck)."""
+    s = s or settings_load()
+    r = region(s)
+    return [r] + [c for c in TV_QUICK.get(ui_lang(s), []) if c != r][:2]
 
 # Sprache fuer gestartete Programme: VLC, PCManFM und andere GTK-/Qt-Programme folgen LANG/LANGUAGE,
 # Firefox (YouTube) bekommt Oberflaechen- und Webseiten-Sprache ueber sein Profil
@@ -2197,7 +2303,8 @@ class IPTV:
         if self.now and "tv" in APPS.running():
             now = self.now
         return {"state": self.state, "error": self.error, "count": len(self.index),
-                "countries": [{"code": c, "n": n} for c, n in self.countries[:40]], "now": now, "failed": self.failed}
+                "countries": [{"code": c, "n": n} for c, n in self.countries[:40]], "now": now, "failed": self.failed,
+                "region": region(), "quick": region_quick()}
 
     def entry(self, key):
         e = self.by_key.get(key)
@@ -5959,7 +6066,7 @@ def settings_payload():
             "audio": audio_info(), "volume": volume_get(), "net": net_info(), "share": share_info(),
             "sysupd_days": sysupd_days(s), "sysupd_choices": SYSUPD_DAYS,
             "frontend": frontend(), "frontends": frontends(), "padmouse": bool(s.get("padmouse", True)),
-            "rate": s.get("rate"), "match_rate": bool(s.get("match_rate"))}
+            "rate": s.get("rate"), "match_rate": bool(s.get("match_rate")), "region": region(s)}
 
 
 # ---------------------------------------------------------------------------
@@ -6022,6 +6129,7 @@ class Installer:
             if not resume:
                 cfg = dict(cfg or {})
                 cfg["live_home"] = str(Path.home())
+                cfg["region"] = region_for(str(cfg.get("lang") or "de"), str(cfg.get("timezone") or ""))   # Radio/TV
                 self.state = {"state": "running", "pct": 0, "phase": None, "phases": {}, "detail": None,
                               "started": time.time(), "mode": cfg.get("mode")}
             else:
@@ -11077,6 +11185,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, JOBS.current() or {})
         if path == "/api/radio/favs":
             return self._json(200, favs_load())
+        if path == "/api/radio/popular":
+            cc = region()
+            try:
+                return self._json(200, {"country": cc, "stations": radio_popular(cc)})
+            except RuntimeError as e:
+                return self._json(502, {"error": str(e), "country": cc})
         if path == "/api/radio/search":
             q = urllib.parse.parse_qs(url.query).get("q", [""])[0].strip()
             if not q:

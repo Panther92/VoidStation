@@ -36,6 +36,7 @@ import json, sys
 p = sys.argv[1]
 d = json.load(open(p, encoding="utf-8"))
 # Texte in allen Sprachen der Oberflaeche (LANG_TABLE in launcher.py); fehlt eine, gilt Englisch
+d.pop("radio_suggestions", None)            # Radio schlaegt die beliebtesten Sender des Landes vor
 d["user"] = {"de": "Gast", "en": "Guest", "cs": "Host", "es": "Invitado", "fr": "Invité", "it": "Ospite", "lv": "Viesis",
              "hu": "Vendég", "nl": "Gast", "pl": "Gość", "pt-BR": "Convidado", "sk": "Hosť", "el": "Επισκέπτης",
              "ru": "Гость", "uk": "Гість"}
@@ -58,9 +59,6 @@ d["groups"].insert(0, {"name": {
             "uk": "на цей комп’ютер"}}]})
 json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PYEOF
-for f in radio.json tvfavs.json; do
-  [ -f "$SRC/personal/$f" ] && install -m 644 "$SRC/personal/$f" "$TV/$f"
-done
 ch chown -R tv:tv /home/tv
 
 if ch xbps-query nvidia >/dev/null 2>&1; then

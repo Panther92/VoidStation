@@ -36,7 +36,6 @@ Layer {
     property string tz: "Europe/Berlin"
     property bool wifi: false
     property bool share: true
-    property bool favs: false
     property bool rtc: false
     property bool rtcSet: false
     property var status: null
@@ -154,7 +153,7 @@ Layer {
         probe = p; disk = null; mode = ""; opt = null; newSize = 0; region = null; roles = ({}); manual = null
         name = ""; pw = ""; pw2 = ""; host = "tv"; hostEdit = ""; field = 0; shift = false; sym = false
         keymap = (p && p.kb) || ld.kb; lang = ld.id; tz = ld.tz; langFocus = "lang"
-        wifi = !!(p && (p.wifi_saved || []).length); share = true; favs = !!(p && p.favs && (p.favs.radio + p.favs.tv)); rtc = false; rtcSet = false
+        wifi = !!(p && (p.wifi_saved || []).length); share = true; rtc = false; rtcSet = false
         status = null; t0 = 0
     }
     function openInst() {
@@ -352,7 +351,7 @@ Layer {
         return out
     }
     function deviceTiles() {
-        var p = probe, T = Ui.t, ws = p.wifi_saved || [], favN = ((p.favs || {}).radio || 0) + ((p.favs || {}).tv || 0)
+        var p = probe, T = Ui.t, ws = p.wifi_saved || []
         function st(k, v, desc, key, nav) { return { kind: "set", size: "wide", color: "#23272c", k: k, v: v, desc: desc, key: key, act: nav === false ? "" : "toggle", nav: nav !== false } }
         var out = [
             { kind: "set", size: "wide", color: "#23272c", k: T("inst.hostname"), v: host, desc: T("inst.hostSub", { host: host }), key: "host", act: "host" },
@@ -360,7 +359,6 @@ Layer {
             st(T("inst.share"), T(share ? "common.on" : "common.off"), T("inst.shareSub"), "share"),
             { kind: "set", size: "wide", color: "#23272c", k: T("inst.language"), v: langName(lang), desc: T("inst.langSub"), key: "lang", act: "region", focus: "lang" },
             { kind: "set", size: "wide", color: "#23272c", k: T("inst.timezone"), v: tzLabel(tz), desc: T("inst.tzSub"), key: "tz", act: "region", focus: "tz" },
-            favN ? st(T("inst.favs"), favs ? T("inst.favCount", { n: favN }) : T("common.off"), T("inst.favSub"), "favs") : null,
             p.windows ? st(T("inst.rtc"), T(rtc ? "inst.rtcLocal" : "inst.rtcUtc"), T(rtc ? "inst.rtcSub" : "inst.rtcUtcSub"), "rtc") : null,
             p.screen ? st(T("inst.screen"), p.screen.mode.replace("x", "\u00d7"), T("inst.screenSub"), "screen", false) : null,
             { kind: "tile", size: "wide", color: "#2f6d4f", icon: "install", label: T("inst.continue"), key: "next", act: "next", to: "confirm" }
@@ -386,7 +384,6 @@ Layer {
     function toggle(k) {
         if (k === "wifi") wifi = !wifi
         else if (k === "share") share = !share
-        else if (k === "favs") favs = !favs
         else if (k === "rtc") rtc = !rtc
     }
     function summary() {
@@ -395,9 +392,7 @@ Layer {
         else if (mode === "beside") eff = T("inst.sumBeside", { os: opt.os, old: gb(opt.size - newSize), size: gb(newSize) })
         else if (mode === "free") eff = T("inst.sumFree", { size: gb(region.bytes) })
         else eff = T("inst.sumManual", { root: manual.root, esp: manual.esp })
-        var favN = probe.favs ? probe.favs.radio + probe.favs.tv : 0
-        var extras = [(probe.wifi_saved || []).length && wifi ? T("inst.wifi") : null, share ? T("inst.whatShare") : null,
-                      favs && favN ? T("inst.favCount", { n: favN }) : null].filter(function (x) { return !!x })
+        var extras = [(probe.wifi_saved || []).length && wifi ? T("inst.wifi") : null, share ? T("inst.whatShare") : null].filter(function (x) { return !!x })
         return [
             { k: T("inst.sumDisk"), html: "<b>" + Ui.esc(diskName(d)) + " · " + Ui.esc(gb(d.size)) + "</b><br>" + Ui.esc(eff) },
             { k: T("inst.sumAccount"), html: "<b>" + Ui.esc(name) + "</b> · " + Ui.esc(T("inst.sumLogin", { login: loginOf(name) })) },
@@ -520,7 +515,7 @@ Layer {
     function config() {
         var c = { mode: mode, disk: disk.path, user: { name: name, login: loginOf(name), password: pw }, hostname: host,
                   lang: lang, keymap: keymap, timezone: tz, wifi: wifi && !!(probe.wifi_saved || []).length,
-                  share: share, favorites: favs, rtc_local: rtc && !!probe.windows }
+                  share: share, rtc_local: rtc && !!probe.windows }
         if (mode === "beside") { c.part = opt.part; c.new_size = newSize }
         if (mode === "free") c.region = { start: region.start, sectors: region.sectors }
         if (mode === "manual") c.manual = manual
@@ -1056,7 +1051,7 @@ Layer {
             Group {
                 title: Ui.t("inst.device")
                 TileGrid {
-                    items: { il.host; il.wifi; il.share; il.lang; il.tz; il.favs; il.rtc; return il.deviceTiles() }
+                    items: { il.host; il.wifi; il.share; il.lang; il.tz; il.rtc; return il.deviceTiles() }
                     rows: 3; cellW: il.iu; cellH: il.iu; delegate: tileDelegate
                 }
             }

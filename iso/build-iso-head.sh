@@ -119,11 +119,8 @@ mkfont "$NOTO" VoidStation 24 vs-24.pf2
 mkfont "$NOTO" VoidStation 30 vs-30.pf2
 mkfont /usr/share/fonts/TTF/DejaVuSansMono.ttf "VoidStation Mono" 20 vs-mono-20.pf2
 
-# Eigene Favoriten (Radio, TV) mitnehmen, falls vorhanden – im Live-System schon da
-PERS="$SRC/personal"; mkdir -p "$PERS"
-for f in radio.json tvfavs.json; do
-  [ -f "$HOMEDIR/.local/share/voidstation/$f" ] && cp "$HOMEDIR/.local/share/voidstation/$f" "$PERS/" && echo "nehme mit: $f"
-done
+# Keine eigenen Favoriten (Radio, TV) auf dem Stick: Radio schlaegt die beliebtesten Sender des Landes vor,
+# Fernsehen zeigt die Sender des Landes – beides nach der Sprache aus dem Startmenue (region in launcher.py)
 
 # Signaturschluessel der XLibre-Quelle (derselbe wie in voidstation-pkg) fuer den Bau
 sed -n "/^  cat <<'KEYEOF'$/,/^KEYEOF$/p" "$SRC/voidstation-pkg" | sed '1d;$d' > "$MK/keys/$XLIBRE_KEYFP.plist"

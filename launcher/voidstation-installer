@@ -1213,8 +1213,11 @@ class Run:
         except (OSError, ValueError):
             pass
         s["lang"] = lang
+        rg = str(c.get("region") or "")                   # Land fuer Radio und Fernsehen (Launcher: Sprache + Zeitzone)
+        if re.fullmatch(r"[A-Z]{2}", rg):
+            s["region"] = rg
         sj.write_text(json.dumps(s, indent=2), encoding="utf-8")
-        if c.get("favorites"):
+        if c.get("favorites", True):                       # eigene Favoriten aus dem Live-System (der Stick bringt keine mit)
             for f in ("radio.json", "tvfavs.json"):
                 if (live / f).is_file():
                     shutil.copy2(live / f, vs / f)

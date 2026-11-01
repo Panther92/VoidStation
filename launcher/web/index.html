@@ -2060,7 +2060,7 @@ async function btRemove(mac) {
 }
 
 /* ============================================================ Fernsehen */
-let tvQuery = '', tvCountry = 'DE', tvCat = '', tvFavs = [], tvResults = [], tvStatus = null, tvNow = null, tvMore = false;
+let tvQuery = '', tvCountry = '', tvCountryPicked = false, tvCat = '', tvFavs = [], tvResults = [], tvStatus = null, tvNow = null, tvMore = false;
 // Senderliste seitenweise (/api/tv/list): A–Z-Leiste, 200 je Seite, am Ende "Weitere Sender" bzw. naechster Buchstabe
 let tvLetter = '', tvLetters = [], tvOffset = 0, tvTotal = 0;
 const TV_PAGE = 200;
@@ -2070,6 +2070,7 @@ const TV_CATS = ['', 'news', 'general', 'entertainment', 'movies', 'series', 'do
 
 async function tvOpen() {
   try { tvStatus = await getJSON('/api/tv/status'); tvFavs = await getJSON('/api/tv/favs'); } catch { tvStatus = { state: 'error' }; }
+  if (!tvCountryPicked) tvCountry = tvStatus?.region || 'DE';   // Land der Installationssprache (Launcher)
   setTvNow(tvStatus?.now);
   if (tvStatus.state === 'loading' || tvStatus.state === 'idle') {
     renderTv(T('tv.loading'));
@@ -2147,10 +2148,11 @@ function renderTv(msg) {
   // Filter
   const f = document.createElement('div'); f.className = 'fchips';
   const rc = document.createElement('div'); rc.className = 'row';
-  const top = ['DE', 'AT', 'CH'];
+  const top = tvStatus?.quick?.length ? [...tvStatus.quick] : ['DE', 'AT', 'CH'];
+  if (tvCountry && tvCountry !== '*' && !top.includes(tvCountry)) top.push(tvCountry);
   const more = (tvStatus?.countries || []).map(c => c.code).filter(c => !top.includes(c)).slice(0, 16);
-  for (const c of [...top, ...(tvMore ? more : [])]) { const b = fpill(regionName(c), tvCountry === c, () => { tvCountry = c; tvSearch(); }); b.dataset.fk = 'c' + c; rc.appendChild(b); }
-  const all = fpill(T('tv.allCountries'), tvCountry === '*', () => { tvCountry = '*'; tvSearch(); }); all.dataset.fk = 'c*'; rc.appendChild(all);
+  for (const c of [...top, ...(tvMore ? more : [])]) { const b = fpill(regionName(c), tvCountry === c, () => { tvCountry = c; tvCountryPicked = true; tvSearch(); }); b.dataset.fk = 'c' + c; rc.appendChild(b); }
+  const all = fpill(T('tv.allCountries'), tvCountry === '*', () => { tvCountry = '*'; tvCountryPicked = true; tvSearch(); }); all.dataset.fk = 'c*'; rc.appendChild(all);
   const mb = fpill(tvMore ? T('tv.less') : T('tv.more'), false, () => { tvMore = !tvMore; renderTv(); }); mb.dataset.fk = 'more'; rc.appendChild(mb);
   const rt = document.createElement('div'); rt.className = 'row';
   for (const k of TV_CATS) { const b = fpill(T('tv.cat.' + (k || 'all')), tvCat === k, () => { tvCat = k; tvSearch(); }); b.dataset.fk = 't' + k; rt.appendChild(b); }
@@ -2533,7 +2535,7 @@ function instFresh(probe) {
   I = { step: 'welcome', probe, disk: null, mode: null, opt: null, newSize: 0, region: null, roles: {},
         name: '', pw: '', pw2: '', host: 'tv', field: 0, shift: false, sym: false, hostEdit: null,
         keymap: probe?.kb || ld.kb, lang: ld.id, tz: ld.tz,
-        wifi: !!(probe?.wifi_saved || []).length, share: true, favs: !!(probe && (probe.favs.radio + probe.favs.tv)), rtc: false,
+        wifi: !!(probe?.wifi_saved || []).length, share: true, rtc: false,
         status: null, t0: 0 };
 }
 const loginOf = n => {
@@ -3041,7 +3043,6 @@ function rDevice() {
   const tr = instShell(T('inst.device'), T('inst.deviceSub'), 3);
   const cyc = (list, cur) => list[(list.indexOf(cur) + 1) % list.length];
   const ws = p.wifi_saved || [];
-  const favN = (p.favs?.radio || 0) + (p.favs?.tv || 0);
   const tiles = [
     stile(T('inst.hostname'), I.host, T('inst.hostSub', { host: I.host }), () => { I.hostEdit = null; instGo('host'); }, 'host'),
     ws.length ? stile(T('inst.wifiTake'), I.wifi ? ws[0] : T('common.off'), I.wifi ? T('inst.wifiSub') : T('inst.wifiOffSub'), () => { I.wifi = !I.wifi; rDevice(); }, 'wifi') : null,
@@ -3052,7 +3053,6 @@ function rDevice() {
       I.lang = nx; rDevice();
     }, 'lang'),
     stile(T('inst.timezone'), tzLabel(I.tz), T('inst.tzSub'), () => { I.tz = cyc(TZS, I.tz); rDevice(); }, 'tz'),
-    favN ? stile(T('inst.favs'), I.favs ? T('inst.favCount', { n: favN }) : T('common.off'), T('inst.favSub'), () => { I.favs = !I.favs; rDevice(); }, 'favs') : null,
     p.windows ? stile(T('inst.rtc'), T(I.rtc ? 'inst.rtcLocal' : 'inst.rtcUtc'), T(I.rtc ? 'inst.rtcSub' : 'inst.rtcUtcSub'), () => { I.rtc = !I.rtc; rDevice(); }, 'rtc') : null,
     p.screen ? stile(T('inst.screen'), p.screen.mode.replace('x', '×'), T('inst.screenSub')) : null,
     itile({ size: 'wide', color: '#2f6d4f', icon: 'install', label: T('inst.continue'), key: 'next', fn: () => instGo('confirm') })
@@ -3071,8 +3071,7 @@ function instSummary() {
   else if (I.mode === 'beside') eff = T('inst.sumBeside', { os: I.opt.os, old: gb(I.opt.size - I.newSize), size: gb(I.newSize) });
   else if (I.mode === 'free') eff = T('inst.sumFree', { size: gb(I.region.bytes) });
   else eff = T('inst.sumManual', { root: I.manual.root, esp: I.manual.esp });
-  const extras = [(I.probe.wifi_saved || []).length && I.wifi ? T('inst.wifi') : null, I.share ? T('inst.whatShare') : null,
-    I.favs && (I.probe.favs.radio + I.probe.favs.tv) ? T('inst.favCount', { n: I.probe.favs.radio + I.probe.favs.tv }) : null].filter(Boolean);
+  const extras = [(I.probe.wifi_saved || []).length && I.wifi ? T('inst.wifi') : null, I.share ? T('inst.whatShare') : null].filter(Boolean);
   return [
     { k: T('inst.sumDisk'), html: `<b>${esc(diskName(d))} · ${esc(gb(d.size))}</b><br>${esc(eff)}` },
     { k: T('inst.sumAccount'), html: `<b>${esc(I.name)}</b> · ${esc(T('inst.sumLogin', { login: loginOf(I.name) }))}` },
@@ -3112,7 +3111,7 @@ function holdTick() {
 function instConfig() {
   const c = { mode: I.mode, disk: I.disk.path, user: { name: I.name, login: loginOf(I.name), password: I.pw }, hostname: I.host,
     lang: I.lang, keymap: I.keymap, timezone: I.tz, wifi: I.wifi && !!(I.probe.wifi_saved || []).length,
-    share: I.share, favorites: I.favs, rtc_local: I.rtc && !!I.probe.windows };
+    share: I.share, rtc_local: I.rtc && !!I.probe.windows };
   if (I.mode === 'beside') Object.assign(c, { part: I.opt.part, new_size: I.newSize });
   if (I.mode === 'free') c.region = { start: I.region.start, sectors: I.region.sectors };
   if (I.mode === 'manual') c.manual = I.manual;

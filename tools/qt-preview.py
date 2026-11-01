@@ -288,6 +288,17 @@ exec(_src[_src.index("_GRP = ["):_src.index("# ----", _src.index("_GRP = ["))], 
 PROBE["langs"] = [{"id": i, "label": n, "kb": _li["INSTALL_DEFAULTS"][i][0], "tz": _li["INSTALL_DEFAULTS"][i][1]}
                   for i, n, _, _ in _li["LANG_TABLE"]]
 PROBE["kbs"] = list(_li["KEYMAPS"])
+# Land fuer Radio und Fernsehen wie im Launcher (LANG_REGIONS/TV_QUICK); VS_REGION=AT … ueberschreibt
+exec(_src[_src.index("LANG_REGIONS = {"):_src.index("def tz_current")], _li)
+
+
+def region_of(lang):
+    return os.environ.get("VS_REGION") or _li["LANG_REGIONS"].get(lang, ["DE"])[0]
+
+
+def region_quick(lang):
+    r = region_of(lang)
+    return [r] + [c for c in _li["TV_QUICK"].get(lang, []) if c != r][:2]
 INST = {"state": "idle"}
 LIVE = {"on": False, "fail": False}
 
@@ -361,7 +372,11 @@ class H(S.H):
             "/api/settings": settings,
             "/api/radio/favs": lambda: st["favs"],
             "/api/radio/search": lambda: STATIONS,
-            "/api/tv/status": lambda: {"state": "ready", "error": None, "count": 10432, "countries": S.COUNTRIES, "now": st["tv"]},
+            "/api/radio/popular": lambda: {"country": region_of(S.SETTINGS.get("lang") or "de"),
+                                           "stations": [dict(x, name=f"Beliebt {i}") for i, x in enumerate(STATIONS[:10], 1)]},
+            "/api/tv/status": lambda: {"state": "ready", "error": None, "count": 10432, "countries": S.COUNTRIES, "now": st["tv"],
+                                       "region": region_of(S.SETTINGS.get("lang") or "de"),
+                                       "quick": region_quick(S.SETTINGS.get("lang") or "de")},
             "/api/tv/favs": lambda: st["tvfavs"],
             "/api/tv/search": lambda: [c for c in S.TV if not q.get("cat", [""])[0] or q["cat"][0] in c["cats"]],
             "/api/tv/list": lambda: tv_list(q),

@@ -2,14 +2,6 @@
   "title": "Start",
   "user": "Paul",
   "background": "",
-  "radio_suggestions": [
-    "MDR Sachsen-Anhalt",
-    "MDR Jump",
-    "Radio Brocken",
-    "Deutschlandfunk",
-    "radioeins",
-    "Klassik Radio"
-  ],
   "groups": [
     {
       "name": "Unterhaltung",
