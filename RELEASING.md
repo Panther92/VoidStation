@@ -15,7 +15,7 @@ not how big it is:
 | `2026.11+testing.20261120` | what *Testing* devices show: the state after 2026.11, last change on 20 Nov 2026 |
 | `0.1.0` … `0.15.0` | releases before the switch (October 2026), kept as they are |
 
-The live ISO carries the number of the Stable version it contains, e.g. `voidstation-2026.11-20261108.iso`
+The live ISO carries the number of the Stable version it contains, e.g. `voidstation-2026.11-20261109.iso`
 (the second part is the build date – a respin with fresher Void packages keeps the version and gets a new date).
 GitHub tags are `v<version>`.
 
@@ -88,7 +88,7 @@ Once a month – usually on the first weekend – *Stable* is updated:
 **One-off exception for 2026.11** (decided on 29 Oct 2026): this train takes *everything* up to 6 Nov, so that
 every device – Testing included – ends up on the same state; that is what lets former Testing devices return to
 Stable without a downgrade. To keep the risk small: feature freeze on 3 Nov (only fixes after that), the
-checklist also covers everything that came after 23 Oct, and the week until the ISO is the buffer for a
+checklist also covers everything that came after 23 Oct, and the weekend until the ISO (Monday, 9 Nov) is the buffer for a
 `2026.11.1` hotfix. Released with `vspub --release HEAD` (it warns about the young commits and asks).
 From 2026.12 on the 14 days apply again.
 
@@ -117,8 +117,10 @@ without changing anything – then a separate version of the fix for Stable is n
 
 ## Live ISO (quarterly)
 
-A new ISO every three months: **February, May, August, November**, about a week after that month's train,
-so the Stable version has already been out for a few days.
+A new ISO every three months: **February, May, August, November**, on the day of that month's train or up to three days
+after it, always **after** `vspub --release`. If a serious bug turns up in the new Stable version that also affects
+new installations, the ISO waits for the hotfix; otherwise it goes out, and installed devices get later fixes as a
+normal update.
 
 1. Build **from `stable`**, never from Testing (the build script refuses a Testing state):
 
@@ -139,10 +141,10 @@ important hardware support): same procedure, same version number, new build date
 | When | What |
 |---|---|
 | beginning of November | train → Stable 2026.11 |
-| about a week later | ISO 2026.11 |
+| Monday after the train (9 Nov) | ISO 2026.11 |
 | beginning of December | train → Stable 2026.12 (no ISO) |
 | beginning of January | train → Stable 2027.01 (no ISO) |
-| beginning of February | train → Stable 2027.02, then ISO 2027.02 |
+| beginning of February | train → Stable 2027.02, then ISO 2027.02 (same day or up to three days later) |
 | any time | hotfixes `.1`, `.2` … |
 
 ## Settings
