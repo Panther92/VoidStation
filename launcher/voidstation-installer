@@ -61,6 +61,17 @@ GUID = {
     "bios_boot": "21686148-6449-6e6f-744e-656564454649",
 }
 SHRINKABLE = {"ntfs", "ext4", "ext3", "ext2", "btrfs"}
+# Sprachen des Systems (wie LANG_TABLE in launcher.py) -> Locale; install.sh erzeugt sie alle
+LOCALES = {"de": "de_DE", "en": "en_US", "cs": "cs_CZ", "es": "es_ES", "fr": "fr_FR", "it": "it_IT", "lv": "lv_LV",
+           "hu": "hu_HU", "nl": "nl_NL", "pl": "pl_PL", "pt-BR": "pt_BR", "sk": "sk_SK", "el": "el_GR", "ru": "ru_RU",
+           "uk": "uk_UA"}
+# Tastaturen (wie KEYMAPS in launcher.py und voidstation.kb im Startmenue): (Konsole/kbd, X-Belegung, X-Optionen).
+# Griechisch/Russisch/Ukrainisch: X mit US + Landesbelegung (Alt+Umschalt), Konsole US (Anmeldung, Befehle).
+KEYMAPS = {"de": ("de", "de", ""), "us": ("us", "us", ""), "gb": ("uk", "gb", ""), "fr": ("fr", "fr", ""),
+           "es": ("es", "es", ""), "it": ("it", "it", ""), "lv": ("lv", "lv", ""), "hu": ("hu", "hu", ""),
+           "pl": ("pl", "pl", ""), "br": ("br-abnt2", "br", ""), "cz": ("cz-qwertz", "cz", ""),
+           "sk": ("sk-qwertz", "sk", ""), "gr": ("us", "us,gr", "grp:alt_shift_toggle"),
+           "ru": ("us", "us,ru", "grp:alt_shift_toggle"), "ua": ("us", "us,ua", "grp:alt_shift_toggle")}
 TEST = os.environ.get("VS_INSTALLER_TEST") == "1"     # nur fuer Tests mit Abbild-Dateien: Loop-Geraete zulassen
 DISK_TYPES = ("disk", "loop") if TEST else ("disk",)
 
@@ -1109,20 +1120,20 @@ class Run:
         if (T / "var/lib/dbus").is_dir():
             (T / "var/lib/dbus/machine-id").write_text(mid)
         lang = c.get("lang", "de")
-        (T / "etc/locale.conf").write_text("LANG=" + {"de": "de_DE.UTF-8", "en": "en_US.UTF-8"}.get(lang, "de_DE.UTF-8") + "\n")
-        keymap = c.get("keymap", "de")
+        (T / "etc/locale.conf").write_text("LANG=" + LOCALES.get(lang, "de_DE") + ".UTF-8\n")
+        con, xkb, xopt = KEYMAPS.get(c.get("keymap", "de"), KEYMAPS["de"])
         rc = T / "etc/rc.conf"
         txt = rc.read_text() if rc.exists() else ""
         txt = re.sub(r"^\s*(KEYMAP|HARDWARECLOCK)=.*\n?", "", txt, flags=re.M).rstrip("\n")
         txt = re.sub(r"\n# VoidStation$", "", txt)
-        txt += f'\n\n# VoidStation\nKEYMAP="{ {"de": "de", "us": "us", "gb": "uk"}.get(keymap, "de") }"\n' \
+        txt += f'\n\n# VoidStation\nKEYMAP="{con}"\n' \
                f'HARDWARECLOCK="{"localtime" if c.get("rtc_local") else "UTC"}"\n'
         rc.write_text(txt.lstrip("\n"))
         xk = T / "etc/X11/xorg.conf.d"
         xk.mkdir(parents=True, exist_ok=True)
         (xk / "00-keyboard.conf").write_text(
             'Section "InputClass"\n  Identifier "system-keyboard"\n  MatchIsKeyboard "on"\n'
-            f'  Option "XkbLayout" "{ {"de": "de", "us": "us", "gb": "gb"}.get(keymap, "de") }"\nEndSection\n')
+            f'  Option "XkbLayout" "{xkb}"\n' + (f'  Option "XkbOptions" "{xopt}"\n' if xopt else "") + "EndSection\n")
         tz = c.get("timezone") or "Europe/Berlin"
         if not re.fullmatch(r"[A-Za-z_]+(/[A-Za-z0-9_+-]+)*", tz) or not (T / "usr/share/zoneinfo" / tz).is_file():
             tz = "Europe/Berlin"
@@ -1456,7 +1467,7 @@ def validate(cfg):
         return "bad_password"
     if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,13}[A-Za-z0-9])?", cfg.get("hostname", "")):
         return "bad_hostname"
-    if cfg.get("lang", "de") not in ("de", "en") or cfg.get("keymap", "de") not in ("de", "us", "gb"):
+    if cfg.get("lang", "de") not in LOCALES or cfg.get("keymap", "de") not in KEYMAPS:
         return "bad_config"
     if cfg.get("live_home") and not re.fullmatch(r"/home/[a-z_][a-z0-9_-]{0,30}", str(cfg["live_home"])):
         return "bad_config"
@@ -1614,7 +1625,7 @@ def cmd_text(_args):
     if input(f"ALLE Daten auf {disk} loeschen? JA eintippen: ") != "JA":
         print("Abgebrochen."); return 1
     cfg = {"mode": "whole", "disk": disk, "user": {"name": name, "login": login, "password": pw}, "hostname": host,
-           "lang": "de", "keymap": "de", "timezone": "Europe/Berlin", "channel": "stable", "wifi": True, "share": True,
+           "lang": "de", "keymap": "de", "timezone": "Europe/Berlin", "wifi": True, "share": True,
            "favorites": True, "rtc_local": False}
     bad = validate(cfg)
     if bad:

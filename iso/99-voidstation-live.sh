@@ -1,11 +1,25 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 # VoidStation Live-System (runit core-service, laeuft beim Start als root)
-# Tastatur der grafischen Oberflaeche passend zum Eintrag im Startmenue (vconsole.keymap=de|us|uk)
-_km=$(sed -n 's/.*vconsole\.keymap=\([^ ]*\).*/\1/p' /proc/cmdline)
-case "$_km" in us*) _xk=us ;; uk*|gb*) _xk=gb ;; *) _xk=de ;; esac
+# Tastatur der grafischen Oberflaeche passend zur Sprache im Startmenue (voidstation.kb=de|us|fr|…, siehe
+# iso/grub-entries.py; aeltere Sticks: vconsole.keymap=de|us|uk). Griechisch, Russisch und Ukrainisch bekommen
+# zusaetzlich US (Anmeldename, Rechnername), Alt+Umschalt wechselt. Der Installer kann sie danach umstellen.
+_kb=$(sed -n 's/.*voidstation\.kb=\([^ ]*\).*/\1/p' /proc/cmdline)
+if [ -z "$_kb" ]; then
+  _km=$(sed -n 's/.*vconsole\.keymap=\([^ ]*\).*/\1/p' /proc/cmdline)
+  case "$_km" in us*) _kb=us ;; uk*|gb*) _kb=gb ;; *) _kb=de ;; esac
+fi
+_xo=""
+case "$_kb" in
+  gr|ru|ua) _xk="us,$_kb"; _xo="grp:alt_shift_toggle" ;;
+  de|us|gb|fr|es|it|lv|hu|pl|br|cz|sk) _xk="$_kb" ;;
+  *) _xk=de ;;
+esac
 mkdir -p /etc/X11/xorg.conf.d
-printf 'Section "InputClass"\n  Identifier "system-keyboard"\n  MatchIsKeyboard "on"\n  Option "XkbLayout" "%s"\nEndSection\n' "$_xk" \
-  > /etc/X11/xorg.conf.d/00-keyboard.conf
+{
+  printf 'Section "InputClass"\n  Identifier "system-keyboard"\n  MatchIsKeyboard "on"\n  Option "XkbLayout" "%s"\n' "$_xk"
+  if [ -n "$_xo" ]; then printf '  Option "XkbOptions" "%s"\n' "$_xo"; fi
+  printf 'EndSection\n'
+} > /etc/X11/xorg.conf.d/00-keyboard.conf
 # Netzwerk nur ueber NetworkManager (auch WLAN aus der Oberflaeche)
 _d=/etc/runit/runsvdir/default
 rm -f "$_d/dhcpcd" "$_d"/dhcpcd-* "$_d/wpa_supplicant"
@@ -27,4 +41,4 @@ else
   mkdir -p /run/modprobe.d
   printf 'install %s /bin/false\n' nvidia nvidia_drm nvidia_modeset nvidia_uvm > /run/modprobe.d/voidstation-no-nvidia.conf
 fi
-unset _km _xk _d
+unset _km _kb _xk _xo _d

@@ -281,6 +281,13 @@ PROBE = {"uefi": True, "secureboot": False, "arch": "x86_64", "ram": 3.7 * GiB, 
                          "role": "os", "os": "FreeBSD", "locked": True}],
               "free": [{"start": 777534528, "sectors": 199000000, "bytes": 101888000000}],
               "options": {"whole": True, "free": [{"start": 777534528, "sectors": 199000000, "bytes": 101888000000}]}}]}
+# Sprachen, Tastaturen und Vorgaben wie im Launcher (probe: langs, kbs, kb, lang)
+_li = {}
+exec(_src[_src.index("LANG_TABLE = ["):_src.index("LANGS = [")], _li)
+exec(_src[_src.index("_GRP = ["):_src.index("# ----", _src.index("_GRP = ["))], _li)
+PROBE["langs"] = [{"id": i, "label": n, "kb": _li["INSTALL_DEFAULTS"][i][0], "tz": _li["INSTALL_DEFAULTS"][i][1]}
+                  for i, n, _, _ in _li["LANG_TABLE"]]
+PROBE["kbs"] = list(_li["KEYMAPS"])
 INST = {"state": "idle"}
 LIVE = {"on": False, "fail": False}
 
@@ -687,6 +694,8 @@ def main():
     LIVE["fail"] = a.fail
     if a.bios:
         PROBE["uefi"] = False
+    PROBE["lang"] = S.SETTINGS.get("lang") or "de"           # wie der Launcher: Sprache der Oberflaeche
+    PROBE["kb"] = _li["INSTALL_DEFAULTS"].get(PROBE["lang"], ("de",))[0]
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     env = dict(os.environ, VS_API=f"http://127.0.0.1:{PORT}", VS_SIZE=a.size, VS_DEMO="1")

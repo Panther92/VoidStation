@@ -14,25 +14,27 @@ terminal-top: "15%"
 terminal-width: "80%"
 terminal-height: "70%"
 
+# Platz fuer fuenf Eintraege auf der ersten Seite (Deutsch, English, Français, Other Languages, Reboot)
+# und die 13 Eintraege unter "Other Languages": ab 1080p alle sichtbar, bei 720p blaettert das Menue (7 Zeilen)
 + image {
     left = 50%-360
-    top = 24%
+    top = 10%
     width = 720
     height = 129
     file = "logo.png"
 }
 
 + boot_menu {
-    left = 50%-330
-    top = 50%
-    width = 660
-    height = 240
-    item_font = "VoidStation Regular 30"
-    selected_item_font = "VoidStation Regular 30"
+    left = 50%-400
+    top = 10%+170
+    width = 800
+    height = 82%-200
+    item_font = "VoidStation Regular 24"
+    selected_item_font = "VoidStation Regular 24"
     item_color = "#c9c8c4"
     selected_item_color = "#ffffff"
-    item_height = 64
-    item_spacing = 12
+    item_height = 44
+    item_spacing = 8
     item_padding = 0
     icon_width = 0
     icon_height = 0
@@ -46,7 +48,7 @@ terminal-height: "70%"
     id = "__timeout__"
     text = "Start in %d s"
     left = 0
-    top = 50%+260
+    top = 100%-48
     width = 100%
     height = 28
     align = "center"

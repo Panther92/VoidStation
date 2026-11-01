@@ -106,14 +106,16 @@ PLY="$INC/usr/share/plymouth/themes/voidstation"
 install -d "$PLY"
 install -m 644 "$SRC/art/plymouth/"* "$PLY/"
 
-# Schriften fuer das Startmenue (UEFI) – fehlen sie, nimmt GRUB seine eigene (klein, aber lesbar)
+# Schriften fuer das Startmenue (UEFI) – fehlen sie, nimmt GRUB seine eigene (klein, aber lesbar).
+# Zeichen: Latein mit Akzenten (cs, lv, hu, pl, sk …), Griechisch und Kyrillisch (el, ru, uk), Striche, Pfeile
 mkfont() {  # <ttf> <name> <groesse> <datei>
   [ -f "$1" ] || { warn "Schrift fehlt: $1"; return 0; }
-  grub-mkfont -n "$2" -s "$3" -r 0x20-0x7E,0xA0-0x17F,0x2010-0x2027,0x2190-0x2193 -o "$SRC/art/grub/$4" "$1" \
+  grub-mkfont -n "$2" -s "$3" -r 0x20-0x7E,0xA0-0x17F,0x370-0x3FF,0x400-0x4FF,0x2010-0x2027,0x2190-0x2193 -o "$SRC/art/grub/$4" "$1" \
     || warn "grub-mkfont: $4 nicht erzeugt"
 }
 NOTO=/usr/share/fonts/noto/NotoSans-Regular.ttf
 mkfont "$NOTO" VoidStation 20 vs-20.pf2
+mkfont "$NOTO" VoidStation 24 vs-24.pf2
 mkfont "$NOTO" VoidStation 30 vs-30.pf2
 mkfont /usr/share/fonts/TTF/DejaVuSansMono.ttf "VoidStation Mono" 20 vs-mono-20.pf2
 

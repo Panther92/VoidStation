@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Installer (nur im Live-System). Gleicher Ablauf wie zuvor in der Web-Oberflaeche:
-//   welcome → disk (+ beside | free | manual) → account → device (→ host) → confirm → progress → done | error
+//   welcome → disk (+ beside | free | manual) → account → device (→ host | lang) → confirm → progress → done | error
 // Die ganze Arbeit macht voidstation-installer (root, ueber den Launcher); hier nur Auswahl, Anzeige und Tastatur.
 // Kacheln sind Beschreibungen ({ kind, size, act, … }), act() fuehrt sie aus.
 import QtQuick
@@ -34,7 +34,6 @@ Layer {
     property string keymap: "de"
     property string lang: "de"
     property string tz: "Europe/Berlin"
-    property string channel: "stable"         // seit 2026.11 immer Stable (Testing nur noch per vsctl channel testing)
     property bool wifi: false
     property bool share: true
     property bool favs: false
@@ -46,15 +45,20 @@ Layer {
     property bool animate: true               // Kacheln fliegen nur beim Schrittwechsel ein
     readonly property real gib: 1073741824
     readonly property real minRoot: 16 * gib
-    readonly property var tzs: ["Europe/Berlin", "Europe/Vienna", "Europe/Zurich", "Europe/Amsterdam", "Europe/Paris", "Europe/London", "Europe/Warsaw",
-                                "America/New_York", "America/Chicago", "America/Denver", "America/Los_Angeles", "Australia/Sydney", "UTC"]
-    readonly property var stepNo: ({ disk: 1, beside: 1, free: 1, manual: 1, account: 2, host: 3, device: 3, confirm: 4, progress: 5, error: 5 })
+    property string langFocus: "lang"         // Seite Sprache & Zeitzone: worauf der Fokus beim Oeffnen steht
+    // Zeitzonen zur Auswahl: die Vorgaben aller Sprachen (probe.langs) und ein paar Nachbarn, grob von West nach Ost
+    readonly property var tzs: ["America/Los_Angeles", "America/Denver", "America/Chicago", "America/New_York", "America/Sao_Paulo",
+                                "Europe/London", "Europe/Lisbon", "Europe/Madrid", "Europe/Paris", "Europe/Brussels", "Europe/Amsterdam",
+                                "Europe/Berlin", "Europe/Zurich", "Europe/Vienna", "Europe/Rome", "Europe/Prague", "Europe/Bratislava",
+                                "Europe/Warsaw", "Europe/Budapest", "Europe/Riga", "Europe/Athens", "Europe/Kyiv", "Europe/Moscow",
+                                "Australia/Sydney", "UTC"]
+    readonly property var stepNo: ({ disk: 1, beside: 1, free: 1, manual: 1, account: 2, host: 3, lang: 3, device: 3, confirm: 4, progress: 5, error: 5 })
     // Der Installer ist dichter als die anderen Seiten: drei Reihen muessen zwischen Kopf und Hinweiszeile passen
     readonly property real iu: Math.max(70, Math.min(170 * Ui.screenH / 768, (stage.height - 46 * Ui.f - 20 * Ui.f) / 3))
 
     title: ({ welcome: Ui.t("inst.title"), probing: Ui.t("inst.title"), disk: Ui.t("inst.disk"),
               beside: opt ? Ui.t("inst.besideOs", { os: opt.os }) : "", free: disk && disk.systems.length === 1 ? Ui.t("inst.besideOs", { os: disk.systems[0] }) : Ui.t("inst.freeTitle"),
-              manual: Ui.t("inst.manual"), account: Ui.t("inst.account"), host: Ui.t("inst.device"), device: Ui.t("inst.device"),
+              manual: Ui.t("inst.manual"), account: Ui.t("inst.account"), host: Ui.t("inst.device"), lang: Ui.t("inst.langTitle"), device: Ui.t("inst.device"),
               confirm: Ui.t("inst.confirm"), progress: Ui.t("inst.installing"), error: Ui.t("inst.failed"), done: Ui.t("inst.done") })[step] || Ui.t("inst.title")
     readonly property string sub: {
         if (step === "welcome" && probe) { var bl = blockers(probe); return bl.length ? (bl.indexOf("fw") >= 0 ? Ui.t("inst.almost") : Ui.t("inst.cantHere")) : Ui.t("inst.offlineOk") }
@@ -97,7 +101,23 @@ Layer {
         return out
     }
     function tzLabel(z) { var t = vs.tzTime(z); return z.split("/").pop().replace(/_/g, " ") + (t ? " · " + t : "") }
-    function chName() { return Ui.t("channel." + (channel === "main" ? "main" : "stable")) }
+    // Sprachen (Reihenfolge der Einstellungen) mit Vorgaben fuer Tastatur und Zeitzone kommen vom Launcher (probe.langs)
+    function langList(p) { var q = p || probe; return (q && q.langs) || [{ id: "de", label: "Deutsch", kb: "de", tz: "Europe/Berlin" }, { id: "en", label: "English", kb: "us", tz: "America/New_York" }] }
+    function langDef(id, p) { var l = langList(p); for (var i = 0; i < l.length; i++) if (l[i].id === id) return l[i]; return l[0] }
+    function langName(id) { return langDef(id).label }
+    // Tastaturen: eigene der Oberflaechensprache, Deutsch, US, UK als Knoepfe, die uebrigen ueber "Weitere"
+    function kbList() { return (probe && probe.kbs) || ["de", "us", "gb"] }
+    function kbFixed() {
+        var out = []
+        ;[langDef(Ui.lang).kb, "de", "us", "gb"].forEach(function (k) { if (out.indexOf(k) < 0 && kbList().indexOf(k) >= 0) out.push(k) })
+        return out
+    }
+    function kbPills() { var f = kbFixed(); return f.indexOf(keymap) >= 0 ? f : f.concat([keymap]) }
+    function kbMore() {
+        var f = kbFixed(), rest = kbList().filter(function (k) { return f.indexOf(k) < 0 })
+        if (!rest.length) return
+        setKeymap(rest[(rest.indexOf(keymap) + 1) % rest.length])
+    }
     function blockers(p) {
         var b = []
         if (p.arch !== "x86_64" && p.arch !== "i686") b.push("arch")      // i686: 32-Bit-ISO (experimentell)
@@ -130,10 +150,10 @@ Layer {
 
     // ------------------------------------------------------------ Oeffnen, Schritte
     function fresh(p) {
-        var l = (p && p.lang) || Ui.lang
+        var l = (p && p.lang) || Ui.lang, ld = langDef(l, p)       // p: probe ist hier noch nicht gesetzt
         probe = p; disk = null; mode = ""; opt = null; newSize = 0; region = null; roles = ({}); manual = null
         name = ""; pw = ""; pw2 = ""; host = "tv"; hostEdit = ""; field = 0; shift = false; sym = false
-        keymap = l === "en" ? "us" : "de"; lang = l; tz = l === "en" ? "America/New_York" : "Europe/Berlin"; channel = "stable"
+        keymap = (p && p.kb) || ld.kb; lang = ld.id; tz = ld.tz; langFocus = "lang"
         wifi = !!(p && (p.wifi_saved || []).length); share = true; favs = !!(p && p.favs && (p.favs.radio + p.favs.tv)); rtc = false; rtcSet = false
         status = null; t0 = 0
     }
@@ -174,6 +194,7 @@ Layer {
         if (step === "disk" && disk) k = "disk" + disk.path
         if (step === "error" && status && status.error && status.error.alt) k = "alt"
         if (step === "account" || step === "host") k = "f" + fields()[field].id
+        if (step === "lang") k = langFocus === "tz" ? "tz" + tz : "lang" + lang
         app.setFocus(findKey(k) || items()[0] || null, true)
     }
     function firstFocus() { return null }       // setzt focusDefault, sobald der Schritt aufgebaut ist
@@ -189,7 +210,7 @@ Layer {
         if (s === "progress") { app.toast(Ui.t("inst.busy")); return true }
         if (s === "done") { app.toast(Ui.t("inst.pleaseReboot")); return true }
         if (s === "welcome" || s === "error" || s === "probing") { close(); return true }
-        if (s === "host") { go("device"); return true }
+        if (s === "host" || s === "lang") { go("device"); return true }
         go(({ disk: "welcome", beside: "disk", free: "disk", manual: "disk", account: mode === "whole" ? "disk" : mode, device: "account", confirm: "device" })[s] || "welcome")
         return true
     }
@@ -197,7 +218,7 @@ Layer {
         var T = Ui.t, b = T("hint.back")
         return ({ welcome: [T("hint.instSelect"), T("hint.instBackLive")], disk: [T("hint.instSelect"), b], beside: [T("hint.instSize"), T("hint.instContinue"), b],
                   free: [T("hint.instContinue"), b], manual: [T("hint.instRole"), b], account: [T("hint.instType"), T("hint.instDel"), T("hint.instFields"), b],
-                  host: [T("hint.instType"), T("hint.instDel"), b], device: [T("hint.instChange"), T("hint.instNext"), b], confirm: [T("hint.instHold"), b],
+                  host: [T("hint.instType"), T("hint.instDel"), b], lang: [T("hint.instSelect"), b], device: [T("hint.instChange"), T("hint.instNext"), b], confirm: [T("hint.instHold"), b],
                   progress: [T("hint.instWait"), T("hint.instVol")], error: [T("hint.instSelect"), T("hint.instBackLive")], done: [T("hint.instReboot")] })[step]
                || [T("hint.instSelect"), b]
     }
@@ -250,6 +271,9 @@ Layer {
         case "rescan": return runProbe(true, function () { go("manual") })
         case "next": return go(d.to)
         case "host": hostEdit = host; field = 0; return go("host")
+        case "region": langFocus = d.focus; return go("lang")
+        case "setlang": return rerender(function () { if (tz === langDef(lang).tz) tz = langDef(d.id).tz; lang = d.id })
+        case "settz": return rerender(function () { tz = d.id })
         case "toggle": return rerender(function () { toggle(d.key) })
         case "hold": return holdStart()
         case "change": return handleBack()
@@ -334,8 +358,8 @@ Layer {
             { kind: "set", size: "wide", color: "#23272c", k: T("inst.hostname"), v: host, desc: T("inst.hostSub", { host: host }), key: "host", act: "host" },
             ws.length ? st(T("inst.wifiTake"), wifi ? ws[0] : T("common.off"), wifi ? T("inst.wifiSub") : T("inst.wifiOffSub"), "wifi") : null,
             st(T("inst.share"), T(share ? "common.on" : "common.off"), T("inst.shareSub"), "share"),
-            st(T("inst.language"), lang === "en" ? "English" : "Deutsch", T("inst.langSub"), "lang"),
-            st(T("inst.timezone"), tzLabel(tz), T("inst.tzSub"), "tz"),
+            { kind: "set", size: "wide", color: "#23272c", k: T("inst.language"), v: langName(lang), desc: T("inst.langSub"), key: "lang", act: "region", focus: "lang" },
+            { kind: "set", size: "wide", color: "#23272c", k: T("inst.timezone"), v: tzLabel(tz), desc: T("inst.tzSub"), key: "tz", act: "region", focus: "tz" },
             favN ? st(T("inst.favs"), favs ? T("inst.favCount", { n: favN }) : T("common.off"), T("inst.favSub"), "favs") : null,
             p.windows ? st(T("inst.rtc"), T(rtc ? "inst.rtcLocal" : "inst.rtcUtc"), T(rtc ? "inst.rtcSub" : "inst.rtcUtcSub"), "rtc") : null,
             p.screen ? st(T("inst.screen"), p.screen.mode.replace("x", "\u00d7"), T("inst.screenSub"), "screen", false) : null,
@@ -343,11 +367,25 @@ Layer {
         ]
         return out.filter(function (x) { return !!x })
     }
+    function langTiles() {
+        return langList().map(function (l) {
+            var on = l.id === lang
+            return { kind: "tile", color: on ? "#2d4a6b" : "#2f3238", icon: on ? "check" : "", label: l.label, key: "lang" + l.id, act: "setlang", id: l.id }
+        })
+    }
+    function tzTiles() {
+        var list = tzs.slice()
+        langList().forEach(function (l) { if (list.indexOf(l.tz) < 0) list.push(l.tz) })
+        if (list.indexOf(tz) < 0) list.push(tz)
+        return list.map(function (z) {
+            var on = z === tz, t = vs.tzTime(z)
+            return { kind: "tile", color: on ? "#2d4a6b" : "#2f3238", icon: on ? "check" : "", label: z.split("/").pop().replace(/_/g, " "),
+                     sub: t || "", key: "tz" + z, act: "settz", id: z }
+        })
+    }
     function toggle(k) {
         if (k === "wifi") wifi = !wifi
         else if (k === "share") share = !share
-        else if (k === "lang") lang = lang === "en" ? "de" : "en"
-        else if (k === "tz") tz = tzs[(tzs.indexOf(tz) + 1) % tzs.length]
         else if (k === "favs") favs = !favs
         else if (k === "rtc") rtc = !rtc
     }
@@ -363,9 +401,9 @@ Layer {
         return [
             { k: T("inst.sumDisk"), html: "<b>" + Ui.esc(diskName(d)) + " · " + Ui.esc(gb(d.size)) + "</b><br>" + Ui.esc(eff) },
             { k: T("inst.sumAccount"), html: "<b>" + Ui.esc(name) + "</b> · " + Ui.esc(T("inst.sumLogin", { login: loginOf(name) })) },
-            { k: T("inst.sumDevice"), html: "<b>" + Ui.esc(host) + "</b> · " + (lang === "en" ? "English" : "Deutsch") + " · " + Ui.esc(tzLabel(tz).split(" · ")[0])
+            { k: T("inst.sumDevice"), html: "<b>" + Ui.esc(host) + "</b> · " + Ui.esc(langName(lang)) + " · " + Ui.esc(tzLabel(tz).split(" · ")[0])
                                            + (probe.screen ? " · " + probe.screen.mode.replace("x", "\u00d7") : "") },
-            { k: T("inst.sumUpdates"), v: T("inst.sumChannel", { channel: chName() }) },
+            { k: T("inst.sumUpdates"), v: T("inst.sumChannel") },
             { k: T("inst.sumExtras"), v: extras.join(", ") || T("inst.sumNone") },
             probe.bitlocker && mode !== "whole" ? { k: "BitLocker", v: T("inst.bitlocker") } : null
         ]
@@ -481,7 +519,7 @@ Layer {
     }
     function config() {
         var c = { mode: mode, disk: disk.path, user: { name: name, login: loginOf(name), password: pw }, hostname: host,
-                  lang: lang, keymap: keymap, timezone: tz, channel: channel, wifi: wifi && !!(probe.wifi_saved || []).length,
+                  lang: lang, keymap: keymap, timezone: tz, wifi: wifi && !!(probe.wifi_saved || []).length,
                   share: share, favorites: favs, rtc_local: rtc && !!probe.windows }
         if (mode === "beside") { c.part = opt.part; c.new_size = newSize }
         if (mode === "free") c.region = { start: region.start, sectors: region.sectors }
@@ -576,7 +614,7 @@ Layer {
         Loader {
             id: stepLoader
             sourceComponent: ({ probing: cProbing, welcome: cWelcome, disk: cDisk, beside: cBeside, free: cFree, manual: cManual, account: cOsk, host: cOsk,
-                                device: cDevice, confirm: cConfirm, progress: cProgress, error: cError, done: cDone })[il.probe || il.step === "probing" || il.status ? il.step : "probing"] || null
+                                lang: cLang, device: cDevice, confirm: cConfirm, progress: cProgress, error: cError, done: cDone })[il.probe || il.step === "probing" || il.status ? il.step : "probing"] || null
         }
     }
     Component {
@@ -899,9 +937,10 @@ Layer {
                     Row {
                         spacing: 8 * Ui.f
                         Repeater {
-                            model: ["de", "us", "gb"]
-                            Pill { property string key: "km" + modelData; text: Ui.t("inst.kb." + modelData); on: il.keymap === modelData; onTriggered: il.setKeymap(modelData) }
+                            model: { il.keymap; il.probe; return il.kbPills() }
+                            Pill { property string key: "km" + modelData; text: Ui.t("inst.kb." + modelData, null, modelData); on: il.keymap === modelData; onTriggered: il.setKeymap(modelData) }
                         }
+                        Pill { property string key: "kmMore"; visible: il.kbList().length > il.kbFixed().length; text: Ui.t("inst.kbMore"); onTriggered: il.kbMore() }
                     }
                     Column {
                         id: kbd
@@ -992,12 +1031,32 @@ Layer {
         }
     }
     Component {
+        id: cLang
+        Steps {
+            Group {
+                title: Ui.t("inst.language")
+                TileGrid { items: { il.lang; return il.langTiles() } rows: 3; cellW: il.iu; cellH: il.iu; delegate: tileDelegate }
+            }
+            Group {
+                title: Ui.t("inst.timezone")
+                TileGrid { items: { il.tz; return il.tzTiles() } rows: 3; cellW: il.iu; cellH: il.iu; delegate: tileDelegate }
+            }
+            Group {
+                title: " "
+                TileGrid {
+                    rows: 3; cellW: il.iu; cellH: il.iu; delegate: tileDelegate
+                    items: [{ kind: "tile", size: "wide", color: "#2f6d4f", icon: "install", label: Ui.t("inst.continue"), key: "next", act: "next", to: "device" }]
+                }
+            }
+        }
+    }
+    Component {
         id: cDevice
         Steps {
             Group {
                 title: Ui.t("inst.device")
                 TileGrid {
-                    items: { il.host; il.channel; il.wifi; il.share; il.lang; il.tz; il.favs; il.rtc; return il.deviceTiles() }
+                    items: { il.host; il.wifi; il.share; il.lang; il.tz; il.favs; il.rtc; return il.deviceTiles() }
                     rows: 3; cellW: il.iu; cellH: il.iu; delegate: tileDelegate
                 }
             }
@@ -1148,7 +1207,7 @@ Layer {
                     u: il.iu; wide: true
                     rows: [{ k: Ui.t("inst.loginAuto"), v: Ui.t("inst.loginAutoText", { name: r.user || il.name }) },
                            il.share ? { k: Ui.t("inst.whatShare"), v: Ui.t("inst.shareText", { host: r.hostname || il.host, login: r.login || il.loginOf(il.name) }) } : null,
-                           { k: Ui.t("inst.sumUpdates"), v: Ui.t("inst.updText", { channel: il.chName() }) },
+                           { k: Ui.t("inst.sumUpdates"), v: Ui.t("inst.updText") },
                            secs ? { k: Ui.t("inst.duration"), v: Ui.t("inst.durationText", { min: Math.floor(secs / 60), sec: secs % 60 }) } : null,
                            { k: Ui.t("inst.tip"), v: Ui.t("inst.tipText") }]
                 }

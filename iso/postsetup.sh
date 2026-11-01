@@ -35,14 +35,27 @@ python3 - "$TV/tiles.json" <<'PYEOF'
 import json, sys
 p = sys.argv[1]
 d = json.load(open(p, encoding="utf-8"))
-d["user"] = {"de": "Gast", "en": "Guest"}
+# Texte in allen Sprachen der Oberflaeche (LANG_TABLE in launcher.py); fehlt eine, gilt Englisch
+d["user"] = {"de": "Gast", "en": "Guest", "cs": "Host", "es": "Invitado", "fr": "Invité", "it": "Ospite", "lv": "Viesis",
+             "hu": "Vendég", "nl": "Gast", "pl": "Gość", "pt-BR": "Convidado", "sk": "Hosť", "el": "Επισκέπτης",
+             "ru": "Гость", "uk": "Гість"}
 for g in d.get("groups", []):
     g["tiles"] = [t for t in g.get("tiles", []) if t.get("id") != "gba"]      # mGBA gibt es erst nach der Installation
 d["groups"] = [g for g in d["groups"] if g.get("tiles")]
-d["groups"].insert(0, {"name": {"de": "Installieren", "en": "Install"}, "tiles": [{
+d["groups"].insert(0, {"name": {
+    "de": "Installieren", "en": "Install", "cs": "Instalace", "es": "Instalar", "fr": "Installer", "it": "Installa",
+    "lv": "Instalēt", "hu": "Telepítés", "nl": "Installeren", "pl": "Instalacja", "pt-BR": "Instalar", "sk": "Inštalácia",
+    "el": "Εγκατάσταση", "ru": "Установка", "uk": "Встановлення"}, "tiles": [{
     "id": "install", "type": "install", "size": "large", "color": "#2f6d4f", "icon": "install",
-    "label": {"de": "VoidStation installieren", "en": "Install VoidStation"},
-    "sub": {"de": "auf diesen PC", "en": "on this PC"}}]})
+    "label": {"de": "VoidStation installieren", "en": "Install VoidStation", "cs": "Nainstalovat VoidStation",
+              "es": "Instalar VoidStation", "fr": "Installer VoidStation", "it": "Installa VoidStation",
+              "lv": "Instalēt VoidStation", "hu": "VoidStation telepítése", "nl": "VoidStation installeren",
+              "pl": "Zainstaluj VoidStation", "pt-BR": "Instalar o VoidStation", "sk": "Nainštalovať VoidStation",
+              "el": "Εγκατάσταση VoidStation", "ru": "Установить VoidStation", "uk": "Встановити VoidStation"},
+    "sub": {"de": "auf diesen PC", "en": "on this PC", "cs": "na tento počítač", "es": "en este PC", "fr": "sur ce PC",
+            "it": "su questo PC", "lv": "šajā datorā", "hu": "erre a gépre", "nl": "op deze pc", "pl": "na tym komputerze",
+            "pt-BR": "neste PC", "sk": "na tento počítač", "el": "σε αυτόν τον υπολογιστή", "ru": "на этот компьютер",
+            "uk": "на цей комп’ютер"}}]})
 json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PYEOF
 for f in radio.json tvfavs.json; do

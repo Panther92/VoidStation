@@ -248,7 +248,7 @@ class Vs(VsBase):
             t = datetime.now(ZoneInfo(tz))
         except Exception:  # noqa: BLE001
             return ""
-        if self._lang == "de":
+        if str(self._strings.get("fmt.clock", "24")) != "12":     # 24 h ausser in Sprachen mit fmt.clock 12 (en)
             return t.strftime("%H:%M")
         return t.strftime("%I:%M %p").lstrip("0")
 

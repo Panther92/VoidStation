@@ -8,26 +8,31 @@ VoidStation Live-ISO: eigenes Startmenue mit Logo, LIESMICH/README beilegen.
 void-mklive baut zwei Startmenues: GRUB fuer UEFI (boot/grub/grub_void.cfg) und isolinux fuer BIOS
 (boot/isolinux/isolinux.cfg). Beide werden komplett ersetzt – oben steht die Sprache, darunter je zwei Starteintraege:
 
-  1. Seite   Deutsch / English / Reboot
-  2. Seite   VoidStation Live starten                freie Treiber (Intel, AMD, nouveau fuer NVIDIA)
+  1. Seite   Deutsch / English / Français / Other Languages / Reboot
+  2. Seite   (nur ueber "Other Languages") die uebrigen Sprachen in der Reihenfolge der Einstellungen
+             (Čeština, Español, Italiano … Українська) + Back
+  3. Seite   VoidStation Live starten                freie Treiber (Intel, AMD, nouveau fuer NVIDIA)
              VoidStation Live starten (nur NVIDIA)   NVIDIA-Treiber statt nouveau (GTX 16xx / RTX 20xx und neuer)
-             Zurueck
-             bzw. Start VoidStation Live / Start VoidStation Live (NVIDIA only) / Back
+             Zurueck                                 – jeweils in der gewaehlten Sprache
 
-Die Sprache stellt Oberflaeche, Installer und Tastatur ein (voidstation.lang, locale.LANG, vconsole.keymap).
-Ohne Tastendruck startet nach TIMEOUT Sekunden "Deutsch › VoidStation Live starten".
-Mit VOIDSTATION_ARCH=i686 (32-Bit-ISO) gibt es je Sprache nur den einen Starteintrag (mit forcepae).
+Die Sprache stellt Oberflaeche, Installer und Tastatur ein (voidstation.lang, locale.LANG, voidstation.kb fuer
+die Tastatur der Oberflaeche, vconsole.keymap fuer die Konsole). Ohne Tastendruck startet nach TIMEOUT Sekunden
+"Deutsch › VoidStation Live starten". Mit VOIDSTATION_ARCH=i686 (32-Bit-ISO) gibt es je Sprache nur den einen
+Starteintrag (mit forcepae).
 
 Kernel, Initramfs und die Grund-Befehlszeile kommen aus dem ersten mklive-Eintrag. Das UEFI-Menue
-bekommt das Theme aus <art-ordner>/grub (Hintergrund, Logo, Kacheln, Schriften), das BIOS-Menue
-den Hintergrund <art-ordner>/isolinux/splash.png (640x480). Schreibt eine neue ISO, die
-Startbereiche (BIOS/UEFI) werden unveraendert uebernommen (xorriso -boot_image any replay).
+bekommt das Theme aus <art-ordner>/grub (Hintergrund, Logo, Kacheln, Schriften mit Griechisch und Kyrillisch),
+das BIOS-Menue den Hintergrund <art-ordner>/isolinux/splash.png (640x480). Die BIOS-Schrift kennt nur
+Codepage 437: Akzente fallen dort weg (Čeština -> Cestina), griechische und kyrillische Texte stehen
+in Umschrift bzw. auf Englisch. Schreibt eine neue ISO, die Startbereiche (BIOS/UEFI) werden unveraendert
+uebernommen (xorriso -boot_image any replay).
 """
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import unicodedata
 from pathlib import Path
 
 ISOLINUX = "/boot/isolinux/isolinux.cfg"
@@ -44,11 +49,53 @@ NVIDIA = "splash voidstation.gpu=nvidia modprobe.blacklist=nouveau,nova_core,nov
 # so gibt es auch ohne UEFI ein Startbild statt Textmeldungen. 791 (0x317) ist seit VBE 1.2 genormt; fehlt
 # der Modus trotzdem, fragt der Kernel 30 s nach und startet dann im Textmodus weiter.
 BIOS_EXTRA = "vga=791"
-LANGS = [  # (id, Menuepunkt, Zusatz-Parameter der Sprache, Zurueck, [(id, Titel, Treiber-Parameter)])
-    ("de", "Deutsch", "voidstation.lang=de locale.LANG=de_DE.UTF-8 vconsole.keymap=de", "Zur\u00fcck",
-     [("live", "VoidStation Live starten", FREE), ("nvidia", "VoidStation Live starten (nur NVIDIA)", NVIDIA)]),
-    ("en", "English", "voidstation.lang=en locale.LANG=en_US.UTF-8 vconsole.keymap=us", "Back",
-     [("live", "Start VoidStation Live", FREE), ("nvidia", "Start VoidStation Live (NVIDIA only)", NVIDIA)]),
+# Sprachen in der Reihenfolge der Einstellungen (LANG_TABLE in launcher/launcher.py). Je Sprache:
+#   id, Name (wie in den Einstellungen), Locale, Tastatur der Oberflaeche (voidstation.kb, siehe
+#   99-voidstation-live.sh und KEYMAPS im Installer), Konsolen-Tastatur (vconsole.keymap, kbd-Name),
+#   Umschrift fuers BIOS-Menue (nur wenn der Name nicht in Codepage 437 geht), Zurueck, Start, Start nur NVIDIA.
+# Griechisch/Russisch/Ukrainisch: Oberflaeche mit US-Tastatur + Landesbelegung (Alt+Umschalt wechselt),
+# Konsole bleibt US (Anmeldename und Befehle sind lateinisch). Niederlaendisch: US-Tastatur wie dort ueblich.
+LANGUAGES = [
+    ("de", "Deutsch", "de_DE", "de", "de", None, "Zurück",
+     "VoidStation Live starten", "VoidStation Live starten (nur NVIDIA)"),
+    ("en", "English", "en_US", "us", "us", None, "Back",
+     "Start VoidStation Live", "Start VoidStation Live (NVIDIA only)"),
+    ("cs", "Čeština", "cs_CZ", "cz", "cz-qwertz", None, "Zpět",
+     "Spustit VoidStation Live", "Spustit VoidStation Live (pouze NVIDIA)"),
+    ("es", "Español", "es_ES", "es", "es", None, "Atrás",
+     "Iniciar VoidStation Live", "Iniciar VoidStation Live (solo NVIDIA)"),
+    ("fr", "Français", "fr_FR", "fr", "fr", None, "Retour",
+     "Démarrer VoidStation Live", "Démarrer VoidStation Live (NVIDIA uniquement)"),
+    ("it", "Italiano", "it_IT", "it", "it", None, "Indietro",
+     "Avvia VoidStation Live", "Avvia VoidStation Live (solo NVIDIA)"),
+    ("lv", "Latviešu", "lv_LV", "lv", "lv", None, "Atpakaļ",
+     "Palaist VoidStation Live", "Palaist VoidStation Live (tikai NVIDIA)"),
+    ("hu", "Magyar", "hu_HU", "hu", "hu", None, "Vissza",
+     "VoidStation Live indítása", "VoidStation Live indítása (csak NVIDIA)"),
+    ("nl", "Nederlands", "nl_NL", "us", "us", None, "Terug",
+     "VoidStation Live starten", "VoidStation Live starten (alleen NVIDIA)"),
+    ("pl", "Polski", "pl_PL", "pl", "pl", None, "Wstecz",
+     "Uruchom VoidStation Live", "Uruchom VoidStation Live (tylko NVIDIA)"),
+    ("pt-BR", "Português (Brasil)", "pt_BR", "br", "br-abnt2", None, "Voltar",
+     "Iniciar o VoidStation Live", "Iniciar o VoidStation Live (somente NVIDIA)"),
+    ("sk", "Slovenčina", "sk_SK", "sk", "sk-qwertz", None, "Späť",
+     "Spustiť VoidStation Live", "Spustiť VoidStation Live (iba NVIDIA)"),
+    ("el", "Ελληνικά", "el_GR", "gr", "us", "Ellinika (Greek)", "Πίσω",
+     "Εκκίνηση VoidStation Live",
+     "Εκκίνηση VoidStation Live (μόνο NVIDIA)"),
+    ("ru", "Русский", "ru_RU", "ru", "us", "Russkiy (Russian)", "Назад",
+     "Запустить VoidStation Live",
+     "Запустить VoidStation Live (только NVIDIA)"),
+    ("uk", "Українська", "uk_UA", "ua", "us", "Ukrainska (Ukrainian)", "Назад",
+     "Запустити VoidStation Live",
+     "Запустити VoidStation Live (лише NVIDIA)"),
+]
+TOP = ("de", "en", "fr")                                    # 1. Seite, der Rest unter "Other Languages"
+OTHER = ("vs-other", "Other Languages", "Back")
+LANGS = [  # (id, Menuepunkt, Zusatz-Parameter der Sprache, Zurueck, [(id, Titel, Treiber-Parameter)], BIOS-Umschrift)
+    (lid, name, f"voidstation.lang={lid} locale.LANG={loc}.UTF-8 voidstation.kb={kb} vconsole.keymap={con}", back,
+     [("live", start, FREE), ("nvidia", start_nv, NVIDIA)], bios)
+    for lid, name, loc, kb, con, bios, back, start, start_nv in LANGUAGES
 ]
 # 32-Bit-ISO (experimentell, VOIDSTATION_ARCH=i686 aus build-iso.sh): kein NVIDIA-Treiber und kein Startbild,
 # also nur ein Starteintrag je Sprache. forcepae: Pentium M (Banias, fruehe Dothan) koennen PAE, melden es aber
@@ -56,11 +103,11 @@ LANGS = [  # (id, Menuepunkt, Zusatz-Parameter der Sprache, Zurueck, [(id, Titel
 ARCH = os.environ.get("VOIDSTATION_ARCH", "x86_64")
 if ARCH == "i686":
     I686 = "forcepae"
-    LANGS = [(lid, lname, lextra, back, [(entries[0][0], entries[0][1], I686)])
-             for lid, lname, lextra, back, entries in LANGS]
+    LANGS = [(lid, lname, lextra, back, [(entries[0][0], entries[0][1], I686)], bios)
+             for lid, lname, lextra, back, entries, bios in LANGS]
 REBOOT = ("vs-reboot", "Reboot")
 DEFAULT = ("de", "live")                                    # Start nach Ablauf des Countdowns
-FONTS = ("vs-20.pf2", "vs-30.pf2", "vs-mono-20.pf2")        # build-iso.sh erzeugt sie mit grub-mkfont
+FONTS = ("vs-20.pf2", "vs-24.pf2", "vs-30.pf2", "vs-mono-20.pf2")        # build-iso.sh erzeugt sie mit grub-mkfont
 
 
 def xorriso(*args):
@@ -164,28 +211,43 @@ if loadfont "(${{voidlive}})/boot/grub/fonts/unicode.pf2" ; then
     fi
 fi
 
-# 1. Seite: Sprache. Countdown nur beim ersten Anzeigen – "Zurueck" laedt diese Datei neu (vs_back=1),
-# dann wartet das Menue, bis jemand waehlt. Ohne Tastendruck: Deutsch › VoidStation Live starten
+# 1. Seite: Sprache. Countdown nur beim ersten Anzeigen – "Zurueck" laedt diese Datei neu (vs_back = Eintrag,
+# von dem man kam), dann wartet das Menue, bis jemand waehlt. Ohne Tastendruck: Deutsch › VoidStation Live starten
 set default="vs-{DEFAULT[0]}>vs-{DEFAULT[0]}-{DEFAULT[1]}"
-if [ "${{vs_back}}" = "1" ]; then
-    set default="vs-{DEFAULT[0]}"
+if [ -n "${{vs_back}}" ]; then
+    set default="${{vs_back}}"
     set timeout=-1
 else
     set timeout={TIMEOUT}
 fi
 set timeout_style=menu
 """]
-    for lid, lname, lextra, back, entries in LANGS:
-        sub = [f'submenu "{lname}" --id "vs-{lid}" {{']
+    def back_entry(eid, title, to, ind):
+        # Zurueck zur 1. Seite, dort steht der Eintrag "to" vorne (Esc geht auch, eine Ebene hoch)
+        return (f'{ind}menuentry "{title}" --id "{eid}" {{\n'
+                f'{ind}    set vs_back="{to}"\n{ind}    export vs_back\n'
+                f'{ind}    configfile "(${{voidlive}}){cfg_path}"\n{ind}}}')
+
+    def lang_menu(lang, ind, back_to):
+        lid, lname, lextra, back, entries = lang[:5]
+        sub = [f'{ind}submenu "{lname}" --id "vs-{lid}" {{']
         for eid, title, extra in entries:
-            sub.append(f'    menuentry "{title}" --id "vs-{lid}-{eid}" {{\n'
-                       f'        set gfxpayload="keep"\n'
-                       f'        linux {kernel} {merge_args(base, extra + " " + lextra)}\n'
-                       f'        initrd {initrd}\n    }}')
-        # 2. Seite: Zurueck zur Sprachwahl (Esc geht auch)
-        sub.append(f'    menuentry "{back}" --id "vs-{lid}-back" {{\n'
-                   f'        set vs_back="1"\n        export vs_back\n'
-                   f'        configfile "(${{voidlive}}){cfg_path}"\n    }}')
+            sub.append(f'{ind}    menuentry "{title}" --id "vs-{lid}-{eid}" {{\n'
+                       f'{ind}        set gfxpayload="keep"\n'
+                       f'{ind}        linux {kernel} {merge_args(base, extra + " " + lextra)}\n'
+                       f'{ind}        initrd {initrd}\n{ind}    }}')
+        sub.append(back_entry(f"vs-{lid}-back", back, back_to, ind + "    "))
+        sub.append(f"{ind}}}")
+        return "\n".join(sub)
+
+    for lang in LANGS:
+        if lang[0] in TOP:
+            out.append(lang_menu(lang, "", f"vs-{lang[0]}") + "\n")
+    others = [lang for lang in LANGS if lang[0] not in TOP]
+    if others:
+        sub = [f'submenu "{OTHER[1]}" --id "{OTHER[0]}" {{']
+        sub += [lang_menu(lang, "    ", OTHER[0]) for lang in others]
+        sub.append(back_entry(f"{OTHER[0]}-back", OTHER[2], OTHER[0], "    "))
         sub.append("}\n")
         out.append("\n".join(sub))
     out.append(f'menuentry "{REBOOT[1]}" --id "{REBOOT[0]}" {{\n    reboot\n}}\n')
@@ -205,10 +267,23 @@ def isolinux_boot_lines(cfg):
     sys.exit("isolinux: Eintrag mit vmlinuz nicht gefunden")
 
 
+def bios_text(text, fallback):
+    """Text fuer das BIOS-Menue (Codepage 437): unveraendert, wenn er dort geht, sonst ohne Akzente
+    (Čeština -> Cestina, Atpakaļ -> Atpakal), sonst der Ersatztext (Umschrift bzw. Englisch)."""
+    for cand in (text, "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))):
+        try:
+            cand.encode("cp437")
+            return cand
+        except UnicodeEncodeError:
+            pass
+    return fallback or text
+
+
 def build_isolinux(cfg):
     kernel, base = isolinux_boot_lines(cfg)
     # 640x480, Schrift 8x16 -> 80 Spalten, 30 Zeilen; das Logo steht im Hintergrundbild (Zeilen 6–10).
-    # Alle *ROW-Angaben verschieben sich um VSHIFT: Eintraege Zeile 18–20, Countdown Zeile 23
+    # Alle *ROW-Angaben verschieben sich um VSHIFT: Eintraege ab Zeile 13 (13 Zeilen: alle "Other Languages"
+    # ohne Blaettern), Countdown Zeile 27
     out = [f"""# VoidStation Live – Startmenue (BIOS), erzeugt von grub-entries.py
 UI vesamenu.c32
 PROMPT 0
@@ -218,14 +293,14 @@ MENU BACKGROUND {SPLASH}
 MENU TABMSG
 MENU AUTOBOOT Start in # s
 MENU WIDTH 80
-MENU MARGIN 17
-MENU ROWS 3
-MENU VSHIFT 15
-MENU TIMEOUTROW 8
-MENU CMDLINEROW 10
-MENU HELPMSGROW 11
-MENU HELPMSGENDROW 13
-MENU TABMSGROW 14
+MENU MARGIN 15
+MENU ROWS 13
+MENU VSHIFT 10
+MENU TIMEOUTROW 17
+MENU CMDLINEROW 18
+MENU HELPMSGROW 19
+MENU HELPMSGENDROW 19
+MENU TABMSGROW 19
 
 MENU COLOR screen      0 #00000000 #00000000 none
 MENU COLOR border      0 #00000000 #00000000 none
@@ -244,14 +319,29 @@ MENU COLOR help        0 #ff8a8f94 #00000000 none
 """]
     # Kein DEFAULT: stuende er im Untermenue, oeffnete isolinux gleich dort statt auf der Sprachseite.
     # ONTIMEOUT startet trotzdem Deutsch › VoidStation Live (Labels gelten im ganzen Menue).
-    # Untermenues erben Farben und Hintergrund; je zwei Eintraege + Zurueck = drei Zeilen wie oben.
-    # Die Datei wird in Codepage 437 geschrieben (Schrift des BIOS), so klappt auch das ü in "Zurück".
-    for lid, lname, lextra, back, entries in LANGS:
-        out.append(f"MENU BEGIN vs-{lid}\n  MENU LABEL {lname}\n  MENU TITLE\n")
+    # Untermenues erben Farben und Hintergrund. Die Datei wird in Codepage 437 geschrieben (Schrift des BIOS):
+    # Akzente, die es dort nicht gibt, fallen weg (bios_text), Griechisch/Kyrillisch steht als Umschrift bzw. Englisch.
+    en = next(lang for lang in LANGS if lang[0] == "en")
+
+    def lang_menu(lang, ind):
+        lid, lname, lextra, back, entries, translit = lang
+        eng = {eid: title for eid, title, _ in en[4]}
+        out = [f"{ind}MENU BEGIN vs-{lid}\n{ind}  MENU LABEL {bios_text(lname, translit)}\n{ind}  MENU TITLE\n"]
         for eid, title, extra in entries:
-            out.append(f"  LABEL vs-{lid}-{eid}\n    MENU LABEL {title}\n    KERNEL {kernel}\n"
-                       f"    APPEND {merge_args(base, extra + ' ' + lextra + ' ' + BIOS_EXTRA)}\n")
-        out.append(f"  LABEL vs-{lid}-back\n    MENU LABEL {back}\n    MENU EXIT\nMENU END\n")
+            out.append(f"{ind}  LABEL vs-{lid}-{eid}\n{ind}    MENU LABEL {bios_text(title, eng.get(eid, title))}\n"
+                       f"{ind}    KERNEL {kernel}\n"
+                       f"{ind}    APPEND {merge_args(base, extra + ' ' + lextra + ' ' + BIOS_EXTRA)}\n")
+        out.append(f"{ind}  LABEL vs-{lid}-back\n{ind}    MENU LABEL {bios_text(back, en[3])}\n{ind}    MENU EXIT\n{ind}MENU END\n")
+        return "\n".join(out)
+
+    for lang in LANGS:
+        if lang[0] in TOP:
+            out.append(lang_menu(lang, ""))
+    others = [lang for lang in LANGS if lang[0] not in TOP]
+    if others:
+        out.append(f"MENU BEGIN {OTHER[0]}\n  MENU LABEL {OTHER[1]}\n  MENU TITLE\n")
+        out += [lang_menu(lang, "  ") for lang in others]
+        out.append(f"  LABEL {OTHER[0]}-back\n    MENU LABEL {OTHER[2]}\n    MENU EXIT\nMENU END\n")
     out.append(f"LABEL {REBOOT[0]}\n  MENU LABEL {REBOOT[1]}\n  COM32 reboot.c32\n")
     return "\n".join(out)
 
@@ -293,7 +383,8 @@ def main(src, dst, liesmich, readme, art):
 
         xorriso("-indev", src, "-outdev", dst, "-boot_image", "any", "replay",
                 *maps, "-map", liesmich, "/LIESMICH.txt", "-map", readme, "/README.txt", "-commit")
-    print("Startmenue angepasst: " + ", ".join(done) + " – " + " / ".join(l[1] for l in LANGS) + " / " + REBOOT[1])
+    top = [l[1] for l in LANGS if l[0] in TOP] + [OTHER[1] + " (" + ", ".join(l[0] for l in LANGS if l[0] not in TOP) + ")"]
+    print("Startmenue angepasst: " + ", ".join(done) + " – " + " / ".join(top) + " / " + REBOOT[1])
 
 
 if __name__ == "__main__":

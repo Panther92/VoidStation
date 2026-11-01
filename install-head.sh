@@ -98,15 +98,17 @@ if grep -q GenuineIntel /proc/cpuinfo 2>/dev/null && ! xbps-query intel-ucode >/
   fi
 fi
 
-# Sprachen der Oberflaeche: deutsches und englisches Locale erzeugen (Dateimanager & Co. folgen der UI-Sprache)
+# Sprachen der Oberflaeche: Locales aller Sprachen erzeugen (Dateimanager & Co. folgen der UI-Sprache).
+# Die Live-ISO entsteht mit diesem Skript – so kennt der Stick jede Sprache aus dem Startmenue
+# (locale.LANG) und der Installer kann jede davon fuer das neue System einstellen (LANG_TABLE in launcher.py).
 if [ -f /etc/default/libc-locales ]; then
   LCH=0
-  for l in de_DE en_US; do
+  for l in de_DE en_US cs_CZ es_ES fr_FR it_IT lv_LV hu_HU nl_NL pl_PL pt_BR sk_SK el_GR ru_RU uk_UA; do
     if ! grep -q "^$l.UTF-8 UTF-8" /etc/default/libc-locales && grep -q "^#[[:space:]]*$l.UTF-8 UTF-8" /etc/default/libc-locales; then
       sed -i "s/^#[[:space:]]*\($l.UTF-8 UTF-8\)/\1/" /etc/default/libc-locales; LCH=1
     fi
   done
-  if [ "$LCH" = 1 ]; then xbps-reconfigure -f glibc-locales >/dev/null 2>&1 && echo "Locales de_DE und en_US erzeugt" || warn "Locales konnten nicht erzeugt werden"; fi
+  if [ "$LCH" = 1 ]; then xbps-reconfigure -f glibc-locales >/dev/null 2>&1 && echo "Locales fuer alle Sprachen erzeugt" || warn "Locales konnten nicht erzeugt werden"; fi
 fi
 
 # ---------------------------------------------------------------------

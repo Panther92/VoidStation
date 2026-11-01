@@ -8,12 +8,17 @@ Booting
   works too, but then VoidStation can only be installed on a whole SSD.
 
 Boot menu
-  First pick the language (Deutsch / English), then one of the two entries below it:
+  First pick the language: Deutsch, English, Français – all others (Čeština, Español, Italiano,
+  Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Slovenčina, Ελληνικά, Русский,
+  Українська) are under "Other Languages". Then one of the two entries below it:
   Start VoidStation Live                 live system (nothing gets installed), open graphics drivers
   Start VoidStation Live (NVIDIA only)   with the NVIDIA driver – for GeForce GTX 16xx, RTX 20xx and newer
   Reboot                                 restart
-  The language applies to the interface, the installer and the keyboard (English: US layout); change
-  it in the live system under Settings and for the installed system in the installer. Esc goes back.
+  The language applies to the interface, the installer and the keyboard (English: US layout; Greek,
+  Russian, Ukrainian: plus US, Alt+Shift switches); change it in the live system under Settings and
+  for the installed system in the installer. Esc goes back.
+  In BIOS mode the menu can't show every letter: Greek, Russian and Ukrainian appear in Latin letters
+  there and their start entries in English.
   With an NVIDIA card, boot "NVIDIA only" and install from there – the installed system then
   gets the NVIDIA driver too. If the interface doesn't come up that way, use the first entry.
 

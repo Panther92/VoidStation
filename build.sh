@@ -74,7 +74,7 @@ for f in sorted(files - {"de", "en"}):
             bad.append(f"  {f}.json: unbekannter Schluessel {k}")
         elif ph(v) != ph(en.get(k, de.get(k))):
             bad.append(f"  {f}.json: andere Platzhalter in {k}")
-    left = [k for k in en if k not in x and not k.startswith(("inst.", "hint.inst"))]
+    left = [k for k in en if k not in x]           # seit 2026.11 auch die Installer-Texte (inst.*, hint.inst*)
     if left:
         print(f"  {f}.json: {len(left)} Texte noch englisch", file=sys.stderr)
 for b in bad: print(b, file=sys.stderr)

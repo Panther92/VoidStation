@@ -2512,8 +2512,13 @@ const IICON = {
 ICONS.install = IICON.install;
 const GiB = 1024 ** 3, MIN_ROOT = 16 * GiB;
 const gb = b => { const v = b / 1e9; return (v < 10 ? v.toLocaleString(loc(), { maximumFractionDigits: 1 }) : num(Math.round(v))) + ' GB'; };
-const TZS = ['Europe/Berlin', 'Europe/Vienna', 'Europe/Zurich', 'Europe/Amsterdam', 'Europe/Paris', 'Europe/London', 'Europe/Warsaw',
-  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'Australia/Sydney', 'UTC'];
+const TZS = ['America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York', 'America/Sao_Paulo',
+  'Europe/London', 'Europe/Lisbon', 'Europe/Madrid', 'Europe/Paris', 'Europe/Brussels', 'Europe/Amsterdam', 'Europe/Berlin',
+  'Europe/Zurich', 'Europe/Vienna', 'Europe/Rome', 'Europe/Prague', 'Europe/Bratislava', 'Europe/Warsaw', 'Europe/Budapest',
+  'Europe/Riga', 'Europe/Athens', 'Europe/Kyiv', 'Europe/Moscow', 'Australia/Sydney', 'UTC'];
+// Sprachen mit Vorgaben fuer Tastatur und Zeitzone kommen vom Launcher (probe.langs, Reihenfolge der Einstellungen)
+const instLangs = () => I?.probe?.langs || [{ id: 'de', label: 'Deutsch', kb: 'de', tz: 'Europe/Berlin' }, { id: 'en', label: 'English', kb: 'us', tz: 'America/New_York' }];
+const instLang = id => instLangs().find(l => l.id === id) || instLangs()[0];
 const OSK = {
   de: ['1234567890ß', 'qwertzuiopü', 'asdfghjklöä', 'yxcvbnm,.-'],
   us: ['1234567890-', 'qwertyuiop@', "asdfghjkl;'", 'zxcvbnm,./'],
@@ -2524,10 +2529,10 @@ let I = null, instPoll = null, gpPoll = null, instTipN = 0;
 function instOpen() { return $('#inst').classList.contains('open'); }
 
 function instFresh(probe) {
-  const lang = probe?.lang || LANG;
+  const ld = (probe?.langs || []).find(l => l.id === (probe?.lang || LANG)) || { id: probe?.lang || LANG, kb: LANG === 'en' ? 'us' : 'de', tz: 'Europe/Berlin' };
   I = { step: 'welcome', probe, disk: null, mode: null, opt: null, newSize: 0, region: null, roles: {},
         name: '', pw: '', pw2: '', host: 'tv', field: 0, shift: false, sym: false, hostEdit: null,
-        keymap: lang === 'en' ? 'us' : 'de', lang, tz: lang === 'en' ? 'America/New_York' : 'Europe/Berlin', channel: 'stable',
+        keymap: probe?.kb || ld.kb, lang: ld.id, tz: ld.tz,
         wifi: !!(probe?.wifi_saved || []).length, share: true, favs: !!(probe && (probe.favs.radio + probe.favs.tv)), rtc: false,
         status: null, t0: 0 };
 }
@@ -2947,7 +2952,7 @@ function oskFieldsDraw() {
 function oskKeys() {
   const k = $('#iOsk'); if (!k) return;
   const keep = focusEl?.dataset?.key;
-  const rows = I.sym ? OSK.sym : OSK[I.keymap] || OSK.de;
+  const rows = I.sym ? OSK.sym : OSK[I.keymap] || OSK.us;
   k.innerHTML = '';
   const add = (label, fn, cls, key) => { const b = document.createElement('button'); b.className = 'key inav ' + (cls || ''); b.textContent = label; b._set = () => { I.phys = false; fn(); }; b.dataset.key = key; k.appendChild(b); };
   rows.forEach((r, ri) => {
@@ -2983,9 +2988,19 @@ function oskStep(title, sub) {
   section(tr, I.step === 'host' ? T('inst.editHost') : T('inst.account'), left);
   const right = document.createElement('div');
   const kb = document.createElement('div'); kb.className = 'kbrow';
-  for (const km of ['de', 'us', 'gb']) {
+  // Tastaturen: eigene der Oberflaechensprache, Deutsch, US, UK als Knoepfe, die uebrigen ueber "Weitere"
+  const kbs = I.probe?.kbs || ['de', 'us', 'gb'];
+  const fixed = [...new Set([instLang(LANG).kb, 'de', 'us', 'gb'])].filter(k => kbs.includes(k));
+  const rest = kbs.filter(k => !fixed.includes(k));
+  const setKm = async km => { I.keymap = km; try { if (!offline) await api('/api/install/keymap', { keymap: km }); } catch {} rAccountOrHost(); };
+  for (const km of fixed.includes(I.keymap) ? fixed : [...fixed, I.keymap]) {
     const b = document.createElement('button'); b.className = 'pill inav' + (I.keymap === km ? ' on' : ''); b.textContent = T('inst.kb.' + km); b.dataset.key = 'km' + km;
-    b._set = async () => { I.keymap = km; try { if (!offline) await api('/api/install/keymap', { keymap: km }); } catch {} rAccountOrHost(); };
+    b._set = () => setKm(km);
+    kb.appendChild(b);
+  }
+  if (rest.length) {
+    const b = document.createElement('button'); b.className = 'pill inav'; b.textContent = T('inst.kbMore'); b.dataset.key = 'kmMore';
+    b._set = () => setKm(rest[(rest.indexOf(I.keymap) + 1) % rest.length]);
     kb.appendChild(b);
   }
   const osk = document.createElement('div'); osk.className = 'osk'; osk.id = 'iOsk';
@@ -3031,7 +3046,11 @@ function rDevice() {
     stile(T('inst.hostname'), I.host, T('inst.hostSub', { host: I.host }), () => { I.hostEdit = null; instGo('host'); }, 'host'),
     ws.length ? stile(T('inst.wifiTake'), I.wifi ? ws[0] : T('common.off'), I.wifi ? T('inst.wifiSub') : T('inst.wifiOffSub'), () => { I.wifi = !I.wifi; rDevice(); }, 'wifi') : null,
     stile(T('inst.share'), T(I.share ? 'common.on' : 'common.off'), T('inst.shareSub'), () => { I.share = !I.share; rDevice(); }, 'share'),
-    stile(T('inst.language'), I.lang === 'en' ? 'English' : 'Deutsch', T('inst.langSub'), () => { I.lang = I.lang === 'en' ? 'de' : 'en'; rDevice(); }, 'lang'),
+    stile(T('inst.language'), instLang(I.lang).label, T('inst.langSub'), () => {
+      const nx = cyc(instLangs().map(l => l.id), I.lang);
+      if (I.tz === instLang(I.lang).tz) I.tz = instLang(nx).tz;
+      I.lang = nx; rDevice();
+    }, 'lang'),
     stile(T('inst.timezone'), tzLabel(I.tz), T('inst.tzSub'), () => { I.tz = cyc(TZS, I.tz); rDevice(); }, 'tz'),
     favN ? stile(T('inst.favs'), I.favs ? T('inst.favCount', { n: favN }) : T('common.off'), T('inst.favSub'), () => { I.favs = !I.favs; rDevice(); }, 'favs') : null,
     p.windows ? stile(T('inst.rtc'), T(I.rtc ? 'inst.rtcLocal' : 'inst.rtcUtc'), T(I.rtc ? 'inst.rtcSub' : 'inst.rtcUtcSub'), () => { I.rtc = !I.rtc; rDevice(); }, 'rtc') : null,
@@ -3057,8 +3076,8 @@ function instSummary() {
   return [
     { k: T('inst.sumDisk'), html: `<b>${esc(diskName(d))} · ${esc(gb(d.size))}</b><br>${esc(eff)}` },
     { k: T('inst.sumAccount'), html: `<b>${esc(I.name)}</b> · ${esc(T('inst.sumLogin', { login: loginOf(I.name) }))}` },
-    { k: T('inst.sumDevice'), html: `<b>${esc(I.host)}</b> · ${esc(I.lang === 'en' ? 'English' : 'Deutsch')} · ${esc(tzLabel(I.tz).split(' · ')[0])}` + (I.probe.screen ? ` · ${esc(I.probe.screen.mode.replace('x', '×'))}` : '') },
-    { k: T('inst.sumUpdates'), v: T('inst.sumChannel', { channel: T('channel.' + (I.channel === 'main' ? 'main' : 'stable')) }) },
+    { k: T('inst.sumDevice'), html: `<b>${esc(I.host)}</b> · ${esc(instLang(I.lang).label)} · ${esc(tzLabel(I.tz).split(' · ')[0])}` + (I.probe.screen ? ` · ${esc(I.probe.screen.mode.replace('x', '×'))}` : '') },
+    { k: T('inst.sumUpdates'), v: T('inst.sumChannel') },
     { k: T('inst.sumExtras'), v: extras.join(', ') || T('inst.sumNone') },
     I.probe.bitlocker && I.mode !== 'whole' ? { k: 'BitLocker', v: T('inst.bitlocker') } : null
   ].filter(Boolean);
@@ -3092,7 +3111,7 @@ function holdTick() {
 }
 function instConfig() {
   const c = { mode: I.mode, disk: I.disk.path, user: { name: I.name, login: loginOf(I.name), password: I.pw }, hostname: I.host,
-    lang: I.lang, keymap: I.keymap, timezone: I.tz, channel: I.channel, wifi: I.wifi && !!(I.probe.wifi_saved || []).length,
+    lang: I.lang, keymap: I.keymap, timezone: I.tz, wifi: I.wifi && !!(I.probe.wifi_saved || []).length,
     share: I.share, favorites: I.favs, rtc_local: I.rtc && !!I.probe.windows };
   if (I.mode === 'beside') Object.assign(c, { part: I.opt.part, new_size: I.newSize });
   if (I.mode === 'free') c.region = { start: I.region.start, sectors: I.region.sectors };
@@ -3229,7 +3248,7 @@ function rDone() {
   section(tr, T('inst.afterReboot'), panel([
     { k: T('inst.loginAuto'), v: T('inst.loginAutoText', { name: r.user || I.name }) },
     I.share !== false ? { k: T('inst.whatShare'), v: T('inst.shareText', { host, login }) } : null,
-    { k: T('inst.sumUpdates'), v: T('inst.updText', { channel: T('channel.' + (I.channel === 'main' ? 'main' : 'stable')) }) },
+    { k: T('inst.sumUpdates'), v: T('inst.updText') },
     secs ? { k: T('inst.duration'), v: T('inst.durationText', { min: Math.floor(secs / 60), sec: secs % 60 }) } : null,
     { k: T('inst.tip'), v: T('inst.tipText') }], 'wide'));
   instFocus('#iTrack [data-key="reboot"]');

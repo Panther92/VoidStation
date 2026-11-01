@@ -6000,7 +6000,14 @@ class Installer:
         p["screen"] = {"name": disp[0]["name"], "mode": disp[0]["current"], "rate": disp[0].get("rate")} if disp else None
         p["favs"] = {"radio": len(favs_load()), "tv": len(tvfavs_load())}
         p["live_home"] = str(Path.home())
-        p["lang"] = ui_lang() if ui_lang() in ("de", "en") else "en"   # Installer kennt bisher nur de/en
+        lang = ui_lang()
+        p["lang"] = lang
+        p["langs"] = [{"id": i, "label": n, "kb": INSTALL_DEFAULTS[i][0], "tz": INSTALL_DEFAULTS[i][1]} for i, n, _, _ in LANG_TABLE]
+        p["kbs"] = list(KEYMAPS)
+        kb = cmdline_value("voidstation.kb")              # Tastatur aus dem Startmenue des Sticks
+        if kb not in KEYMAPS:
+            kb = {"us": "us", "gb": "gb", "de": "de"}.get(x_keyboard_layout() or "", INSTALL_DEFAULTS.get(lang, ("de",))[0])
+        p["kb"] = kb
         self.probe_cache = p
         return p
 
@@ -6120,7 +6127,20 @@ class Installer:
 
 
 INSTALL = Installer()
-KEYMAPS = {"de": ["de"], "us": ["us"], "gb": ["gb"]}
+# Tastaturen im Installer (Reihenfolge der Auswahl) -> setxkbmap; gleiche Kennungen wie voidstation.kb im Startmenue
+# des Sticks und KEYMAPS in voidstation-installer. Griechisch/Russisch/Ukrainisch mit US dazu, Alt+Umschalt wechselt.
+_GRP = ["-option", "", "-option", "grp:alt_shift_toggle"]
+KEYMAPS = {"de": ["-layout", "de", "-option", ""], "us": ["-layout", "us", "-option", ""], "gb": ["-layout", "gb", "-option", ""],
+           "fr": ["-layout", "fr", "-option", ""], "es": ["-layout", "es", "-option", ""], "it": ["-layout", "it", "-option", ""],
+           "lv": ["-layout", "lv", "-option", ""], "hu": ["-layout", "hu", "-option", ""], "pl": ["-layout", "pl", "-option", ""],
+           "br": ["-layout", "br", "-option", ""], "cz": ["-layout", "cz", "-option", ""], "sk": ["-layout", "sk", "-option", ""],
+           "gr": ["-layout", "us,gr"] + _GRP, "ru": ["-layout", "us,ru"] + _GRP, "ua": ["-layout", "us,ua"] + _GRP}
+# Vorgaben im Installer je Sprache: Tastatur und Zeitzone (aenderbar)
+INSTALL_DEFAULTS = {"de": ("de", "Europe/Berlin"), "en": ("us", "America/New_York"), "cs": ("cz", "Europe/Prague"),
+                    "es": ("es", "Europe/Madrid"), "fr": ("fr", "Europe/Paris"), "it": ("it", "Europe/Rome"),
+                    "lv": ("lv", "Europe/Riga"), "hu": ("hu", "Europe/Budapest"), "nl": ("us", "Europe/Amsterdam"),
+                    "pl": ("pl", "Europe/Warsaw"), "pt-BR": ("br", "America/Sao_Paulo"), "sk": ("sk", "Europe/Bratislava"),
+                    "el": ("gr", "Europe/Athens"), "ru": ("ru", "Europe/Moscow"), "uk": ("ua", "Europe/Kyiv")}
 
 
 # ---------------------------------------------------------------------------
