@@ -25,6 +25,6 @@ Normalerweise kommt nur in ein Monats-Update, was mindestens 14 Tage in Testing 
 ## Fahrplan {#fahrplan}
 
 - **Freitag, 6. November – VoidStation 2026.11** für alle, das erste große Monats-Update. Was alles drinsteckt, steht wie immer in den News, sobald es da ist. Eine Neuerung gleich vorweg: Updates zeigen kein Protokoll mehr, sondern einen ruhigen Bildschirm mit drei Schritten – Programme aktualisiert, neue Version geladen und geprüft, eingerichtet.
-- **Etwa eine Woche später – die Live-ISO 2026.11.** Neu ist vor allem der Installer: Er spricht jetzt alle 13 Sprachen der Oberfläche statt nur Deutsch und Englisch – Deutsch, Englisch, Spanisch, Französisch, Italienisch, Niederländisch, Polnisch, Portugiesisch (Brasilien), Griechisch, Lettisch, Ungarisch, Russisch und Ukrainisch. Neue Installationen laufen immer auf Stable.
+- **Montag, 9. November – die Live-ISO 2026.11.** Neu ist vor allem der Installer: Er spricht jetzt alle 15 Sprachen der Oberfläche statt nur Deutsch und Englisch – Deutsch, Englisch, Spanisch, Französisch, Italienisch, Niederländisch, Polnisch, Portugiesisch (Brasilien), Griechisch, Lettisch, Ungarisch, Russisch, Ukrainisch, Tschechisch und Slowakisch. Neue Installationen laufen immer auf Stable.
 
 Die Übersetzungen sind maschinell entstanden. Wenn dir in deiner Sprache etwas komisch vorkommt, sind Korrekturen auf [GitHub](https://github.com/Panther92/VoidStation) sehr willkommen.

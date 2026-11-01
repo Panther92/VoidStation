@@ -141,7 +141,7 @@ Nein. VoidStation kennt keine Anmeldung bei irgendeinem Dienst. Nur Streaming-Ap
 
 ### Läuft das auf einem Raspberry Pi?
 
-Nein, nur auf 64-Bit-PCs (x86_64). Ein gebrauchter Mini-PC oder Büro-PC ist ideal.
+Nein, VoidStation läuft nur auf PCs: mit der normalen ISO auf 64-Bit-Rechnern (x86_64), mit der experimentellen 32-Bit-ISO von der [Download-Seite](seite:download) auch auf alten i686-Rechnern. Ein gebrauchter Mini-PC oder Büro-PC ist ideal.
 
 ### Kann ich Windows behalten?
 
@@ -161,7 +161,7 @@ Auf der Startseite der Mediathek **Alle Cover laden** wählen. Ist ein Cover fal
 
 ### Welche Sprachen gibt es?
 
-Dreizehn: Deutsch, English, Español, Français, Italiano, Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Ελληνικά, Русский und Українська – **Einstellungen → Sprache**. Außer Deutsch und Englisch sind die Übersetzungen maschinell erstellt; Korrekturen gern als [Pull Request](seite:contribute#uebersetzen). Installer und Startmenü des Sticks gibt es vorerst nur auf Deutsch und Englisch.
+Fünfzehn: Deutsch, English, Čeština, Español, Français, Italiano, Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Slovenčina, Ελληνικά, Русский und Українська – **Einstellungen → Sprache**. Außer Deutsch und Englisch sind die Übersetzungen maschinell erstellt; Korrekturen gern als [Pull Request](seite:contribute#uebersetzen). Installer und Startmenü des Sticks sprechen ab der Live-ISO 2026.11 ebenfalls alle Sprachen.
 
 ### Eigene Programme als Kachel {#eigene-programme}
 

@@ -13,7 +13,7 @@ Everything you need from the couch – on a small PC next to the TV, with no acc
 - On-screen keyboard for every input field – in Firefox and on YouTube too
 - Themes: Dark, Light, High contrast and Nord; your own themes as a single CSS file
 - Adjustable scaling and resolution, 60 Hz preferred
-- 13 languages: German and English maintained by hand, plus Español, Français, Italiano, Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Ελληνικά, Русский and Українська (machine-translated) – date, time and numbers in the language's format, launched programs follow
+- 15 languages: German and English maintained by hand, plus Čeština, Español, Français, Italiano, Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Slovenčina, Ελληνικά, Русский and Українська (machine-translated) – date, time and numbers in the language's format, launched programs follow
 - Several programs at once – <kbd>Guide</kbd> or <kbd>Win</kbd> takes you back to the start screen from anywhere, with the mouse via the bottom right corner
 - Controller as mouse in programs like Firefox, FreeTube or Discord – it switches itself off in games
 - Sleep, woken by a USB keyboard, mouse or remote

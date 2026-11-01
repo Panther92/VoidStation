@@ -13,7 +13,7 @@ Alles, was man vom Sofa aus braucht – auf einem kleinen PC am Fernseher, ohne 
 - Bildschirmtastatur für jedes Eingabefeld – auch in Firefox und auf YouTube
 - Designs: Dunkel, Hell, Hoher Kontrast und Nord; eigene Designs als einzelne CSS-Datei
 - Skalierung und Auflösung einstellbar, 60 Hz werden bevorzugt
-- 13 Sprachen: Deutsch und Englisch von Hand gepflegt, dazu Español, Français, Italiano, Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Ελληνικά, Русский und Українська (maschinell übersetzt) – Datum, Uhrzeit und Zahlen im Format der Sprache, gestartete Programme folgen
+- 15 Sprachen: Deutsch und Englisch von Hand gepflegt, dazu Čeština, Español, Français, Italiano, Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Slovenčina, Ελληνικά, Русский und Українська (maschinell übersetzt) – Datum, Uhrzeit und Zahlen im Format der Sprache, gestartete Programme folgen
 - Mehrere Programme gleichzeitig – mit <kbd>Guide</kbd> bzw. <kbd>Win</kbd> geht es aus jedem Programm zurück zur Startseite, mit der Maus über die Ecke unten rechts
 - Controller als Maus in Programmen wie Firefox, FreeTube oder Discord – in Spielen schaltet sich das von selbst ab
 - Standby mit Aufwecken per USB-Tastatur, -Maus oder Fernbedienung
