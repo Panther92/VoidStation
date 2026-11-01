@@ -61,29 +61,29 @@ Alles, was man vom Sofa aus braucht – auf einem kleinen PC am Fernseher, ohne 
 
 - YouTube im Vollbild (Firefox im Kioskmodus)
 - Netflix, Prime Video, Disney+, Joyn, RTL+ und Twitch aus dem AppCenter – Kopierschutz (Widevine) wird dafür eingeschaltet
-- Kodi, Jellyfin, Plex HTPC, Spotify und FreeTube aus dem AppCenter; VLC gibt es dort weiterhin mit einem Klick
+- Kodi, Jellyfin, Spotify und FreeTube aus dem AppCenter; VLC gibt es dort weiterhin mit einem Klick
 
 ## AppCenter {#appcenter}
 
-61 ausgesuchte Apps in sieben Bereichen – installieren und entfernen mit einem Klick:
+60 ausgesuchte Apps in sieben Bereichen – installieren und entfernen mit einem Klick:
 
-- **Gaming:** Steam mit Proton-GE, Heroic Games Launcher, Lutris, itch, Prism Launcher (Minecraft), Moonlight, Steam Link, Discord
+- **Gaming:** Steam mit Proton-GE, Heroic Games Launcher, Lutris, itch, Prism Launcher (Minecraft), Moonlight, Discord
 - **Emulatoren:** DuckStation, PCSX2, PPSSPP, Dolphin, Cemu, Flycast, mGBA, melonDS, Azahar, Snes9x, Nestopia, Rosalie's Mupen GUI, MAME, DOSBox Staging, ScummVM, VICE, Stella, RetroArch
 - **Spiele:** SuperTuxKart, SuperTux, Neverball, Luanti, Xonotic, Hedgewars, Battle for Wesnoth, OpenTTD
 - **Medien, Streaming, Browser und Werkzeuge:** von Kodi bis LocalSend (Dateien vom Handy schicken)
 
-Native Void-Pakete haben Vorrang; Flatpak oder AppImage gibt es nur, wo kein Void-Paket existiert. „Installiert“ zeigt alles auf dem Gerät – auch Programme aus dem Terminal.
+Native Void-Pakete haben Vorrang; wo es keins gibt, lädt VoidStation das Programm direkt vom Hersteller und entpackt es (AppImage, ZIP, Tarball) – ohne Flatpak, ohne Sandbox, Updates über denselben Knopf wie alles andere. Flatpak selbst ist trotzdem da, für alles, was man selbst installieren möchte. „Installiert“ zeigt alles auf dem Gerät – auch Programme aus dem Terminal.
 
 ## Spiele {#spiele}
 
 - Steam nativ aus den Void-Paketquellen, Proton-GE wird automatisch aktuell gehalten
 - Emulator-Kacheln zeigen die Spiele aus der Freigabe (`share/ROMs/<System>`) und starten sie direkt; im Hintergrund hält das Spiel an und läuft danach an derselben Stelle weiter
 - DOSBox Staging fertig eingerichtet, Game Boy Color in der mGBA-Kachel
-- Spiele vom Gaming-PC streamen mit Moonlight oder Steam Link
+- Spiele vom Gaming-PC streamen mit Moonlight
 
 ## Updates {#updates}
 
-- Ein Knopf für alles: Void-Pakete samt Kernel, Flatpaks, AppImages, Proton-GE und VoidStation selbst
+- Ein Knopf für alles: Void-Pakete samt Kernel, Programme aus dem AppCenter, selbst installierte Flatpaks, Proton-GE und VoidStation selbst
 - Updates von VoidStation sind signiert – Geräte installieren nur, was der Herausgeber unterschrieben hat
 - Alle Geräte bekommen **Stable**; wer Fehler melden möchte, holt sich im Terminal den Entwicklerstand **Testing** (`vsctl channel testing`)
 - Kein tägliches Nachfragen: reine Systemupdates meldet VoidStation erst nach 30, 60 oder 90 Tagen; ein Neustart wird nur verlangt, wenn er nötig ist

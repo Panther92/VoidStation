@@ -10,7 +10,7 @@ The installer in the live system is Qt as well. The previous web interface (WebK
 
 **Features:** YouTube (Firefox in kiosk mode), radio with search and favorites, TV channels from around the world (iptv-org) in its own player
 (switch channels in the picture, channel list, program info), **Videos & Music** (library for the share and USB drives with covers,
-continue watching, repeat/shuffle, “Find music” with downloads including tags and cover), emulators, an AppCenter for optional apps (xbps, Flatpak, AppImage, web), settings (language, scaling, resolution,
+continue watching, repeat/shuffle, “Find music” with downloads including tags and cover), emulators, an AppCenter for optional apps (Void packages, unpacked builds from the makers, web), settings (language, scaling, resolution,
 audio output, Wi-Fi, Bluetooth, mouse pointer), a Samba share `\\<hostname>\share`, several apps side by side with switching.
 Interface in **English or German**, plus eleven machine-translated languages: Español, Français, Italiano, Latviešu, Magyar,
 Nederlands, Polski, Português (Brasil), Ελληνικά, Русский, Українська (Settings → Language). The installer is English/German only for now.

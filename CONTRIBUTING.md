@@ -61,7 +61,7 @@ before the monthly release train takes them to *Stable* – see [RELEASING.md](R
 - **Changelog:** don't add version headings to `CHANGELOG.md` – the maintainer writes the entry under
   `## Testing` (German and English) when merging, and the version number is assigned at release time.
   A short line in the PR description about what users will notice is perfect.
-- **Packages:** native Void packages first. Flatpak or AppImage only when there is no Void package.
+- **Packages:** native Void packages first. Otherwise the maker's own build (AppImage, zip, tarball or .deb) that VoidStation downloads and unpacks into `apps/<id>` (catalog source `appimage`, see `app_release()` in `launcher.py`). No Flatpaks in the catalog – only apps that exist as a direct download.
   AppCenter apps are listed in `launcher/catalog.json`.
 - **New files** start with an SPDX line, e.g. `# SPDX-License-Identifier: GPL-3.0-or-later`.
 - **Code comments** may be German or English – most existing comments are German (written without umlauts, `ae`/`oe`/`ue`).

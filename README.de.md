@@ -10,7 +10,7 @@ Auch der Installer im Live-System ist Qt. Die bisherige Web-Oberfläche (WebKitG
 
 **Funktionen:** YouTube (Firefox im Kiosk-Modus), Radio mit Suche und Favoriten, TV-Sender aus aller Welt (iptv-org) im eigenen Player
 (umschalten im Bild, Senderliste, Programminfo), **Videos & Musik** (Mediathek für Freigabe und USB-Laufwerke mit Covern,
-Weiterschauen, Wiederholen/Zufall, „Musik suchen“ mit Download samt Tags und Cover), Emulatoren, AppCenter für optionale Apps (xbps, Flatpak, AppImage, Web), Einstellungen (Sprache, Skalierung, Auflösung,
+Weiterschauen, Wiederholen/Zufall, „Musik suchen“ mit Download samt Tags und Cover), Emulatoren, AppCenter für optionale Apps (Void-Pakete, entpackte Programme der Hersteller, Web), Einstellungen (Sprache, Skalierung, Auflösung,
 Tonausgang, WLAN, Bluetooth, Mauszeiger), Samba-Freigabe `\\<rechner>\share`, mehrere Apps parallel mit Umschalten.
 Oberfläche auf **Deutsch oder Englisch**, dazu elf maschinell übersetzte Sprachen: Español, Français, Italiano, Latviešu, Magyar,
 Nederlands, Polski, Português (Brasil), Ελληνικά, Русский, Українська (Einstellungen → Sprache). Den Installer gibt es vorerst nur auf Deutsch/Englisch.
