@@ -73,13 +73,38 @@
       "cat": "Gaming",
       "desc": "Spiele von Epic, GOG und Amazon Prime Gaming in einem Launcher – Windows-Spiele laufen über Wine/Proton, das Heroic selbst verwaltet.",
       "source": {
-        "type": "flatpak",
-        "ref": "com.heroicgameslauncher.hgl"
+        "type": "appimage",
+        "gh": "Heroic-Games-Launcher/HeroicGamesLauncher",
+        "assets": [
+          "Heroic-{ver}-linux-x86_64.AppImage"
+        ],
+        "host_pkgs": [
+          "gtk+3",
+          "nss",
+          "libcups",
+          "libgbm",
+          "at-spi2-core",
+          "alsa-lib",
+          "libxkbcommon"
+        ],
+        "was_flatpak": "com.heroicgameslauncher.hgl",
+        "migrate": [
+          [
+            "config/heroic",
+            ".config/heroic"
+          ],
+          [
+            "config/legendary",
+            ".config/legendary"
+          ],
+          [
+            "config/nile",
+            ".config/nile"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "com.heroicgameslauncher.hgl"
+        "~/.local/share/voidstation/apps/heroic/AppRun"
       ],
       "tile": {
         "group": "Spiele",
@@ -115,13 +140,34 @@
       "cat": "Gaming",
       "desc": "Indie-Spiele von itch.io kaufen, herunterladen und starten – viele davon kostenlos.",
       "source": {
-        "type": "flatpak",
-        "ref": "io.itch.itch"
+        "type": "appimage",
+        "ver": {
+          "url": "https://broth.itch.zone/itch/linux-amd64/LATEST",
+          "re": "([0-9][0-9.]*[0-9])"
+        },
+        "dl": "https://broth.itch.zone/itch/linux-amd64/{ver}/archive/default",
+        "format": "zip",
+        "run": "itch",
+        "chromium": true,
+        "host_pkgs": [
+          "gtk+3",
+          "nss",
+          "libcups",
+          "libgbm",
+          "at-spi2-core",
+          "alsa-lib",
+          "libxkbcommon"
+        ],
+        "was_flatpak": "io.itch.itch",
+        "migrate": [
+          [
+            "config/itch",
+            ".config/itch"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "io.itch.itch"
+        "~/.local/share/voidstation/apps/itch/AppRun"
       ],
       "tile": {
         "group": "Spiele",
@@ -161,13 +207,21 @@
       "cat": "Gaming",
       "desc": "Spiele vom Gaming-PC auf den Fernseher streamen (braucht Sunshine oder NVIDIA GameStream auf dem PC).",
       "source": {
-        "type": "flatpak",
-        "ref": "com.moonlight_stream.Moonlight"
+        "type": "appimage",
+        "gh": "moonlight-stream/moonlight-qt",
+        "assets": [
+          "Moonlight-{ver}-x86_64.AppImage"
+        ],
+        "was_flatpak": "com.moonlight_stream.Moonlight",
+        "migrate": [
+          [
+            "config/Moonlight Game Streaming Project",
+            ".config/Moonlight Game Streaming Project"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "com.moonlight_stream.Moonlight"
+        "~/.local/share/voidstation/apps/moonlight/AppRun"
       ],
       "tile": {
         "group": "Spiele",
@@ -197,7 +251,8 @@
         "color": "#1b2838",
         "icon": "monitor",
         "sub": "PC-Streaming"
-      }
+      },
+      "retired": true
     },
     {
       "id": "discord",
@@ -205,13 +260,49 @@
       "cat": "Gaming",
       "desc": "Sprach- und Text-Chat für Spielerunden.",
       "source": {
-        "type": "flatpak",
-        "ref": "com.discordapp.Discord"
+        "type": "appimage",
+        "ver": {
+          "url": "https://discord.com/api/updates/stable?platform=linux",
+          "json": "name"
+        },
+        "dl": "https://dl.discordapp.net/apps/linux/{ver}/discord-{ver}.tar.gz",
+        "strip": 1,
+        "run": "Discord",
+        "chromium": true,
+        "host_pkgs": [
+          "gtk+3",
+          "nss",
+          "libcups",
+          "libgbm",
+          "at-spi2-core",
+          "alsa-lib",
+          "libxkbcommon",
+          "libnotify",
+          "libXScrnSaver",
+          "libXtst",
+          "libcxx",
+          "libatomic",
+          "dbus-glib",
+          "xdg-utils"
+        ],
+        "json_set": [
+          {
+            "path": "~/.config/discord/settings.json",
+            "values": {
+              "SKIP_HOST_UPDATE": true
+            }
+          }
+        ],
+        "was_flatpak": "com.discordapp.Discord",
+        "migrate": [
+          [
+            "config/discord",
+            ".config/discord"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "com.discordapp.Discord"
+        "~/.local/share/voidstation/apps/discord/AppRun"
       ],
       "tile": {
         "group": "Programme",
@@ -855,7 +946,8 @@
         "color": "#4a3a1a",
         "icon": "film",
         "sub": "Medienserver"
-      }
+      },
+      "retired": true
     },
     {
       "id": "spotify",
@@ -863,13 +955,42 @@
       "cat": "Medien",
       "desc": "Musik und Podcasts streamen. Steuerung auch vom Handy aus (Spotify Connect).",
       "source": {
-        "type": "flatpak",
-        "ref": "com.spotify.Client"
+        "type": "appimage",
+        "deb": {
+          "index": "https://repository.spotify.com/dists/stable/non-free/binary-amd64/Packages",
+          "pkg": "spotify-client",
+          "base": "https://repository.spotify.com"
+        },
+        "run": "usr/share/spotify/spotify",
+        "links": {
+          "usr/share/spotify/libcurl-gnutls.so.4": "/usr/lib/libcurl.so.4"
+        },
+        "host_pkgs": [
+          "gtk+3",
+          "nss",
+          "libcups",
+          "libgbm",
+          "at-spi2-core",
+          "alsa-lib",
+          "libxkbcommon",
+          "libcurl",
+          "libayatana-appindicator",
+          "libatomic"
+        ],
+        "was_flatpak": "com.spotify.Client",
+        "migrate": [
+          [
+            "config/spotify",
+            ".config/spotify"
+          ],
+          [
+            "cache/spotify",
+            ".cache/spotify"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "com.spotify.Client"
+        "~/.local/share/voidstation/apps/spotify/AppRun"
       ],
       "tile": {
         "group": "Unterhaltung",
@@ -910,13 +1031,30 @@
       "cat": "Medien",
       "desc": "YouTube ohne Werbung und ohne Google-Konto – Abos bleiben auf dem Gerät.",
       "source": {
-        "type": "flatpak",
-        "ref": "io.freetubeapp.FreeTube"
+        "type": "appimage",
+        "gh": "FreeTubeApp/FreeTube",
+        "assets": [
+          "freetube-{ver}-amd64.AppImage"
+        ],
+        "host_pkgs": [
+          "gtk+3",
+          "nss",
+          "libcups",
+          "libgbm",
+          "at-spi2-core",
+          "alsa-lib",
+          "libxkbcommon"
+        ],
+        "was_flatpak": "io.freetubeapp.FreeTube",
+        "migrate": [
+          [
+            "config/FreeTube",
+            ".config/FreeTube"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "io.freetubeapp.FreeTube"
+        "~/.local/share/voidstation/apps/freetube/AppRun"
       ],
       "tile": {
         "group": "Unterhaltung",
@@ -1212,13 +1350,39 @@
       "cat": "Browser",
       "desc": "Browser auf Chromium-Basis mit eingebautem Werbe- und Tracking-Blocker.",
       "source": {
-        "type": "flatpak",
-        "ref": "com.brave.Browser"
+        "type": "appimage",
+        "gh": "brave/brave-browser",
+        "assets": [
+          "brave-browser-{ver}-linux-amd64.zip"
+        ],
+        "run": [
+          "brave-browser",
+          "brave"
+        ],
+        "chromium": true,
+        "host_pkgs": [
+          "gtk+3",
+          "nss",
+          "libcups",
+          "libgbm",
+          "at-spi2-core",
+          "alsa-lib",
+          "libxkbcommon"
+        ],
+        "was_flatpak": "com.brave.Browser",
+        "migrate": [
+          [
+            "config/BraveSoftware",
+            ".config/BraveSoftware"
+          ],
+          [
+            ".pki",
+            ".pki"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "com.brave.Browser"
+        "~/.local/share/voidstation/apps/brave/AppRun"
       ],
       "tile": {
         "group": "Programme",
@@ -1234,13 +1398,23 @@
       "cat": "Browser",
       "desc": "Firefox-Ableger mit Fokus auf Privatsphäre, uBlock Origin ist schon dabei.",
       "source": {
-        "type": "flatpak",
-        "ref": "io.gitlab.librewolf-community"
+        "type": "appimage",
+        "api": "https://librewolf.dev/api/v1/repos/librewolf/bsys6/releases/latest",
+        "pick": "-linux-x86_64-appimage\\.AppImage$",
+        "was_flatpak": "io.gitlab.librewolf-community",
+        "migrate": [
+          [
+            ".librewolf",
+            ".librewolf"
+          ],
+          [
+            "config/librewolf",
+            ".config/librewolf"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "io.gitlab.librewolf-community"
+        "~/.local/share/voidstation/apps/librewolf/AppRun"
       ],
       "tile": {
         "group": "Programme",
@@ -1279,13 +1453,13 @@
       "cat": "Werkzeuge",
       "desc": "Grafischer Systemmonitor: Prozessor, Speicher, Grafik, Netzwerk und laufende Programme auf einen Blick.",
       "source": {
-        "type": "flatpak",
-        "ref": "io.missioncenter.MissionCenter"
+        "type": "appimage",
+        "api": "https://gitlab.com/api/v4/projects/mission-center-devs%2Fmission-center/releases/permalink/latest",
+        "pick": "x86_64.*AppImage|AppImage.*x86_64",
+        "was_flatpak": "io.missioncenter.MissionCenter"
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "io.missioncenter.MissionCenter"
+        "~/.local/share/voidstation/apps/missioncenter/AppRun"
       ],
       "tile": {
         "group": "System",
@@ -1301,13 +1475,21 @@
       "cat": "Werkzeuge",
       "desc": "Fotos, Videos und Dateien vom Handy oder PC im WLAN aufs Gerät schicken – ohne Kabel und ohne Cloud. Die App gibt es für Android, iOS, Windows und macOS.",
       "source": {
-        "type": "flatpak",
-        "ref": "org.localsend.localsend_app"
+        "type": "appimage",
+        "gh": "localsend/localsend",
+        "assets": [
+          "LocalSend-{ver}-linux-x86-64.AppImage"
+        ],
+        "was_flatpak": "org.localsend.localsend_app",
+        "migrate": [
+          [
+            "data/org.localsend.localsend_app",
+            ".local/share/org.localsend.localsend_app"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "org.localsend.localsend_app"
+        "~/.local/share/voidstation/apps/localsend/AppRun"
       ],
       "tile": {
         "group": "System",

@@ -4823,6 +4823,20 @@ def app_installed(a):
     return False
 
 
+def flathub_ensure():
+    """Flathub als Quelle fuer den Benutzer einrichten (falls noch nicht da): Das AppCenter bietet seit 2026.11 keine
+    Flatpaks mehr an, wer etwas selbst installiert ("flatpak install --user flathub …"), braucht sie aber.
+    Kurz nach dem Start, ohne Netz einfach beim naechsten Mal."""
+    time.sleep(120)
+    if not shutil.which("flatpak"):
+        return
+    r = run(["flatpak", "remotes", "--user", "--columns=name"], timeout=20)
+    if r and r.returncode == 0 and "flathub" in r.stdout.split():
+        return
+    r = run(["flatpak", "remote-add", "--user", "--if-not-exists", "flathub", FLATHUB], timeout=60)
+    log("Flathub eingerichtet" if r and r.returncode == 0 else "Flathub nicht eingerichtet (kein Netz?)")
+
+
 def legacy_flatpak(a):
     """Ist von dieser App (heute AppImage) noch die fruehere Flatpak-Fassung installiert?"""
     ref = a["source"].get("was_flatpak")
@@ -5100,7 +5114,7 @@ class Jobs:
                 self._log(f"== Flatpak: {len(s['flatpak'])} ==")
                 ok_apps = self._run(["flatpak", "update", "--user", "-y", "--noninteractive"]) == 0 and ok_apps
             for app in imgs:
-                self._log(f"== {app['name']} (AppImage) ==")
+                self._log(f"== {app['name']} ({'Wechsel vom Flatpak' if legacy_flatpak(app) else 'Download'}) ==")
                 ok_apps = self._appimage(app) and ok_apps
             if s["proton"]:
                 self._log(f"== Proton-GE {s['proton']} ==")
@@ -5301,52 +5315,84 @@ class Jobs:
         return False
 
     def _appimage(self, a):
+        """Programm herunterladen und unter apps/<id> entpacken – AppImage, ZIP, Tarball oder .deb (app_release).
+        Gestartet wird immer apps/<id>/AppRun: beim AppImage dessen eigenes, sonst ein kleines Startskript, das
+        VoidStation anlegt (Quelle "run"). Kein FUSE, keine Sandbox, Dateidialoge wie bei jedem anderen Programm."""
+        s = a["source"]
         APPDIR.mkdir(parents=True, exist_ok=True)
-        img = APPDIR / f"{a['id']}.AppImage"
+        for pkg in s.get("host_pkgs", []):             # Bibliotheken, die das Programm vom System erwartet
+            if not xbps_installed(pkg):
+                self._log(f"benötigt {pkg} – wird installiert …")
+                if self._run(["sudo", "-n", PKG_HELPER, "install", pkg]) != 0:
+                    self._log(f"Hinweis: {pkg} konnte nicht installiert werden")
         try:
-            url = appimage_url(a)
+            rel = app_release(a)
         except Exception as e:  # noqa: BLE001
             self._log(f"Download-Adresse nicht gefunden: {e}")
             return False
+        url = rel["url"]
+        fmt = archive_format(a, url)
+        dl = APPDIR / f".{a['id']}.download"
         self._log(f"Lade {url}")
-        req = urllib.request.Request(url, headers=UA)
-        with urllib.request.urlopen(req, timeout=60) as r, open(img, "wb") as f:
-            stamp = url if a["source"].get("gh") else asset_stamp(r.headers)
-            total = int(r.headers.get("Content-Length") or 0)
-            done, last = 0, 0
-            while True:
-                chunk = r.read(1 << 16)
-                if not chunk:
-                    break
-                f.write(chunk)
-                done += len(chunk)
-                if total and done * 10 // total > last:
-                    last = done * 10 // total
-                    self._log(f"… {last * 10} %")
-        img.chmod(0o755)
+        try:
+            req = urllib.request.Request(url, headers=UA)
+            h = hashlib.sha256()
+            with urllib.request.urlopen(req, timeout=60) as r, open(dl, "wb") as f:
+                stamp = rel["stamp"] or asset_stamp(r.headers)
+                total = int(r.headers.get("Content-Length") or 0)
+                done, last = 0, 0
+                while True:
+                    chunk = r.read(1 << 16)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    h.update(chunk)
+                    done += len(chunk)
+                    if total and done * 10 // total > last:
+                        last = done * 10 // total
+                        self._log(f"… {last * 10} %")
+            if total and done != total:
+                raise RuntimeError(f"Download unvollständig ({done} von {total} Byte)")
+            if rel["sha256"] and h.hexdigest() != rel["sha256"]:
+                raise RuntimeError("Prüfsumme stimmt nicht")
+        except Exception as e:  # noqa: BLE001
+            dl.unlink(missing_ok=True)
+            self._log(f"Download fehlgeschlagen: {e}")
+            return False
         work = APPDIR / f".{a['id']}-extract"
         shutil.rmtree(work, ignore_errors=True)
         work.mkdir()
-        # Entpacken statt direkt starten: braucht kein FUSE und startet schneller
         self._log("Entpacke …")
-        subprocess.run([str(img), "--appimage-extract"], cwd=str(work),
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        root = work / "squashfs-root"
-        if not (root / "AppRun").exists():
-            self._log("Entpacken fehlgeschlagen")
+        try:
+            root = extract_app(dl, fmt, work, int(s.get("strip", 0)))
+            if fmt != "appimage":
+                app_launcher(root, a)
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Entpacken fehlgeschlagen: {e}")
+            shutil.rmtree(work, ignore_errors=True)
+            dl.unlink(missing_ok=True)
             return False
         dest = APPDIR / a["id"]
-        shutil.rmtree(dest, ignore_errors=True)
+        old = APPDIR / f".{a['id']}-old"
+        shutil.rmtree(old, ignore_errors=True)
+        if dest.exists():
+            dest.rename(old)                           # erst tauschen, dann loeschen: nie ohne lauffaehige Fassung
         shutil.move(str(root), str(dest))
+        shutil.rmtree(old, ignore_errors=True)
         shutil.rmtree(work, ignore_errors=True)
-        img.unlink(missing_ok=True)
+        dl.unlink(missing_ok=True)
         try:
             appimage_stampfile(a).write_text(stamp)    # Vergleichswert fuer die Update-Pruefung
         except OSError:
             pass
         self._log("installiert nach " + str(dest))
-        if a["source"].get("was_flatpak"):
+        if s.get("was_flatpak"):                       # zuerst: Daten des Flatpaks uebernehmen ...
             self._from_flatpak(a)
+        for js in s.get("json_set", []):               # ... dann z. B. Discord: eigenes Update-Fenster abschalten
+            try:
+                json_merge(Path(os.path.expanduser(js["path"])), js["values"])
+            except (OSError, ValueError) as e:
+                self._log(f"Hinweis: {js['path']} nicht angepasst ({e})")
         return True
 
     def _from_flatpak(self, a):
@@ -5354,6 +5400,24 @@ class Jobs:
         AppImage noch nichts hat), Kachel umstellen, Flatpak entfernen – seine Daten unter ~/.var/app bleiben als
         Sicherung liegen."""
         ref = a["source"]["was_flatpak"]
+        # Programme (nicht Emulatoren): Ordner aus ~/.var/app/<ref> verschieben statt kopieren – Spielebibliotheken
+        # (itch) waeren sonst doppelt auf der Platte. Am alten Ort bleibt ein Link, damit gespeicherte absolute Pfade
+        # (Heroic: Wine-Versionen unter config/heroic/tools, itch: Datenbank) weiter stimmen.
+        fp = Path.home() / ".var/app" / ref
+        for rel_src, rel_dst in a["source"].get("migrate", []):
+            src, dst = fp / rel_src, Path.home() / rel_dst
+            if not src.exists() or src.is_symlink():
+                continue
+            if dst.exists():
+                self._log(f"nicht übernommen (gibt es schon): {dst}")
+                continue
+            try:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(src), str(dst))
+                os.symlink(dst, src)
+                self._log(f"übernommen: {src} -> {dst}")
+            except OSError as e:
+                self._log(f"nicht übernommen: {src} ({e})")
         for src, dst in emu_dirs(a["id"]):
             if src.is_dir() and not dst.exists():
                 try:
@@ -5373,7 +5437,7 @@ class Jobs:
                     changed = True
         if changed:
             config_save(c)
-            self._log("Kachel startet jetzt das AppImage")
+            self._log("Kachel startet jetzt die entpackte Fassung")
         if legacy_flatpak(a):
             if self._run(["flatpak", "uninstall", "--user", "-y", "--noninteractive", ref]) == 0:
                 self._run(["flatpak", "uninstall", "--user", "-y", "--noninteractive", "--unused"])
@@ -5655,50 +5719,140 @@ def appimage_stampfile(a):
     return APPDIR / f".{a['id']}.stamp"
 
 
-_AI_URL = {}                                           # App -> (Zeitpunkt, Adresse der neuesten Ausgabe)
+_AI_URL = {}                                           # App -> (Zeitpunkt, Ausgabe: Adresse, Vergleichswert, SHA256)
 
 
-def appimage_url(a):
-    """Download-Adresse: feste "url" (DuckStation: immer Tag "latest"), sonst die neueste Ausgabe auf GitHub –
-    /releases/latest leitet auf /releases/tag/<tag> um, daraus und den Mustern in "assets" ({tag}, {ver} = Tag ohne
-    fuehrendes v) wird der Dateiname; es gilt das erste Muster, das es gibt. Ohne GitHub-API (keine Anfragegrenze)."""
+def _http_get(url, timeout=20, head=False):
+    """Antwort einer Anfrage (HEAD: nur Kopf) – liefert (endgueltige Adresse nach Weiterleitungen, Inhalt bzw. b"")."""
+    req = urllib.request.Request(url, headers=UA, method="HEAD" if head else "GET")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.geturl(), (b"" if head else r.read(8 << 20))
+
+
+def _url_exists(url):
+    try:
+        _http_get(url, head=True)
+        return True
+    except urllib.error.HTTPError as e:
+        if e.code in (403, 404, 410):
+            return False
+        raise
+
+
+def _deb_version_key(v):
+    """Sortierschluessel fuer Debian-Versionen wie "1:1.2.95.453.g0eeebbed" (Epoche, dann Zahlenfolge)."""
+    epoch, _, rest = v.partition(":") if ":" in v else ("0", "", v)
+    return (int(epoch) if epoch.isdigit() else 0, [int(x) if x.isdigit() else -1 for x in re.split(r"[.+~-]", rest)])
+
+
+def app_release(a):
+    """Neueste Ausgabe einer App, die VoidStation selbst herunterlaedt und unter apps/<id> entpackt (Katalog-Quelle
+    "appimage" – AppImage, ZIP, Tarball oder .deb). Ergebnis: {"url", "stamp" (Vergleichswert fuer die Update-Pruefung),
+    "sha256" (oder None)}. Woher die Adresse kommt, steht in der Quelle:
+      "url"      feste Adresse (DuckStation: Tag "latest"); Vergleichswert aus ETag/Last-Modified/Groesse
+      "gh"       GitHub "besitzer/repo": /releases/latest leitet auf /releases/tag/<tag> um (ohne API, keine
+                 Anfragegrenze); "assets" = Dateinamen-Muster mit {tag} und {ver} (Tag ohne fuehrendes v), es gilt
+                 das erste, das es gibt
+      "api"      JSON der neuesten Ausgabe (Forgejo/Gitea wie librewolf.dev, GitLab-Permalink); "pick" = Muster fuer
+                 Dateiname bzw. Adresse
+      "ver"      {"url", "json": Schluessel | "re": Muster} liefert die Versionsnummer, "dl" = Adresse mit {ver}
+      "deb"      {"index": Packages-Datei, "pkg": Paketname, "base": Repo-Adresse} – mit SHA256 aus dem Index"""
     s = a["source"]
     if s.get("url"):
-        return s["url"]
+        return {"url": s["url"], "stamp": None, "sha256": None}
     hit = _AI_URL.get(a["id"])
     if hit and time.time() - hit[0] < 600:
         return hit[1]
-    req = urllib.request.Request(f"https://github.com/{s['gh']}/releases/latest", headers=UA, method="HEAD")
-    with urllib.request.urlopen(req, timeout=20) as r:
-        final = r.geturl()
-    m = re.search(r"/releases/tag/([^/?#]+)", final)
-    if not m:
-        raise RuntimeError(f"{a['name']}: keine Ausgabe auf GitHub gefunden")
-    tag = urllib.parse.unquote(m.group(1))
-    ver = tag[1:] if tag[:1] in "vV" and tag[1:2].isdigit() else tag
-    for tpl in s.get("assets", []):
-        url = (f"https://github.com/{s['gh']}/releases/download/{urllib.parse.quote(tag)}/"
-               + urllib.parse.quote(tpl.format(tag=tag, ver=ver)))
-        try:
-            with urllib.request.urlopen(urllib.request.Request(url, headers=UA, method="HEAD"), timeout=20):
-                pass
-        except urllib.error.HTTPError as e:
-            if e.code == 404:
-                continue
-            raise
-        _AI_URL[a["id"]] = (time.time(), url)
-        return url
-    raise RuntimeError(f"{a['name']}: kein passendes AppImage in {tag}")
+    rel = None
+    if s.get("gh"):
+        page = f"https://github.com/{s['gh']}/releases/latest"
+        final, _ = _http_get(page, head=True)
+        m = re.search(r"/releases/tag/([^/?#]+)/?$", final)
+        if not m:
+            raise RuntimeError(f"{a['name']}: keine Ausgabe auf GitHub gefunden")
+        tag = urllib.parse.unquote(m.group(1))
+        ver = tag[1:] if tag[:1] in "vV" and tag[1:2].isdigit() else tag
+        base = f"https://github.com/{s['gh']}/releases/download/{urllib.parse.quote(tag)}/"
+        for tpl in s.get("assets", []):
+            url = base + urllib.parse.quote(tpl.format(tag=tag, ver=ver))
+            if _url_exists(url):
+                rel = {"url": url, "stamp": url, "sha256": None}
+                break
+        if not rel:
+            raise RuntimeError(f"{a['name']}: keine passende Datei in {tag}")
+    elif s.get("api"):
+        _, body = _http_get(s["api"])
+        assets = json.loads(body).get("assets") or []
+        if isinstance(assets, dict):                   # GitLab: {"links": [...], "sources": [...]}
+            assets = assets.get("links") or []
+        pick = re.compile(s.get("pick", r"x86_64.*\.AppImage$"), re.I)
+        for it in assets:
+            url = it.get("browser_download_url") or it.get("direct_asset_url") or it.get("url") or ""
+            name = it.get("name") or url.rsplit("/", 1)[-1]
+            if url.startswith("https://") and (pick.search(name) or pick.search(url)):
+                rel = {"url": url, "stamp": url, "sha256": None}
+                break
+        if not rel:
+            raise RuntimeError(f"{a['name']}: keine passende Datei in der neuesten Ausgabe")
+    elif s.get("ver"):
+        v = s["ver"]
+        _, body = _http_get(v["url"])
+        txt = body.decode("utf-8", "replace")
+        if v.get("json"):
+            ver = str(json.loads(txt)[v["json"]])
+        else:
+            m = re.search(v.get("re", r"([0-9][0-9A-Za-z.+_-]*)"), txt)
+            ver = m.group(1) if m else ""
+        if not re.fullmatch(r"[0-9A-Za-z.+_-]{1,40}", ver):
+            raise RuntimeError(f"{a['name']}: Versionsnummer nicht lesbar")
+        url = s["dl"].format(ver=ver)
+        rel = {"url": url, "stamp": url, "sha256": None}
+    elif s.get("deb"):
+        d = s["deb"]
+        _, body = _http_get(d["index"])
+        best = None
+        for block in body.decode("utf-8", "replace").split("\n\n"):
+            f = dict(re.findall(r"^([A-Za-z0-9-]+):\s*(.*)$", block, re.M))
+            if f.get("Package") == d["pkg"] and f.get("Filename"):
+                if not best or _deb_version_key(f.get("Version", "")) > _deb_version_key(best.get("Version", "")):
+                    best = f
+        if not best:
+            raise RuntimeError(f"{a['name']}: {d['pkg']} nicht im Paketindex")
+        url = d["base"].rstrip("/") + "/" + best["Filename"].lstrip("/")
+        rel = {"url": url, "stamp": url, "sha256": (best.get("SHA256") or "").lower() or None}
+    else:
+        raise RuntimeError(f"{a['name']}: keine Download-Quelle im Katalog")
+    _AI_URL[a["id"]] = (time.time(), rel)
+    return rel
+
+
+def appimage_url(a):
+    return app_release(a)["url"]
+
+
+def archive_format(a, url):
+    """Art der heruntergeladenen Datei: "format" im Katalog, sonst nach der Endung."""
+    f = a["source"].get("format")
+    if f:
+        return f
+    low = urllib.parse.urlparse(url).path.lower()
+    if low.endswith(".zip"):
+        return "zip"
+    if low.endswith(".deb"):
+        return "deb"
+    if re.search(r"\.(tar(\.(gz|xz|bz2|zst))?|tgz|txz)$", low):
+        return "tar"
+    return "appimage"
 
 
 def appimage_outdated(a):
     try:
-        if a["source"].get("gh"):                      # GitHub-Ausgabe: die Adresse enthaelt die Version
-            remote = appimage_url(a)
-        else:
+        if a["source"].get("url"):                     # feste Adresse: Vergleich ueber ETag/Last-Modified/Groesse
             req = urllib.request.Request(a["source"]["url"], headers=UA, method="HEAD")
             with urllib.request.urlopen(req, timeout=20) as r:
                 remote = asset_stamp(r.headers)
+        else:                                          # sonst enthaelt die Adresse die Version
+            remote = app_release(a)["stamp"]
     except Exception:  # noqa: BLE001
         return False
     try:
@@ -5706,6 +5860,156 @@ def appimage_outdated(a):
     except OSError:
         local = None                                   # vor 0.9.0 installiert: einmal neu laden
     return remote != local
+
+
+def _safe_member(work, name):
+    """Ziel eines Archiv-Eintrags – nur innerhalb des Entpack-Ordners."""
+    dest = (work / name).resolve()
+    if dest != work.resolve() and work.resolve() not in dest.parents:
+        raise RuntimeError(f"ungültiger Pfad im Archiv: {name}")
+    return dest
+
+
+def _extract_zip(path, work):
+    """ZIP mit Ausfuehrungsrechten und symbolischen Links entpacken (zipfile allein verliert beides);
+    setuid/setgid fallen weg (Brave: chrome-sandbox – Chromium nimmt dann die Namensraum-Sandbox)."""
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        for i in z.infolist():
+            mode = (i.external_attr >> 16) & 0o177777
+            dest = _safe_member(work, i.filename)
+            if i.is_dir():
+                dest.mkdir(parents=True, exist_ok=True)
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if (mode & 0o170000) == 0o120000:          # symbolischer Link – nur innerhalb des Archivs
+                target = z.read(i).decode("utf-8")
+                if target.startswith("/") or work.resolve() not in (dest.parent / target).resolve().parents:
+                    continue
+                dest.unlink(missing_ok=True)
+                os.symlink(target, dest)
+                continue
+            with z.open(i) as src, open(dest, "wb") as out:
+                shutil.copyfileobj(src, out, 1 << 20)
+            os.chmod(dest, (mode & 0o777) or 0o644)
+
+
+def _extract_tar(fileobj_or_path, work, stream=False):
+    kw = {"fileobj": fileobj_or_path, "mode": "r|*"} if stream else {"name": str(fileobj_or_path), "mode": "r:*"}
+    with tarfile.open(**kw) as t:
+        try:
+            t.extractall(work, filter="data")          # keine absoluten Pfade, kein setuid, Links nur nach innen
+        except TypeError:                              # aelteres Python ohne Filter
+            t.extractall(work)
+
+
+def _extract_deb(path, work):
+    """.deb = ar-Archiv: debian-binary, control.tar.*, data.tar.* – entpackt wird nur data.tar.* (ohne binutils)."""
+    with open(path, "rb") as f:
+        if f.read(8) != b"!<arch>\n":
+            raise RuntimeError("kein .deb-Paket")
+        while True:
+            hdr = f.read(60)
+            if len(hdr) < 60:
+                break
+            name = hdr[:16].decode("ascii", "replace").strip().rstrip("/")
+            size = int(hdr[48:58].decode("ascii").strip())
+            if name.startswith("data.tar"):
+                part = path.with_name(path.name + "." + name)
+                with open(part, "wb") as out:
+                    left = size
+                    while left:
+                        chunk = f.read(min(left, 1 << 20))
+                        if not chunk:
+                            raise RuntimeError(".deb unvollständig")
+                        out.write(chunk)
+                        left -= len(chunk)
+                try:
+                    if name.endswith(".zst"):          # Pythons tarfile kann (noch) kein zstd
+                        p = subprocess.Popen(["zstd", "-dcq", str(part)], stdout=subprocess.PIPE)
+                        try:
+                            _extract_tar(p.stdout, work, stream=True)
+                        finally:
+                            p.stdout.close()
+                            if p.wait() != 0:
+                                raise RuntimeError("zstd fehlgeschlagen")
+                    else:
+                        _extract_tar(part, work)
+                finally:
+                    part.unlink(missing_ok=True)
+                return
+            f.seek(size + (size & 1), 1)
+    raise RuntimeError("data.tar fehlt im .deb")
+
+
+def extract_app(path, fmt, work, strip=0):
+    """Heruntergeladene Datei nach work entpacken; Rueckgabe: Wurzelordner des Programms."""
+    if fmt == "appimage":
+        path.chmod(0o755)
+        subprocess.run([str(path), "--appimage-extract"], cwd=str(work),
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900)
+        root = work / "squashfs-root"
+        if not (root / "AppRun").exists():
+            raise RuntimeError("AppImage ließ sich nicht entpacken")
+        return root
+    root = work / "root"
+    root.mkdir()
+    if fmt == "zip":
+        _extract_zip(path, root)
+    elif fmt == "tar":
+        _extract_tar(path, root)
+    elif fmt == "deb":
+        _extract_deb(path, root)
+    else:
+        raise RuntimeError(f"unbekanntes Format {fmt}")
+    for _ in range(strip):                             # z. B. Discord: alles steckt in "Discord/"
+        inner = [x for x in root.iterdir()]
+        if len(inner) != 1 or not inner[0].is_dir():
+            raise RuntimeError("Archiv hat nicht den erwarteten Aufbau")
+        inner[0].rename(work / "inner")
+        root.rmdir()
+        (work / "inner").rename(root)
+    return root
+
+
+def app_launcher(root, a):
+    """Startskript AppRun fuer entpackte ZIP/Tarball/.deb-Programme: startet die Datei aus "run" (die erste, die es
+    gibt) – fuer Chromium/Electron mit --no-sandbox nur dann, wenn der Kernel keine Benutzer-Namensraeume erlaubt
+    (setuid-Helfer kann ein Download nicht haben). "links" legt symbolische Links an (Spotify: libcurl-gnutls)."""
+    s = a["source"]
+    runs = s["run"] if isinstance(s.get("run"), list) else [s.get("run")]
+    exe = next((r for r in runs if r and (root / r).is_file()), None)
+    if not exe:
+        raise RuntimeError(f"Programmdatei fehlt im Archiv ({', '.join(r for r in runs if r)})")
+    (root / exe).chmod((root / exe).stat().st_mode | 0o755)
+    for rel, target in (s.get("links") or {}).items():
+        lp = _safe_member(root, rel)
+        lp.parent.mkdir(parents=True, exist_ok=True)
+        if not lp.exists() and not lp.is_symlink():
+            os.symlink(target, lp)
+    sandbox = ('NS=\nunshare -Ur true 2>/dev/null || NS=--no-sandbox\n' if s.get("chromium") else "")
+    script = ("#!/bin/sh\n# von VoidStation angelegt – startet " + a["name"] + "\n"
+              'HERE=$(dirname "$(readlink -f "$0")")\n' + sandbox +
+              f'exec "$HERE/{exe}"' + (" $NS" if sandbox else "") + ' "$@"\n')
+    (root / "AppRun").write_text(script)
+    (root / "AppRun").chmod(0o755)
+
+
+def json_merge(path, values):
+    """Schluessel in eine JSON-Datei schreiben, Rest bleibt (legt die Datei bei Bedarf an)."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    if all(data.get(k) == v for k, v in values.items()):
+        return
+    data.update(values)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".vs-tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(path)
 
 
 def _sys_check(sync, logf=None):
@@ -5741,10 +6045,10 @@ def _sys_check(sync, logf=None):
             if (APPDIR / a["id"] / "AppRun").exists():
                 if appimage_outdated(a):
                     res["appimage"].append(a["id"])
-            elif legacy_flatpak(a):                    # noch das Flatpak: Wechsel aufs AppImage beim Update
+            elif legacy_flatpak(a):                    # noch das Flatpak: Wechsel auf die entpackte Fassung beim Update
                 res["appimage"].append(a["id"])
                 if logf:
-                    logf(f"{a['name']}: Wechsel von Flatpak auf AppImage steht an")
+                    logf(f"{a['name']}: Wechsel vom Flatpak auf die entpackte Fassung steht an")
         if any("proton-ge" in a["source"].get("addons", []) and app_installed(a) for a in apps):
             try:
                 tag = proton_latest()["tag_name"]
@@ -6024,8 +6328,8 @@ def apps_payload():
         item = {k: a[k] for k in ("id", "name", "desc", "cat")}
         item["type"] = a["source"]["type"]
         item["installed"] = app_installed_in(a, pkgs, fps, tiles)
-        if not item["installed"] and not app_supported(a):      # gibt es fuer diese Architektur nicht (32 Bit)
-            continue
+        if not item["installed"] and (a.get("retired") or not app_supported(a)):
+            continue                                   # nicht mehr im Angebot bzw. nicht fuer diese Architektur (32 Bit)
         item["tile"] = a["id"] in tiles
         item["icon"] = a.get("tile", {}).get("icon", "globe")
         item["color"] = a.get("tile", {}).get("color", "#2f3238")
@@ -11544,6 +11848,8 @@ class Handler(BaseHTTPRequestHandler):
                         a = catalog_app(str(self._body().get("id", "")))
                         if not a:
                             return self._json(404, {"error": "unbekannte App"})
+                        if act == "install" and a.get("retired"):
+                            return self._json(409, {"error": f"{a['name']} gibt es im AppCenter nicht mehr"})
                         if act == "install" and not app_supported(a):
                             return self._json(409, {"error": f"{a['name']} gibt es nicht für {SYS_ARCH}"})
                         JOBS.start(act, a)
@@ -11942,6 +12248,7 @@ def main():
         threading.Thread(target=updates_background_check, daemon=True).start()
         threading.Thread(target=kernel_autopurge, daemon=True).start()
         threading.Thread(target=SAVES.watcher, daemon=True).start()   # Spielstaende alle 30 Minuten sichern
+        threading.Thread(target=flathub_ensure, daemon=True).start()  # Flathub fuer selbst installierte Flatpaks
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
     log(f"laeuft auf http://{HOST}:{PORT}/")
     try:
