@@ -204,7 +204,6 @@
   "settings.netPrefer": "Voorkeur voor internet",
   "settings.netWiredPick": "Bekabeld netwerk",
   "settings.netWifiPick": "Draadloos netwerk (wifi)",
-  "settings.netPreferHint": "Zijn kabel en wifi tegelijk verbonden, dan gebruikt internet de gekozen verbinding. De gedeelde map en toegang op afstand blijven via beide bereikbaar.",
   "settings.netSwitching": "Omschakelen …",
   "settings.netPreferDone": "Internet nu via: {what}",
   "settings.pwShow": "Wachtwoord tonen",

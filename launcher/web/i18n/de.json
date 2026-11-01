@@ -204,7 +204,6 @@
   "settings.netPrefer": "Internet bevorzugt über",
   "settings.netWiredPick": "Kabelnetzwerk",
   "settings.netWifiPick": "Funknetzwerk (WLAN)",
-  "settings.netPreferHint": "Sind Kabel und WLAN gleichzeitig verbunden, läuft das Internet über die gewählte Verbindung. Freigabe und Fernzugriff bleiben über beide erreichbar.",
   "settings.netSwitching": "Stelle um …",
   "settings.netPreferDone": "Internet jetzt über: {what}",
   "settings.pwShow": "Passwort anzeigen",

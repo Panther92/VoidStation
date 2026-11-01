@@ -204,7 +204,6 @@
   "settings.netPrefer": "Προτίμηση για διαδίκτυο",
   "settings.netWiredPick": "Ενσύρματο δίκτυο",
   "settings.netWifiPick": "Ασύρματο δίκτυο (Wi-Fi)",
-  "settings.netPreferHint": "Αν καλώδιο και Wi-Fi είναι συνδεδεμένα ταυτόχρονα, το διαδίκτυο χρησιμοποιεί την επιλεγμένη σύνδεση. Ο κοινόχρηστος φάκελος και η απομακρυσμένη πρόσβαση μένουν διαθέσιμα και από τις δύο.",
   "settings.netSwitching": "Αλλαγή …",
   "settings.netPreferDone": "Διαδίκτυο τώρα μέσω: {what}",
   "settings.pwShow": "Εμφάνιση κωδικού",

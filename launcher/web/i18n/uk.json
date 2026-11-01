@@ -204,7 +204,6 @@
   "settings.netPrefer": "Надавати перевагу для інтернету",
   "settings.netWiredPick": "Дротова мережа",
   "settings.netWifiPick": "Бездротова мережа (Wi-Fi)",
-  "settings.netPreferHint": "Якщо кабель і Wi-Fi під’єднані одночасно, інтернет іде через вибране з’єднання. Спільна папка й віддалений доступ лишаються доступні через обидва.",
   "settings.netSwitching": "Перемикання …",
   "settings.netPreferDone": "Інтернет тепер через: {what}",
   "settings.pwShow": "Показати пароль",

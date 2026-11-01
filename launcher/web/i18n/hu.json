@@ -204,7 +204,6 @@
   "settings.netPrefer": "Internethez előnyben",
   "settings.netWiredPick": "Vezetékes hálózat",
   "settings.netWifiPick": "Vezeték nélküli hálózat (Wi-Fi)",
-  "settings.netPreferHint": "Ha a kábel és a Wi-Fi egyszerre csatlakozik, az internet a kiválasztott kapcsolatot használja. A megosztás és a távoli elérés mindkettőn elérhető marad.",
   "settings.netSwitching": "Átváltás …",
   "settings.netPreferDone": "Internet most: {what}",
   "settings.pwShow": "Jelszó megjelenítése",

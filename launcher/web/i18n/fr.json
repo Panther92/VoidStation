@@ -204,7 +204,6 @@
   "settings.netPrefer": "Préférer pour internet",
   "settings.netWiredPick": "Réseau filaire",
   "settings.netWifiPick": "Réseau sans fil (Wi-Fi)",
-  "settings.netPreferHint": "Si le câble et le Wi-Fi sont connectés en même temps, internet passe par la connexion choisie. Le partage et l’accès à distance restent accessibles par les deux.",
   "settings.netSwitching": "Changement …",
   "settings.netPreferDone": "Internet maintenant via : {what}",
   "settings.pwShow": "Afficher le mot de passe",

@@ -204,7 +204,6 @@
   "settings.netPrefer": "Preferir para a internet",
   "settings.netWiredPick": "Rede cabeada",
   "settings.netWifiPick": "Rede sem fio (Wi-Fi)",
-  "settings.netPreferHint": "Se o cabo e o Wi-Fi estiverem conectados ao mesmo tempo, a internet usa a conexão escolhida. O compartilhamento e o acesso remoto continuam acessíveis pelos dois.",
   "settings.netSwitching": "Alternando …",
   "settings.netPreferDone": "Internet agora via: {what}",
   "settings.pwShow": "Mostrar senha",

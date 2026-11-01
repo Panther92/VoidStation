@@ -719,7 +719,6 @@ Layer {
                            on: !!s.sett && s.sett.net.prefer === modelData; onTriggered: s.netPrefer(modelData) }
                 }
             }
-            Info { visible: !!s.sett && !!s.sett.net.has_wired && !!s.sett.net.has_wifi; html: Ui.esc(Ui.t("settings.netPreferHint")) }
             // Kabel per Klick trennen und wieder verbinden (ohne eingestecktes Kabel keine Anzeige)
             SetRow {
                 visible: !!s.netLink("wired")

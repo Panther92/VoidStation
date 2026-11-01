@@ -1592,7 +1592,6 @@ const SET_PAGES = {
         const b = pill(esc(T(m === 'wifi' ? 'settings.netWifiPick' : 'settings.netWiredPick')), () => netPrefer(m), sett.net.prefer === m);
         b.dataset.key = 'np' + m; rp.appendChild(b);
       }
-      const h = document.createElement('div'); h.className = 'info'; h.textContent = T('settings.netPreferHint'); n.appendChild(h);
     }
     const wl = (sett.net.links || []).find(x => x.type === 'wired' && (x.connected || x.ready));
     if (wl) {                                                    // Kabel per Klick trennen und wieder verbinden

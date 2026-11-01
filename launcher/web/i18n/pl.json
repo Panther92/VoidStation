@@ -204,7 +204,6 @@
   "settings.netPrefer": "Preferuj dla internetu",
   "settings.netWiredPick": "Sieć przewodowa",
   "settings.netWifiPick": "Sieć bezprzewodowa (Wi-Fi)",
-  "settings.netPreferHint": "Gdy kabel i Wi-Fi są połączone jednocześnie, internet używa wybranego połączenia. Udział sieciowy i dostęp zdalny pozostają dostępne przez oba.",
   "settings.netSwitching": "Przełączanie …",
   "settings.netPreferDone": "Internet teraz przez: {what}",
   "settings.pwShow": "Pokaż hasło",

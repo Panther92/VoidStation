@@ -204,7 +204,6 @@
   "settings.netPrefer": "Pre internet uprednostniť",
   "settings.netWiredPick": "Káblová sieť",
   "settings.netWifiPick": "Bezdrôtová sieť (Wi-Fi)",
-  "settings.netPreferHint": "Ak je pripojený kábel aj Wi-Fi súčasne, internet použije zvolené pripojenie. Zdieľaný priečinok a vzdialený prístup zostanú dostupné cez obe.",
   "settings.netSwitching": "Prepínam …",
   "settings.netPreferDone": "Internet teraz cez: {what}",
   "settings.pwShow": "Zobraziť heslo",

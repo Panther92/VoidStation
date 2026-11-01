@@ -204,7 +204,6 @@
   "settings.netPrefer": "Internetam dot priekšroku",
   "settings.netWiredPick": "Vadu tīkls",
   "settings.netWifiPick": "Bezvadu tīkls (Wi-Fi)",
-  "settings.netPreferHint": "Ja kabelis un Wi-Fi ir pievienoti vienlaikus, internets izmanto izvēlēto savienojumu. Koplietošana un attālā piekļuve paliek pieejama caur abiem.",
   "settings.netSwitching": "Pārslēdz …",
   "settings.netPreferDone": "Internets tagad caur: {what}",
   "settings.pwShow": "Rādīt paroli",

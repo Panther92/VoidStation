@@ -204,7 +204,6 @@
   "settings.netPrefer": "Prefer for internet",
   "settings.netWiredPick": "Wired network",
   "settings.netWifiPick": "Wireless network (Wi-Fi)",
-  "settings.netPreferHint": "If cable and Wi-Fi are connected at the same time, the internet uses the chosen connection. The share and remote access stay reachable over both.",
   "settings.netSwitching": "Switching …",
   "settings.netPreferDone": "Internet now via: {what}",
   "settings.pwShow": "Show password",

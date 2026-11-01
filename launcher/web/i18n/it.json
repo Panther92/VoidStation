@@ -204,7 +204,6 @@
   "settings.netPrefer": "Preferisci per internet",
   "settings.netWiredPick": "Rete via cavo",
   "settings.netWifiPick": "Rete senza fili (Wi-Fi)",
-  "settings.netPreferHint": "Se cavo e Wi-Fi sono collegati contemporaneamente, internet usa la connessione scelta. La cartella condivisa e l’accesso remoto restano raggiungibili da entrambe.",
   "settings.netSwitching": "Cambio …",
   "settings.netPreferDone": "Internet ora tramite: {what}",
   "settings.pwShow": "Mostra password",

@@ -204,7 +204,6 @@
   "settings.netPrefer": "Preferir para internet",
   "settings.netWiredPick": "Red por cable",
   "settings.netWifiPick": "Red inalámbrica (Wi-Fi)",
-  "settings.netPreferHint": "Si el cable y el Wi-Fi están conectados a la vez, internet usa la conexión elegida. La carpeta compartida y el acceso remoto siguen accesibles por ambas.",
   "settings.netSwitching": "Cambiando …",
   "settings.netPreferDone": "Internet ahora por: {what}",
   "settings.pwShow": "Mostrar contraseña",

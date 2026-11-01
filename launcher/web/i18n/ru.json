@@ -204,7 +204,6 @@
   "settings.netPrefer": "Предпочитать для интернета",
   "settings.netWiredPick": "Проводная сеть",
   "settings.netWifiPick": "Беспроводная сеть (Wi-Fi)",
-  "settings.netPreferHint": "Если кабель и Wi-Fi подключены одновременно, интернет идёт через выбранное подключение. Общая папка и удалённый доступ остаются доступны через оба.",
   "settings.netSwitching": "Переключение …",
   "settings.netPreferDone": "Интернет теперь через: {what}",
   "settings.pwShow": "Показать пароль",
