@@ -2043,10 +2043,37 @@ def net_links(addrs=None):
             continue
         up = state.split(" ")[0] in ("connected", "verbunden")
         # "internet": darueber laeuft das Internet – die IPv4-Standardroute, ohne IPv4 die von IPv6
+        # "ready": getrennt, aber verbindbar (ohne Kabel meldet NetworkManager "unavailable")
         out.append({"dev": dev, "type": kind, "connected": up, "name": conn if up else "", "ip": ip4.get(dev, ""),
-                    "internet": up and dev == (d4 or d6)})
+                    "internet": up and dev == (d4 or d6), "ready": state in ("disconnected", "getrennt")})
     out.sort(key=lambda l: (not l["connected"], l["type"] != "wired", l["dev"]))
     return out
+
+
+def net_device(action, dev):
+    r = run(["sudo", "-n", "nmcli", "--wait", "30", "device", action, dev], timeout=40)
+    if r is None:
+        raise RuntimeError(f"{dev}: Zeitueberschreitung")
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout or "nmcli").strip().splitlines()[-1])
+
+
+def net_disconnect(kind):
+    """Kabel oder WLAN trennen. "device disconnect" haelt das Geraet getrennt, bis man wieder verbindet oder neu
+    startet – sonst waehlte NetworkManager gleich das naechste bekannte Netz. Die gespeicherten Profile bleiben."""
+    done = 0
+    for l in net_links():
+        if l["type"] == kind and l["connected"]:
+            net_device("disconnect", l["dev"])
+            done += 1
+    log("Netzwerk: getrennt", kind, f"({done})")
+
+
+def net_connect(kind):
+    """Getrenntes Kabel wieder verbinden (WLAN laeuft ueber wifi_connect, dort zaehlt das gewaehlte Netz)."""
+    for l in net_links():
+        if l["type"] == kind and l["ready"]:
+            net_device("connect", l["dev"])
 
 
 def net_prefer_get(s=None):
@@ -2135,23 +2162,33 @@ def wifi_scan():
                 o["active"] = n["active"]
                 continue
         nets[ssid] = n
+    saved = wifi_saved()
+    for n in nets.values():
+        n["known"] = n["ssid"] in saved          # Profil vorhanden: Verbinden ohne Passwort-Abfrage
     return sorted(nets.values(), key=lambda n: (-n["active"], -n["signal"]))
 
 
-def wifi_profiles(ssid):
-    """UUIDs aller gespeicherten WLAN-Profile fuer dieses Netz (Name und SSID koennen abweichen)."""
-    r = run(["sudo", "-n", "nmcli", "-t", "-f", "UUID,TYPE", "connection", "show"], timeout=10)
-    out = []
-    if not r or r.returncode != 0:
-        return out
-    for line in r.stdout.splitlines():
-        uuid, typ = (nm_split(line) + ["", ""])[:2]
-        if typ not in ("802-11-wireless", "wifi") or not uuid:
+def wifi_saved():
+    """Gespeicherte WLAN-Profile: {SSID: [UUIDs, zuletzt benutztes zuerst]} (Name und SSID koennen abweichen)."""
+    r = run(["sudo", "-n", "nmcli", "-t", "-f", "UUID,TYPE,TIMESTAMP", "connection", "show"], timeout=10)
+    found = []
+    for line in (r.stdout.splitlines() if r and r.returncode == 0 else []):
+        uuid, typ, ts = (nm_split(line) + ["", "", ""])[:3]
+        if not uuid or NM_TYPES.get(typ) != "wifi":
             continue
         g = run(["sudo", "-n", "nmcli", "-g", "802-11-wireless.ssid", "connection", "show", uuid], timeout=10)
-        if g and g.returncode == 0 and g.stdout.strip() == ssid:
-            out.append(uuid)
+        if g and g.returncode == 0 and g.stdout.strip():
+            # -g maskiert Doppelpunkte und Backslashes
+            found.append((int(ts) if ts.isdigit() else 0, uuid, ":".join(nm_split(g.stdout.strip()))))
+    out = {}
+    for _, uuid, ssid in sorted(found, key=lambda f: -f[0]):
+        out.setdefault(ssid, []).append(uuid)
     return out
+
+
+def wifi_profiles(ssid):
+    """UUIDs aller gespeicherten WLAN-Profile fuer dieses Netz."""
+    return wifi_saved().get(ssid, [])
 
 
 def wifi_forget(uuids):
@@ -2164,7 +2201,8 @@ WIFI_ERRORS = [
     ("wifi.err.password", ("secrets were required", "geheimdaten", "wireless-security.psk", "passwd-file",
                            "4-way handshake", "invalid passphrase", "property 'psk' is invalid",
                            "eigenschaft »psk« ist ungültig", "psk: ungültig", "psk: invalid")),
-    ("wifi.err.notFound", ("no network with ssid", "kein netzwerk mit ssid")),
+    ("wifi.err.notFound", ("no network with ssid", "kein netzwerk mit ssid", "no suitable device",
+                           "kein geeignetes gerät")),
     ("wifi.err.noDevice", ("no wi-fi device", "kein wlan-gerät", "kein wi-fi-gerät")),
     ("wifi.err.timeout", ("timeout", "zeitüberschreitung", "timed out")),
 ]
@@ -2186,14 +2224,19 @@ def wifi_error(text):
 
 
 def wifi_connect(ssid, password):
-    """Verbinden. Mit Passwort wird ein altes Profil fuer dasselbe Netz vorher entfernt (sonst nimmt
-    NetworkManager dessen gespeichertes, evtl. falsches Passwort); scheitert der Versuch, wird das dabei
-    angelegte Profil wieder geloescht. Fehler kommen als Schluessel "wifi.err.*" oder als Klartext."""
+    """Verbinden, auch beim Wechsel von einem anderen Netz. Ohne Passwort nimmt es das gespeicherte Profil (die
+    Oberflaeche fragt bekannte Netze nicht ab; lehnt der Router das gespeicherte Passwort ab, kommt
+    wifi.err.password und sie fragt dann doch). Mit Passwort wird ein altes Profil fuer dasselbe Netz vorher
+    entfernt (sonst nimmt NetworkManager dessen gespeichertes, evtl. falsches Passwort); scheitert der Versuch,
+    wird das dabei angelegte Profil wieder geloescht. Fehler kommen als Schluessel "wifi.err.*" oder als Klartext."""
     before = wifi_profiles(ssid)
     if password:
         wifi_forget(before)
         before = []
-    args = ["sudo", "-n", "nmcli", "--wait", "90", "device", "wifi", "connect", ssid]
+    if before:
+        args = ["sudo", "-n", "nmcli", "--wait", "90", "connection", "up", "uuid", before[0]]
+    else:
+        args = ["sudo", "-n", "nmcli", "--wait", "90", "device", "wifi", "connect", ssid]
     if password:
         args += ["password", password]
     try:
@@ -12040,6 +12083,15 @@ class Handler(BaseHTTPRequestHandler):
                 except ValueError as e:
                     return self._json(400, {"error": str(e)})
                 time.sleep(2)                     # Routen stehen nach reapply erst nach einem Moment
+                return self._json(200, settings_payload())
+            if parts in (["api", "net", "disconnect"], ["api", "net", "connect"]):
+                kind = self._body().get("type")
+                if kind not in ("wired", "wifi") or (parts[2] == "connect" and kind != "wired"):
+                    return self._json(400, {"error": "unbekannte Verbindungsart"})
+                try:
+                    (net_connect if parts[2] == "connect" else net_disconnect)(kind)
+                except RuntimeError as e:
+                    return self._json(502, {"error": str(e)})
                 return self._json(200, settings_payload())
             if parts == ["api", "wifi", "connect"]:
                 b = self._body()

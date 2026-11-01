@@ -365,6 +365,37 @@ Layer {
         })
         return out.join("<br>")
     }
+    function netLink(kind) {
+        var ls = sett && sett.net && sett.net.links ? sett.net.links : []
+        for (var i = 0; i < ls.length; i++) if (ls[i].type === kind && (ls[i].connected || ls[i].ready)) return ls[i]
+        return null
+    }
+    function wifiOn() { var l = netLink("wifi"); return l && l.connected ? l : null }
+    function wifiDisconnect() {
+        var l = wifiOn(), name = l ? (l.name || l.dev) : ""
+        Api.post("/api/net/disconnect", { type: "wifi" }, function (j) {
+            update(function () {
+                sett = j
+                if (wifiList) wifiList = wifiList.map(function (w) { return Object.assign({}, w, { active: false }) })
+            })
+            app.toast(Ui.t("settings.netDisconnected", { ssid: name }))
+            Qt.callLater(function () { refocus("scan") })
+        }, function (e) { app.toast(Ui.t("common.failedMsg", { msg: e }), true) })
+    }
+    function wiredToggle(on) {
+        app.toast(Ui.t("settings.netSwitching"))
+        Api.post(on ? "/api/net/connect" : "/api/net/disconnect", { type: "wired" }, function (j) {
+            update(function () { sett = j })
+            app.toast(Ui.t(on ? "settings.netWiredOnDone" : "settings.netWiredOffDone"))
+            Qt.callLater(function () { refocus(on ? "wiredoff" : "wiredon") })
+        }, function (e) { app.toast(Ui.t("common.failedMsg", { msg: e }), true) })
+    }
+    function wifiAsk(net) {
+        wifiPw.value = ""
+        wifiPw.password = true
+        wifiPick = net
+        Qt.callLater(function () { app.setFocus(wifiPw, true); app.openOsk(wifiPw) })
+    }
     function wifiConnect(ssid, pw) {
         app.toast(Ui.t("wifi.connecting", { ssid: ssid }))
         Api.post("/api/wifi/connect", { ssid: ssid, password: pw }, function (j) {
@@ -372,17 +403,15 @@ Layer {
             update(function () {
                 sett = j
                 // Liste gleich mitziehen: das neue Netz ist jetzt das aktive
-                if (wifiList) wifiList = wifiList.map(function (w) { return Object.assign({}, w, { active: w.ssid === ssid }) })
+                if (wifiList) wifiList = wifiList.map(function (w) { return Object.assign({}, w, { active: w.ssid === ssid, known: w.known || w.ssid === ssid }) })
             })
             app.toast(Ui.t("wifi.connected", { ssid: ssid }))
             Qt.callLater(function () { refocus("scan") })
         }, function (e) {
             // Bekannte Fehler kommen als Schluessel "wifi.err.*", alles andere als Klartext
             app.toast(e.indexOf("wifi.err.") === 0 ? Ui.t(e, { ssid: ssid }) : Ui.t("wifi.failed", { msg: e }), true)
-            if (e === "wifi.err.password" && wifiPick) {
-                wifiPw.value = ""
-                Qt.callLater(function () { app.setFocus(wifiPw, true); app.openOsk(wifiPw) })
-            }
+            // Auch wenn das gespeicherte Passwort nicht mehr passt: jetzt erst danach fragen
+            if (e === "wifi.err.password") wifiAsk(wifiPick || { ssid: ssid })
         })
     }
     function btCall(path, body, busy, ok, okErr) {
@@ -691,6 +720,14 @@ Layer {
                 }
             }
             Info { visible: !!s.sett && !!s.sett.net.has_wired && !!s.sett.net.has_wifi; html: Ui.esc(Ui.t("settings.netPreferHint")) }
+            // Kabel per Klick trennen und wieder verbinden (ohne eingestecktes Kabel keine Anzeige)
+            SetRow {
+                visible: !!s.netLink("wired")
+                Pill { property string key: "wiredoff"; visible: !!s.netLink("wired") && s.netLink("wired").connected
+                       text: Ui.t("settings.netWiredOff"); onTriggered: s.wiredToggle(false) }
+                Pill { property string key: "wiredon"; visible: !!s.netLink("wired") && !s.netLink("wired").connected
+                       text: Ui.t("settings.netWiredOn"); onTriggered: s.wiredToggle(true) }
+            }
         }
         SetGroup {
             visible: s.cat === "net"; availH: s.colH; title: Ui.t("settings.wifi")
@@ -713,6 +750,9 @@ Layer {
             SetRow {
                 visible: !s.wifiPick
                 Pill { property string key: "scan"; text: s.wifiList ? Ui.t("settings.rescan") : Ui.t("settings.scan"); onTriggered: s.wifiScan() }
+                Pill { property string key: "wdis"; visible: !!s.wifiOn(); maxWidth: Ui.screenW * 0.3
+                       text: s.wifiOn() ? Ui.t("settings.netDisconnect", { ssid: s.wifiOn().name || s.wifiOn().dev }) : ""
+                       onTriggered: s.wifiDisconnect() }
             }
             SetRow {
                 visible: !s.wifiPick && !!s.wifiList
@@ -725,12 +765,9 @@ Layer {
                         text: (modelData.secure ? "\ud83d\udd12 " : "") + Ui.esc(modelData.ssid) + " <font color='" + Ui.c.textFaint + "'>" + modelData.signal + "%</font>"
                         on: modelData.active
                         onTriggered: {
-                            if (modelData.secure && !modelData.active) {
-                                wifiPw.value = ""
-                                wifiPw.password = true
-                                s.wifiPick = modelData
-                                Qt.callLater(function () { app.setFocus(wifiPw, true); app.openOsk(wifiPw) })
-                            } else s.wifiConnect(modelData.ssid, "")
+                            if (modelData.active) s.wifiDisconnect()         // verbundenes Netz: trennen
+                            else if (modelData.secure && !modelData.known) s.wifiAsk(modelData)
+                            else s.wifiConnect(modelData.ssid, "")           // bekannt oder offen: gleich wechseln
                         }
                     }
                 }

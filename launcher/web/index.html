@@ -1594,6 +1594,11 @@ const SET_PAGES = {
       }
       const h = document.createElement('div'); h.className = 'info'; h.textContent = T('settings.netPreferHint'); n.appendChild(h);
     }
+    const wl = (sett.net.links || []).find(x => x.type === 'wired' && (x.connected || x.ready));
+    if (wl) {                                                    // Kabel per Klick trennen und wieder verbinden
+      const b = pill(esc(T(wl.connected ? 'settings.netWiredOff' : 'settings.netWiredOn')), () => wiredToggle(!wl.connected));
+      b.dataset.key = 'wired'; row(n).appendChild(b);
+    }
     const wc = col(tr, T('settings.wifi'));
     const rw = row(wc);
     if (wifiPick) {
@@ -1609,11 +1614,15 @@ const SET_PAGES = {
       rw.append(show, go, cancel);
     } else {
       const scan = pill(esc(wifiList ? T('settings.rescan') : T('settings.scan')), wifiScan); scan.dataset.key = 'scan'; rw.appendChild(scan);
+      const won = (sett.net.links || []).find(x => x.type === 'wifi' && x.connected);
+      if (won) {
+        const dis = pill(esc(T('settings.netDisconnect', { ssid: won.name || won.dev })), wifiDisconnect); dis.dataset.key = 'wdis'; rw.appendChild(dis);
+      }
       if (wifiList) {
         const rl = row(wc);
         rl.classList.add('wifi');
         for (const w of wifiList.slice(0, 8)) {
-          const b = pill(`${w.secure ? '🔒 ' : ''}${esc(w.ssid)} <span class="sig">${w.signal}%</span>`, () => w.secure && !w.active ? (wifiPick = w, renderSettings(), setFocus($('#wifiPw'))) : wifiConnect(w.ssid, ''), w.active);
+          const b = pill(`${w.secure ? '🔒 ' : ''}${esc(w.ssid)} <span class="sig">${w.signal}%</span>`, () => w.active ? wifiDisconnect() : w.secure && !w.known ? wifiAsk(w) : wifiConnect(w.ssid, ''), w.active);
           b.dataset.key = 'w' + w.ssid; rl.appendChild(b);
         }
       }
@@ -1957,17 +1966,33 @@ async function netPrefer(mode) {
   try { sett = await api('/api/net/prefer', { mode }); toast(T('settings.netPreferDone', { what: T(mode === 'wifi' ? 'settings.wifi' : 'settings.netWired') })); renderSettings(); }
   catch (e) { toast(T('common.failedMsg', { msg: e.message }), true); }
 }
+function wifiAsk(w) { wifiPick = w; renderSettings(); setFocus($('#wifiPw')); }
+async function wifiDisconnect() {
+  const won = (sett?.net?.links || []).find(x => x.type === 'wifi' && x.connected);
+  try {
+    sett = await api('/api/net/disconnect', { type: 'wifi' });
+    if (wifiList) wifiList = wifiList.map(w => ({ ...w, active: false }));
+    toast(T('settings.netDisconnected', { ssid: won ? won.name || won.dev : '' })); renderSettings();
+  } catch (e) { toast(T('common.failedMsg', { msg: e.message }), true); }
+}
+async function wiredToggle(on) {
+  toast(T('settings.netSwitching'));
+  try { sett = await api(on ? '/api/net/connect' : '/api/net/disconnect', { type: 'wired' }); toast(T(on ? 'settings.netWiredOnDone' : 'settings.netWiredOffDone')); renderSettings(); }
+  catch (e) { toast(T('common.failedMsg', { msg: e.message }), true); }
+}
 async function wifiConnect(ssid, pw) {
   toast(T('wifi.connecting', { ssid }));
   try {
     sett = await api('/api/wifi/connect', { ssid, password: pw }); wifiPick = null;
-    if (wifiList) wifiList = wifiList.map(w => ({ ...w, active: w.ssid === ssid }));     // neues Netz ist jetzt das aktive
+    if (wifiList) wifiList = wifiList.map(w => ({ ...w, active: w.ssid === ssid, known: w.known || w.ssid === ssid }));     // neues Netz ist jetzt das aktive
     toast(T('wifi.connected', { ssid })); renderSettings();
   }
   catch (e) {
     const m = String(e.message);                            // bekannte Fehler: Schluessel "wifi.err.*"
     toast(m.startsWith('wifi.err.') ? T(m, { ssid }) : T('wifi.failed', { msg: m }), true);
-    if (m === 'wifi.err.password' && wifiPick && $('#wifiPw')) { $('#wifiPw').value = ''; setFocus($('#wifiPw')); }
+    if (m === 'wifi.err.password') {                        // auch wenn das gespeicherte Passwort nicht mehr passt
+      if (wifiPick && $('#wifiPw')) { $('#wifiPw').value = ''; setFocus($('#wifiPw')); } else wifiAsk({ ssid });
+    }
   }
 }
 async function btTogglePower() {

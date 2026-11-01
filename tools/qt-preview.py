@@ -404,8 +404,10 @@ class H(S.H):
             "/api/apps/job": job,
             "/api/updates": lambda: updates(q),
             "/api/bluetooth/status": bt_status,
-            "/api/wifi/scan": lambda: [{"ssid": "FRITZ!Box 7530", "signal": 72, "secure": True, "active": True},
-                                       {"ssid": "Nachbar", "signal": 31, "secure": True, "active": False}],
+            "/api/wifi/scan": lambda: [{"ssid": "FRITZ!Box 7530", "signal": 72, "secure": True, "known": True,
+                                        "active": any(l["type"] == "wifi" and l["connected"] for l in S.SETTINGS["net"]["links"])},
+                                       {"ssid": "iPhone von Paul", "signal": 58, "secure": True, "known": True, "active": False},
+                                       {"ssid": "Nachbar", "signal": 31, "secure": True, "known": False, "active": False}],
             "/api/keymap": lambda: keymap_payload(q.get("emu", ["gba"])[0]),
             "/api/roms": lambda: {"system": q.get("system", ["gba"])[0], "count": len(ROMS), "roms": ROMS,
                                   "keymap": q.get("system", ["gba"])[0] in EMU_LAYOUTS,
@@ -670,6 +672,13 @@ class H(S.H):
             ls = [l for l in n["links"] if l["connected"]]
             for l in ls:
                 l["internet"] = l["type"] == n["prefer"] or len(ls) == 1
+            return self.j(settings())
+        if p in ("/api/net/disconnect", "/api/net/connect"):
+            n = S.SETTINGS["net"]
+            on = p.endswith("/connect")
+            for l in n["links"]:
+                if l["type"] == body.get("type"):
+                    l.update(connected=on, ready=not on, name=l["name"] if on else "", internet=on)
             return self.j(settings())
         if p == "/api/wifi/connect":                # verbunden: WLAN-Zeile unter Verbindung
             n = S.SETTINGS["net"]
