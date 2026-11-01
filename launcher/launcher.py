@@ -5307,7 +5307,7 @@ class Jobs:
             return True
         if s["type"] in ("appimage", "web"):
             target = APPDIR / a["id"] if s["type"] == "appimage" else BASE / "profiles" / a["id"]
-            shutil.rmtree(target, ignore_errors=True)
+            rm_path(target)
             self._log(f"entfernt: {target}")
             if s["type"] == "appimage" and legacy_flatpak(a):
                 self._run(["flatpak", "uninstall", "--user", "-y", "--noninteractive", s["was_flatpak"]])
@@ -5351,6 +5351,9 @@ class Jobs:
                     if total and done * 10 // total > last:
                         last = done * 10 // total
                         self._log(f"… {last * 10} %")
+                    elif not total and done >> 20 >= last + 10:   # ohne Groessenangabe (GitLab-Artefakte): alle 10 MB
+                        last = done >> 20
+                        self._log(f"… {last} MB")
             if total and done != total:
                 raise RuntimeError(f"Download unvollständig ({done} von {total} Byte)")
             if rel["sha256"] and h.hexdigest() != rel["sha256"]:
@@ -5374,11 +5377,11 @@ class Jobs:
             return False
         dest = APPDIR / a["id"]
         old = APPDIR / f".{a['id']}-old"
-        shutil.rmtree(old, ignore_errors=True)
-        if dest.exists():
+        rm_path(old)
+        if dest.exists() or dest.is_symlink():         # auch ein kaputter Link (Fehler bis 01.11.2026)
             dest.rename(old)                           # erst tauschen, dann loeschen: nie ohne lauffaehige Fassung
         shutil.move(str(root), str(dest))
-        shutil.rmtree(old, ignore_errors=True)
+        rm_path(old)
         shutil.rmtree(work, ignore_errors=True)
         dl.unlink(missing_ok=True)
         try:
@@ -5862,6 +5865,14 @@ def appimage_outdated(a):
     return remote != local
 
 
+def rm_path(p):
+    """Ordner, Datei oder (auch kaputten) Link entfernen – rmtree allein laesst Links stehen."""
+    if p.is_symlink() or p.is_file():
+        p.unlink(missing_ok=True)
+    elif p.exists():
+        shutil.rmtree(p, ignore_errors=True)
+
+
 def _safe_member(work, name):
     """Ziel eines Archiv-Eintrags – nur innerhalb des Entpack-Ordners."""
     dest = (work / name).resolve()
@@ -5948,7 +5959,15 @@ def extract_app(path, fmt, work, strip=0):
         path.chmod(0o755)
         subprocess.run([str(path), "--appimage-extract"], cwd=str(work),
                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900)
+        # Neuere AppImage-Startteile (Mission Center) entpacken nach AppDir/ und legen squashfs-root nur als Link
+        # darauf an – dann zaehlt der Ordner, auf den er zeigt (der Link selbst waere nach dem Verschieben kaputt)
         root = work / "squashfs-root"
+        if not root.exists() and (work / "AppDir").is_dir():
+            root = work / "AppDir"
+        if root.is_symlink():
+            root = root.resolve()
+            if root.parent != work.resolve() or not root.is_dir():
+                raise RuntimeError("AppImage entpackt an einen unerwarteten Ort")
         if not (root / "AppRun").exists():
             raise RuntimeError("AppImage ließ sich nicht entpacken")
         return root
