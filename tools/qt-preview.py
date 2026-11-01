@@ -244,6 +244,24 @@ def job():
         JOB["log"] = [f"Zeile {k}" for k in range(int(t * 10))][-60:]
         JOB["n"] = len(JOB["log"])
         return JOB
+    if JOB.get("state") == "running" and os.environ.get("VS_JOB_DL") and JOB.get("action") == "install":
+        # Download wie Jobs._appimage: "progress" statt Protokollzeilen. VS_JOB_DL=size (mit Groesse, 120 MB)
+        # oder nosize (Server ohne Groessenangabe, z. B. GitLab-Artefakte); dauert ~12 s
+        t = time.time() - JOB.setdefault("t0", time.time())
+        total = 0 if os.environ["VS_JOB_DL"] == "nosize" else 120 << 20
+        done = int(min(t / 10, 1) * (120 << 20))
+        JOB["log"] = ["$ sudo -n /usr/local/sbin/voidstation-pkg install libcups",
+                      "Lade https://github.com/example/releases/download/v1.0/Example-x86_64.AppImage"]
+        if t < 10:
+            JOB["progress"] = {"mb": round(done / 1048576, 1), "total_mb": round(total / 1048576, 1) if total else 0,
+                               "pct": done * 100 // total if total else None}
+        else:
+            JOB.pop("progress", None)
+            JOB["log"] += ["geladen: 120 MB", "Entpacke …"]
+        if t >= 12:
+            JOB["log"].append("installiert")
+            JOB["state"] = "done"
+        return JOB
     if JOB.get("state") == "running":
         JOB["n"] = JOB.get("n", 0) + 1
         JOB["log"].append(f"Schritt {JOB['n']} …")

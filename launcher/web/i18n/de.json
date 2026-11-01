@@ -292,6 +292,7 @@
   "apps.type.web": "Web-App",
   "apps.type.flatpak": "Flatpak",
   "apps.type.appimage": "AppImage",
+  "apps.type.archive": "Download",
   "apps.type.xbps": "Paket",
   "apps.optional": "Optionale Programme",
   "apps.autoTiles": "Kacheln werden automatisch angelegt",

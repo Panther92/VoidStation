@@ -292,6 +292,7 @@
   "apps.type.web": "Aplikacja web",
   "apps.type.flatpak": "Flatpak",
   "apps.type.appimage": "AppImage",
+  "apps.type.archive": "Pobieranie",
   "apps.type.xbps": "Pakiet",
   "apps.optional": "Programy opcjonalne",
   "apps.autoTiles": "Kafelki dodawane są automatycznie",

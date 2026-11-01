@@ -292,6 +292,7 @@
   "apps.type.web": "Appli web",
   "apps.type.flatpak": "Flatpak",
   "apps.type.appimage": "AppImage",
+  "apps.type.archive": "Téléchargement",
   "apps.type.xbps": "Paquet",
   "apps.optional": "Programmes optionnels",
   "apps.autoTiles": "Les tuiles sont ajoutées automatiquement",

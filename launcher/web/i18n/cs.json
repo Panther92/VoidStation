@@ -292,6 +292,7 @@
   "apps.type.web": "Webová aplikace",
   "apps.type.flatpak": "Flatpak",
   "apps.type.appimage": "AppImage",
+  "apps.type.archive": "Stažení",
   "apps.type.xbps": "Balíček",
   "apps.optional": "Volitelné programy",
   "apps.autoTiles": "Dlaždice se přidají automaticky",

@@ -389,6 +389,15 @@ class AppManager:
                     run(["wmctrl", "-i", "-a", wid])
                 if fullscreen:                           # Emulator ohne eigene Vollbild-Option (EMU_WM_FULLSCREEN)
                     run(["wmctrl", "-i", "-r", wins[0][0], "-b", "add,fullscreen"])
+                elif app_maximize(tid):
+                    # Openbox maximiert neue Fenster per Regel (rc.xml) – GTK4-Programme (Mission Center & Co.)
+                    # setzen danach aber ihre gespeicherte Groesse und heben das wieder auf: nachsehen, nachziehen
+                    for delay in (0.8, 2.5, 5.0):
+                        time.sleep(delay)
+                        if proc.poll() is not None:
+                            return
+                        for wid, _, _ in wins:
+                            wm_maximize(wid)
                 return
         with self.lock:                          # kein Fenster erkennbar -> nicht ewig "startet"
             self.shown.add(tid)
@@ -1275,11 +1284,14 @@ def apply_appearance(s):
     idx.parent.mkdir(parents=True, exist_ok=True)
     idx.write_text(f"[Icon Theme]\nInherits={theme}\n")
     qt_style, gtk_env = ("Adwaita-Dark", "Adwaita:dark") if dark else ("Adwaita", "Adwaita")
+    # libadwaita (GTK 4: Mission Center & Co.) ignoriert GTK_THEME und liest das Farbschema nur aus dem Portal bzw.
+    # GSettings – entpackte AppImages mit eigener GLib erreichen beides oft nicht. ADW_DEBUG_COLOR_SCHEME gilt immer.
+    adw = "prefer-dark" if dark else "prefer-light"
     (BASE / "env.sh").write_text(
         f"export XCURSOR_THEME={theme}\nexport XCURSOR_SIZE={size}\n"
-        f"export QT_STYLE_OVERRIDE={qt_style}\nexport GTK_THEME={gtk_env}\n")
+        f"export QT_STYLE_OVERRIDE={qt_style}\nexport GTK_THEME={gtk_env}\nexport ADW_DEBUG_COLOR_SCHEME={adw}\n")
     os.environ.update({"XCURSOR_THEME": theme, "XCURSOR_SIZE": str(size),
-                       "QT_STYLE_OVERRIDE": qt_style, "GTK_THEME": gtk_env})
+                       "QT_STYLE_OVERRIDE": qt_style, "GTK_THEME": gtk_env, "ADW_DEBUG_COLOR_SCHEME": adw})
     run(["xsetroot", "-cursor_name", "left_ptr"])
     try:
         apply_openbox_theme(s.get("theme") or DEFAULTS["theme"], dark)
@@ -4758,6 +4770,34 @@ def pad_mouse_default(tile_id):
     return True
 
 
+def app_maximize(tile_id):
+    """Fenster dieses Programms nach dem Start maximieren (Vorgabe: ja, wie im Vollbild – ohne Rahmen ist da kein
+    Unterschied). Aus mit "maximize": false an der Kachel (tiles.json) oder im Katalog."""
+    t = find_tile(tile_id) or {}
+    if isinstance(t.get("maximize"), bool):
+        return t["maximize"]
+    try:
+        a = catalog_app(tile_id)
+    except (OSError, ValueError):
+        a = None
+    return not (a and a.get("maximize") is False)
+
+
+def wm_maximize(wid):
+    """Normales Fenster maximieren, wenn es weder maximiert noch im Vollbild ist (Dialoge und Spiele im Vollbild
+    bleiben, wie sie sind)."""
+    r = run(["xprop", "-id", wid, "_NET_WM_STATE", "_NET_WM_WINDOW_TYPE"], timeout=3)
+    if r and r.returncode == 0:
+        out = r.stdout
+        if "_NET_WM_WINDOW_TYPE_NORMAL" not in out and "_NET_WM_WINDOW_TYPE" in out and "not found" not in out:
+            return                                     # Dialog, Werkzeugleiste, Startbild …
+        if "_NET_WM_STATE_FULLSCREEN" in out or ("MAXIMIZED_VERT" in out and "MAXIMIZED_HORZ" in out):
+            return
+    elif r is None:
+        return                                         # Fenster schon weg
+    run(["wmctrl", "-i", "-r", wid, "-b", "add,maximized_vert,maximized_horz"])
+
+
 def app_suspendable(tile_id):
     """Programm dieser Kachel anhalten, solange etwas anderes vorn ist? Vorrang: "suspend" an der Kachel
     (tiles.json), dann im Katalog; von selbst bei Emulatoren (Katalog-Kategorie "Emulatoren" bzw. Kacheln, die
@@ -4989,6 +5029,18 @@ class Jobs:
     def _step_state(self, sid):
         with self.lock:
             return next((x["state"] for x in self.job.get("steps") or [] if x["id"] == sid), None)
+
+    def _progress(self, done=None, total=0):
+        """Download-Fortschritt fuer das Band der Oberflaeche: {"mb", "total_mb", "pct"} – statt Protokollzeilen
+        "… 10 %" je Zehntel. None = fertig (der Wert verschwindet)."""
+        with self.lock:
+            if not self.job:
+                return
+            if done is None:
+                self.job.pop("progress", None)
+            else:
+                self.job["progress"] = {"mb": round(done / 1048576, 1), "total_mb": round(total / 1048576, 1) if total else 0,
+                                        "pct": min(100, done * 100 // total) if total else None}
 
     def _marker(self, m):
         if m == "verified" and self._step_state("load") == "run":
@@ -5340,7 +5392,8 @@ class Jobs:
             with urllib.request.urlopen(req, timeout=60) as r, open(dl, "wb") as f:
                 stamp = rel["stamp"] or asset_stamp(r.headers)
                 total = int(r.headers.get("Content-Length") or 0)
-                done, last = 0, 0
+                done, last = 0, 0.0
+                self._progress(0, total)
                 while True:
                     chunk = r.read(1 << 16)
                     if not chunk:
@@ -5348,17 +5401,18 @@ class Jobs:
                     f.write(chunk)
                     h.update(chunk)
                     done += len(chunk)
-                    if total and done * 10 // total > last:
-                        last = done * 10 // total
-                        self._log(f"… {last * 10} %")
-                    elif not total and done >> 20 >= last + 10:   # ohne Groessenangabe (GitLab-Artefakte): alle 10 MB
-                        last = done >> 20
-                        self._log(f"… {last} MB")
+                    now = time.monotonic()
+                    if now - last >= 0.5:              # Balken im Band (ohne Groessenangabe nur MB, z. B. GitLab)
+                        last = now
+                        self._progress(done, total)
+            self._progress(None)
+            self._log(f"geladen: {done / 1048576:.0f} MB")
             if total and done != total:
                 raise RuntimeError(f"Download unvollständig ({done} von {total} Byte)")
             if rel["sha256"] and h.hexdigest() != rel["sha256"]:
                 raise RuntimeError("Prüfsumme stimmt nicht")
         except Exception as e:  # noqa: BLE001
+            self._progress(None)
             dl.unlink(missing_ok=True)
             self._log(f"Download fehlgeschlagen: {e}")
             return False
@@ -6349,6 +6403,8 @@ def apps_payload():
     for a in cat["apps"]:
         item = {k: a[k] for k in ("id", "name", "desc", "cat")}
         item["type"] = a["source"]["type"]
+        if item["type"] == "appimage" and a["source"].get("run"):   # ZIP, Tarball, .deb: Beschriftung "Download"
+            item["type"] = "archive"
         item["installed"] = app_installed_in(a, pkgs, fps, tiles)
         if not item["installed"] and (a.get("retired") or not app_supported(a)):
             continue                                   # nicht mehr im Angebot bzw. nicht fuer diese Architektur (32 Bit)

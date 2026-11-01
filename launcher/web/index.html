@@ -2484,7 +2484,9 @@ function watchJob() {
     const what = jobState.action === 'update' ? T('job.update') : ['install', 'remove'].includes(jobState.action) ? T('job.' + jobState.action, { name }) : name;
     $('#jobTitle').textContent = what + T(jobState.state === 'running' ? 'job.running' : jobState.state === 'done' ? 'job.done' : 'job.failed');
     $('#jobSpin').style.display = jobState.state === 'running' ? '' : 'none';
-    $('#jobLog').textContent = (jobState.log || []).slice(-6).join('\n');
+    const pr = jobState.state === 'running' && jobState.progress;   // Download: Stand statt Protokollzeilen
+    $('#jobLog').textContent = (jobState.log || []).slice(pr ? -4 : -6).join('\n') + (pr ? '\n' + (pr.total_mb
+      ? `${num(Math.round(pr.mb))} / ${num(Math.round(pr.total_mb))} MB · ${pr.pct} %` : `${num(Math.round(pr.mb))} MB`) : '');
     if (jobState.state !== 'running') {
       clearInterval(jobTimer);
       const upd = jobState.action === 'update', r = jobState.result;

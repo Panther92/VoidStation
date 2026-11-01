@@ -292,6 +292,7 @@
   "apps.type.web": "Веб-приложение",
   "apps.type.flatpak": "Flatpak",
   "apps.type.appimage": "AppImage",
+  "apps.type.archive": "Загрузка",
   "apps.type.xbps": "Пакет",
   "apps.optional": "Дополнительные программы",
   "apps.autoTiles": "Плитки добавляются автоматически",

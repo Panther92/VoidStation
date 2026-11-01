@@ -292,6 +292,7 @@
   "apps.type.web": "Webes alkalmazás",
   "apps.type.flatpak": "Flatpak",
   "apps.type.appimage": "AppImage",
+  "apps.type.archive": "Letöltés",
   "apps.type.xbps": "Csomag",
   "apps.optional": "Választható programok",
   "apps.autoTiles": "A csempék automatikusan megjelennek",

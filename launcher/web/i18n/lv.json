@@ -292,6 +292,7 @@
   "apps.type.web": "Tīmekļa lietotne",
   "apps.type.flatpak": "Flatpak",
   "apps.type.appimage": "AppImage",
+  "apps.type.archive": "Lejupielāde",
   "apps.type.xbps": "Pakotne",
   "apps.optional": "Papildu programmas",
   "apps.autoTiles": "Flīzes tiek pievienotas automātiski",

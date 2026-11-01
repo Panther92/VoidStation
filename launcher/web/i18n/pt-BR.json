@@ -292,6 +292,7 @@
   "apps.type.web": "App web",
   "apps.type.flatpak": "Flatpak",
   "apps.type.appimage": "AppImage",
+  "apps.type.archive": "Download",
   "apps.type.xbps": "Pacote",
   "apps.optional": "Programas opcionais",
   "apps.autoTiles": "Os blocos são adicionados automaticamente",

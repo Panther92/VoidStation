@@ -292,6 +292,7 @@
   "apps.type.web": "Εφαρμογή web",
   "apps.type.flatpak": "Flatpak",
   "apps.type.appimage": "AppImage",
+  "apps.type.archive": "Λήψη",
   "apps.type.xbps": "Πακέτο",
   "apps.optional": "Προαιρετικά προγράμματα",
   "apps.autoTiles": "Τα πλακίδια προστίθενται αυτόματα",

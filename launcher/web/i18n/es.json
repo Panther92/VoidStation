@@ -292,6 +292,7 @@
   "apps.type.web": "App web",
   "apps.type.flatpak": "Flatpak",
   "apps.type.appimage": "AppImage",
+  "apps.type.archive": "Descarga",
   "apps.type.xbps": "Paquete",
   "apps.optional": "Programas opcionales",
   "apps.autoTiles": "Los mosaicos se añaden automáticamente",

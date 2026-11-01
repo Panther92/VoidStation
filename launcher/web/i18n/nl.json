@@ -292,6 +292,7 @@
   "apps.type.web": "Web-app",
   "apps.type.flatpak": "Flatpak",
   "apps.type.appimage": "AppImage",
+  "apps.type.archive": "Download",
   "apps.type.xbps": "Pakket",
   "apps.optional": "Optionele programma’s",
   "apps.autoTiles": "Tegels worden automatisch toegevoegd",

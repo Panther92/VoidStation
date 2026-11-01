@@ -24,6 +24,41 @@ Rectangle {
             Spinner { id: spin; size: 14 * Ui.f; line: 2; anchors.verticalCenter: parent.verticalCenter }
             Txt { id: title; font.pixelSize: 17 * Ui.f; anchors.verticalCenter: parent.verticalCenter }
         }
+        // Download: Balken mit "54 / 120 MB" (ohne Groessenangabe des Servers: wandernder Abschnitt und nur MB)
+        Item {
+            id: prog
+            property var p: null
+            visible: p !== null
+            width: Math.min(parent.width, 640 * Ui.f)
+            height: visible ? progLabel.implicitHeight + 14 * Ui.f : 0
+            Rectangle {
+                id: track
+                width: parent.width; height: 6 * Ui.f; radius: height / 2
+                color: Ui.c.borderSubtle; clip: true
+                Rectangle {
+                    height: parent.height; radius: parent.radius; color: Ui.c.textPrimary
+                    visible: prog.p && prog.p.pct !== null && prog.p.pct !== undefined
+                    width: parent.width * Math.min(100, (prog.p && prog.p.pct) || 0) / 100
+                    Behavior on width { NumberAnimation { duration: 450 } }
+                }
+                Rectangle {
+                    id: sweep
+                    height: parent.height; radius: parent.radius; color: Ui.c.textPrimary
+                    width: parent.width * 0.25
+                    visible: prog.p && (prog.p.pct === null || prog.p.pct === undefined)
+                    NumberAnimation on x { running: sweep.visible; loops: Animation.Infinite; duration: 1400
+                                           from: -sweep.width; to: track.width }
+                }
+            }
+            Txt {
+                id: progLabel
+                y: track.height + 8 * Ui.f
+                font.pixelSize: 13 * Ui.f; color: Ui.c.textDim
+                text: !prog.p ? "" : prog.p.total_mb
+                      ? Ui.num(Math.round(prog.p.mb)) + " / " + Ui.num(Math.round(prog.p.total_mb)) + " MB  ·  " + Ui.pct(prog.p.pct || 0)
+                      : Ui.num(Math.round(prog.p.mb)) + " MB"
+            }
+        }
         Text {
             id: logText
             width: parent.width
@@ -57,7 +92,8 @@ Rectangle {
             var upd = js.action === "update", r = js.result
             jb.upd = upd
             // Updates: statt Protokollzeilen nur der laufende Schritt (das Protokoll steht in logs/update.log)
-            logText.text = upd ? (js.state === "running" ? updScreen.current() : "") : (js.log || []).slice(-6).join("\n")
+            logText.text = upd ? (js.state === "running" ? updScreen.current() : "") : (js.log || []).slice(js.progress ? -2 : -6).join("\n")
+            prog.p = (!upd && js.state === "running" && js.progress) ? js.progress : null
             if (js.state === "running") return
             poll.stop()
             app.load()
