@@ -26,7 +26,10 @@ Flickable {
         var p = item.mapToItem(col.contentItem, 0, 0)
         var m = Math.max(0, Math.min(40 * Ui.f, (height - item.height) / 2))
         var y = a.running ? a.to : contentY
-        if (p.y < y + m) y = p.y - m
+        // Passt das Element auch ganz oben ins Bild: dorthin. Sonst blieben Texte ueber dem ersten Knopf
+        // (die keinen Fokus bekommen) nach dem Zurueckgehen dauerhaft abgeschnitten.
+        if (p.y + item.height + m <= height) y = 0
+        else if (p.y < y + m) y = p.y - m
         else if (p.y + item.height > y + height - m) y = p.y + item.height - height + m
         y = Math.max(0, Math.min(contentHeight - height, y))
         a.stop()

@@ -51,12 +51,33 @@ done
 
 say "1/8  Pakete"
 MISSING=""
-for p in curl elogind xrdb pulseaudio-utils mpv python3-mpv ffmpegthumbnailer ffmpeg yt-dlp nodejs samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf xprop adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 \
+for p in curl elogind xrdb pulseaudio-utils xdotool mpv python3-mpv ffmpegthumbnailer ffmpeg yt-dlp nodejs lsdvd samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf xprop adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 \
          bluez libspa-bluetooth htop nano fastfetch mousepad python3-pyside6-declarative qt6-svg qt6-imageformats qt6-plugin-tls-openssl \
-         wireless-regdb; do
+         wireless-regdb bash-completion; do
   xbps-query "$p" >/dev/null 2>&1 || MISSING="$MISSING $p"
 done
+# Startbild beim Hochfahren (s. voidstation-splash) – nur 64 Bit
+[ "$(xbps-uhelper arch 2>/dev/null)" = x86_64 ] && ! xbps-query plymouth >/dev/null 2>&1 && MISSING="$MISSING plymouth"
 if [ -n "$MISSING" ]; then xbps-install -Sy $MISSING || warn "Paketinstallation fehlgeschlagen"; else echo "alles da"; fi
+# 32-Bit-Rechner (experimentell): 2D-Treiber fuer die alte Grafik nachholen (Xv fuer den Player, s. install.sh)
+if [ "$(xbps-uhelper arch 2>/dev/null)" = i686 ]; then
+  DDX=""
+  for d in /sys/bus/pci/devices/*; do
+    case "$(cat "$d/class" 2>/dev/null)" in 0x03*) ;; *) continue ;; esac
+    case "$(cat "$d/vendor" 2>/dev/null)" in
+      0x1002) ddxp=xlibre-xf86-video-ati ;;
+      0x8086) ddxp=xlibre-xf86-video-intel ;;
+      0x10de) ddxp=xlibre-xf86-video-nouveau ;;
+      0x1106) ddxp=xlibre-xf86-video-openchrome ;;
+      *) continue ;;
+    esac
+    xbps-query "$ddxp" >/dev/null 2>&1 || ! xbps-query -R "$ddxp" >/dev/null 2>&1 || DDX="$DDX $ddxp"
+  done
+  if [ -n "$DDX" ]; then
+    xbps-install -Sy $DDX && echo "Grafiktreiber (2D):$DDX – wirkt nach dem Neustart" \
+      || warn "Grafiktreiber$DDX konnte nicht installiert werden"
+  fi
+fi
 
 # Intel-CPU: aktueller Microcode beim Start (behebt u. a. Haenger aelterer Skylake-CPUs mit altem BIOS)
 if grep -q GenuineIntel /proc/cpuinfo 2>/dev/null && ! xbps-query intel-ucode >/dev/null 2>&1 && [ "${VOIDSTATION_OFFLINE:-0}" != 1 ]; then
@@ -91,6 +112,22 @@ chmod +x "$TV/launcher.py" "$TV/home.sh" "$TV/vsctl" "$TV/voidstation-shell.py" 
 echo "__VS_VERSION__" > "$TV/VERSION"
 echo '__VS_VERSION_B64__' | base64 -d > "$TV/version.json" 2>/dev/null || true
 cp "$TV/openbox/"{rc.xml,menu.xml,autostart} "$HOMEDIR/.config/openbox/"
+# Terminal: die Void-Vorgabe PS1='[\u@\h \W]\$ ' aus ~/.bashrc nehmen – sie ueberdeckt sonst die
+# Eingabeaufforderung von VoidStation (/etc/bash/bashrc.d/voidstation.sh, s. sysfix.sh). Nur die unveraenderte Zeile;
+# ein eigenes PS1 bleibt und geht vor.
+python3 - "$HOMEDIR/.bashrc" <<'PYEOF'
+import sys
+p = sys.argv[1]
+try:
+    lines = open(p, encoding="utf-8").read().split("\n")
+except OSError:
+    sys.exit(0)
+old = r"PS1='[\u@\h \W]\$ '"
+if old in lines:
+    lines[lines.index(old)] = "# PS1: kommt von VoidStation (/etc/bash/bashrc.d/voidstation.sh) – ein eigenes PS1 hier geht vor"
+    open(p, "w", encoding="utf-8").write("\n".join(lines))
+    print("Eingabeaufforderung: VoidStation-Vorgabe")
+PYEOF
 
 python3 - "$TV/tiles.json" <<'PYEOF'
 import json, sys
@@ -133,6 +170,20 @@ for t in [t for g in c["groups"] for t in g["tiles"]]:
         t["cmd"] = ["mgba-qt"]; t["sub"] = "mGBA"
     if t.get("id") == "files" and t.get("cmd") == ["pcmanfm", "~"]:
         t["cmd"] = ["pcmanfm", "~/share"]
+    # Terminal (und Terminal-Apps wie htop): Schrift und Farben kommen jetzt aus ~/.Xresources (folgen dem Theme);
+    # die alten festen Vorgaben raus, eigene andere Werte bleiben
+    if t.get("cmd") and t["cmd"][0] == "xterm":
+        old = {"-fa": {"Monospace", "DejaVu Sans Mono"}, "-fs": {"13", "14"}, "-bg": {"#111316"}, "-fg": {"#dcdcdc"}}
+        cmd, out, i = t["cmd"], [t["cmd"][0]], 1
+        while i < len(cmd):
+            if cmd[i] == "-e":
+                out += cmd[i:]; break
+            if cmd[i] in old and i + 1 < len(cmd) and cmd[i + 1] in old[cmd[i]]:
+                i += 2; continue
+            out.append(cmd[i]); i += 1
+        if out != cmd:
+            t["cmd"] = out
+            print("Kachel", t.get("label", t.get("id")) + ": Terminal folgt jetzt dem Theme")
 json.dump(c, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PYEOF
 xbps-query vba-m >/dev/null 2>&1 && xbps-remove -Ry vba-m >/dev/null 2>&1 && echo "defektes vba-m entfernt"
@@ -180,8 +231,84 @@ PYEOF
   fi
 fi
 
+# YouTube TV-Oberflaeche (youtube.com/tv mit vorgetaeuschtem Smart-TV-Browser) ist aus dem AppCenter
+# geflogen: Google laesst sie nur auf echten Fernsehern zu und meldet sonst, das Geraet werde nicht erkannt.
+# Einmalig je Geraet: Kachel und Firefox-Profil entfernen. Normales YouTube (Kachel "YouTube") bleibt.
+YTTVDONE=/usr/local/share/voidstation/youtube-tv-removed
+if [ ! -e "$YTTVDONE" ]; then
+  if python3 - "$TV/tiles.json" <<'PYEOF'
+import json, sys
+p = sys.argv[1]
+c = json.load(open(p, encoding="utf-8"))
+n = 0
+for g in c["groups"]:
+    keep = [t for t in g["tiles"] if t.get("id") != "youtube-tv"]
+    n += len(g["tiles"]) - len(keep)
+    g["tiles"] = keep
+if n:
+    c["groups"] = [g for g in c["groups"] if g["tiles"]]
+    json.dump(c, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    print("Kachel entfernt: YouTube TV")
+PYEOF
+  then
+    if [ -d "$TV/profiles/youtube-tv" ]; then
+      rm -rf "$TV/profiles/youtube-tv" && echo "Firefox-Profil der YouTube TV-Oberflaeche entfernt"
+    fi
+    install -d -m 755 /usr/local/share/voidstation && date -I > "$YTTVDONE" && chmod 644 "$YTTVDONE"
+  else
+    warn "Kachel YouTube TV konnte nicht entfernt werden – naechstes Update versucht es erneut"
+  fi
+fi
+
+# 32 Bit (experimentell): YouTube Light loest die YouTube-Kachel im Firefox-Kiosk ab (einmalig, an derselben Stelle und
+# in derselben Groesse). Ist YouTube Light schon da (aus dem AppCenter: klein, am Ende der Gruppe), wandert diese Kachel
+# an den Platz der alten. Neue Installationen bekommen das schon von install.sh; 64 Bit behaelt Firefox, YouTube Light
+# steht dort im AppCenter.
+# ytlight-i686 = erste Fassung (nur Testing, 22.10.2026): entfernte bei vorhandenem YouTube Light nur die alte Kachel –
+# dann YouTube Light einmalig an den Anfang seiner Gruppe holen (breit).
+YTLDONE=/usr/local/share/voidstation/ytlight-i686-v2
+YTLOLD=/usr/local/share/voidstation/ytlight-i686
+if [ "$(xbps-uhelper arch 2>/dev/null)" = i686 ] && [ ! -e "$YTLDONE" ]; then
+  if python3 - "$TV/tiles.json" "$([ -e "$YTLOLD" ] && echo repair)" <<'PYEOF'
+import json, sys
+p, repair = sys.argv[1], sys.argv[2] == "repair"
+c = json.load(open(p, encoding="utf-8"))
+new = {"id": "ytlight", "label": "YouTube Light", "sub": "Videos & Abos", "size": "wide", "color": "#6e2b2b",
+       "icon": "play", "cmd": ["~/.local/share/voidstation/qt/voidstation-player.py", "--yt"], "app": True}
+yt_pos = next(((gi, ti) for gi, g in enumerate(c["groups"]) for ti, t in enumerate(g["tiles"]) if t.get("id") == "youtube"), None)
+old = next(((gi, ti) for gi, g in enumerate(c["groups"]) for ti, t in enumerate(g["tiles"]) if t.get("id") == "ytlight"), None)
+msg = ""
+if yt_pos:
+    gi, ti = yt_pos
+    size = c["groups"][gi]["tiles"][ti].get("size", "wide")
+    tile = dict(c["groups"][old[0]]["tiles"][old[1]]) if old else dict(new)
+    tile["size"] = size
+    c["groups"][gi]["tiles"][ti] = tile                      # an die Stelle der alten Kachel
+    if old:
+        c["groups"][old[0]]["tiles"].pop(old[1])          # die kleine Kachel vom AppCenter
+    msg = "32 Bit: Kachel YouTube (Firefox) durch YouTube Light ersetzt"
+elif repair and old:
+    gi, ti = old
+    tile = c["groups"][gi]["tiles"].pop(ti)
+    tile["size"] = "wide"
+    c["groups"][gi]["tiles"].insert(0, tile)
+    msg = "32 Bit: YouTube Light an den Platz der alten YouTube-Kachel gerueckt"
+if msg:
+    c["groups"] = [g for g in c["groups"] if g["tiles"]]
+    json.dump(c, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    print(msg)
+PYEOF
+  then
+    install -d -m 755 /usr/local/share/voidstation && date -I > "$YTLDONE" && chmod 644 "$YTLDONE"
+  else
+    warn "YouTube Light konnte die YouTube-Kachel nicht ersetzen – naechstes Update versucht es erneut"
+  fi
+fi
+
 # Bluetooth: bluetoothctl braucht die Gruppe bluetooth (wirkt nach dem naechsten Neustart)
 getent group bluetooth >/dev/null && usermod -aG bluetooth "$VSUSER" || true
+# DVD-Laufwerk lesen (Videos & Musik: DVDs; wirkt nach dem naechsten Neustart)
+for g in optical cdrom; do getent group "$g" >/dev/null && usermod -aG "$g" "$VSUSER" || true; done
 
 # Bluetooth & Controller (BlueZ-Einstellungen, udev-Regeln, uinput): sysfix.sh
 
@@ -192,12 +319,15 @@ say "3/8  AppCenter-Helfer (installiert nur freigegebene Pakete)"
 install -o root -g root -m 755 "$TV/voidstation-pkg" /usr/local/sbin/voidstation-pkg
 ln -sfn "$TV/vsctl" /usr/local/bin/vsctl          # "vsctl update" im Terminal = Einstellungen → Updates
 install -d -o root -g root -m 755 /usr/local/share/voidstation
-python3 - "$TV/catalog.json" > /usr/local/share/voidstation/allowed-packages <<'PYEOF'
+python3 - "$TV/catalog.json" "$(xbps-uhelper arch 2>/dev/null)" > /usr/local/share/voidstation/allowed-packages <<'PYEOF'
 import json, sys
 c = json.load(open(sys.argv[1], encoding="utf-8"))
+arch = sys.argv[2] if len(sys.argv) > 2 else ""
 pk = {"flatpak"}
 for a in c["apps"]:
     s = a["source"]
+    if arch and isinstance(a.get("arch"), list) and arch not in a["arch"]:
+        continue                                  # z. B. Steam (multilib) nicht auf 32 Bit
     if s["type"] == "xbps":
         pk.add(s["pkg"])
     for k in ("repos", "deps", "optional", "host_pkgs"):
@@ -211,8 +341,18 @@ chmod 644 /usr/local/share/voidstation/allowed-packages
 echo "$(wc -l < /usr/local/share/voidstation/allowed-packages) Pakete freigegeben"
 printf '%s\n' "__VS_UPDATE_URL__" > /usr/local/share/voidstation/update-url
 chmod 644 /usr/local/share/voidstation/update-url
-# Update-Kanal (stable = fuer alle, main = Test); bestehende Wahl bleibt
+# Update-Kanal (stable = fuer alle, main = Testing); bestehende Wahl bleibt
 [ -s /usr/local/share/voidstation/channel ] || echo stable > /usr/local/share/voidstation/channel
+# Seit 2026.11 gibt es Testing nur noch auf Wunsch (vsctl channel testing, Markierung testing-optin).
+# Wer Testing frueher im Installer oder in den Einstellungen gewaehlt hat, kehrt mit dem ersten freigegebenen
+# Stand auf main (Version ohne "+testing" = gleich Stable) zu Stable zurueck – ohne Downgrade. Spaetere Faelle
+# erledigt der Launcher, sobald Stable neuer ist als der eigene Stand.
+VSVER="$(echo '__VS_VERSION_B64__' | base64 -d 2>/dev/null | sed -n 's/^{"version": "\([^"]*\)".*/\1/p')"
+if [ "$(head -n1 /usr/local/share/voidstation/channel)" = main ] && [ ! -e /usr/local/share/voidstation/testing-optin ] \
+   && [ -n "$VSVER" ] && [ "${VSVER#*+testing}" = "$VSVER" ]; then
+  echo stable > /usr/local/share/voidstation/channel
+  echo "Update-Kanal: Stable (Testing gibt es nur noch auf Wunsch: vsctl channel testing)"
+fi
 chmod 644 /usr/local/share/voidstation/channel
 # Signaturschluessel: danach werden nur noch signierte Updates installiert
 SIGNERS="$(echo '__VS_SIGNERS_B64__' | base64 -d 2>/dev/null || true)"
@@ -227,10 +367,15 @@ fi
 # Vorher: Eintrag je Kernelversion (manche Firmware startete weiter den alten Kernel) und
 # ~240 MB Initramfs je Kernel auf der 512-MB-EFI-Partition.
 install -o root -g root -m 755 "$TV/voidstation-efistub" /usr/local/sbin/voidstation-efistub
+install -o root -g root -m 755 "$TV/voidstation-splash" /usr/local/sbin/voidstation-splash
+install -o root -g root -m 644 "$TV/dracut-voidstation.conf" /usr/local/share/voidstation/dracut-voidstation.conf
 KCHANGED=0
+# Initramfs-Vorgabe von VoidStation (vom Installer bzw. aus 0.14.2) auf den neuen Stand bringen:
+# kleines Initramfs ohne Grafiktreiber; seit 2026.11 darf das Startbild (Plymouth) mit hinein
 DCONF=/etc/dracut.conf.d/10-voidstation.conf
-if [ -f "$DCONF" ] && grep -q '^hostonly="no"' "$DCONF" && ! grep -q 'omit_dracutmodules' "$DCONF"; then
-  say "Kernel-Start: kleineres Initramfs (ohne Grafiktreiber)"
+if [ -f "$DCONF" ] && grep -q '^hostonly="no"' "$DCONF" && grep -q 'VoidStation' "$DCONF" \
+   && ! cmp -s "$TV/dracut-voidstation.conf" "$DCONF"; then
+  say "Kernel-Start: Initramfs-Vorgabe erneuert (ohne Grafiktreiber, mit Startbild)"
   install -m 644 "$TV/dracut-voidstation.conf" "$DCONF"
   KCHANGED=1
 fi
@@ -252,14 +397,25 @@ if [ -f /etc/kernel.d/post-install/40-voidstation-esp ] && [ ! -f /etc/default/v
     warn "EFI-Partition unter /boot/efi nicht gefunden – Umstellung uebersprungen"
   fi
 fi
+# Startbild beim Hochfahren (Plymouth): Theme, Kernel-Befehlszeile ("splash"), Ende vor X.
+# Meldet 2, wenn das Initramfs neu gebaut werden muss – das passiert dann hier zusammen mit dem Rest.
+say "Startbild beim Hochfahren"
+SPL=0
+/usr/local/sbin/voidstation-splash setup --no-rebuild --theme "$TV/plymouth" || SPL=$?
+case "$SPL" in
+  0) ;;
+  2) [ "$KCHANGED" = 0 ] && KCHANGED=3 ;;
+  *) warn "Startbild nicht vollstaendig eingerichtet (sudo voidstation-splash status)" ;;
+esac
 if [ "$KCHANGED" != 0 ]; then
   [ -f /etc/default/voidstation-efistub ] && /usr/local/sbin/voidstation-efistub --setup >/dev/null
   # Initramfs des neuesten Kernels neu bauen; der Hook legt ihn danach auf die EFI-Partition
   UKV="$(ls /boot/vmlinuz-* 2>/dev/null | sed 's|.*/vmlinuz-||' | sort -V | tail -1)"
   if [ -n "$UKV" ]; then
     echo "Initramfs fuer Kernel $UKV wird neu erzeugt (dauert etwas) ..."
-    if xbps-reconfigure -f "linux$(echo "$UKV" | cut -d. -f1-2)" >/dev/null 2>&1; then
+    if xbps-reconfigure -f "linux$(echo "$UKV" | cut -d. -f1-2)" >/dev/null 2>&1 && [ -s "/boot/initramfs-$UKV.img" ]; then
       echo "Initramfs: $(( $(stat -c %s "/boot/initramfs-$UKV.img" 2>/dev/null || echo 0) / 1048576 )) MB"
+      /usr/local/sbin/voidstation-splash stamp
     else
       warn "Kernel-Neukonfiguration fehlgeschlagen"
     fi
@@ -302,17 +458,22 @@ PYEOF
 
 say "6/8  Freigabe-Ordner $SHARE"
 for d in ROMs/gba ROMs/gbc ROMs/nes ROMs/snes ROMs/psx ROMs/psp ROMs/nds ROMs/gamecube ROMs/dreamcast \
-         ROMs/dos ROMs/c64 ROMs/atari2600 ROMs/scummvm BIOS Musik Videos Bilder; do
+         ROMs/dos ROMs/c64 ROMs/atari2600 ROMs/scummvm ROMs/ps2 ROMs/n64 ROMs/xbox ROMs/3ds ROMs/wiiu ROMs/mame \
+         Musik Videos Bilder; do
   mkdir -p "$SHARE/$d"
 done
 [ -f "$SHARE/LIESMICH.txt" ] || cat > "$SHARE/LIESMICH.txt" <<'EOF'
 VoidStation Freigabe
 =================
 ROMs/<system>   Spiele fuer die Emulatoren (gba, gbc, nes, snes, psx, psp, nds …)
-BIOS            BIOS-Dateien (z. B. PlayStation fuer DuckStation)
+ROMs/<system>/bios  BIOS-Dateien aus der eigenen Konsole – was hineingehoert, steht im Hinweis im Ordner
 Musik, Videos   eigene Medien (Kachel "Videos & Musik")
 Bilder          fuer den Bildbetrachter
 EOF
+# BIOS liegt seit Oktober 2026 je System in ROMs/<system>/bios (der Launcher verschiebt alte Dateien selbst)
+sed -i 's|^BIOS  .*|ROMs/<system>/bios  BIOS-Dateien aus der eigenen Konsole – was hineingehoert, steht im Hinweis im Ordner|' \
+  "$SHARE/LIESMICH.txt" 2>/dev/null || true
+rmdir "$SHARE/BIOS" 2>/dev/null || true
 chown -R "$VSUSER:$VSUSER" "$SHARE"
 
 say "7/8  Samba (Zugriff vom Windows-PC)"
@@ -438,6 +599,11 @@ fi
 
 say "8/8  Besitzrechte"
 chown -R "$VSUSER:$VSUSER" "$HOMEDIR/.config" "$HOMEDIR/.local" "$HOMEDIR/.bash_profile" "$HOMEDIR/.xinitrc"
+
+# Alles auf die Platte schreiben, bevor "Fertig" erscheint: ext4 haelt frisch geschriebene Dateien sonst noch
+# Sekunden im Speicher – geht der Rechner dann hart aus (Netzschalter, VM-Fenster zu), bleiben sie leer
+# (gesehen am 22.10.2026: xstart, Autostart, Web-Oberflaeche mit 0 Byte, Startseite kam nicht mehr).
+sync
 
 IP="$(ip -4 -o addr show scope global | awk '{print $4}' | cut -d/ -f1 | head -1)"
 cat <<EOF

@@ -224,6 +224,13 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 6px; font: inherit; fo
 .isocard h2 { margin-top: 4px; }
 .isocard .sha { font-size: 14px; color: var(--text-dim); }
 .isocard .sha span { display: block; }
+.iso32 { margin: -12px 0 28px; padding: 16px 20px; border-left: 3px solid var(--text-dim); background: rgba(255,255,255,.03); }
+.iso32 p { margin: 6px 0; }
+.iso32 .btn { gap: 10px; background: transparent; color: var(--text-primary); box-shadow: inset 0 0 0 2px var(--text-dim); }
+.iso32 .btn:hover { background: var(--text-primary); color: var(--bg-main); }
+.iso32 .btn svg { width: 18px; height: 18px; }
+.iso32 .dim { margin-left: 12px; font-size: 14px; }
+.iso32 .sha { font-size: 14px; color: var(--text-dim); word-break: break-all; }
 @media (max-width: 640px) {
   .isocard { grid-template-columns: 1fr; }
   .isocard .tile { width: 100%; height: auto; aspect-ratio: 2 / 1; }

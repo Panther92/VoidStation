@@ -100,7 +100,10 @@ Layer {
             return (d && d.current ? d.current.replace("x", "\u00d7") + " · " : "") + Ui.num(Ui.scale) + "\u00d7"
         case "design": return Ui.t("theme." + vs.themeName, null, vs.themeName)
         case "audio": return (audioDev ? devLabel(audioDev) + " · " : "") + app.volText
-        case "net": return sett.net.addresses.length ? sett.net.addresses[0].ip : Ui.t("settings.offline")
+        case "net":
+            var nl = (sett.net.links || []).filter(function (x) { return x.internet })[0]
+            if (nl) return (nl.type === "wifi" ? (nl.name || Ui.t("settings.wifi")) : Ui.t("settings.netWired")) + (nl.ip ? " · " + nl.ip : "")
+            return sett.net.addresses.length ? sett.net.addresses[0].ip : Ui.t("settings.offline")
         case "bt":
             if (!bt || !bt.available) return Ui.t("settings.btNone")
             if (!bt.service || !bt.powered) return Ui.t("common.off")
@@ -138,7 +141,8 @@ Layer {
         var st = Ui.esc(Ui.t("upd.searching"))
         if (vsState) st = vsState.available ? "<b>" + Ui.esc(Ui.t("upd.available", { version: vsState.remote })) + "</b>"
                                             : Ui.esc(vsState.remote ? Ui.t("upd.current") : vsNoRemote(vsState))
-        var ch = vsState ? " · " + Ui.esc(Ui.t("upd.channel", { channel: chLabel(vsState) })) : ""
+        // Kanal nur nennen, wenn er nicht Stable ist (Testing gibt es seit 2026.11 nur noch auf Wunsch)
+        var ch = vsState && vsState.channel === "main" ? " · " + Ui.esc(Ui.t("upd.channel", { channel: chLabel(vsState) })) : ""
         return "VoidStation " + Ui.esc(vsVersion()) + ch + "<br>" + st
     }
     function sysInfo() {
@@ -148,6 +152,7 @@ Layer {
         if (sum && y.due_at && !y.due && !vsState.available)
             line += "<br>" + Ui.esc(Ui.t("upd.sysDueAt", { date: Ui.loc.toString(new Date(y.due_at * 1000), Ui.t("fmt.dateYear", null, "d. MMMM yyyy")) }))
         if (y.error && !(y.pkgs && y.pkgs.length)) line = Ui.esc(Ui.t("upd.sysError"))
+        if (y.checking) line += "<br>" + Ui.esc(Ui.t("upd.sysChecking"))
         var rb = vsState.reboot || {}
         if (rb.kernel || rb.voidstation) line += "<br><b>" + Ui.esc(Ui.t(rb.kernel ? "upd.rebootKernel" : "upd.rebootVs")) + "</b>"
         if (rb.kernel_stuck) line += "<br>" + Ui.esc(Ui.t("upd.kernelStuck", { version: rb.kernel_stuck.version, running: rb.kernel_stuck.running }))
@@ -157,42 +162,94 @@ Layer {
         Api.get("/api/updates" + (force ? "?force=1" : ""), function (j) { update(function () { vsState = j }); if (then) then() },
                 function () { vsState = { local: null, remote: null, available: false, any: false, error: "api" }; if (then) then() })
     }
-    function runUpdates() {
-        if (app.jobBusy) return app.toast(Ui.t("common.busy"))
-        app.toast(Ui.t("upd.checking"))
-        refreshVs(true, function () {
-            toastBox.hide()
-            var v = vsState
-            if (!v) return app.toast(Ui.t("upd.unreachable"), true)
-            if (v.busy) return app.toast(Ui.t("upd.xbpsBusy"), true)
-            var rb = v.reboot || {}
-            if (!v.any) {
-                if (rb.kernel || rb.voidstation) return app.rebootPrompt(rb)
-                if (!v.remote) return app.toast(vsNoRemote(v), true)
-                return app.toast(Ui.t("upd.upToDate"))
-            }
-            var parts = []
-            if (v.available) {
-                var news = (v.changes || []).map(function (e) {
-                    var tr = Ui.lang === "de" ? null : ((e["changes_" + Ui.lang] || []).length ? e["changes_" + Ui.lang] : e.changes_en)   // Changelog gibt es de + en
-                    var ch = (tr && tr.length) ? tr : e.changes
-                    return e.version + ":\n" + ch.map(function (c) { return "\u2022 " + c }).join("\n")
-                }).join("\n\n")
-                parts.push(Ui.t("upd.confirmText", { remote: v.remote, local: v.local || "\u2013", channel: chLabel(v) }) + (news ? "\n\n" + Ui.t("upd.news") + "\n" + news : ""))
-            }
-            var y = v.system
-            if (y && y.count) {
-                var names = y.pkgs.slice(0, 12).join(", ") + (y.pkgs.length > 12 ? " " + Ui.t("upd.more", { n: Ui.num(y.pkgs.length - 12) }) : "")
-                parts.push(Ui.t("upd.system") + ": " + sysSummary(v) + (names ? "\n" + names : ""))
-            }
-            var restart = v.available || (y && y.kernel) || rb.kernel || rb.voidstation
-            parts.push(Ui.t(restart ? "upd.keep" : "upd.keepNoReboot"))
-            app.dialog(Ui.t("upd.confirmTitle"), parts.join("\n\n"), [[Ui.t("upd.now"), function () { app.jobStart("update") }], [Ui.t("common.cancel")]])
+    // Updates: Der VoidStation-Stand ist in Sekunden da, die Paketpruefung (Paketlisten laden, Flatpak …) laeuft im
+    // Hintergrund. Gibt es schon etwas zu zeigen, oeffnet der Dialog sofort und ergaenzt den Systemteil, sobald die
+    // Pruefung fertig ist. Sonst wird auf die Pruefung gewartet (hoechstens 3 Minuten).
+    property int updSeq: 0
+    function updDialogText(v) {
+        var parts = []
+        if (v.available) {
+            var news = (v.changes || []).map(function (e) {
+                var tr = Ui.lang === "de" ? null : ((e["changes_" + Ui.lang] || []).length ? e["changes_" + Ui.lang] : e.changes_en)   // Changelog gibt es de + en
+                var ch = (tr && tr.length) ? tr : (e.changes || [])
+                return e.version + ":\n" + ch.map(function (c) { return "\u2022 " + c }).join("\n")
+            }).join("\n\n")
+            parts.push(Ui.t("upd.confirmText", { remote: v.remote, local: v.local || "\u2013", channel: chLabel(v) }) + (news ? "\n\n" + Ui.t("upd.news") + "\n" + news : ""))
+        }
+        var y = v.system, rb = v.reboot || {}
+        if (y && y.count) {
+            var names = y.pkgs.slice(0, 12).join(", ") + (y.pkgs.length > 12 ? " " + Ui.t("upd.more", { n: Ui.num(y.pkgs.length - 12) }) : "")
+            parts.push(Ui.t("upd.system") + ": " + sysSummary(v) + (names ? "\n" + names : "") + (y.checking ? "\n" + Ui.t("upd.sysChecking") : ""))
+        } else if (y && y.checking) {
+            parts.push(Ui.t("upd.system") + ": " + Ui.t("upd.sysChecking"))
+        }
+        var restart = v.available || (y && y.kernel) || rb.kernel || rb.voidstation
+        parts.push(Ui.t(restart ? "upd.keep" : "upd.keepNoReboot"))
+        return parts.join("\n\n")
+    }
+    function updShow(seq) {
+        if (seq !== updSeq) return
+        var v = vsState
+        if (!v) return app.toast(Ui.t("upd.unreachable"), true)
+        if (v.busy) return app.toast(Ui.t("upd.xbpsBusy"), true)
+        var rb = v.reboot || {}, y = v.system || {}
+        if (!v.any) {
+            if (rb.kernel || rb.voidstation) return app.rebootPrompt(rb)
+            if (y.checking || (y.error && !v.available)) return app.toast(Ui.t("upd.sysError"), true)   // Pruefung haengt/scheiterte
+            if (!v.remote) return app.toast(vsNoRemote(v), true)
+            return app.toast(Ui.t("upd.upToDate"))
+        }
+        app.dialog(Ui.t("upd.confirmTitle"), updDialogText(v), [[Ui.t("upd.now"), function () { app.jobStart("update") }], [Ui.t("common.cancel")]])
+        updDlg.seq = seq
+        if (y.checking) updWait(seq, function () {
+            // Dialog noch offen? Dann den Systemteil mit dem frischen Stand neu schreiben
+            if (updDlg.seq === seq && adlg.open && adlg.title === Ui.t("upd.confirmTitle") && vsState) adlg.text = updDialogText(vsState)
         })
     }
-    function setChannel(ch) {
-        if (ch === "main" && !(vsState && vsState.channel === "main")) app.toast(Ui.t("channel.testWarn"))
-        Api.post("/api/selfupdate/channel", { channel: ch }, function (j) { update(function () { vsState = j }) }, fail)
+    QtObject { id: updDlg; property int seq: -1 }
+    function updWait(seq, done) {
+        sysPoll.seq = seq; sysPoll.done = done; sysPoll.until = Date.now() + 180000
+        sysPoll.restart()
+    }
+    Timer {
+        id: sysPoll
+        interval: 1500; repeat: true
+        property int seq: 0
+        property var done: null
+        property real until: 0
+        onTriggered: {
+            if (seq !== s.updSeq) { stop(); return }
+            Api.get("/api/updates", function (j) {
+                if (!sysPoll.running || sysPoll.seq !== s.updSeq) return
+                if (j) update(function () { vsState = j })
+                if (j && j.system && j.system.checking && Date.now() < sysPoll.until) return
+                sysPoll.stop()
+                var f = sysPoll.done; sysPoll.done = null
+                if (f) f()
+            }, function () {})
+        }
+    }
+    function runUpdates() {
+        if (app.jobBusy) return app.toast(Ui.t("common.busy"))
+        var seq = ++updSeq
+        toastBox.show(Ui.t("upd.checking"), false, 200000)
+        refreshVs(true, function () {
+            if (seq !== updSeq) return
+            var v = vsState, y = (v && v.system) || {}
+            if (v && !v.busy && y.checking && !(v.available || y.count)) {
+                // noch nichts Bekanntes zum Zeigen: auf die Paketpruefung warten
+                return updWait(seq, function () { toastBox.hide(); updShow(seq) })
+            }
+            toastBox.hide()
+            updShow(seq)
+        })
+    }
+    // Nur noch der Rueckweg zu Stable; Testing waehlt man im Terminal (vsctl channel testing)
+    function toStable() {
+        Api.post("/api/selfupdate/channel", { channel: "stable" }, function (j) {
+            update(function () { vsState = j })
+            app.toast(Ui.t("channel.toStableDone"))
+        }, fail)
     }
     function setSysDays(d) {
         if (sett.sysupd_days === d) return
@@ -223,12 +280,22 @@ Layer {
     function setCursor(c) {
         Api.post("/api/settings/cursor", c, function (j) { update(function () { sett = j }); app.toast(Ui.t("settings.cursorToast")) }, fail)
     }
-    function setResolution(m) {
-        Api.post("/api/settings/resolution", { mode: m }, function (j) {
+    function setResolution(m, rate) {
+        var body = { mode: m }
+        if (rate) body.rate = rate
+        Api.post("/api/settings/resolution", body, function (j) {
             update(function () { sett = j })
-            app.toast(Ui.t("settings.resToast", { mode: m.replace("x", "\u00d7") }))
+            app.toast(rate ? Ui.t("settings.rateToast", { hz: hz(rate) }) : Ui.t("settings.resToast", { mode: m.replace("x", "\u00d7") }))
         }, fail)
     }
+    function setMatchRate(on) {
+        if (!!sett.match_rate === on) return
+        Api.post("/api/settings/matchrate", { on: on }, function (j) {
+            update(function () { sett = j })
+            app.toast(Ui.t(on ? "settings.matchRateOnToast" : "settings.matchRateOffToast"))
+        }, fail)
+    }
+    function hz(r) { return Ui.num(Math.round(r * 100) / 100, 2) }
     function devLabel(d) {
         switch (d.kind) {
         case "hdmi": return (d.name || Ui.t("audio.tv")) + (d.num ? " " + d.num : "")
@@ -253,8 +320,22 @@ Layer {
         audioPost("/api/audio/mic", { key: d.key, on: on }, Ui.t(on ? "audio.micOn" : "audio.micOff"))
     }
     function setAudioAuto(on) { audioPost("/api/audio/auto", { on: on }, "") }
+    // Aufloesungen ab 1024x576, die mindestens ~50 Hz koennen (4K mit nur 30 Hz ruckelt) – dazu immer die aktuelle
+    // und die bevorzugte; hoechstens acht, groesste zuerst (Reihenfolge von xrandr)
     function modes(d) {
-        return d.modes.filter(function (m) { var p = m.split("x"); return parseInt(p[0]) >= 1024 && parseInt(p[1]) >= 576 }).slice(0, 6)
+        return d.modes.filter(function (m) {
+            var p = m.split("x")
+            if (parseInt(p[0]) < 1024 || parseInt(p[1]) < 576) return false
+            return m === d.current || m === d.preferred || ((d.rates || {})[m] || []).some(function (r) { return r >= 49 })
+        }).slice(0, 8)
+    }
+    // Bildraten der aktuellen Aufloesung ab 23 Hz, hoechste zuerst, ohne Doppelte (xrandr kennt 60.00 oft zweimal)
+    function rates(d) {
+        var out = []
+        ;((d.rates || {})[d.current] || []).forEach(function (r) {
+            if (r >= 23 && !out.some(function (x) { return Math.abs(x - r) < 0.005 })) out.push(r)
+        })
+        return out.sort(function (a, b) { return b - a })
     }
 
     // ---- Netzwerk, Bluetooth, System
@@ -263,20 +344,74 @@ Layer {
         Api.get("/api/wifi/scan", function (j) { toastBox.hide(); update(function () { wifiList = j || [] }) },
                 function (e) { app.toast(Ui.t("wifi.scanFailed", { msg: e }), true) })
     }
+    // Kabel oder WLAN fuers Internet bevorzugen (beide verbunden: Standardroute ueber die gewaehlte)
+    function netPrefer(mode) {
+        if (sett && sett.net && sett.net.prefer === mode) return
+        app.toast(Ui.t("settings.netSwitching"))
+        Api.post("/api/net/prefer", { mode: mode }, function (j) {
+            update(function () { sett = j })
+            app.toast(Ui.t("settings.netPreferDone", { what: Ui.t(mode === "wifi" ? "settings.wifi" : "settings.netWired") }))
+        }, function (e) { app.toast(Ui.t("common.failedMsg", { msg: e }), true) })
+    }
+    function netLines() {
+        var n = sett.net, out = [Ui.esc(Ui.t("settings.hostname")) + ": <b>" + Ui.esc(n.hostname) + "</b>"]
+        var ls = (n.links || []).filter(function (x) { return x.connected })
+        if (!ls.length && n.addresses.length) return out.concat(n.addresses.map(function (x) { return Ui.esc(x.iface) + ": <b>" + Ui.esc(x.ip) + "</b>" })).join("<br>")
+        if (!ls.length) return out.concat([Ui.esc(Ui.t("settings.noConn"))]).join("<br>")
+        ls.forEach(function (x) {
+            var what = x.type === "wifi" ? Ui.t("settings.netWifiLine", { ssid: x.name || x.dev }) : Ui.t("settings.netWired")
+            out.push((x.internet ? "\u2713 " : "") + "<b>" + Ui.esc(what) + "</b>" + (x.ip ? " · " + Ui.esc(x.ip) : "")
+                     + (x.internet ? " <font color='" + Ui.c.textFaint + "'>· " + Ui.esc(Ui.t("settings.netViaThis")) + "</font>" : ""))
+        })
+        return out.join("<br>")
+    }
+    function netLink(kind) {
+        var ls = sett && sett.net && sett.net.links ? sett.net.links : []
+        for (var i = 0; i < ls.length; i++) if (ls[i].type === kind && (ls[i].connected || ls[i].ready)) return ls[i]
+        return null
+    }
+    function wifiOn() { var l = netLink("wifi"); return l && l.connected ? l : null }
+    function wifiDisconnect() {
+        var l = wifiOn(), name = l ? (l.name || l.dev) : ""
+        Api.post("/api/net/disconnect", { type: "wifi" }, function (j) {
+            update(function () {
+                sett = j
+                if (wifiList) wifiList = wifiList.map(function (w) { return Object.assign({}, w, { active: false }) })
+            })
+            app.toast(Ui.t("settings.netDisconnected", { ssid: name }))
+            Qt.callLater(function () { refocus("scan") })
+        }, function (e) { app.toast(Ui.t("common.failedMsg", { msg: e }), true) })
+    }
+    function wiredToggle(on) {
+        app.toast(Ui.t("settings.netSwitching"))
+        Api.post(on ? "/api/net/connect" : "/api/net/disconnect", { type: "wired" }, function (j) {
+            update(function () { sett = j })
+            app.toast(Ui.t(on ? "settings.netWiredOnDone" : "settings.netWiredOffDone"))
+            Qt.callLater(function () { refocus(on ? "wiredoff" : "wiredon") })
+        }, function (e) { app.toast(Ui.t("common.failedMsg", { msg: e }), true) })
+    }
+    function wifiAsk(net) {
+        wifiPw.value = ""
+        wifiPw.password = true
+        wifiPick = net
+        Qt.callLater(function () { app.setFocus(wifiPw, true); app.openOsk(wifiPw) })
+    }
     function wifiConnect(ssid, pw) {
         app.toast(Ui.t("wifi.connecting", { ssid: ssid }))
         Api.post("/api/wifi/connect", { ssid: ssid, password: pw }, function (j) {
             wifiPick = null
-            update(function () { sett = j })
+            update(function () {
+                sett = j
+                // Liste gleich mitziehen: das neue Netz ist jetzt das aktive
+                if (wifiList) wifiList = wifiList.map(function (w) { return Object.assign({}, w, { active: w.ssid === ssid, known: w.known || w.ssid === ssid }) })
+            })
             app.toast(Ui.t("wifi.connected", { ssid: ssid }))
             Qt.callLater(function () { refocus("scan") })
         }, function (e) {
             // Bekannte Fehler kommen als Schluessel "wifi.err.*", alles andere als Klartext
             app.toast(e.indexOf("wifi.err.") === 0 ? Ui.t(e, { ssid: ssid }) : Ui.t("wifi.failed", { msg: e }), true)
-            if (e === "wifi.err.password" && wifiPick) {
-                wifiPw.value = ""
-                Qt.callLater(function () { app.setFocus(wifiPw, true); app.openOsk(wifiPw) })
-            }
+            // Auch wenn das gespeicherte Passwort nicht mehr passt: jetzt erst danach fragen
+            if (e === "wifi.err.password") wifiAsk(wifiPick || { ssid: ssid })
         })
     }
     function btCall(path, body, busy, ok, okErr) {
@@ -457,6 +592,41 @@ Layer {
                 }
             }
         }
+        // Bildrate je Ausgang: Automatisch (~60 Hz) oder fest, z. B. 50 Hz fuer Fernsehen aus Europa
+        Repeater {
+            model: s.cat === "display" && s.sett ? (s.sett.displays || []).filter(function (d) { return s.rates(d).length > 1 }) : []
+            SetGroup {
+                property var d: modelData
+                availH: s.colH; title: Ui.t("settings.rate", { name: modelData.name })
+                SetRow {
+                    Pill {
+                        property string key: "rateauto" + d.name
+                        text: Ui.t("settings.rateAuto") + (!s.sett.rate && d.rate ? " · " + s.hz(d.rate) + " Hz" : "")
+                        on: !s.sett.rate
+                        onTriggered: s.setResolution(d.current)
+                    }
+                    Repeater {
+                        model: s.rates(d)
+                        Pill {
+                            property string key: "rate" + d.name + modelData
+                            text: s.hz(modelData) + " Hz"
+                            on: !!s.sett.rate && Math.abs(modelData - s.sett.rate) < 0.005
+                            onTriggered: s.setResolution(d.current, modelData)
+                        }
+                    }
+                }
+            }
+        }
+        SetGroup {
+            visible: s.cat === "display" && !!s.sett && s.sett.match_rate !== undefined; availH: s.colH; title: Ui.t("settings.matchRate")
+            SetRow {
+                Repeater {
+                    model: [true, false]
+                    Pill { property string key: "mr" + modelData; text: Ui.t(modelData ? "common.on" : "common.off"); on: !!s.sett && !!s.sett.match_rate === modelData; onTriggered: s.setMatchRate(modelData) }
+                }
+            }
+            Info { html: Ui.esc(Ui.t("settings.matchRateHint")) }
+        }
         // Design
         SetGroup {
             visible: s.cat === "design"; availH: s.colH; title: Ui.t("settings.colors")
@@ -538,10 +708,24 @@ Layer {
         // Netzwerk
         SetGroup {
             visible: s.cat === "net"; availH: s.colH; title: Ui.t("settings.connection")
-            Info {
-                html: !s.sett ? "" : Ui.esc(Ui.t("settings.hostname")) + ": <b>" + Ui.esc(s.sett.net.hostname) + "</b><br>" +
-                      (s.sett.net.addresses.length ? s.sett.net.addresses.map(function (x) { return Ui.esc(x.iface) + ": <b>" + Ui.esc(x.ip) + "</b>" }).join("<br>")
-                                                   : Ui.esc(Ui.t("settings.noConn")))
+            Info { html: !s.sett ? "" : s.netLines() }
+            // Nur mit Kabel- UND WLAN-Anschluss: welche Verbindung das Internet nimmt, wenn beide verbunden sind
+            SetRow {
+                visible: !!s.sett && !!s.sett.net.has_wired && !!s.sett.net.has_wifi
+                label: Ui.t("settings.netPrefer")
+                Repeater {
+                    model: ["wired", "wifi"]
+                    Pill { property string key: "np" + modelData; text: Ui.t(modelData === "wifi" ? "settings.netWifiPick" : "settings.netWiredPick")
+                           on: !!s.sett && s.sett.net.prefer === modelData; onTriggered: s.netPrefer(modelData) }
+                }
+            }
+            // Kabel per Klick trennen und wieder verbinden (ohne eingestecktes Kabel keine Anzeige)
+            SetRow {
+                visible: !!s.netLink("wired")
+                Pill { property string key: "wiredoff"; visible: !!s.netLink("wired") && s.netLink("wired").connected
+                       text: Ui.t("settings.netWiredOff"); onTriggered: s.wiredToggle(false) }
+                Pill { property string key: "wiredon"; visible: !!s.netLink("wired") && !s.netLink("wired").connected
+                       text: Ui.t("settings.netWiredOn"); onTriggered: s.wiredToggle(true) }
             }
         }
         SetGroup {
@@ -552,15 +736,22 @@ Layer {
                     id: wifiPw
                     property string key: "pw"
                     password: true
+                    revealable: true
                     placeholder: s.wifiPick ? Ui.t("settings.wifiPw", { ssid: s.wifiPick.ssid }) : ""
                     onSubmitted: function (t) { if (s.wifiPick) s.wifiConnect(s.wifiPick.ssid, t) }
                 }
+                // Passwort im Klartext zeigen (Feld und Bildschirmtastatur), beim naechsten Netz wieder verdeckt
+                Pill { property string key: "pwshow"; text: Ui.t(wifiPw.password ? "settings.pwShow" : "settings.pwHide"); on: !wifiPw.password
+                       onTriggered: wifiPw.password = !wifiPw.password }
                 Pill { property string key: "go"; text: Ui.t("settings.connect"); onTriggered: s.wifiConnect(s.wifiPick.ssid, wifiPw.value) }
                 Pill { property string key: "cancel"; text: Ui.t("common.cancel"); onTriggered: { s.wifiPick = null; Qt.callLater(function () { s.refocus("scan") }) } }
             }
             SetRow {
                 visible: !s.wifiPick
                 Pill { property string key: "scan"; text: s.wifiList ? Ui.t("settings.rescan") : Ui.t("settings.scan"); onTriggered: s.wifiScan() }
+                Pill { property string key: "wdis"; visible: !!s.wifiOn(); maxWidth: Ui.screenW * 0.3
+                       text: s.wifiOn() ? Ui.t("settings.netDisconnect", { ssid: s.wifiOn().name || s.wifiOn().dev }) : ""
+                       onTriggered: s.wifiDisconnect() }
             }
             SetRow {
                 visible: !s.wifiPick && !!s.wifiList
@@ -573,11 +764,9 @@ Layer {
                         text: (modelData.secure ? "\ud83d\udd12 " : "") + Ui.esc(modelData.ssid) + " <font color='" + Ui.c.textFaint + "'>" + modelData.signal + "%</font>"
                         on: modelData.active
                         onTriggered: {
-                            if (modelData.secure && !modelData.active) {
-                                wifiPw.value = ""
-                                s.wifiPick = modelData
-                                Qt.callLater(function () { app.setFocus(wifiPw, true); app.openOsk(wifiPw) })
-                            } else s.wifiConnect(modelData.ssid, "")
+                            if (modelData.active) s.wifiDisconnect()         // verbundenes Netz: trennen
+                            else if (modelData.secure && !modelData.known) s.wifiAsk(modelData)
+                            else s.wifiConnect(modelData.ssid, "")           // bekannt oder offen: gleich wechseln
                         }
                     }
                 }
@@ -687,12 +876,15 @@ Layer {
             }
         }
         SetGroup {
-            visible: s.cat === "updates" && !!s.sett && !s.sett.live; availH: s.colH; title: Ui.t("settings.channel")
+            // Kanal: keine Wahl mehr (seit 2026.11). Steht das Geraet auf Testing, steht das hier – mit Rueckweg.
+            id: chGroup
+            property bool testing: !!(s.vsState && s.vsState.channel === "main")
+            visible: s.cat === "updates" && !!s.sett && !s.sett.live; availH: s.colH
+            title: Ui.t(testing ? "settings.channel" : "settings.sysRemindTitle")
+            Info { visible: chGroup.testing; html: Ui.esc(Ui.t("channel.testingInfo")) }
             SetRow {
-                Repeater {
-                    model: [["stable", "channel.stable"], ["main", "channel.main"]]
-                    Pill { property string key: "ch" + modelData[0]; text: Ui.t(modelData[1]); on: ((s.vsState && s.vsState.channel) || "stable") === modelData[0]; onTriggered: s.setChannel(modelData[0]) }
-                }
+                visible: chGroup.testing
+                Pill { property string key: "chstable"; text: Ui.t("channel.toStable"); onTriggered: s.toStable() }
             }
             SetRow {
                 label: Ui.t("settings.sysRemind")
@@ -722,7 +914,7 @@ Layer {
                     Pill { property string key: "pm" + modelData; text: Ui.t(modelData ? "common.on" : "common.off"); on: !!s.sett && !!s.sett.padmouse === modelData; onTriggered: s.setPadMouse(modelData) }
                 }
             }
-            Info { html: Ui.esc(Ui.t("settings.padMouseHint")) }
+            Info { html: Ui.keys(Ui.t("settings.padMouseHint"), Ui.c.textPrimary, 16 * Ui.f) }
         }
         SetGroup {
             visible: s.cat === "system" && !!s.sett && (s.sett.frontends || []).length > 1; availH: s.colH; title: Ui.t("settings.frontend")

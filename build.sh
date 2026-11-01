@@ -25,8 +25,9 @@ tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
 (cd launcher && tar --owner=0 --group=0 --sort=name --mtime='2026-01-01' \
    --exclude='*.pyc' --exclude=__pycache__ -czf "$tmp/payload.tgz" \
-   launcher.py voidstation-shell.py tiles.json catalog.json voidstation-pkg voidstation-efistub dracut-voidstation.conf \
-   home.sh vsctl xstart sysfix.sh web qt openbox firefox)
+   launcher.py voidstation-shell.py tiles.json catalog.json voidstation-pkg voidstation-efistub voidstation-splash \
+   dracut-voidstation.conf home.sh vsctl xstart sysfix.sh web qt openbox firefox shell \
+   -C ../iso/art plymouth)                         # Startbild (Theme) fuer installierte Geraete, s. voidstation-splash
 
 URL="$(head -n1 update-url)"
 case "$URL" in https://*) ;; *) echo "update-url muss mit https:// beginnen" >&2; exit 1 ;; esac
@@ -73,7 +74,7 @@ for f in sorted(files - {"de", "en"}):
             bad.append(f"  {f}.json: unbekannter Schluessel {k}")
         elif ph(v) != ph(en.get(k, de.get(k))):
             bad.append(f"  {f}.json: andere Platzhalter in {k}")
-    left = [k for k in en if k not in x and not k.startswith(("inst.", "hint.inst"))]
+    left = [k for k in en if k not in x]           # seit 2026.11 auch die Installer-Texte (inst.*, hint.inst*)
     if left:
         print(f"  {f}.json: {len(left)} Texte noch englisch", file=sys.stderr)
 for b in bad: print(b, file=sys.stderr)
@@ -154,10 +155,12 @@ VERSION="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1]))["vers
 b64() { printf '%s' "$1" | base64 -w0; }
 V_B64="$(base64 -w0 < "$tmp/version.json")"
 S_B64="$(b64 "$SIGNERS")"
-subst() {
-  sed -e "s|__VS_VERSION__|$BUILD|g" -e "s|__VS_UPDATE_URL__|$URL|g" \
-      -e "s|__VS_VERSION_B64__|$V_B64|g" -e "s|__VS_SIGNERS_B64__|$S_B64|g" "$1"
-}
+# Ersetzungen als sed-Skript in einer Datei: version.json (mit Changelog-Verlauf) ist base64 laenger als
+# 128 KiB – mehr nimmt Linux fuer ein einzelnes Programm-Argument nicht an ("Argument list too long").
+# printf ist eingebaut, kennt die Grenze also nicht.
+printf 's|__VS_VERSION__|%s|g\ns|__VS_UPDATE_URL__|%s|g\ns|__VS_VERSION_B64__|%s|g\ns|__VS_SIGNERS_B64__|%s|g\n' \
+  "$BUILD" "$URL" "$V_B64" "$S_B64" > "$tmp/subst.sed"
+subst() { sed -f "$tmp/subst.sed" "$1"; }
 { subst install-head.sh; base64 -w 76 "$tmp/payload.tgz"; } > "$OUT/install.sh"
 { subst update-head.sh;  base64 -w 76 "$tmp/payload.tgz"; } > "$OUT/update.sh"
 cp "$tmp/version.json" "$OUT/version.json"

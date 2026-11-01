@@ -16,9 +16,12 @@ Kleiner lokaler Dienst fuer die Kacheloberflaeche:
 Lauscht ausschliesslich auf 127.0.0.1.
 """
 
+import csv
+import datetime
 import hashlib
 import json
 import os
+import random
 import re
 import shlex
 import shutil
@@ -33,6 +36,9 @@ import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
+import xml.etree.ElementTree as ET
+import zlib
+from html import escape as html_escape, unescape as html_unescape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -125,11 +131,12 @@ def active_window():
 
 
 def media_notify(cmd):
-    """Laufendem Player "Videos & Musik" Bescheid geben (ohne zu warten): "background" = Startseite oder anderes
-    Programm kommt nach vorn (Videos halten an, Musik laeuft weiter), "pause" = Radio startet."""
+    """Laufendem Player "Videos & Musik" bzw. "YouTube Light" Bescheid geben (ohne zu warten): "background" =
+    Startseite oder anderes Programm kommt nach vorn (Videos halten an, Musik laeuft weiter), "pause" = Radio startet."""
     try:
-        if APPS._get("media"):
-            threading.Thread(target=PLAYERS.send, args=("media", {"cmd": cmd}), daemon=True).start()
+        for tid, mode in (("media", "media"), ("ytlight", "yt")):
+            if APPS._get(tid):
+                threading.Thread(target=PLAYERS.send, args=(mode, {"cmd": cmd}), daemon=True).start()
     except NameError:                                   # beim Start, bevor es APPS/PLAYERS gibt
         pass
 
@@ -159,6 +166,7 @@ class AppManager:
         self.claimed = {}                     # tile_id -> Fenster-IDs ohne passende Prozess-ID (Flatpak), beim Start zugeordnet
         self.paused = {}                      # tile_id -> Prozess-IDs, die im Hintergrund angehalten sind (SIGSTOP)
         self._pwatch = False                  # Waechter fuer angehaltene Programme laeuft
+        self.kinds = {}                       # tile_id -> Programm (z. B. "mgba-qt"), fuer die Vollbild-Taste
 
     def running(self):
         with self.lock:
@@ -324,8 +332,9 @@ class AppManager:
         if not cmd:
             raise ValueError("Kachel hat keinen Befehl")
         args = expand(cmd if isinstance(cmd, list) else ["sh", "-c", cmd])
-        if Path(args[0]).name == PLAYER_BIN.name:          # Videos & Musik: eigener Player (Stufe, Absturzzaehler)
-            return PLAYERS.start(tid, args[2] if len(args) > 2 else "", mode="media")
+        if Path(args[0]).name == PLAYER_BIN.name:          # Videos & Musik, YouTube Light: eigener Player (Stufe, Absturzzaehler)
+            mode = "yt" if "--yt" in args[1:2] else "media"
+            return PLAYERS.start(tid, args[2] if len(args) > 2 else "", mode=mode)
         media_notify("background")                         # anderes Programm: laufendes Video anhalten
         return self.start(tid, args)
 
@@ -339,7 +348,9 @@ class AppManager:
             firefox_prefs(args, ui_lang(), theme_is_dark(settings_load().get("theme") or DEFAULTS["theme"]))
         if Path(args[0]).name in ("dosbox", "dosbox-staging"):
             args = dosbox_prepare(args)
+        args, emu_env, wm_fs = emu_prepare(tid, args)   # Emulatoren: Vorgaben, Vollbild, Controller
         penv = app_env()
+        penv.update(emu_env)
         penv.update(env or {})
         self.pause_background(keep=tid)                 # anderes Programm kommt nach vorn: Emulatoren anhalten
         proc = subprocess.Popen(args, cwd=str(Path.home()), stdin=subprocess.DEVNULL, env=penv,
@@ -348,13 +359,14 @@ class AppManager:
         with self.lock:
             self.procs[tid] = proc
             self.shown.discard(tid)
+            self.kinds[tid] = emu_kind(args)
         self._touch(tid)
         # Neues Fenster aktiv nach vorn holen (Openbox verhindert sonst u. U. den Fokuswechsel,
         # und das Programm laeuft unsichtbar hinter der Startseite)
-        threading.Thread(target=self._bring_up, args=(tid, proc, before), daemon=True).start()
+        threading.Thread(target=self._bring_up, args=(tid, proc, before, wm_fs), daemon=True).start()
         return "started"
 
-    def _bring_up(self, tid, proc, before=frozenset()):
+    def _bring_up(self, tid, proc, before=frozenset(), fullscreen=False):
         # Auf das erste Fenster warten: anfangs schnell, danach gemaechlich - Steam braucht
         # bei der Ersteinrichtung mehrere Minuten, bis sich ein Fenster zeigt
         t0 = time.monotonic()
@@ -375,6 +387,17 @@ class AppManager:
                 time.sleep(0.4)
                 for wid, _, _ in wins:
                     run(["wmctrl", "-i", "-a", wid])
+                if fullscreen:                           # Emulator ohne eigene Vollbild-Option (EMU_WM_FULLSCREEN)
+                    run(["wmctrl", "-i", "-r", wins[0][0], "-b", "add,fullscreen"])
+                elif app_maximize(tid):
+                    # Openbox maximiert neue Fenster per Regel (rc.xml) – GTK4-Programme (Mission Center & Co.)
+                    # setzen danach aber ihre gespeicherte Groesse und heben das wieder auf: nachsehen, nachziehen
+                    for delay in (0.8, 2.5, 5.0):
+                        time.sleep(delay)
+                        if proc.poll() is not None:
+                            return
+                        for wid, _, _ in wins:
+                            wm_maximize(wid)
                 return
         with self.lock:                          # kein Fenster erkennbar -> nicht ewig "startet"
             self.shown.add(tid)
@@ -452,7 +475,7 @@ APPS = AppManager()
 
 
 # ---------------------------------------------------------------------------
-#  Eigener Player (qt/voidstation-player.py): Fernsehen ("tv") und Videos & Musik ("media")
+#  Eigener Player (qt/voidstation-player.py): Fernsehen ("tv"), Videos & Musik ("media"), YouTube Light ("yt")
 # ---------------------------------------------------------------------------
 class PlayerManager:
     """Startet den Player, reicht Auftraege an einen laufenden weiter (Socket) und stuft nach Abstuerzen hoch:
@@ -490,14 +513,14 @@ class PlayerManager:
 
     def start(self, tid, arg="", mode="media"):
         level = min(self.level(), 2)
-        for other in ("tv", "media"):                # nur ein Video zur Zeit
+        for other in ("tv", "media", "ytlight"):     # nur ein Video zur Zeit
             if other != tid:
                 APPS.close(other)
         if tid == "tv":
             TV.raw = False
         if APPS._get(tid):
             msg = {"cmd": "tune", "key": arg} if mode == "tv" else {"cmd": "open", "path": arg}
-            if (not arg and mode == "media") or self.send(mode, msg):
+            if (not arg and mode in ("media", "yt")) or self.send(mode, msg):
                 APPS.focus(tid)
                 return "focused"
             APPS.close(tid)
@@ -511,6 +534,10 @@ class PlayerManager:
     def _watch(self, tid, proc, level):
         t0 = time.monotonic()
         rc = proc.wait()
+        try:
+            DISPLAY_RATE.request(0, {"ytlight": "yt"}.get(tid, tid))   # Player zu -> Desktop-Rate
+        except Exception as e:  # noqa: BLE001
+            log("Bildrate zuruecksetzen:", e)
         if rc in self.CRASH or rc > 0:
             with self.lock:
                 self.fails.append(time.time())
@@ -520,7 +547,7 @@ class PlayerManager:
 
     def active(self, tid):
         """Laeuft fuer diese Kachel der eigene Player (nicht das nackte mpv)?"""
-        if tid == "media":
+        if tid in ("media", "ytlight"):
             return True
         return tid == "tv" and not TV.raw
 
@@ -628,6 +655,43 @@ def radio_search(query):
     raise RuntimeError(f"Senderverzeichnis nicht erreichbar ({last})")
 
 
+
+_POPULAR = {}                                   # Land -> (Zeitpunkt, Sender); 6 h zwischenspeichern
+
+
+def radio_popular(cc, limit=24):
+    """Meistgehoerte Sender eines Landes (radio-browser.info, nach Klicks) – Vorschlaege im Radio."""
+    cc = (cc or "").upper()
+    if not re.fullmatch(r"[A-Z]{2}", cc):
+        return []
+    hit = _POPULAR.get(cc)
+    if hit and time.time() - hit[0] < 6 * 3600:
+        return hit[1]
+    params = urllib.parse.urlencode({"countrycode": cc, "limit": limit * 2, "hidebroken": "true",
+                                     "order": "clickcount", "reverse": "true"})
+    last = None
+    for host in RADIO_SERVERS:
+        try:
+            req = urllib.request.Request(f"https://{host}/json/stations/search?{params}",
+                                         headers={"User-Agent": "VoidStation/2.0"})
+            with urllib.request.urlopen(req, timeout=6) as r:
+                items = json.load(r)
+            out, seen = [], set()
+            for i in items:
+                url = i.get("url_resolved") or i.get("url")
+                name = (i.get("name") or "").strip()
+                if not url or not name or name.lower() in seen:     # gleicher Sender mehrfach (andere Bitrate)
+                    continue
+                seen.add(name.lower())
+                out.append({"name": name, "url": url, "favicon": i.get("favicon") or "", "country": cc,
+                            "tags": (i.get("tags") or "")[:60]})
+            out = out[:limit]
+            _POPULAR[cc] = (time.time(), out)
+            return out
+        except Exception as e:  # noqa: BLE001
+            last = e
+    raise RuntimeError(f"Senderverzeichnis nicht erreichbar ({last})")
+
 def favs_load():
     try:
         return json.loads(FAVS.read_text(encoding="utf-8"))
@@ -672,7 +736,9 @@ def volume_set(action):
 # ---------------------------------------------------------------------------
 SETTINGS = BASE / "settings.json"
 DEFAULTS = {"scale": 1.75, "resolution": None, "cursor_theme": "Bibata-Modern-Ice", "cursor_size": 48, "lang": None, "theme": "default-dark",
-            "sysupd_days": 90, "padmouse": True, "covers_auto": True, "covers_embed": False, "audio_auto": True}
+            "sysupd_days": 90, "padmouse": True, "covers_auto": True, "covers_embed": False, "audio_auto": True,
+            "emu_fullscreen": True, "save_backup": True, "rom_covers": True,
+            "rate": None, "match_rate": False}
 SYSUPD_DAYS = (30, 60, 90)                  # Erinnerung an Systemupdates (ohne VoidStation-Update) nach … Tagen
 # Sprachen der Oberflaeche: Texte in web/i18n/<id>.json, fehlende Texte kommen aus en.json, dann aus de.json.
 # Anzeige immer in der eigenen Sprache. Je Sprache auch das Locale fuer gestartete Programme (LANG/LANGUAGE) und
@@ -681,6 +747,7 @@ SYSUPD_DAYS = (30, 60, 90)                  # Erinnerung an Systemupdates (ohne 
 LANG_TABLE = [  # (id, Name, Locale, Firefox-Sprache)
     ("de", "Deutsch", "de_DE", "de"),
     ("en", "English", "en_US", "en-US"),
+    ("cs", "Čeština", "cs_CZ", "cs"),
     ("es", "Español", "es_ES", "es-ES"),
     ("fr", "Français", "fr_FR", "fr"),
     ("it", "Italiano", "it_IT", "it"),
@@ -689,6 +756,7 @@ LANG_TABLE = [  # (id, Name, Locale, Firefox-Sprache)
     ("nl", "Nederlands", "nl_NL", "nl"),
     ("pl", "Polski", "pl_PL", "pl"),
     ("pt-BR", "Português (Brasil)", "pt_BR", "pt-BR"),
+    ("sk", "Slovenčina", "sk_SK", "sk"),
     ("el", "Ελληνικά", "el_GR", "el"),
     ("ru", "Русский", "ru_RU", "ru"),
     ("uk", "Українська", "uk_UA", "uk"),
@@ -743,6 +811,75 @@ def ui_lang(s=None):
             return cand
     return "de"
 
+
+
+# Land fuer Radio und Fernsehen ("region" in settings.json, ISO-Code wie DE). Vorgabe: das Land der Sprache, in der
+# VoidStation installiert wurde. Je Sprache die Laender, in denen sie zu Hause ist – das erste ist der Standard; liegt die
+# Zeitzone in einem der anderen, gilt dieses (de + Europe/Vienna -> AT, fr + Europe/Brussels -> BE, en + Europe/London -> GB).
+LANG_REGIONS = {
+    "de": ["DE", "AT", "CH", "LU", "LI", "BE"], "en": ["US", "GB", "CA", "IE", "AU", "NZ", "ZA", "IN", "MT"],
+    "cs": ["CZ"], "sk": ["SK"], "fr": ["FR", "BE", "CH", "LU", "CA", "MC"],
+    "es": ["ES", "MX", "AR", "CO", "CL", "PE", "VE", "UY"], "it": ["IT", "CH", "SM"], "lv": ["LV"], "hu": ["HU"],
+    "nl": ["NL", "BE"], "pl": ["PL"], "pt-BR": ["BR", "PT"], "el": ["GR", "CY"], "ru": ["RU", "BY", "KZ"], "uk": ["UA"],
+}
+# Schnellwahl der Laender im Fernsehen je Sprache (das eigene Land kommt immer zuerst), der Rest unter "Weitere Laender"
+TV_QUICK = {
+    "de": ["DE", "AT", "CH"], "en": ["US", "GB", "CA"], "cs": ["CZ", "SK", "AT"], "sk": ["SK", "CZ", "HU"],
+    "fr": ["FR", "BE", "CH"], "es": ["ES", "MX", "AR"], "it": ["IT", "CH", "SM"], "lv": ["LV", "LT", "EE"],
+    "hu": ["HU", "AT", "SK"], "nl": ["NL", "BE", "DE"], "pl": ["PL", "DE", "CZ"], "pt-BR": ["BR", "PT"],
+    "el": ["GR", "CY"], "ru": ["RU", "BY", "KZ"], "uk": ["UA", "PL"],
+}
+
+
+def tz_current():
+    """Zeitzone des Systems (Ziel von /etc/localtime, z. B. Europe/Berlin), sonst ''."""
+    try:
+        t = os.readlink("/etc/localtime")
+    except OSError:
+        return ""
+    return t.split("zoneinfo/", 1)[1] if "zoneinfo/" in t else ""
+
+
+_TZ_CC = None
+
+
+def tz_country(tz):
+    """Land einer Zeitzone laut zone.tab (Europe/Vienna -> AT), sonst ''."""
+    global _TZ_CC
+    if _TZ_CC is None:
+        _TZ_CC = {}
+        try:
+            for line in Path("/usr/share/zoneinfo/zone.tab").read_text(encoding="utf-8").splitlines():
+                f = line.split("\t")
+                if len(f) >= 3 and not line.startswith("#"):
+                    _TZ_CC[f[2]] = f[0]
+        except OSError:
+            pass
+        _TZ_CC.setdefault("Europe/Kyiv", "UA")                # aeltere tzdata kennt nur Europe/Kiev
+    return _TZ_CC.get(tz or "", "")
+
+
+def region_for(lang, tz=""):
+    """Vorgabe-Land fuer eine Sprache: das Land der Zeitzone, wenn die Sprache dort zu Hause ist, sonst das erste."""
+    cands = LANG_REGIONS.get(lang) or LANG_REGIONS["de"]
+    cc = tz_country(tz)
+    return cc if cc in cands else cands[0]
+
+
+def region(s=None):
+    """Land fuer Radio und Fernsehen: Einstellung (setzt der Installer), sonst aus Sprache und Zeitzone."""
+    s = s or settings_load()
+    r = s.get("region")
+    if isinstance(r, str) and re.fullmatch(r"[A-Z]{2}", r):
+        return r
+    return region_for(ui_lang(s), tz_current())
+
+
+def region_quick(s=None):
+    """Schnellwahl der Laender im Fernsehen: eigenes Land zuerst, dann die uebrigen der Sprache (3 Stueck)."""
+    s = s or settings_load()
+    r = region(s)
+    return [r] + [c for c in TV_QUICK.get(ui_lang(s), []) if c != r][:2]
 
 # Sprache fuer gestartete Programme: VLC, PCManFM und andere GTK-/Qt-Programme folgen LANG/LANGUAGE,
 # Firefox (YouTube) bekommt Oberflaechen- und Webseiten-Sprache ueber sein Profil
@@ -819,7 +956,7 @@ DOSBOX_LANG = {"de": "de", "en": "en", "es": "es", "fr": "fr", "it": "it", "nl":
 # X-Tastaturbelegung -> DOS-Tastaturcode (FreeDOS KEYB); unbekannt -> auto
 DOSBOX_KEYB = {"de": "gr", "at": "gr", "ch": "sg", "us": "us", "gb": "uk", "fr": "fr", "it": "it", "es": "sp",
                "nl": "nl", "be": "be", "pl": "pl", "hu": "hu", "ru": "ru", "ua": "ur", "gr": "gk", "br": "br",
-               "pt": "po", "dk": "dk", "se": "sv", "no": "no", "fi": "su", "cz": "cz", "sk": "sl", "tr": "tr"}
+               "pt": "po", "dk": "dk", "se": "sv", "no": "no", "fi": "su", "cz": "cz", "sk": "sk", "tr": "tr"}
 DOSBOX_PRIMARY = """# DOSBox Staging – Grundeinstellung von VoidStation
 # Angelegt beim ersten Start ueber die Kachel. Die Datei gehoert jetzt dir: Aenderungen bleiben erhalten,
 # VoidStation schreibt sie nicht wieder ueber. Geloescht wird sie beim naechsten Start neu angelegt.
@@ -869,6 +1006,20 @@ def dosbox_prepare(args):
     home = Path.home()
     rom_dir = home / "share" / "ROMs" / "dos"
     vs_conf = BASE / "dosbox" / "voidstation.conf"
+    # Spiel aus der Spieleliste (Datei oder Ordner unter share/ROMs/dos): ueber [autoexec] starten, danach beenden
+    game, own_conf = None, None
+    if len(args) > 1:
+        t = Path(str(args[-1]))
+        try:
+            inside = t.resolve().is_relative_to(rom_dir.resolve()) and t.resolve() != rom_dir.resolve()
+        except OSError:
+            inside = False
+        if inside and t.exists():
+            args = list(args[:-1])
+            if t.suffix.lower() == ".conf":
+                own_conf = t                      # eigene .conf bringt ihr eigenes [autoexec] mit
+            else:
+                game = t
     try:
         rom_dir.mkdir(parents=True, exist_ok=True)
         primary = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config") / "dosbox" / "dosbox-staging.conf"
@@ -878,19 +1029,114 @@ def dosbox_prepare(args):
             log("DOSBox: Grundeinstellung angelegt:", primary)
         keyb = DOSBOX_KEYB.get(x_keyboard_layout() or "", "auto")
         lang = DOSBOX_LANG.get(ui_lang(), "en")
+        auto = "" if own_conf else dosbox_game_lines(game, rom_dir)
         vs_conf.parent.mkdir(parents=True, exist_ok=True)
         vs_conf.write_text(
             "# Von VoidStation vor jedem Start von DOSBox neu geschrieben – Aenderungen hier gehen verloren.\n"
             "# Eigene Einstellungen: ~/.config/dosbox/dosbox-staging.conf\n\n"
             f"[dosbox]\nlanguage = {lang}\n\n"
             f"[dos]\nkeyboardlayout = {keyb}\n\n"
-            f'[autoexec]\nmount c "{rom_dir}"\nc:\n', encoding="utf-8")
+            f'[autoexec]\n{auto}', encoding="utf-8")
     except OSError as e:
         log("DOSBox: Einstellungen nicht geschrieben:", e)
         return args
-    if str(vs_conf) in args:
-        return args
-    return [args[0], "--conf", str(vs_conf)] + list(args[1:])
+    if str(vs_conf) not in args:
+        args = [args[0], "--conf", str(vs_conf)] + list(args[1:])
+    if own_conf:
+        # Eigene .conf (z. B. von GOG) mountet meist relativ ("mount c ."): DOSBox loest das gegen das
+        # Arbeitsverzeichnis auf – also das der .conf, nicht das Home, aus dem VoidStation startet
+        args = list(args) + ["--working-dir", str(own_conf.parent), "--conf", str(own_conf)]
+    return args
+
+
+DOS_83 = re.compile(r"[A-Z0-9!#$%&'()@^_`{}~-]{1,8}(\.[A-Z0-9!#$%&'()@^_`{}~-]{1,3})?")
+
+
+# Programme in Spielordnern, die nie das Spiel selbst sind: Installation/Einrichtung, DOS-Extender, Packer, Intros …
+DOS_HELPERS = re.compile(r"(install|setup|config|setsound|setsnd|sndsetup|soundset|sound$|uninst|dos4gw|dos32a|cwsdpmi|"
+                         r"pmodew|dpmi|pkunzip|pkzip|unzip|lha$|arj$|intro|readme|liesmich|catalog|order|help$|info$|"
+                         r"drivers?$|ipxsetup|sersetup|crack|trainer)", re.I)
+
+
+def dosbox_start_file(game):
+    """Start-Datei eines Spielordners -> (Datei, Argumente) oder (None, ""). Der Reihe nach:
+      1. start.txt im Ordner: erste Zeile = Start-Datei, ggf. mit Argumenten (z. B. "MTV.EXE" oder "GAME /nosound")
+      2. genau eine .bat (ohne Hilfsprogramme) bzw. genau eine .exe/.com
+      3. mehrere: die eine, deren Name zum Ordnernamen passt (DOOM/DOOM.EXE, mad-tv/MTV.EXE, monkey2/MONKEY2.EXE)
+    Sonst nichts – lieber an der Eingabe stehen als das Falsche starten."""
+    try:
+        entries = [f for f in game.iterdir() if f.is_file()]
+    except OSError:
+        return None, ""
+    by_name = {f.name.upper(): f for f in entries}
+    st = next((f for f in entries if f.name.lower() == "start.txt"), None)
+    if st:
+        try:
+            line = next((l.strip() for l in st.read_text(encoding="utf-8", errors="replace").splitlines() if l.strip()), "")
+        except OSError:
+            line = ""
+        name, _, rest = line.partition(" ")
+        name = name.upper()
+        cand = [name] if "." in name else [name + ext for ext in (".BAT", ".EXE", ".COM")]
+        hit = next((by_name[c] for c in cand if c in by_name), None)
+        if hit:
+            return hit, re.sub(r"[\r\n&|<>]", "", rest).strip()
+        log("DOSBox: start.txt nennt keine vorhandene Datei:", line)
+    files = sorted((f for f in entries if f.suffix.lower() in (".bat", ".exe", ".com")
+                    and not DOS_HELPERS.match(f.stem)), key=lambda f: f.name.upper())
+    bats = [f for f in files if f.suffix.lower() == ".bat"]
+    if len(bats) == 1:
+        return bats[0], ""
+    if len(files) == 1:
+        return files[0], ""
+    # Name passt zum Ordner: gleich, Anfang des einen ist der andere, oder Kuerzel (Buchstaben der Reihe nach)
+    alnum = lambda t: re.sub(r"[^a-z0-9]", "", t.lower())
+    folder = alnum(game.name)
+
+    def fits(f):
+        stem = alnum(f.stem)
+        if not stem or not folder:
+            return False
+        if stem == folder or folder.startswith(stem) or stem.startswith(folder):
+            return True
+        it = iter(folder)
+        return len(stem) >= 2 and stem[0] == folder[0] and all(c in it for c in stem)
+    pool = bats or files
+    match = [f for f in pool if fits(f)]
+    if len(match) == 1:
+        return match[0], ""
+    return None, ""
+
+
+def dosbox_game_lines(game, root):
+    """[autoexec]-Zeilen: Laufwerk C: und ggf. Spiel starten, danach DOSBox beenden.
+    C: ist wie beim Start ohne Spiel die ganze Freigabe share/ROMs/dos – ein Spiel, das man in DOSBox selbst
+    installiert hat (INSTALL.EXE nach C:\\SPIEL), findet so seine Pfade wieder. Nur ein Ordner, dessen Name kein
+    DOS-Name ist (laenger als 8.3, Leerzeichen …), wird selbst zu C: – solche Ordner kommen vom PC und waeren unter
+    DOS nur als SPIEL~1 erreichbar. Start-Datei im Ordner: dosbox_start_file; findet sie keine eindeutige (oder hat
+    die einen langen Namen), bleibt es bei C: und der Eingabe.
+    Vorher wird C: freigegeben: Eine aeltere Grundeinstellung mountet C: oft schon selbst ([autoexec] beider Dateien
+    werden aneinandergehaengt), dann schlug unser mount fehl und das Spiel startete nicht."""
+    head = "mount -u c > nul\n"
+    if game is None:
+        return head + f'mount c "{root}"\nc:\n'
+    cd, args = "", ""
+    if game.is_dir():
+        pick, args = dosbox_start_file(game)
+        if game.resolve().parent == root.resolve() and DOS_83.fullmatch(game.name.upper()):
+            mount, cd = root, f"cd \\{game.name.upper()}\n"
+        else:
+            mount = game
+    else:
+        pick, mount = game, game.parent
+    out = head + f'mount c "{mount}"\nc:\n' + cd
+    if pick is not None and not DOS_83.fullmatch(pick.name.upper()):
+        pick = None                               # langer Name: unter DOS nicht aufrufbar – nicht starten und beenden
+    if pick is not None:
+        out += ("call " if pick.suffix.lower() == ".bat" else "") + pick.name + (f" {args}" if args else "") + "\nexit\n"
+    else:
+        log("DOSBox: keine eindeutige Start-Datei in", game, "– bleibt an der Eingabe (start.txt hilft)")
+    return out
 
 
 def settings_save(s):
@@ -958,6 +1204,47 @@ def apply_color_scheme(dark):
             log("gsettings", key, "nicht gesetzt:", (r.stderr.strip() if r else "nicht ausfuehrbar"))
 
 
+# Terminal (xterm) – eingestellt ueber ~/.Xresources, gilt fuer jedes neu geoeffnete Terminal (Kachel, Strg+Alt+T,
+# Terminal-Apps wie htop, "Im Terminal" startende Programme):
+#  - Farben nach dem Theme (hell/dunkel) mit ruhiger 16-Farben-Palette; Cyan = Petrol wie im Logo (Eingabeaufforderung,
+#    Titelzeile von fastfetch). boldColors aus: fett bleibt dieselbe Farbe statt der grelleren "hellen" Variante.
+#  - meldet sich als xterm-256color (sonst nutzen htop, nano & Co. nur 8 Farben), 10.000 Zeilen zum Zurueckscrollen
+#  - Eingabemarke als blinkender senkrechter Strich (wie in Editoren und Browsern) statt Block
+#  - Schrift DejaVu Sans Mono 14 (skaliert mit Xft.dpi), Strg + / Strg - groesser/kleiner, Strg 0 zurueck
+#  - Einfuegen aus der Zwischenablage wie ueberall: Strg+Umschalt+V, Umschalt+Einfg und Rechtsklick (Controller: L2).
+#    Von Haus aus fuegt xterm nur die Markierung (PRIMARY) ein, nicht das mit Strg+C Kopierte. Markieren kopiert
+#    zugleich in die Zwischenablage, Strg+Umschalt+C ebenso.
+XTERM_PALETTE = {
+    True: {"background": "#111316", "foreground": "#dcdcdc", "cursorColor": "#dcdcdc",
+           "colors": ["#1e2126", "#d0585c", "#6fb36f", "#d6b45a", "#5b8ed6", "#a77dd0", "#5fa8b8", "#c8c8c8",
+                      "#5c6370", "#e8797c", "#8fcf8f", "#ebd07f", "#80aaf0", "#c59de6", "#8cc8d4", "#f2f2f2"]},
+    False: {"background": "#f6f6f4", "foreground": "#1e1f22", "cursorColor": "#1e1f22",
+            "colors": ["#1e1f22", "#b3261e", "#2e7d32", "#8a6100", "#2a5db0", "#7b3fa6", "#2f6b7a", "#b8bcc2",
+                       "#6b6f76", "#d0393b", "#3d9441", "#a87a00", "#3c74d0", "#9452c4", "#3f8fa0", "#e4e4e1"]},
+}
+XTERM_KEYS = re.compile(r"XTerm\*(selectToClipboard|VT100\.translations|termName|saveLines|faceName|faceSize\d?|"
+                        r"boldColors|background|foreground|cursorColor|cursorBar|cursorBlink|color\d+)\s*:")
+
+
+def xterm_resources(dark):
+    pal = XTERM_PALETTE[bool(dark)]
+    out = ["XTerm*termName: xterm-256color", "XTerm*saveLines: 10000", "XTerm*boldColors: false",
+           "XTerm*cursorBar: true", "XTerm*cursorBlink: true",
+           "XTerm*faceName: DejaVu Sans Mono", "XTerm*faceSize: 14"]
+    # Stufen fuer Strg +/- (xterm springt zwischen faceSize1..6; dazwischen liegt die Grundgroesse 14)
+    out += [f"XTerm*faceSize{i}: {v}" for i, v in enumerate((8, 10, 12, 17, 20, 26), 1)]
+    out += [f"XTerm*{k}: {pal[k]}" for k in ("background", "foreground", "cursorColor")]
+    out += [f"XTerm*color{i}: {c}" for i, c in enumerate(pal["colors"])]
+    out += ["XTerm*selectToClipboard: true",
+            "XTerm*VT100.translations: #override Ctrl Shift <Key>V: insert-selection(CLIPBOARD)\\n"
+            "Ctrl Shift <Key>C: copy-selection(CLIPBOARD)\\nShift <Key>Insert: insert-selection(CLIPBOARD, PRIMARY)\\n"
+            "<Btn3Down>: ignore()\\n<Btn3Up>: insert-selection(CLIPBOARD, PRIMARY)\\n"
+            "Ctrl <Key>plus: larger-vt-font()\\nCtrl <Key>KP_Add: larger-vt-font()\\n"
+            "Ctrl <Key>minus: smaller-vt-font()\\nCtrl <Key>KP_Subtract: smaller-vt-font()\\n"
+            "Ctrl <Key>0: set-vt-font(d)\\nCtrl <Key>KP_0: set-vt-font(d)"]
+    return out
+
+
 def apply_appearance(s):
     """Skalierung (Xft.dpi), Mauszeiger und Farbschema (hell/dunkel nach dem Theme) fuer neu gestartete
     Programme setzen."""
@@ -968,14 +1255,16 @@ def apply_appearance(s):
         theme = next(iter(cursor_themes()), "Adwaita")
     size = int(s.get("cursor_size") or DEFAULTS["cursor_size"])
     xres = home / ".Xresources"
+    dark = theme_is_dark(s.get("theme") or DEFAULTS["theme"])
     try:
-        lines = [l for l in xres.read_text().splitlines() if not l.startswith(("Xft.dpi", "Xcursor."))]
+        lines = [l for l in xres.read_text().splitlines()
+                 if not l.startswith(("Xft.dpi", "Xcursor.")) and not XTERM_KEYS.match(l)]
     except OSError:
         lines = []
     lines += [f"Xft.dpi: {dpi}", f"Xcursor.theme: {theme}", f"Xcursor.size: {size}"]
+    lines += xterm_resources(dark)
     xres.write_text("\n".join(lines) + "\n")
     run(["xrdb", "-merge", str(xres)])
-    dark = theme_is_dark(s.get("theme") or DEFAULTS["theme"])
     gtk_name = "Adwaita-dark" if dark else "Adwaita"
     for gtk in ("gtk-3.0", "gtk-4.0"):
         vals = {"gtk-cursor-theme-name": theme, "gtk-cursor-theme-size": str(size),
@@ -995,13 +1284,133 @@ def apply_appearance(s):
     idx.parent.mkdir(parents=True, exist_ok=True)
     idx.write_text(f"[Icon Theme]\nInherits={theme}\n")
     qt_style, gtk_env = ("Adwaita-Dark", "Adwaita:dark") if dark else ("Adwaita", "Adwaita")
+    # libadwaita (GTK 4: Mission Center & Co.) ignoriert GTK_THEME und liest das Farbschema nur aus dem Portal bzw.
+    # GSettings – entpackte AppImages mit eigener GLib erreichen beides oft nicht. ADW_DEBUG_COLOR_SCHEME gilt immer.
+    adw = "prefer-dark" if dark else "prefer-light"
     (BASE / "env.sh").write_text(
         f"export XCURSOR_THEME={theme}\nexport XCURSOR_SIZE={size}\n"
-        f"export QT_STYLE_OVERRIDE={qt_style}\nexport GTK_THEME={gtk_env}\n")
+        f"export QT_STYLE_OVERRIDE={qt_style}\nexport GTK_THEME={gtk_env}\nexport ADW_DEBUG_COLOR_SCHEME={adw}\n")
     os.environ.update({"XCURSOR_THEME": theme, "XCURSOR_SIZE": str(size),
-                       "QT_STYLE_OVERRIDE": qt_style, "GTK_THEME": gtk_env})
+                       "QT_STYLE_OVERRIDE": qt_style, "GTK_THEME": gtk_env, "ADW_DEBUG_COLOR_SCHEME": adw})
     run(["xsetroot", "-cursor_name", "left_ptr"])
+    try:
+        apply_openbox_theme(s.get("theme") or DEFAULTS["theme"], dark)
+    except OSError as e:
+        log("Openbox-Theme nicht geschrieben:", e)
     threading.Thread(target=apply_color_scheme, args=(dark,), daemon=True).start()   # Start nicht aufhalten
+
+
+# Openbox: Fenster, die Openbox selbst zeichnet (Dialoge und Hilfsfenster von Emulatoren & Co. – normale Fenster
+# laufen ohne Rahmen), sehen aus wie das gewaehlte Kachel-Theme statt wie Clearlooks. Das Theme "VoidStation" wird aus
+# den Farben der Theme-Datei (web/themes/<name>.css) gebaut und nach jedem Theme-Wechsel neu geschrieben;
+# rc.xml waehlt es. Schriften stehen in rc.xml.
+OB_CLOSE_XBM = """#define close_width 10
+#define close_height 10
+static unsigned char close_bits[] = {
+   0x03, 0x03, 0x87, 0x03, 0xce, 0x01, 0xfc, 0x00, 0x78, 0x00, 0x78, 0x00,
+   0xfc, 0x00, 0xce, 0x01, 0x87, 0x03, 0x03, 0x03 };
+"""
+
+
+def theme_colors(theme):
+    """Farben (#rrggbb) aus web/themes/<theme>.css; rgba(...) wird auf --surface-card bzw. --bg-main gemischt."""
+    try:
+        css = (WEB / "themes" / f"{theme}.css").read_text(encoding="utf-8")
+    except OSError:
+        css = ""
+    raw = dict(re.findall(r"--([a-z0-9-]+):\s*([^;]+);", css))
+
+    def hexc(v):
+        v = (v or "").strip()
+        m = re.fullmatch(r"#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})", v)
+        if m:
+            h = m.group(1)
+            return "#" + ("".join(c * 2 for c in h) if len(h) == 3 else h).lower()
+        return None
+
+    base = hexc(raw.get("surface-card")) or hexc(raw.get("bg-main")) or "#22262b"
+    out = {}
+    for k, v in raw.items():
+        c = hexc(v)
+        m = re.fullmatch(r"rgba\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)\s*,\s*([\d.]+)\s*\)", v.strip())
+        if not c and m:
+            r, g, b, a = int(m.group(1)), int(m.group(2)), int(m.group(3)), float(m.group(4))
+            br, bg_, bb = (int(base[i:i + 2], 16) for i in (1, 3, 5))
+            c = "#%02x%02x%02x" % tuple(round(x * a + y * (1 - a)) for x, y in ((r, br), (g, bg_), (b, bb)))
+        if c:
+            out[k] = c
+    return out
+
+
+def openbox_themerc(theme, dark):
+    c = theme_colors(theme)
+    fb = ({"surface-card": "#22262b", "surface-dialog": "#1a1d21", "surface-card-hover": "#2e343b",
+           "surface-active": "#4a5260", "text-primary": "#ecebe8", "text-dim": "#a7a6a4", "border-subtle": "#2c3035",
+           "border-focus": "#f2efe9", "status-danger-bg": "#6e2b2b"} if dark else
+          {"surface-card": "#ffffff", "surface-dialog": "#ffffff", "surface-card-hover": "#eef2f6",
+           "surface-active": "#b8c8dc", "text-primary": "#15181c", "text-dim": "#5f6266", "border-subtle": "#d0d5dc",
+           "border-focus": "#1a73e8", "status-danger-bg": "#c62828"})
+    g = lambda k: c.get(k) or fb[k]
+    title, title_in, text, dim = g("surface-card"), g("surface-dialog"), g("text-primary"), g("text-dim")
+    border, hover, active, danger = g("border-subtle"), g("surface-card-hover"), g("surface-active"), g("status-danger-bg")
+    btn_text = "#ffffff"                                  # weisses X auf Rot, in allen Themes
+    lines = [
+        f"# VoidStation: Openbox-Theme passend zum Kachel-Theme \"{theme}\" – wird vom Launcher geschrieben",
+        "border.width: 1", "padding.width: 10", "padding.height: 8",
+        "window.handle.width: 0", "window.client.padding.width: 0", "window.client.padding.height: 0",
+        "window.label.text.justify: left",
+        f"window.active.border.color: {border}", f"window.inactive.border.color: {border}",
+        f"window.active.title.separator.color: {border}", f"window.inactive.title.separator.color: {border}",
+        "window.active.title.bg: flat solid", f"window.active.title.bg.color: {title}",
+        "window.inactive.title.bg: flat solid", f"window.inactive.title.bg.color: {title_in}",
+        "window.active.label.bg: parentrelative", f"window.active.label.text.color: {text}",
+        "window.inactive.label.bg: parentrelative", f"window.inactive.label.text.color: {dim}",
+        f"window.active.client.color: {title}", f"window.inactive.client.color: {title_in}",
+    ]
+    for st, img in (("active", text), ("inactive", dim)):
+        lines += [f"window.{st}.button.unpressed.bg: parentrelative", f"window.{st}.button.unpressed.image.color: {img}",
+                  f"window.{st}.button.disabled.bg: parentrelative", f"window.{st}.button.disabled.image.color: {dim}",
+                  f"window.{st}.button.hover.bg: flat solid", f"window.{st}.button.hover.bg.color: {hover}",
+                  f"window.{st}.button.hover.image.color: {text}",
+                  f"window.{st}.button.pressed.bg: flat solid", f"window.{st}.button.pressed.bg.color: {active}",
+                  f"window.{st}.button.pressed.image.color: {text}",
+                  f"window.{st}.button.toggled.bg: parentrelative", f"window.{st}.button.toggled.image.color: {img}"]
+    # Schliessen-Knopf: beim Zeigen rot hinterlegt (wie die Ecke "App schliessen")
+    lines += ["window.active.button.close.hover.bg: flat solid", f"window.active.button.close.hover.bg.color: {danger}",
+              f"window.active.button.close.hover.image.color: {btn_text}",
+              "window.active.button.close.pressed.bg: flat solid", f"window.active.button.close.pressed.bg.color: {danger}",
+              f"window.active.button.close.pressed.image.color: {btn_text}"]
+    lines += [
+        "menu.border.width: 1", f"menu.border.color: {border}", "menu.overlap.x: 0", "menu.overlap.y: 0",
+        "menu.title.bg: flat solid", f"menu.title.bg.color: {title}", f"menu.title.text.color: {text}",
+        "menu.title.text.justify: left",
+        "menu.items.bg: flat solid", f"menu.items.bg.color: {title_in}", f"menu.items.text.color: {text}",
+        f"menu.items.disabled.text.color: {dim}",
+        "menu.items.active.bg: flat solid", f"menu.items.active.bg.color: {hover}", f"menu.items.active.text.color: {text}",
+        f"menu.separator.color: {border}", "menu.separator.width: 1", "menu.separator.padding.width: 6",
+        "menu.separator.padding.height: 3",
+        "osd.border.width: 1", f"osd.border.color: {border}", "osd.bg: flat solid", f"osd.bg.color: {title_in}",
+        f"osd.label.text.color: {text}", "osd.hilight.bg: flat solid", f"osd.hilight.bg.color: {active}",
+        "osd.unhilight.bg: flat solid", f"osd.unhilight.bg.color: {hover}",
+    ]
+    return "\n".join(lines) + "\n"
+
+
+def apply_openbox_theme(theme, dark):
+    d = Path.home() / ".local/share/themes/VoidStation/openbox-3"
+    d.mkdir(parents=True, exist_ok=True)
+    changed = False
+    for name, txt in (("themerc", openbox_themerc(theme, dark)), ("close.xbm", OB_CLOSE_XBM)):
+        p = d / name
+        try:
+            if p.read_text(encoding="utf-8") == txt:
+                continue
+        except OSError:
+            pass
+        p.write_text(txt, encoding="utf-8")
+        changed = True
+    if changed and os.environ.get("DISPLAY") and shutil.which("openbox"):
+        run(["openbox", "--reconfigure"])                   # laufendes Openbox laedt das Theme neu
 
 
 def restart_home_later(delay=0.8):
@@ -1072,10 +1481,14 @@ def xrandr_info():
     return outs
 
 
-def _best_rate(rates):
-    """Moeglichst 60 Hz (60.00 vor 59.94), sonst die hoechste Rate."""
+def _best_rate(rates, want=None):
+    """Gewaehlte Rate (Einstellungen -> Anzeige), sonst moeglichst 60 Hz (60.00 vor 59.94), sonst die hoechste."""
     if not rates:
         return None
+    if want:
+        hit = [r for r in rates if abs(r - want) < 0.005]
+        if hit:
+            return hit[0]
     near = [r for r in rates if abs(r - 60) < 0.5]
     return max(near) if near else max(rates)
 
@@ -1093,12 +1506,15 @@ def _auto_mode(o):
     return max(prog, key=lambda m: int(m.split("x")[0]) * int(m.split("x")[1].rstrip("i")))
 
 
-def apply_resolution(res):
+def apply_resolution(res, want_rate=None):
+    """Aufloesung (None = automatisch) und Bildrate des Desktops setzen (want_rate None = ~60 Hz)."""
     for o in xrandr_info():
         mode = res if res in o["modes"] else (None if res else _auto_mode(o))
+        if not mode and want_rate and o["current"]:
+            mode = o["current"]                         # automatische Aufloesung, aber feste Bildrate
         if not mode:
             continue
-        rate = _best_rate(o["rates"].get(mode, []))
+        rate = _best_rate(o["rates"].get(mode, []), want_rate)
         if mode == o["current"] and (rate is None or o["rate"] == rate):
             continue
         cmd = ["xrandr", "--output", o["name"], "--mode", mode]
@@ -1106,6 +1522,110 @@ def apply_resolution(res):
             cmd += ["--rate", f"{rate:.2f}"]
         run(cmd)
         log("Aufloesung", o["name"], mode, f"{rate} Hz" if rate else "", "(automatisch)" if not res else "")
+
+
+def apply_display(s=None):
+    """Aufloesung und Bildrate aus den Einstellungen."""
+    s = s or settings_load()
+    apply_resolution(s.get("resolution"), s.get("rate"))
+
+
+# Bildrate an das Video anpassen (Einstellungen -> Anzeige, Standard aus): Laeuft vorn ein Video mit 25/50 fps,
+# schaltet der Bildschirm auf 50 Hz (sonst ruckelt es auf 60 Hz gleichmaessig: Bilder abwechselnd 2 und 3 Takte lang),
+# 23,976 fps auf 23,98 Hz, 29,97 auf 59,94 Hz – nur wenn die aktuelle Aufloesung die Rate anbietet. Den Wunsch meldet
+# der Player (POST /api/display/video {fps, src}), sobald die Bildrate feststeht, und 0, wenn kein Video mehr vorn
+# laeuft (Ende, Musik, Startseite, Player zu). Zurueck auf die Desktop-Rate geht es spaetestens, wenn der Player endet.
+# Jede Umschaltung kostet 1–3 s schwarzes Bild (HDMI rastet neu ein) – deshalb nur, wenn die Rate nicht ohnehin passt.
+RATE_TOL = 0.002                                       # 0,2 %: 24 fps auf 23,98 Hz (0,1 %) gilt noch als passend
+
+
+def rate_fits(fps, rate):
+    """Zeigt rate jedes Bild gleich lang (ganzzahliges Vielfaches, bis auf RATE_TOL)?"""
+    if not fps or not rate:
+        return False
+    k = round(rate / fps)
+    return k >= 1 and abs(rate - k * fps) / rate <= RATE_TOL
+
+
+def pick_rate(fps, rates):
+    """Passende Bildschirm-Rate fuer ein Video: kleinste Abweichung, bei Gleichstand die hoehere Rate
+    (25 fps -> 50 Hz statt 25 Hz). None, wenn keine Rate passt (z. B. 50 fps auf einem reinen 60-Hz-Fernseher)."""
+    best = None
+    for r in set(rates or []):
+        if not 23 <= r <= 145 or not rate_fits(fps, r):
+            continue
+        key = (round(abs(r - round(r / fps) * fps) / r, 5), -r)
+        if best is None or key < best[0]:
+            best = (key, r)
+    return best[1] if best else None
+
+
+class DisplayRate:
+    def __init__(self):
+        self.lock = threading.RLock()
+        self.wanted = 0.0                              # Bildrate des Videos, das gerade vorn laeuft (0 = keins)
+        self.src = ""                                  # welcher Player sie gemeldet hat (tv, media, yt)
+        self.base = {}                                 # Ausgang -> (Modus, Rate) vor dem Umschalten
+        self.now = None                                # zuletzt gesetzte Video-Rate (fuer die Technik-Anzeige)
+
+    def request(self, fps, src=""):
+        with self.lock:
+            try:
+                fps = float(fps or 0)
+            except (TypeError, ValueError):
+                fps = 0.0
+            if not fps and src and self.src and src != self.src:
+                return self.state()                    # ein anderer Player hat inzwischen uebernommen
+            self.wanted = fps if 10 <= fps <= 121 else 0.0
+            self.src = src if self.wanted else ""
+            self._apply()
+            return self.state()
+
+    def reapply(self):
+        """Beim Umschalten der Einstellung und nach dem Standby: laeuft vorn ein Video, gilt (wieder) dessen Rate.
+        base bleibt – es haelt die Desktop-Rate fest, auch wenn der Bildschirm nach dem Aufwachen schon darauf steht."""
+        with self.lock:
+            self._apply()
+
+    def state(self):
+        return {"on": bool(settings_load().get("match_rate")), "fps": self.wanted, "rate": self.now}
+
+    def _apply(self):
+        if not self.wanted or not settings_load().get("match_rate"):
+            self._restore()
+            return
+        for o in xrandr_info():
+            mode, cur = o["current"], o["rate"]
+            if not mode or not cur:
+                continue
+            if rate_fits(self.wanted, cur):
+                self.now = cur if o["name"] in self.base else None
+                continue
+            r = pick_rate(self.wanted, o["rates"].get(mode, []))
+            if not r:
+                log(f"Bildrate: {self.wanted:.3f} fps – {o['name']} bietet bei {mode} keine passende Rate")
+                continue
+            self.base.setdefault(o["name"], (mode, cur))
+            run(["xrandr", "--output", o["name"], "--mode", mode, "--rate", f"{r:.2f}"])
+            self.now = r
+            log(f"Bildrate an Video angepasst: {self.wanted:.3f} fps -> {o['name']} {mode} {r} Hz (vorher {cur} Hz)")
+
+    def _restore(self):
+        if not self.base:
+            self.now = None
+            return
+        outs = {o["name"]: o for o in xrandr_info()}
+        for name, (mode, rate) in self.base.items():
+            o = outs.get(name)
+            if not o or o["current"] != mode or (o["rate"] and abs(o["rate"] - rate) < 0.005):
+                continue                               # inzwischen andere Aufloesung oder schon zurueck
+            run(["xrandr", "--output", name, "--mode", mode, "--rate", f"{rate:.2f}"])
+            log(f"Bildrate zurueck: {name} {mode} {rate} Hz")
+        self.base = {}
+        self.now = None
+
+
+DISPLAY_RATE = DisplayRate()
 
 
 def pactl_json(*args):
@@ -1413,13 +1933,14 @@ class AudioWatch:
         return time.clock_gettime(time.CLOCK_BOOTTIME) - time.monotonic()
 
     def run(self):
-        for _ in range(90):                              # PipeWire startet mit der Sitzung, evtl. nach dem Launcher
-            if pactl_json("info") is not None:
-                break
-            time.sleep(1)
-        else:
-            log("Ton: PipeWire nicht erreichbar, keine Geraete-Ueberwachung")
-            return
+        tries = 0                                        # PipeWire startet mit der Sitzung, evtl. nach dem Launcher
+        while pactl_json("info") is None:                # nicht aufgeben: kommt der Ton spaeter (langsamer Rechner,
+            tries += 1                                   # WirePlumber neu gestartet), soll die Ueberwachung mitlaufen
+            if tries == 90:
+                log("Ton: PipeWire nach 90 s nicht erreichbar – versuche es weiter")
+            time.sleep(1 if tries < 90 else 10)
+        if tries >= 90:
+            log("Ton: PipeWire jetzt erreichbar")
         time.sleep(8)                                    # Geraete beim Hochfahren in Ruhe ankommen lassen
         try:
             audio_tidy()
@@ -1477,7 +1998,124 @@ def net_info():
             p = line.split()
             if len(p) >= 4:
                 addrs.append({"iface": p[1], "ip": p[3].split("/")[0]})
-    return {"hostname": socket.gethostname(), "addresses": addrs}
+    links = net_links(addrs)
+    return {"hostname": socket.gethostname(), "addresses": addrs, "links": links,
+            "has_wired": any(l["type"] == "wired" for l in links), "has_wifi": any(l["type"] == "wifi" for l in links),
+            "prefer": net_prefer_get()}
+
+
+# ---------------------------------------------------------------------------
+#  Kabel oder WLAN bevorzugen: sind beide verbunden, nimmt Linux fuer das Internet die Standardroute mit der
+#  kleinsten Metrik (NetworkManager: Kabel 100, WLAN 600). "WLAN bevorzugen" gibt allen WLAN-Profilen Metrik 50
+#  (IPv4 und IPv6), "Kabel" stellt die Vorgabe wieder her. Lokale Ziele (Freigabe, SSH) bleiben ueber beide erreichbar.
+#  Anlass: Kabelanschluss, der nur noch IPv6 durchlaesst – GitHub braucht IPv4, der Handy-Hotspot hat es.
+# ---------------------------------------------------------------------------
+NM_TYPES = {"ethernet": "wired", "802-3-ethernet": "wired", "wifi": "wifi", "802-11-wireless": "wifi"}
+WIFI_METRIC = 50
+
+
+def net_default_dev(fam):
+    """Schnittstelle der Standardroute mit der kleinsten Metrik (fam "-4"/"-6"), sonst ''."""
+    r = run(["ip", fam, "route", "show", "default"])
+    best = None
+    for line in (r.stdout.splitlines() if r and r.returncode == 0 else []):
+        m = re.search(r"\bdev (\S+)", line)
+        if not m:
+            continue
+        mm = re.search(r"\bmetric (\d+)", line)
+        metric = int(mm.group(1)) if mm else 0
+        if best is None or metric < best[0]:
+            best = (metric, m.group(1))
+    return best[1] if best else ""
+
+
+def net_links(addrs=None):
+    """Kabel- und WLAN-Schnittstellen laut NetworkManager: Typ, Zustand, Profil (bei WLAN der Netzname),
+    IPv4-Adresse und ob das Internet (Standardroute) gerade darueber laeuft."""
+    r = run(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"], timeout=10)
+    ip4 = {a["iface"]: a["ip"] for a in (addrs or [])}
+    d4, d6 = net_default_dev("-4"), net_default_dev("-6")
+    out = []
+    for line in (r.stdout.splitlines() if r and r.returncode == 0 else []):
+        dev, typ, state, conn = (nm_split(line) + ["", "", "", ""])[:4]
+        kind = NM_TYPES.get(typ)
+        if not kind:
+            continue
+        up = state.split(" ")[0] in ("connected", "verbunden")
+        # "internet": darueber laeuft das Internet – die IPv4-Standardroute, ohne IPv4 die von IPv6
+        # "ready": getrennt, aber verbindbar (ohne Kabel meldet NetworkManager "unavailable")
+        out.append({"dev": dev, "type": kind, "connected": up, "name": conn if up else "", "ip": ip4.get(dev, ""),
+                    "internet": up and dev == (d4 or d6), "ready": state in ("disconnected", "getrennt")})
+    out.sort(key=lambda l: (not l["connected"], l["type"] != "wired", l["dev"]))
+    return out
+
+
+def net_device(action, dev):
+    r = run(["sudo", "-n", "nmcli", "--wait", "30", "device", action, dev], timeout=40)
+    if r is None:
+        raise RuntimeError(f"{dev}: Zeitueberschreitung")
+    if r.returncode != 0:
+        raise RuntimeError((r.stderr or r.stdout or "nmcli").strip().splitlines()[-1])
+
+
+def net_disconnect(kind):
+    """Kabel oder WLAN trennen. "device disconnect" haelt das Geraet getrennt, bis man wieder verbindet oder neu
+    startet – sonst waehlte NetworkManager gleich das naechste bekannte Netz. Die gespeicherten Profile bleiben."""
+    done = 0
+    for l in net_links():
+        if l["type"] == kind and l["connected"]:
+            net_device("disconnect", l["dev"])
+            done += 1
+    log("Netzwerk: getrennt", kind, f"({done})")
+
+
+def net_connect(kind):
+    """Getrenntes Kabel wieder verbinden (WLAN laeuft ueber wifi_connect, dort zaehlt das gewaehlte Netz)."""
+    for l in net_links():
+        if l["type"] == kind and l["ready"]:
+            net_device("connect", l["dev"])
+
+
+def net_prefer_get(s=None):
+    p = (s or settings_load()).get("net_prefer")
+    return p if p in ("wired", "wifi") else "wired"
+
+
+def nm_profiles(kind):
+    """UUIDs der gespeicherten NetworkManager-Profile eines Typs ("wired"/"wifi")."""
+    r = run(["sudo", "-n", "nmcli", "-t", "-f", "UUID,TYPE", "connection", "show"], timeout=10)
+    out = []
+    for line in (r.stdout.splitlines() if r and r.returncode == 0 else []):
+        uuid, typ = (nm_split(line) + ["", ""])[:2]
+        if uuid and NM_TYPES.get(typ) == kind:
+            out.append(uuid)
+    return out
+
+
+def net_prefer_apply(mode):
+    """Metrik aller WLAN-Profile setzen und auf die laufende WLAN-Verbindung anwenden (reapply, sonst neu verbinden)."""
+    metric = str(WIFI_METRIC) if mode == "wifi" else "-1"
+    changed = 0
+    for u in nm_profiles("wifi"):
+        r = run(["sudo", "-n", "nmcli", "connection", "modify", "uuid", u,
+                 "ipv4.route-metric", metric, "ipv6.route-metric", metric], timeout=15)
+        changed += bool(r and r.returncode == 0)
+    for l in net_links():
+        if l["type"] == "wifi" and l["connected"]:
+            r = run(["sudo", "-n", "nmcli", "device", "reapply", l["dev"]], timeout=30)
+            if not r or r.returncode != 0:
+                run(["sudo", "-n", "nmcli", "--wait", "30", "device", "connect", l["dev"]], timeout=40)
+    log("Netzwerk: bevorzugt", mode, f"({changed} WLAN-Profile)")
+    return changed
+
+
+def net_prefer_set(mode):
+    if mode not in ("wired", "wifi"):
+        raise ValueError("unbekannte Verbindungsart")
+    s = settings_load()
+    s["net_prefer"] = mode
+    settings_save(s)
+    net_prefer_apply(mode)
 
 
 def nm_split(line):
@@ -1517,25 +2155,40 @@ def wifi_scan():
             continue
         n = {"ssid": ssid, "signal": int(sig or 0), "secure": bool(sec and sec != "--"),
              "active": use.strip() == "*"}
-        if ssid not in nets or n["signal"] > nets[ssid]["signal"]:
-            nets[ssid] = n
+        o = nets.get(ssid)                       # gleiches Netz mehrfach (Frequenzen, Zellen): staerkstes zeigen,
+        if o:                                   # "aktiv" aber behalten (iPhone-Hotspot meldet sich oft doppelt)
+            n["active"] = n["active"] or o["active"]
+            if o["signal"] >= n["signal"]:
+                o["active"] = n["active"]
+                continue
+        nets[ssid] = n
+    saved = wifi_saved()
+    for n in nets.values():
+        n["known"] = n["ssid"] in saved          # Profil vorhanden: Verbinden ohne Passwort-Abfrage
     return sorted(nets.values(), key=lambda n: (-n["active"], -n["signal"]))
 
 
-def wifi_profiles(ssid):
-    """UUIDs aller gespeicherten WLAN-Profile fuer dieses Netz (Name und SSID koennen abweichen)."""
-    r = run(["sudo", "-n", "nmcli", "-t", "-f", "UUID,TYPE", "connection", "show"], timeout=10)
-    out = []
-    if not r or r.returncode != 0:
-        return out
-    for line in r.stdout.splitlines():
-        uuid, typ = (nm_split(line) + ["", ""])[:2]
-        if typ not in ("802-11-wireless", "wifi") or not uuid:
+def wifi_saved():
+    """Gespeicherte WLAN-Profile: {SSID: [UUIDs, zuletzt benutztes zuerst]} (Name und SSID koennen abweichen)."""
+    r = run(["sudo", "-n", "nmcli", "-t", "-f", "UUID,TYPE,TIMESTAMP", "connection", "show"], timeout=10)
+    found = []
+    for line in (r.stdout.splitlines() if r and r.returncode == 0 else []):
+        uuid, typ, ts = (nm_split(line) + ["", "", ""])[:3]
+        if not uuid or NM_TYPES.get(typ) != "wifi":
             continue
         g = run(["sudo", "-n", "nmcli", "-g", "802-11-wireless.ssid", "connection", "show", uuid], timeout=10)
-        if g and g.returncode == 0 and g.stdout.strip() == ssid:
-            out.append(uuid)
+        if g and g.returncode == 0 and g.stdout.strip():
+            # -g maskiert Doppelpunkte und Backslashes
+            found.append((int(ts) if ts.isdigit() else 0, uuid, ":".join(nm_split(g.stdout.strip()))))
+    out = {}
+    for _, uuid, ssid in sorted(found, key=lambda f: -f[0]):
+        out.setdefault(ssid, []).append(uuid)
     return out
+
+
+def wifi_profiles(ssid):
+    """UUIDs aller gespeicherten WLAN-Profile fuer dieses Netz."""
+    return wifi_saved().get(ssid, [])
 
 
 def wifi_forget(uuids):
@@ -1548,7 +2201,8 @@ WIFI_ERRORS = [
     ("wifi.err.password", ("secrets were required", "geheimdaten", "wireless-security.psk", "passwd-file",
                            "4-way handshake", "invalid passphrase", "property 'psk' is invalid",
                            "eigenschaft »psk« ist ungültig", "psk: ungültig", "psk: invalid")),
-    ("wifi.err.notFound", ("no network with ssid", "kein netzwerk mit ssid")),
+    ("wifi.err.notFound", ("no network with ssid", "kein netzwerk mit ssid", "no suitable device",
+                           "kein geeignetes gerät")),
     ("wifi.err.noDevice", ("no wi-fi device", "kein wlan-gerät", "kein wi-fi-gerät")),
     ("wifi.err.timeout", ("timeout", "zeitüberschreitung", "timed out")),
 ]
@@ -1570,14 +2224,19 @@ def wifi_error(text):
 
 
 def wifi_connect(ssid, password):
-    """Verbinden. Mit Passwort wird ein altes Profil fuer dasselbe Netz vorher entfernt (sonst nimmt
-    NetworkManager dessen gespeichertes, evtl. falsches Passwort); scheitert der Versuch, wird das dabei
-    angelegte Profil wieder geloescht. Fehler kommen als Schluessel "wifi.err.*" oder als Klartext."""
+    """Verbinden, auch beim Wechsel von einem anderen Netz. Ohne Passwort nimmt es das gespeicherte Profil (die
+    Oberflaeche fragt bekannte Netze nicht ab; lehnt der Router das gespeicherte Passwort ab, kommt
+    wifi.err.password und sie fragt dann doch). Mit Passwort wird ein altes Profil fuer dasselbe Netz vorher
+    entfernt (sonst nimmt NetworkManager dessen gespeichertes, evtl. falsches Passwort); scheitert der Versuch,
+    wird das dabei angelegte Profil wieder geloescht. Fehler kommen als Schluessel "wifi.err.*" oder als Klartext."""
     before = wifi_profiles(ssid)
     if password:
         wifi_forget(before)
         before = []
-    args = ["sudo", "-n", "nmcli", "--wait", "90", "device", "wifi", "connect", ssid]
+    if before:
+        args = ["sudo", "-n", "nmcli", "--wait", "90", "connection", "up", "uuid", before[0]]
+    else:
+        args = ["sudo", "-n", "nmcli", "--wait", "90", "device", "wifi", "connect", ssid]
     if password:
         args += ["password", password]
     try:
@@ -1589,6 +2248,8 @@ def wifi_connect(ssid, password):
         wifi_forget([u for u in wifi_profiles(ssid) if u not in before])
         log("WLAN:", ssid, "->", err)
         raise RuntimeError(err)
+    if net_prefer_get() == "wifi":
+        net_prefer_apply("wifi")                 # neues Profil: WLAN-Vorrang gleich mitgeben
 
 
 def share_info():
@@ -1794,7 +2455,8 @@ class IPTV:
         if self.now and "tv" in APPS.running():
             now = self.now
         return {"state": self.state, "error": self.error, "count": len(self.index),
-                "countries": [{"code": c, "n": n} for c, n in self.countries[:40]], "now": now, "failed": self.failed}
+                "countries": [{"code": c, "n": n} for c, n in self.countries[:40]], "now": now, "failed": self.failed,
+                "region": region(), "quick": region_quick()}
 
     def entry(self, key):
         e = self.by_key.get(key)
@@ -1870,17 +2532,23 @@ class IPTV:
         return self.status()
 
     def play_raw(self, e):
-        """Stufe 3: nacktes mpv im Vollbild (wie vor dem eigenen Player), mit Hardware-Decoding und Wiederverbinden."""
+        """Stufe 3: nacktes mpv im Vollbild (wie vor dem eigenen Player), mit Hardware-Decoding."""
         args = ["mpv", "--fs", "--force-window=immediate", "--keep-open=no",
                 f"--title=TV · {e['name']}", "--cache=yes", "--demuxer-max-bytes=64MiB", "--hwdec=auto-safe",
-                "--network-timeout=10", "--stream-lavf-o=reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
+                "--network-timeout=10",           # ohne stream-lavf-o=reconnect: bremst HLS-Sender aus (s. Player)
                 "--ytdl=no"]
+        if os.environ.get("VS_WEAK", "1" if os.uname().machine in ("i386", "i486", "i586", "i686") else "0") == "1":
+            # schwache Hardware (32 Bit, wie im Player): Xv statt OpenGL, Software-Decoding, niedrigste Qualitaet
+            args = [a for a in args if not a.startswith("--hwdec=")] + [
+                "--hwdec=no", "--vo=xv,x11", "--hls-bitrate=min", "--vd-lavc-fast=yes",
+                "--vd-lavc-skiploopfilter=nonref", "--sws-scaler=fast-bilinear", "--sws-allow-zimg=no"]
         if e.get("ref"):
             args.append(f"--referrer={e['ref']}")
         if e.get("ua"):
             args.append(f"--user-agent={e['ua']}")
         args.append(e["url"])
         APPS.close("media")
+        APPS.close("ytlight")
         APPS.close("tv")
         APPS.start("tv", args)
         self.raw = True
@@ -2162,6 +2830,145 @@ def natural_key(name):
     return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", tv_fold(name))]
 
 
+class DvdDrive:
+    """DVD-Laufwerk fuer "Videos & Musik": Disc erkennen (ioctl CDROM_DRIVE_STATUS – laeuft die Disc nicht an),
+    Titel lesen (lsdvd, einmal je Disc, im Hintergrund), auswerfen. Abgespielt wird mit mpv: dvd://<n>/<geraet>,
+    mpv zaehlt Titel ab 0, lsdvd ab 1. DVD-Menues kann mpv nicht – deshalb die Titelliste (Serien: ein Titel je Folge).
+    Kopiergeschuetzte Kauf-DVDs entschluesselt libdvdread ueber libdvdcss (bei Void eine Abhaengigkeit von mpv)."""
+    CDROM_DRIVE_STATUS = 0x5326
+    CDS_DISC_OK = 4
+    MIN_TITLE = 60                                       # kuerzere Titel (Warnhinweise, Logos, Menues) ausblenden
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.cache = {}                                  # geraet -> {"key": (status, groesse), "info": ..., "busy": bool}
+
+    @staticmethod
+    def devices():
+        return sorted(str(p) for p in Path("/dev").glob("sr[0-9]*"))
+
+    def _status(self, dev):
+        import fcntl
+        try:
+            fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
+        except OSError:
+            return -1
+        try:
+            return fcntl.ioctl(fd, self.CDROM_DRIVE_STATUS, 0x7fffffff)
+        except OSError:
+            return -1
+        finally:
+            os.close(fd)
+
+    @staticmethod
+    def _size(dev):
+        try:
+            return int(Path(f"/sys/block/{Path(dev).name}/size").read_text().strip() or 0)
+        except (OSError, ValueError):
+            return 0
+
+    @staticmethod
+    def parse(text):
+        """lsdvd -Ox (XML) -> {"label", "titles": [{ix, length, aspect, format, chapters, audio, subs}], "longest"}.
+        Mit regulaeren Ausdruecken statt XML-Parser: lsdvd schreibt Disc-Namen ungefiltert."""
+        def tag(name, block, default=""):
+            m = re.search(rf"<{name}>(.*?)</{name}>", block, re.S)
+            return html_unescape(m.group(1).strip()) if m else default
+        head = text.split("<track>", 1)[0]
+        titles = []
+        for block in re.findall(r"<track>(.*?)</track>", text, re.S):
+            try:
+                ix, length = int(tag("ix", block, "0")), float(tag("length", block, "0"))
+            except ValueError:
+                continue
+            if ix > 0:
+                titles.append({"ix": ix, "length": round(length, 1), "aspect": tag("aspect", block),
+                               "format": tag("format", block), "chapters": block.count("<chapter>"),
+                               "audio": block.count("<audio>"), "subs": block.count("<subp>")})
+        longest = max(titles, key=lambda t: t["length"])["ix"] if titles else 0
+        label = tag("title", head).replace("_", " ").strip()
+        return {"label": "" if label.lower() == "unknown" else label, "titles": titles, "longest": longest}
+
+    def _scan(self, dev, key):
+        info = None
+        exe = shutil.which("lsdvd")
+        if exe:
+            r = run([exe, "-Ox", "-v", "-a", "-c", "-s", dev], timeout=90)
+            if r and r.stdout.strip():
+                info = self.parse(r.stdout)
+            else:
+                log("DVD: lsdvd ohne Ergebnis", dev, (r.stderr.strip().splitlines() or [""])[-1][:200] if r else "")
+        else:
+            log("DVD: lsdvd fehlt")
+        with self.lock:
+            c = self.cache.get(dev)
+            if c and c["key"] == key:
+                c.update(info=info or {"label": "", "titles": [], "longest": 0}, busy=False)
+        if info:
+            log(f"DVD {dev}: „{info['label']}“, {len(info['titles'])} Titel")
+
+    def discs(self):
+        """Eingelegte Discs: [{dev, label, ready, n}]; liest neue Discs im Hintergrund ein."""
+        out = []
+        for dev in self.devices():
+            st = self._status(dev)
+            with self.lock:
+                if st != self.CDS_DISC_OK:
+                    self.cache.pop(dev, None)
+                    continue
+                key = (st, self._size(dev))
+                c = self.cache.get(dev)
+                if not c or c["key"] != key:
+                    c = self.cache[dev] = {"key": key, "info": None, "busy": True}
+                    threading.Thread(target=self._scan, args=(dev, key), daemon=True).start()
+                info = c["info"]
+            out.append({"dev": dev, "label": (info or {}).get("label", ""), "ready": info is not None,
+                        "n": len(self.shown(info)) if info else 0})
+        return out
+
+    def shown(self, info):
+        t = [x for x in (info or {}).get("titles", []) if x["length"] >= self.MIN_TITLE]
+        return t or (info or {}).get("titles", [])
+
+    def listing(self, dev):
+        if dev not in self.devices():
+            raise FileNotFoundError(dev)
+        for _ in range(180):                             # Disc wird gerade gelesen: bis zu 90 s warten
+            self.discs()
+            with self.lock:
+                c = self.cache.get(dev)
+                if not c:
+                    raise FileNotFoundError("keine Disc im Laufwerk")
+                if c["info"] is not None:
+                    info = c["info"]
+                    break
+            time.sleep(0.5)
+        else:
+            raise FileNotFoundError("Disc nicht lesbar")
+        titles = self.shown(info)
+        items = []
+        if len(titles) > 1:
+            items.append({"kind": "dvdall", "path": f"dvd://{titles[0]['ix'] - 1}/{dev}", "title": "", "n": len(titles)})
+        for t in titles:
+            items.append({"kind": "dvdtitle", "path": f"dvd://{t['ix'] - 1}/{dev}", "ix": t["ix"], "dur": t["length"],
+                          "aspect": t["aspect"], "chapters": t["chapters"], "main": t["ix"] == info["longest"],
+                          "title": "", "name": f"{t['ix']}", "thumb": ""})
+        items.append({"kind": "eject", "path": f"dvd:{dev}", "title": ""})
+        return {"path": f"dvd:{dev}", "name": info["label"], "parent": "", "items": items, "select": "",
+                "audio": 0, "coversPending": 0, "dvd": dev}
+
+    def eject(self, dev):
+        if dev not in self.devices():
+            raise ValueError("kein Laufwerk")
+        with self.lock:
+            self.cache.pop(dev, None)
+        r = run(["eject", dev], timeout=20)
+        return bool(r and r.returncode == 0)
+
+
+DVD = DvdDrive()
+
+
 class MediaLib:
     """Ordner auflisten, Vorschaubilder (ffmpegthumbnailer, zwischengespeichert), Weiterschauen (resume.json).
     Nur innerhalb von ~/share und eingehaengten Laufwerken unter /run/media und /media."""
@@ -2326,10 +3133,16 @@ class MediaLib:
         2. Cover des Ordners – ausser der Ordner mischt verschiedene Alben
         3. online gefundenes Cover zu Interpret + Album bzw. Interpret + Titel (Zwischenspeicher, gilt fuer alle
            Titel desselben Albums) – nur mit online=True wird gesucht (Hintergrund, CoverFetcher)
+        Vor allem anderen: ein gleichnamiges Bild neben dem Titel ("Interpret - Titel.jpg") – fuer Titel, die keine Suche
+        findet oder bei denen sie danebenliegt.
         Rueckgabe (Pfad oder None, fertig): fertig=False heisst, eine Suche im Netz koennte noch etwas bringen."""
         st = p.stat()
+        for ext in (".jpg", ".jpeg", ".png", ".webp", ".JPG", ".PNG"):
+            side = p.with_suffix(ext)
+            if side.is_file():
+                return self._art_found(p, st, side)
         key = hashlib.sha1(f"art:{p}:{int(st.st_mtime)}:{st.st_size}".encode()).hexdigest()
-        out, none = self.THUMBS / f"{key}.jpg", self.THUMBS / f"{key}.none"
+        out, none, wide = self.THUMBS / f"{key}.jpg", self.THUMBS / f"{key}.none", self.THUMBS / f"{key}.wide"
         if not out.exists() and not none.exists():
             self.THUMBS.mkdir(parents=True, exist_ok=True)
             with self.sem:
@@ -2337,6 +3150,8 @@ class MediaLib:
                     img = COVERS._embedded(p)
                     try:
                         if img:
+                            if self._pic_wide(p):
+                                wide.touch()
                             tmp = out.with_name(f"{key}.{threading.get_ident()}.tmp.jpg")
                             tmp.write_bytes(img)
                             tmp.replace(out)
@@ -2344,8 +3159,25 @@ class MediaLib:
                             none.touch()
                     except OSError:
                         pass
-        if out.exists():
+        if out.exists() and not wide.exists():
             return self._art_found(p, st, out)
+        # Eingebettet ist nur ein Standbild aus einem Video (YouTube: 16:9 oder 4:3) – lieber das echte Cover suchen
+        # und das Standbild nur nehmen, wenn es keins gibt (bis dahin zeigt die Kachel es schon)
+        still = out if out.exists() else None
+        if still is not None:
+            ac = COVERS.track_cache(p, self.track_tags(p, st))
+            if ac is None:
+                return self._art_found(p, st, still)
+            if ac.is_file():
+                return self._art_found(p, st, ac)
+            if COVERS.track_missed(ac):
+                return self._art_found(p, st, still)
+            if online:
+                ok = COVERS.fetch_track(p, self.track_tags(p, st), ac)
+                if ok is None:
+                    return still, False
+                return self._art_found(p, st, ac if ok else still)
+            return still, False
         if not self.mixed(p.parent):
             c = self.own_cover(p.parent)
             if c is not None:
@@ -2363,6 +3195,17 @@ class MediaLib:
                 return None, False
             return self._art_found(p, st, ac if ok else None)
         return None, False
+
+    @staticmethod
+    def _pic_wide(p):
+        """Ist das eingebettete Bild deutlich breiter als hoch (Video-Standbild statt Plattencover)?"""
+        r = run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=width,height", "-of", "csv=p=0",
+                 str(p)], timeout=15)
+        try:
+            w, h = (int(x) for x in (r.stdout.strip().split(",")[:2] if r and r.returncode == 0 else ()))
+        except ValueError:
+            return False
+        return h > 0 and w / h >= 1.25
 
     def _art_found(self, p, st, f):
         try:
@@ -2382,7 +3225,7 @@ class MediaLib:
         if not ff or not fp:
             return False
         st = p.stat()
-        if cover is not None and cover.parent == self.THUMBS:  # Bild steckt schon in der Datei
+        if cover is not None and (cover.parent == self.THUMBS or COVERS._embedded(p)):   # schon ein Bild in der Datei
             cover = None
         tags = self.track_tags(p, st)
         have = {k for k, v in tags.items() if v}
@@ -2403,7 +3246,13 @@ class MediaLib:
         add = {k: v for k, v in add.items() if v and k not in have}
         if cover is None and not add:
             return False
-        ours = set(filter(None, (tags.get("voidstation") or "").split(","))) | set(add) | ({"cover"} if cover is not None else set())
+        ours = self._marker(tags)
+        ours.update({k: self._fp(v) for k, v in add.items()})
+        if cover is not None:
+            try:
+                ours["cover"] = self._fp_bytes(cover.read_bytes())
+            except OSError:
+                ours["cover"] = None
         args = []
         if cover is not None:
             args += ["-i", str(cover), "-map", "0:a", "-map", "1:0", "-disposition:v:0", "attached_pic",
@@ -2412,7 +3261,9 @@ class MediaLib:
             args += ["-map", "0"]
         for k, v in add.items():
             args += ["-metadata", f"{k}={v}"]
-        args += ["-metadata", "VOIDSTATION=" + ",".join(sorted(ours))]   # was von VoidStation stammt (Cover neu suchen)
+        # was von VoidStation stammt, je mit Fingerabdruck des Werts – "Cover neu suchen" nimmt nur heraus, was noch so
+        # in der Datei steht; von Hand Korrigiertes (EasyTAG & Co.) bleibt
+        args += ["-metadata", "VOIDSTATION=" + ",".join(k + (f":{h}" if h else "") for k, h in sorted(ours.items()))]
         if not self._rewrite(p, args):
             return False
         parts = (["Cover"] if cover is not None else []) + ([", ".join(add)] if add else [])
@@ -2462,13 +3313,57 @@ class MediaLib:
         self.tags_cache.pop(str(p), None)
         return True
 
+    @staticmethod
+    def _fp(v):
+        return hashlib.sha1(str(v).strip().encode("utf-8")).hexdigest()[:10]
+
+    @staticmethod
+    def _fp_bytes(b):
+        return hashlib.sha1(b).hexdigest()[:10]
+
+    @staticmethod
+    def _marker(tags):
+        """Kennzeichen VOIDSTATION -> {Tag: Fingerabdruck}; Fassungen bis Oktober 2026 ohne Fingerabdruck -> None."""
+        out = {}
+        for item in filter(None, (tags.get("voidstation") or "").split(",")):
+            k, _, h = item.partition(":")
+            out[k.strip()] = h.strip() or None
+        return out
+
+    @staticmethod
+    def _pic_raw(p):
+        """Eingebettetes Bild so, wie es in der Datei steckt (ohne Umrechnen) – fuer den Vergleich mit dem, was
+        VoidStation hineingeschrieben hat."""
+        ff = shutil.which("ffmpeg")
+        if not ff:
+            return None
+        try:
+            r = subprocess.run([ff, "-v", "error", "-i", str(p), "-map", "0:v:0", "-c", "copy", "-f", "image2pipe", "-"],
+                               capture_output=True, timeout=20, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return r.stdout if r.returncode == 0 and r.stdout else None
+
     def reset_art(self, p):
         """Cover neu suchen: Was VoidStation selbst in die Datei geschrieben hat (Kennzeichen VOIDSTATION; bei
         Dateien aus der ersten Fassung ohne Kennzeichen: Tags, die genau der damals gefundenen Aufnahme entsprechen),
         wieder herausnehmen und Zwischenspeicher wie "nichts gefunden" fuer diesen Titel vergessen."""
         tags = COVERS._tags(p)
-        ours = set(filter(None, (tags.get("voidstation") or "").split(",")))
-        if not ours and COVERS._embedded(p):           # erste Fassung schrieb immer Cover + Tags zusammen
+        marker = self._marker(tags)
+        ours = set()
+        for k, h in marker.items():
+            if h is None:                              # Kennzeichen ohne Fingerabdruck (aeltere Fassung): wie bisher
+                ours.add(k)
+            elif k == "cover":
+                raw = self._pic_raw(p)
+                if raw is not None and self._fp_bytes(raw) == h:
+                    ours.add(k)
+            elif tags.get(k) and self._fp(tags[k]) == h:
+                ours.add(k)                            # steht noch so drin, wie VoidStation es schrieb
+        kept = set(marker) - ours
+        if kept:
+            log("Cover neu suchen:", p.name, "– von Hand geaendert, bleibt:", ", ".join(sorted(kept)))
+        if not marker and COVERS._embedded(p):         # erste Fassung schrieb immer Cover + Tags zusammen
             for c in COVERS.track_caches(p, tags):
                 try:
                     meta = json.loads(c.with_suffix(".json").read_text(encoding="utf-8"))
@@ -2485,7 +3380,7 @@ class MediaLib:
         orig = {k: v for k, v in tags.items() if k not in ours}
         for c in set(COVERS.track_caches(p, tags)) | set(COVERS.track_caches(p, orig)):
             COVERS.forget(c)
-        if ours and p.suffix.lower() in EMBED_EXT and os.access(p.parent, os.W_OK):
+        if (ours or marker) and p.suffix.lower() in EMBED_EXT and os.access(p.parent, os.W_OK):
             args = ["-map", "0:a" if "cover" in ours else "0"]
             for k in sorted(ours - {"cover"}):
                 args += ["-metadata", f"{k}="]
@@ -2511,9 +3406,9 @@ class MediaLib:
         if not p or not p.is_file() or p.suffix.lower() not in AUDIO_EXT:
             return None
         f, final = self.art_file(p)
+        if not final:
+            COVERS.add_track(p)
         if f is None:
-            if not final:
-                COVERS.add_track(p)
             return None
         try:
             return f.read_bytes(), MIME.get(f.suffix.lower(), "image/jpeg")
@@ -2524,6 +3419,36 @@ class MediaLib:
     def title(name):
         stem = name.rsplit(".", 1)[0] if "." in name else name
         return re.sub(r"[._]+", " ", stem).strip() or name
+
+    def display_name(self, p, tags):
+        """Anzeige eines Musiktitels -> (Titel, Interpret): Titel- und Interpret-Tag, wenn sie zusammenpassen; steckt
+        im Titel-Tag "Interpret - Titel" (YouTube, Kanal als Interpret) oder fehlt er, der bereinigte Titel bzw.
+        Dateiname als Ganzes, ohne Interpret ("Fat_Larry_s_Band_-_Act…" -> "Fat Larry's Band - Act Like You Know")."""
+        t = (tags.get("title") or "").strip().lstrip("-–— ").strip()
+        a = (tags.get("artist") or tags.get("album_artist") or tags.get("albumartist") or "").strip()
+        if t and not COVERS.SEP.search(t):
+            return t, a
+        return COVERS._clean(t or self.title(p.name), tail=False) or t or p.stem, ""
+
+    def _audio_names(self, items):
+        """Titel und Interpret aus den Tags fuer die Kacheln und "Danach" (sonst stand dort der Dateiname). Tags
+        werden je Datei einmal gelesen (bis zu 6 parallel) und bis zur naechsten Aenderung der Datei gemerkt."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        def one(e):
+            try:
+                pth = Path(e["path"])
+                title, artist = self.display_name(pth, self.track_tags(pth))
+            except Exception:  # noqa: BLE001 – lieber Dateiname als gar keine Liste
+                return
+            if title:
+                e["title"] = title
+            if artist:
+                e["sub"] = artist
+        if not items:
+            return
+        with ThreadPoolExecutor(max_workers=6) as ex:
+            list(ex.map(one, items))
 
     def resume_load(self):
         try:
@@ -2580,6 +3505,9 @@ class MediaLib:
                {"kind": "music", "path": str(share / "Musik"), "title": "", "thumb": ""}]
         for d in self.drives():
             out.append({"kind": "drive", "path": d, "title": os.path.basename(d), "thumb": ""})
+        for d in DVD.discs():                          # eingelegte DVD (Titel liest der Launcher im Hintergrund)
+            out.append({"kind": "dvd", "path": "dvd:" + d["dev"], "title": d["label"], "ready": d["ready"], "n": d["n"],
+                        "thumb": ""})
         res = self.resume_load()
         cont = []
         for path, r in sorted(res.items(), key=lambda kv: -kv[1].get("t", 0)):
@@ -2594,6 +3522,8 @@ class MediaLib:
         return {"roots": out, "resume": cont}
 
     def listdir(self, path):
+        if str(path).startswith("dvd:") and not str(path).startswith("dvd://"):
+            return DVD.listing(str(path)[4:])
         p = self.resolve(path)
         if not p:
             raise ValueError("Ordner nicht erlaubt")
@@ -2623,6 +3553,7 @@ class MediaLib:
         if p.parent == self.share().resolve():
             parent = ""                              # ~/share/Videos und ~/share/Musik: zurueck zur Startseite
         audio = sum(1 for f in files if f["kind"] == "audio")
+        self._audio_names([f for f in files if f["kind"] == "audio"][:800])
         # Cover automatisch laden: dieser Ordner (hat er Musik) und die Unterordner ohne Bild
         pending = 0
         if COVERS.auto():
@@ -2723,18 +3654,25 @@ MEDIA = MediaLib()
 # ---------------------------------------------------------------------------
 #  Album-Cover automatisch laden (wie der Scraper in Batocera)
 # ---------------------------------------------------------------------------
+class MbBusy(Exception):
+    """MusicBrainz drosselt oder ist ueberlastet (503) – spaeter nochmal, nicht als "nichts gefunden" merken."""
+
+
 class CoverFetcher:
     """Fuer Musik-Ordner ohne Bild ein Cover besorgen, im Hintergrund, nacheinander:
     1. eingebettetes Bild der ersten Datei (ffmpeg) – ohne Internet
     2. Interpret + Album aus den Tags (ffprobe), sonst aus den Ordnernamen ("Interpret/Album" oder "Interpret - Album")
-    3. MusicBrainz-Suche (Release-Group) -> Cover Art Archive (front-500)
+    3. MusicBrainz-Suche (Release-Group) -> Cover Art Archive (front-500), sonst iTunes-Suche (Bild 600x600)
     Gespeichert als cover.jpg im Ordner (sehen auch andere Player); ist der Ordner schreibgeschuetzt (USB-Stick,
     Freigabe), im Zwischenspeicher ~/.cache/voidstation/covers. Nichts gefunden: 30 Tage lang nicht erneut fragen.
-    MusicBrainz erlaubt eine Anfrage pro Sekunde und verlangt einen erkennbaren User-Agent."""
+    MusicBrainz erlaubt eine Anfrage pro Sekunde und verlangt einen erkennbaren User-Agent; antwortet es mit 503
+    (ueberlastet bzw. zu viele Anfragen), wird kurz gewartet und nach drei Fehlschlaegen 15 Minuten nur iTunes
+    gefragt. iTunes vertraegt etwa 20 Anfragen pro Minute."""
     CACHE = Path.home() / ".cache" / "voidstation" / "covers"
     MISSES = CACHE / "misses.json"
     MB = os.environ.get("VS_MB_URL", "https://musicbrainz.org/ws/2/")
     CAA = os.environ.get("VS_CAA_URL", "https://coverartarchive.org/")
+    ITUNES = os.environ.get("VS_ITUNES_URL", "https://itunes.apple.com/search")
     UA = {"User-Agent": "VoidStation/2026 ( https://voidstation.de )", "Accept": "application/json"}
 
     def __init__(self):
@@ -2745,6 +3683,10 @@ class CoverFetcher:
         self.current = None
         self.stats = {"done": 0, "found": 0, "total": 0}
         self.last_mb = 0.0
+        self.mb_lock = threading.Lock()                # MusicBrainz: hoechstens eine Anfrage je Sekunde, nie parallel
+        self.mb_fails, self.mb_pause = 0, 0.0          # 503 hintereinander, Pause bis
+        self.last_it = 0.0
+        self.counted = set()                           # Titel, die in der Anzeige "n von m" mitzaehlen (Alle Cover laden)
         self.offline = False                           # letzte Suche scheiterte am Netz (dann nicht als "nichts da" merken)
         self.last_meta = None                          # Angaben zur zuletzt gefundenen Aufnahme
         self.misses = None
@@ -2818,12 +3760,16 @@ class CoverFetcher:
             self._start()
         return 1
 
-    def add_track(self, path, force=False):
-        """Titel vormerken: eingebettetes Bild pruefen, sonst Cover zu Interpret + Album (oder Titel) im Netz suchen."""
+    def add_track(self, path, force=False, count=False):
+        """Titel vormerken: eingebettetes Bild pruefen, sonst Cover zu Interpret + Album (oder Titel) im Netz suchen.
+        count: zaehlt in der Anzeige mit (Alle Cover laden, gemischter Ordner)."""
         if not force and not self.auto():
             return 0
         path = str(path)
         with self.lock:
+            if count and path not in self.counted:
+                self.counted.add(path)
+                self.stats["total"] += 1
             if path in self.tqueued:
                 return 0
             self.tqueued.add(path)
@@ -2839,12 +3785,13 @@ class CoverFetcher:
     def scan(self, root):
         """Ganze Sammlung (z. B. share/Musik) durchgehen – auch Ordner, fuer die es zuletzt nichts gab."""
         with self.lock:
-            self.stats = {"done": 0, "found": 0, "total": len(self.queue)}
+            self.stats = {"done": 0, "found": 0, "total": len(self.queue) + len(self.counted)}
         n, t = 0, 0
         for d in MEDIA._preorder(Path(root)):
             n += self.add(d, force=True)
             if self.embed():                           # Cover/Tags auch in Dateien von Ordnern, die schon ein Bild haben
-                t += sum(self.add_track(f, force=True) for f in self._audio_files(d) if f.suffix.lower() in EMBED_EXT)
+                t += sum(self.add_track(f, force=True, count=True) for f in self._audio_files(d)
+                         if f.suffix.lower() in EMBED_EXT)
         log(f"Cover: {n} Ordner ohne Bild vorgemerkt" + (f", {t} Titel fuer Cover/Tags in den Dateien" if t else ""))
         return n
 
@@ -2870,6 +3817,7 @@ class CoverFetcher:
                 self.current = (self.tqueue if track else self.queue).pop(0)
             if track:
                 p = Path(self.current)
+                f = None
                 try:
                     with self.lock:
                         fresh = str(p) in self.refresh
@@ -2884,6 +3832,10 @@ class CoverFetcher:
                     log("Cover:", p.name, e)
                 with self.lock:
                     self.tqueued.discard(str(p))
+                    if str(p) in self.counted:
+                        self.counted.discard(str(p))
+                        self.stats["done"] += 1
+                        self.stats["found"] += 1 if f is not None else 0
                 continue
             folder = Path(self.current)
             try:
@@ -2905,7 +3857,7 @@ class CoverFetcher:
             return False
         if MEDIA.mixed(folder):                        # verschiedene Alben: jeder Titel zeigt sein eigenes Bild
             self._miss(folder)
-            n = sum(self.add_track(f, force=True) for f in files[:400] if MEDIA.art_pending(f))
+            n = sum(self.add_track(f, force=True, count=True) for f in files[:400] if MEDIA.art_pending(f))
             log(f"Cover: gemischter Ordner, kein gemeinsames Cover – {folder.name} ({n} Titel einzeln)")
             return False
         img = self._embedded(files[0])
@@ -2913,8 +3865,14 @@ class CoverFetcher:
         self.offline = False
         if not img:
             artist, album = self._names(folder, files[0])
+            artist, album = self._main_artist(self._clean(artist)), self._clean(album, tail=False)
             img = self._online(artist, album) if album else None
             source = f"MusicBrainz ({artist} – {album})"
+            if not img and album:
+                mb_off = self.offline
+                img, _meta = self._itunes(artist, "", album)
+                source = f"iTunes ({artist} – {album})"
+                self.offline = self.offline and not img
         if not img:
             if self.offline:                           # kein Netz: beim naechsten Oeffnen nochmal versuchen
                 return False
@@ -2971,13 +3929,32 @@ class CoverFetcher:
         return artist, album
 
     def _mb_get(self, path):
-        wait = 1.1 - (time.time() - self.last_mb)
-        if wait > 0:
-            time.sleep(wait)
-        self.last_mb = time.time()
-        req = urllib.request.Request(self.MB + path, headers=self.UA)
-        with urllib.request.urlopen(req, timeout=15) as r:
-            return json.loads(r.read().decode("utf-8"))
+        """Eine Anfrage an MusicBrainz – nie parallel, hoechstens eine je Sekunde. 503/429 (Drossel bzw. Ueberlast):
+        zweimal mit Pause wiederholen; dreimal hintereinander erfolglos -> 15 Minuten keine Anfragen (MbBusy)."""
+        with self.mb_lock:
+            if time.time() < self.mb_pause:
+                raise MbBusy("MusicBrainz pausiert")
+            for attempt in range(3):
+                wait = 1.1 - (time.time() - self.last_mb)
+                if wait > 0:
+                    time.sleep(wait)
+                self.last_mb = time.time()
+                try:
+                    req = urllib.request.Request(self.MB + path, headers=self.UA)
+                    with urllib.request.urlopen(req, timeout=15) as r:
+                        data = json.loads(r.read().decode("utf-8"))
+                    self.mb_fails = 0
+                    return data
+                except urllib.error.HTTPError as e:
+                    if e.code not in (429, 503):
+                        raise
+                    if attempt < 2:
+                        time.sleep(2 + 3 * attempt)
+            self.mb_fails += 1
+            if self.mb_fails >= 3:
+                self.mb_pause, self.mb_fails = time.time() + 900, 0
+                log("Cover: MusicBrainz ueberlastet – 15 Minuten Pause, bis dahin nur iTunes")
+            raise MbBusy("MusicBrainz antwortet 503")
 
     @staticmethod
     def _q(s):
@@ -2988,7 +3965,8 @@ class CoverFetcher:
         try:
             d = self._mb_get("release-group/?fmt=json&limit=5&query=" + urllib.parse.quote(q))
         except Exception as e:  # noqa: BLE001
-            log("Cover: MusicBrainz nicht erreichbar:", e)
+            if not isinstance(e, MbBusy):
+                log("Cover: MusicBrainz nicht erreichbar:", e)
             self.offline = True
             return None
         for g in (d.get("release-groups") or [])[:5]:
@@ -3012,36 +3990,113 @@ class CoverFetcher:
     def _norm(x):
         return re.sub(r"\s+", " ", JUNK.sub("", x or "")).strip().casefold()
 
-    def _track_names(self, p, tags):
-        """Interpret, Album, Titel aus den Tags; fehlen sie, aus dem Dateinamen ("01 - Interpret - Titel")."""
-        artist = tags.get("album_artist") or tags.get("albumartist") or tags.get("artist") or ""
-        album, title = tags.get("album") or "", tags.get("title") or ""
-        if not artist or not title:
-            stem = re.sub(r"^\d{1,3}[\s._-]+", "", p.stem).strip()
-            if " - " in stem:
-                a, t = stem.split(" - ", 1)
-                artist, title = artist or a.strip(), title or t.strip()
-        # "feat." und Zusaetze helfen der Suche nicht
-        artist = re.split(r"\s+(?:feat\.?|ft\.?|featuring)\s+", artist, maxsplit=1, flags=re.I)[0].strip()
-        return artist, JUNK.sub("", album).strip(), JUNK.sub("", title).strip()
+    # ---- Namen fuer die Suche: aus Tags und Dateinamen, auch von YouTube-Downloads ----
+    # Zusaetze, die der Suche nur schaden: in Klammern (alles mit diesen Woertern), am Ende ohne Klammern
+    BRACKET_JUNK = re.compile(
+        r"\s*[\(\[\{][^\)\]\}]*\b(?:official|offizielle?s?|lyrics?|audio|video|hd|hq|4k|visuali[sz]er|clip|videoclip|"
+        r"remaster(?:ed|is[eé])?|explicit|live|feat\.?|ft\.?|featuring|mix|edit|version|anniversary|mash ?up|cover|"
+        r"performance|full|original|edition|deluxe|expanded|bonus)\b[^\)\]\}]*[\)\]\}]", re.I)
+    TAIL_JUNK = re.compile(
+        r"\s+(?:(?:official\s+)?(?:music\s+|lyrics?\s+)?(?:video|audio)\b|lyrics?\b|clip officiel\b|live\s+(?:at|in|from|\d)|"
+        r"live performance\b|remaster(?:ed|is[eé])?\b|(?:original\s+|extended\s+|radio\s+|club\s+)+(?:mix|edit|version)\b|"
+        r"extended\b|cover by\b|feat\.?\s|ft\.?\s|featuring\b|full original\b|\d+k\)?$|"
+        r"[-–—]\s.*\b(?:mash ?up|remix|mix|edit|version|live)\b).*$", re.I)
+    CONTRACTIONS = re.compile(r"\b([A-Za-z]+) (s|t|m|d|ll|re|ve)\b")       # "Larry s", "Don t", "I m" (Apostroph fiel weg)
+
+    @classmethod
+    def _clean(cls, s, tail=True):
+        """Titel bzw. Interpret fuer die Suche: Unterstriche, Emojis, Zusaetze wie "(Lyrics)", "Official Video",
+        "Live at …", "Remastered 1996", "-(115k)" weg; verlorene Apostrophe zurueck ("Larry s" -> "Larry's")."""
+        s = unicodedata.normalize("NFKC", s or "").replace("_", " ")
+        s = re.sub(r"[\U0001F000-\U0001FFFF☀-➿️]", "", s)
+        s = re.sub(r"-?\(\d+k\)$", "", s.strip())                            # "-(115k)" vom Downloader
+        for _ in range(3):
+            s = cls.BRACKET_JUNK.sub("", s)
+        s = JUNK.sub("", s)
+        if tail:
+            s = cls.TAIL_JUNK.sub("", s)
+        s = cls.CONTRACTIONS.sub(lambda m: f"{m.group(1)}'{m.group(2)}"
+                                 if m.group(2) != "s" or m.group(1).lower() not in ("a", "i") else m.group(0), s)
+        s = re.sub(r"\s+", " ", s).strip(" -–—|·:,")
+        return s
 
     @staticmethod
-    def _guess_text(p, tags):
-        """Ohne Interpret: der Dateiname (ohne Titelnummer, Zusaetze) als Ganzes, z. B. "Beck loser"."""
-        stem = re.sub(r"^\d{1,3}[\s._-]+", "", p.stem).replace("_", " ")
-        stem = re.sub(r"\s+", " ", JUNK.sub("", stem)).strip()
-        if len(stem.split()) >= 2:
-            return stem
-        return JUNK.sub("", tags.get("title") or "").strip()
+    def _main_artist(a):
+        """Erster Interpret: "Eurythmics, Annie Lennox …" -> Eurythmics, "Bananarama / Shocking Blue" -> Bananarama,
+        "X feat. Y" -> X; "Ray Parker, Jr." bleibt."""
+        a = unicodedata.normalize("NFKC", a or "").strip()
+        a = re.split(r"\s+(?:feat\.?|ft\.?|featuring|x|vs\.?)\s+|\s*/\s*|\s+&\s+|,(?!\s*(?:jr|sr)\b)", a,
+                     maxsplit=1, flags=re.I)[0]
+        return a.strip()
+
+    @staticmethod
+    def _fold(x):
+        return re.sub(r"[^a-z0-9]+", " ", tv_fold(x or "")).strip()
+
+    SEP = re.compile(r"\s+[-–—]\s+|(?<=\w)[-–—]\s+")       # "A - B", "A – B", "Prince- Purple Rain"
+
+    def _track_cands(self, p, tags):
+        """Moegliche (Interpret, Album, Titel) fuer die Suche, beste zuerst. Tags gehen vor; steckt im Titel-Tag
+        "Interpret - Titel" (YouTube: der Kanal steht dann oft als Interpret drin, z. B. "7clouds"), zaehlt das.
+        Ist unklar, was Interpret und was Titel ist ("Royals - Lorde"), kommen beide Reihenfolgen. Ohne Tags: der
+        Dateiname ("01 - Interpret - Titel", "Interpret_-_Titel")."""
+        tag_artist = tags.get("album_artist") or tags.get("albumartist") or tags.get("artist") or ""
+        album = self._clean(tags.get("album") or "", tail=False)
+        raw_title = (tags.get("title") or "").strip().lstrip("-–— ").strip()
+        out = []
+
+        def add(a, t, alb=album):
+            a, t = self._main_artist(self._clean(a)), self._clean(t)
+            if t and (a, alb, t) not in out:
+                out.append((a, alb, t))
+
+        def split(text):
+            parts = self.SEP.split(self._clean(text, tail=False), maxsplit=1)
+            return [x.strip() for x in parts] if len(parts) == 2 and all(x.strip() for x in parts) else None
+
+        parts = split(raw_title) if raw_title else None
+        if parts:
+            fa = self._fold(self._main_artist(tag_artist))
+            l, r = parts
+            if fa and fa == self._fold(r) or (fa and self._fold(r).startswith(fa) and not self._fold(l).startswith(fa)):
+                add(r, l)                                    # "Royals - Lorde" mit Interpret Lorde
+            elif fa and (fa == self._fold(l) or self._fold(l).startswith(fa)):
+                add(l, r)
+            else:                                            # Interpret-Tag ist der Kanal: Titel-Tag entscheidet
+                add(l, r, "")
+                add(r, l, "")
+        elif raw_title and tag_artist:
+            add(tag_artist, raw_title)
+        if not out:                                          # Dateiname
+            stem = re.sub(r"^\d{1,3}[\s._-]+", "", p.stem.replace("_", " ")).strip()
+            parts = split(stem)
+            if parts:
+                add(parts[0], parts[1], album)
+                add(parts[1], parts[0], album)
+            elif tag_artist:
+                add(tag_artist, raw_title or stem)
+            else:
+                add("", raw_title or stem)
+        return out
+
+    def _track_names(self, p, tags):
+        """Interpret, Album, Titel – die wahrscheinlichste Lesart (_track_cands)."""
+        c = self._track_cands(p, tags)
+        return c[0] if c else ("", "", "")
+
+    def _guess_text(self, p, tags):
+        """Ohne Interpret: der bereinigte Dateiname bzw. Titel als Ganzes, z. B. "Beck loser"."""
+        _a, _al, t = self._track_names(p, tags)
+        return t
 
     def track_cache(self, p, tags):
         """Datei im Zwischenspeicher fuer das Cover dieses Titels – gemeinsam fuer alle Titel eines Albums."""
         artist, album, title = self._track_names(p, tags)
-        if not artist:                                 # nur ein Dateiname wie "Beck loser": raten (fetch_track)
+        if not artist:                                 # nur ein Dateiname wie "Beck loser" oder "Funkytown": raten
             text = self._guess_text(p, tags)
-            if len(text.split()) < 2:
+            if not text:
                 return None
-            return self.CACHE / ("t-" + hashlib.sha1(f"guess|{self._norm(text)}".encode()).hexdigest()[:16] + ".jpg")
+            return self._guess_cache(p, tags)
         if not (album or title):
             return None
         key = f"album|{self._norm(artist)}|{self._norm(album)}" if album else f"title|{self._norm(artist)}|{self._norm(title)}"
@@ -3089,23 +4144,40 @@ class CoverFetcher:
         return self._recent_miss(cache.name)
 
     def fetch_track(self, p, tags, cache):
+        """Cover fuer einen Titel suchen: je Lesart (_track_cands) MusicBrainz (Album, dann Aufnahme), ohne Interpret
+        Raten aus dem Dateinamen; zuletzt iTunes (findet auch "Funkytown" allein). Rueckgabe True/False, None = kein
+        Netz bzw. MusicBrainz ueberlastet (spaeter nochmal, nicht als "nichts gefunden" merken)."""
         if cache.is_file():                            # inzwischen von einem anderen Titel desselben Albums geholt
             return True
-        artist, album, title = self._track_names(p, tags)
-        img, via = None, ""
-        self.offline = False
-        meta = None
-        if not artist:
-            text = self._guess_text(p, tags)
-            img, via = self._online_guess(text), text
-            meta = self.last_meta if img else None
-        elif album:
-            img, via = self._online(artist, album), f"{artist} – {album}"
-        if not img and artist and title:
-            img, via = self._online_recording(artist, title), f"{artist} – {title}"
-            meta = self.last_meta if img else None
+        cands = self._track_cands(p, tags)
+        img, via, meta = None, "", None
+        mb_off = False
+        for artist, album, title in cands[:3]:
+            self.offline = False
+            if not artist:
+                if len(title.split()) >= 2:
+                    img, via = self._online_guess(title), f"MusicBrainz ({title})"
+                    meta = self.last_meta if img else None
+            else:
+                if album:
+                    img, via = self._online(artist, album), f"MusicBrainz ({artist} – {album})"
+                if not img and title and not self.offline:
+                    img, via = self._online_recording(artist, title), f"MusicBrainz ({artist} – {title})"
+                    meta = self.last_meta if img else None
+            mb_off = mb_off or self.offline
+            if img:
+                break
         if not img:
-            if self.offline:                           # kein Netz: None = spaeter nochmal
+            self.offline = False
+            for artist, album, title in cands[:2]:
+                img, meta = self._itunes(artist, title, album)
+                if img:
+                    via = f"iTunes ({artist + ' – ' if artist else ''}{title or album})"
+                    break
+                if self.offline:
+                    break
+        if not img:
+            if mb_off or self.offline:                 # kein Netz/ueberlastet: None = spaeter nochmal
                 return None
             self._miss(cache.name)
             log("Cover: nichts gefunden fuer", p.name)
@@ -3120,8 +4192,71 @@ class CoverFetcher:
         except OSError as e:
             log("Cover: Zwischenspeicher nicht beschreibbar:", e)
             return False
-        log("Cover:", p.name, "<- MusicBrainz (" + via + ")")
+        log("Cover:", p.name, "<-", via)
         return True
+
+    def _itunes(self, artist, title, album=""):
+        """iTunes-Suche (Lied, ohne Titel: Album) -> (Bild 600x600, Angaben) oder (None, None). Passt nur, was im
+        Titel (bzw. Album) fast genau und beim Interpreten aehnlich ist; ohne Interpret zaehlt allein der Titel, und
+        es gilt der erste Treffer (iTunes sortiert nach Bekanntheit: "Funkytown" -> Lipps Inc.)."""
+        import difflib
+        entity, name = ("song", title) if title else ("album", album)
+        if not name:
+            return None, None
+        term = urllib.parse.urlencode({"term": f"{artist} {name}".strip(), "entity": entity, "limit": "10",
+                                       "media": "music"})
+        with self.mb_lock:                             # gleiche Warteschlange wie MusicBrainz, ~20 Anfragen/Minute
+            wait = 3.1 - (time.time() - self.last_it)
+            if wait > 0:
+                time.sleep(wait)
+            self.last_it = time.time()
+            try:
+                req = urllib.request.Request(self.ITUNES + "?" + term, headers={"User-Agent": self.UA["User-Agent"]})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    d = json.loads(r.read().decode("utf-8"))
+            except urllib.error.HTTPError as e:
+                log("Cover: iTunes:", e)
+                self.offline = self.offline or e.code in (403, 429, 503)
+                return None, None
+            except Exception as e:  # noqa: BLE001
+                log("Cover: iTunes nicht erreichbar:", e)
+                self.offline = True
+                return None, None
+        sim = lambda x, y: difflib.SequenceMatcher(None, self._fold(x), self._fold(y)).ratio()    # noqa: E731
+        best, best_score = None, 0.0
+        for r in d.get("results") or []:
+            got = r.get("trackName") if title else r.get("collectionName")
+            sn = max(sim(name, got), sim(name, self._clean(got or "")))
+            fa, fb = self._fold(name), self._fold(got)
+            if artist and fa and fb and min(len(fa.split()), len(fb.split())) >= 2 and (
+                    f" {fa} " in f" {fb} " or f" {fb} " in f" {fa} "):
+                sn = max(sn, 0.85)                     # "Stay With Me" in "真夜中のドア〜stay with me"
+            if not artist:
+                if sn >= 0.9:
+                    best = r
+                    break
+                continue
+            sa = max(sim(artist, r.get("artistName")), 1.0 if self._artist_fits(r.get("artistName") or "", artist) else 0.0)
+            score = sn * 0.65 + sa * 0.35
+            if sn >= 0.8 and sa >= 0.6 and score > best_score:
+                best, best_score = r, score
+        url = (best or {}).get("artworkUrl100") or ""
+        if not url:
+            return None, None
+        url = re.sub(r"/\d+x\d+(bb)?\.(jpg|png)$", r"/600x600bb.jpg", url)
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers={"User-Agent": self.UA["User-Agent"]}),
+                                        timeout=20) as r:
+                data = r.read()
+        except Exception as e:  # noqa: BLE001
+            log("Cover: iTunes-Bild:", e)
+            return None, None
+        if len(data) < 1000:
+            return None, None
+        meta = {"title": best.get("trackName") or "", "artist": best.get("artistName") or "",
+                "album": best.get("collectionName") or "", "date": (best.get("releaseDate") or "")[:4],
+                "track": str(best.get("trackNumber") or "")} if title else None
+        return data, meta
 
     def _caa(self, gid):
         try:
@@ -3175,7 +4310,8 @@ class CoverFetcher:
         try:
             d = self._mb_get("recording/?fmt=json&limit=8&query=" + urllib.parse.quote(q))
         except Exception as e:  # noqa: BLE001
-            log("Cover: MusicBrainz nicht erreichbar:", e)
+            if not isinstance(e, MbBusy):
+                log("Cover: MusicBrainz nicht erreichbar:", e)
             self.offline = True
             return None
 
@@ -3282,7 +4418,10 @@ class MusicDL:
 
     @staticmethod
     def ytdlp():
-        exe = os.environ.get("VS_YTDLP") or shutil.which("yt-dlp")
+        # die eigene, aktuelle Kopie von YouTube Light (falls dort aktualisiert) vor dem Paket aus Void
+        local = YtLight.LOCAL
+        exe = os.environ.get("VS_YTDLP") or (str(local) if local.is_file() and os.access(local, os.X_OK) else "") \
+            or shutil.which("yt-dlp")
         return exe
 
     def tools(self):
@@ -3631,13 +4770,34 @@ def catalog_app(app_id):
     return next((a for a in catalog()["apps"] if a["id"] == app_id), None)
 
 
+# Architektur des Geraets ("x86_64" oder "i686" – die 32-Bit-Variante ist experimentell)
+SYS_ARCH = "i686" if os.uname().machine in ("i386", "i486", "i586", "i686") else os.uname().machine
+
+
+def app_archs(a):
+    """Architekturen, fuer die es eine App gibt; None = alle. "arch" im Katalog geht vor, sonst aus der Quelle:
+    Flathub baut kein 32-Bit-x86 mehr, AppImages im Katalog sind 64 Bit, Widevine (Netflix & Co.) gibt es unter
+    Linux nur fuer 64 Bit."""
+    if isinstance(a.get("arch"), list):
+        return a["arch"]
+    s = a.get("source", {})
+    if s.get("type") in ("flatpak", "appimage") or s.get("drm"):
+        return ["x86_64"]
+    return None
+
+
+def app_supported(a):
+    archs = app_archs(a)
+    return not archs or SYS_ARCH in archs
+
+
 def pad_mouse_default(tile_id):
-    """Controller als Maus (Startseite: rechter Stick, R2/L2) im Programm dieser Kachel von selbst an?
+    """Controller als Maus (Startseite: rechter Stick, A/B bzw. ✕/○ klicken) im Programm dieser Kachel von selbst an?
     Vorrang: "mouse" an der Kachel (tiles.json), dann im Katalog; Spiele und Emulatoren (Gruppe "Spiele") aus,
-    weil dort rechter Stick und Schultertasten zum Spiel gehoeren – R3 schaltet trotzdem um. Sonst an."""
+    weil dort Sticks und Tasten zum Spiel gehoeren – R3 schaltet trotzdem um. Sonst an."""
     if not tile_id:
         return True
-    if tile_id in ("tv", "media") and PLAYERS.active(tile_id):   # eigener Player: komplett mit dem Controller bedienbar
+    if tile_id in ("tv", "media", "ytlight") and PLAYERS.active(tile_id):   # eigener Player: komplett mit dem Controller bedienbar
         return False
     t = find_tile(tile_id) or {}
     if isinstance(t.get("mouse"), bool):
@@ -3651,6 +4811,34 @@ def pad_mouse_default(tile_id):
             return a["mouse"]
         return (a.get("tile") or {}).get("group") != "Spiele"
     return True
+
+
+def app_maximize(tile_id):
+    """Fenster dieses Programms nach dem Start maximieren (Vorgabe: ja, wie im Vollbild – ohne Rahmen ist da kein
+    Unterschied). Aus mit "maximize": false an der Kachel (tiles.json) oder im Katalog."""
+    t = find_tile(tile_id) or {}
+    if isinstance(t.get("maximize"), bool):
+        return t["maximize"]
+    try:
+        a = catalog_app(tile_id)
+    except (OSError, ValueError):
+        a = None
+    return not (a and a.get("maximize") is False)
+
+
+def wm_maximize(wid):
+    """Normales Fenster maximieren, wenn es weder maximiert noch im Vollbild ist (Dialoge und Spiele im Vollbild
+    bleiben, wie sie sind)."""
+    r = run(["xprop", "-id", wid, "_NET_WM_STATE", "_NET_WM_WINDOW_TYPE"], timeout=3)
+    if r and r.returncode == 0:
+        out = r.stdout
+        if "_NET_WM_WINDOW_TYPE_NORMAL" not in out and "_NET_WM_WINDOW_TYPE" in out and "not found" not in out:
+            return                                     # Dialog, Werkzeugleiste, Startbild …
+        if "_NET_WM_STATE_FULLSCREEN" in out or ("MAXIMIZED_VERT" in out and "MAXIMIZED_HORZ" in out):
+            return
+    elif r is None:
+        return                                         # Fenster schon weg
+    run(["wmctrl", "-i", "-r", wid, "-b", "add,maximized_vert,maximized_horz"])
 
 
 def app_suspendable(tile_id):
@@ -3696,9 +4884,9 @@ def app_installed_in(a, pkgs, fps, tiles):
         return s["pkg"] in pkgs
     if s["type"] == "flatpak":
         return s["ref"] in fps
-    if s["type"] == "appimage":
-        return (APPDIR / a["id"] / "AppRun").exists()
-    if s["type"] == "web":
+    if s["type"] == "appimage":                            # oder noch als frueheres Flatpak (Wechsel beim naechsten Update)
+        return (APPDIR / a["id"] / "AppRun").exists() or bool(s.get("was_flatpak") and s["was_flatpak"] in fps)
+    if s["type"] in ("web", "builtin"):                    # builtin: im Player eingebaut (YouTube Light) – nur die Kachel
         return a["id"] in tiles
     return False
 
@@ -3712,10 +4900,33 @@ def app_installed(a):
         r = run(["flatpak", "info", "--user", s["ref"]])
         return bool(r and r.returncode == 0)
     if s["type"] == "appimage":
-        return (APPDIR / a["id"] / "AppRun").exists()
-    if s["type"] == "web":
+        return (APPDIR / a["id"] / "AppRun").exists() or legacy_flatpak(a)
+    if s["type"] in ("web", "builtin"):
         return a["id"] in tile_ids()
     return False
+
+
+def flathub_ensure():
+    """Flathub als Quelle fuer den Benutzer einrichten (falls noch nicht da): Das AppCenter bietet seit 2026.11 keine
+    Flatpaks mehr an, wer etwas selbst installiert ("flatpak install --user flathub …"), braucht sie aber.
+    Kurz nach dem Start, ohne Netz einfach beim naechsten Mal."""
+    time.sleep(120)
+    if not shutil.which("flatpak"):
+        return
+    r = run(["flatpak", "remotes", "--user", "--columns=name"], timeout=20)
+    if r and r.returncode == 0 and "flathub" in r.stdout.split():
+        return
+    r = run(["flatpak", "remote-add", "--user", "--if-not-exists", "flathub", FLATHUB], timeout=60)
+    log("Flathub eingerichtet" if r and r.returncode == 0 else "Flathub nicht eingerichtet (kein Netz?)")
+
+
+def legacy_flatpak(a):
+    """Ist von dieser App (heute AppImage) noch die fruehere Flatpak-Fassung installiert?"""
+    ref = a["source"].get("was_flatpak")
+    if not ref or not shutil.which("flatpak"):
+        return False
+    r = run(["flatpak", "info", "--user", ref])
+    return bool(r and r.returncode == 0)
 
 
 def app_cmd(a):
@@ -3814,21 +5025,89 @@ def proton_installed():
 class Jobs:
     """Genau ein Installations-/Update-Auftrag gleichzeitig, mit Protokoll fuer die Oberflaeche."""
 
+    UPDATE_LOG = BASE / "logs" / "update.log"      # ganzes Protokoll des letzten Update-Laufs (davor: .1)
+
     def __init__(self):
         self.lock = threading.Lock()
         self.job = None
+        self._logf = None
 
     def current(self):
         with self.lock:
-            return dict(self.job) if self.job else None
+            if not self.job:
+                return None
+            j = dict(self.job)
+            j["steps"] = [dict(x) for x in self.job.get("steps") or []]
+            return j
 
     def _log(self, line):
         line = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", line).rstrip()
         if not line:
             return
+        if line.startswith("@vs "):                  # Steuerzeile fuer die Oberflaeche (voidstation-pkg), nicht ins Protokoll
+            return self._marker(line[4:].strip())
+        if line == "Signatur geprueft: ok":          # aeltere voidstation-pkg ohne Steuerzeile
+            self._marker("verified")
         with self.lock:
             self.job["log"] = (self.job["log"] + [line])[-60:]
-            self.job["n"] += 1                       # laufende Zeilennummer (fuer "vsctl update")
+            self.job["n"] += 1                       # laufende Zeilennummer (fuer "vsctl update -v")
+            f = self._logf
+        if f:
+            try:
+                f.write(line + "\n")
+                f.flush()
+            except (OSError, ValueError):
+                pass
+
+    # ---- Fortschritt des Update-Auftrags fuer den Vollbild-Bildschirm und "vsctl update":
+    #   steps = [{"id": "apps"|"load"|"setup", "state": "wait"|"run"|"done"|"fail", "n": <Pakete>}]
+    #   apps = Void-Pakete, Flatpaks, AppImages, Proton-GE · load = neue VoidStation-Version laden und
+    #   Signatur pruefen · setup = update.sh richtet sie ein. Was nichts zu tun hat, fehlt in der Liste.
+    def _step(self, sid, state):
+        with self.lock:
+            for x in self.job.get("steps") or []:
+                if x["id"] == sid:
+                    x["state"] = state
+
+    def _step_state(self, sid):
+        with self.lock:
+            return next((x["state"] for x in self.job.get("steps") or [] if x["id"] == sid), None)
+
+    def _progress(self, done=None, total=0):
+        """Download-Fortschritt fuer das Band der Oberflaeche: {"mb", "total_mb", "pct"} – statt Protokollzeilen
+        "… 10 %" je Zehntel. None = fertig (der Wert verschwindet)."""
+        with self.lock:
+            if not self.job:
+                return
+            if done is None:
+                self.job.pop("progress", None)
+            else:
+                self.job["progress"] = {"mb": round(done / 1048576, 1), "total_mb": round(total / 1048576, 1) if total else 0,
+                                        "pct": min(100, done * 100 // total) if total else None}
+
+    def _marker(self, m):
+        if m == "verified" and self._step_state("load") == "run":
+            self._step("load", "done")
+            self._step("setup", "run")
+
+    def _open_log(self):
+        try:
+            self.UPDATE_LOG.parent.mkdir(parents=True, exist_ok=True)
+            if self.UPDATE_LOG.exists():
+                self.UPDATE_LOG.replace(self.UPDATE_LOG.with_name("update.log.1"))
+            self._logf = open(self.UPDATE_LOG, "w", encoding="utf-8")
+            self._logf.write(f"VoidStation-Update {time.strftime('%Y-%m-%d %H:%M:%S')}\n")
+        except OSError as e:
+            log("update.log:", e)
+            self._logf = None
+
+    def _close_log(self):
+        f, self._logf = self._logf, None
+        if f:
+            try:
+                f.close()
+            except OSError:
+                pass
 
     def _run(self, args, cwd=None):
         self._log("$ " + " ".join(args))
@@ -3851,7 +5130,8 @@ class Jobs:
             name = app["name"] if app else "Updates"
             self.job = {"action": action, "app": app["id"] if app else None,
                         "name": name, "state": "running", "reboot": False,
-                        "log": [], "n": 0, "started": time.time(), "result": None}
+                        "log": [], "n": 0, "started": time.time(), "result": None,
+                        "steps": [], "from": None, "to": None}
         threading.Thread(target=self._work, args=(action, app), daemon=True).start()
 
     def _finish(self, ok, result=None, reboot=False):
@@ -3861,7 +5141,7 @@ class Jobs:
             self.job["reboot"] = bool(reboot)
 
     def _selfupdate(self):
-        ok = self._run(["sudo", "-n", PKG_HELPER, "selfupdate"]) == 0
+        ok = self._run(["sudo", "-n", PKG_HELPER, "selfupdate", "--markers"]) == 0
         _VCACHE["t"] = 0.0
         return ok
 
@@ -3880,7 +5160,11 @@ class Jobs:
                         tile_remove(a["id"])
                     self._finish(ok)
                 elif action == "update":
-                    ok, result, reboot = self._update_all()
+                    self._open_log()
+                    try:
+                        ok, result, reboot = self._update_all()
+                    finally:
+                        self._close_log()
                     self._finish(ok, result, reboot)
                 if action in ("install", "remove"):
                     _sys_check(sync=False)           # Paketstand hat sich geaendert
@@ -3895,33 +5179,54 @@ class Jobs:
             self._log("xbps läuft gerade (z. B. im Terminal) – bitte warten, bis es fertig ist.")
             return False, {"busy": True}, False
         self._log("Suche nach Updates …")
-        _sys_check(sync=True, logf=self._log)
+        # Gerade erst (Einstellungen → Updates) mit frischen Paketlisten geprueft: nicht noch einmal laden
+        fresh = time.time() - (_SCACHE["t"] or 0) < 180 and not _SCACHE["error"]
+        _sys_check(sync=not fresh, logf=self._log)
         s = dict(_SCACHE)
         vs = vs_update_status(force=True)
         ok, done = True, []
-        if s["pkgs"] or s["error"]:
-            self._log(f"== Void-Pakete: {len(s['pkgs'])} ==")
-            if self._run(["sudo", "-n", PKG_HELPER, "update"]) == 0:
-                done.append("system")
+        flat = bool(s["flatpak"] and shutil_which("flatpak"))
+        imgs = [app for app in catalog()["apps"] if app["id"] in s["appimage"]]
+        apps = bool(s["pkgs"] or s["error"] or flat or imgs or s["proton"])
+        steps = [{"id": "apps", "state": "wait",
+                  "n": len(s["pkgs"]) + (len(s["flatpak"]) if flat else 0) + len(imgs) + (1 if s["proton"] else 0)}] if apps else []
+        if vs["available"]:
+            steps += [{"id": "load", "state": "wait"}, {"id": "setup", "state": "wait"}]
+        with self.lock:
+            self.job.update(steps=steps, **({"from": vs["local"], "to": vs["remote"]} if vs["available"] else {}))
+        if apps:
+            self._step("apps", "run")
+            ok_apps = True
+            if s["pkgs"] or s["error"]:
+                self._log(f"== Void-Pakete: {len(s['pkgs'])} ==")
+                if self._run(["sudo", "-n", PKG_HELPER, "update"]) == 0:
+                    done.append("system")
+                else:
+                    ok_apps = False
             else:
-                ok = False
+                self._log("Void-Pakete: aktuell")
+            if flat:
+                self._log(f"== Flatpak: {len(s['flatpak'])} ==")
+                ok_apps = self._run(["flatpak", "update", "--user", "-y", "--noninteractive"]) == 0 and ok_apps
+            for app in imgs:
+                self._log(f"== {app['name']} ({'Wechsel vom Flatpak' if legacy_flatpak(app) else 'Download'}) ==")
+                ok_apps = self._appimage(app) and ok_apps
+            if s["proton"]:
+                self._log(f"== Proton-GE {s['proton']} ==")
+                ok_apps = self._proton_ge() and ok_apps
+            self._step("apps", "done" if ok_apps else "fail")
+            ok = ok_apps
         else:
             self._log("Void-Pakete: aktuell")
-        if s["flatpak"] and shutil_which("flatpak"):
-            self._log(f"== Flatpak: {len(s['flatpak'])} ==")
-            ok = self._run(["flatpak", "update", "--user", "-y", "--noninteractive"]) == 0 and ok
-        for app in catalog()["apps"]:
-            if app["id"] in s["appimage"]:
-                self._log(f"== {app['name']} (AppImage) ==")
-                ok = self._appimage(app) and ok
-        if s["proton"]:
-            self._log(f"== Proton-GE {s['proton']} ==")
-            ok = self._proton_ge() and ok
         if vs["available"]:
             self._log(f"== VoidStation {vs['remote']} ==")
+            self._step("load", "run")
             if self._selfupdate():
+                self._step("load", "done")           # falls die Steuerzeile fehlte
+                self._step("setup", "done")
                 done.append("voidstation")
             else:
+                self._step("load" if self._step_state("load") == "run" else "setup", "fail")
                 ok = False
         else:
             self._log("VoidStation: aktuell")
@@ -3952,6 +5257,12 @@ class Jobs:
             return True
         if s["type"] == "appimage":
             return self._appimage(a)
+        if s["type"] == "builtin":                     # Teil von VoidStation: nur fehlende Pakete nachholen, dann Kachel
+            for pkg in s.get("pkgs", []):
+                if not xbps_installed(pkg) and self._run(["sudo", "-n", PKG_HELPER, "install", pkg]) != 0:
+                    return False
+            self._log("in VoidStation eingebaut – Kachel wird angelegt")
+            return True
         if s["type"] == "web":
             prof = BASE / "profiles" / a["id"]
             prof.mkdir(parents=True, exist_ok=True)
@@ -4087,54 +5398,150 @@ class Jobs:
             for pkg in s.get("host_pkgs", []):
                 self._run(["sudo", "-n", PKG_HELPER, "remove", pkg])
             return ok
+        if s["type"] == "builtin":                     # nur die Kachel; Abos und Verlauf bleiben fuer spaeter
+            return True
         if s["type"] in ("appimage", "web"):
             target = APPDIR / a["id"] if s["type"] == "appimage" else BASE / "profiles" / a["id"]
-            shutil.rmtree(target, ignore_errors=True)
+            rm_path(target)
             self._log(f"entfernt: {target}")
+            if s["type"] == "appimage" and legacy_flatpak(a):
+                self._run(["flatpak", "uninstall", "--user", "-y", "--noninteractive", s["was_flatpak"]])
             return True
         return False
 
     def _appimage(self, a):
+        """Programm herunterladen und unter apps/<id> entpacken – AppImage, ZIP, Tarball oder .deb (app_release).
+        Gestartet wird immer apps/<id>/AppRun: beim AppImage dessen eigenes, sonst ein kleines Startskript, das
+        VoidStation anlegt (Quelle "run"). Kein FUSE, keine Sandbox, Dateidialoge wie bei jedem anderen Programm."""
+        s = a["source"]
         APPDIR.mkdir(parents=True, exist_ok=True)
-        img = APPDIR / f"{a['id']}.AppImage"
-        self._log(f"Lade {a['source']['url']}")
-        req = urllib.request.Request(a["source"]["url"], headers=UA)
-        with urllib.request.urlopen(req, timeout=60) as r, open(img, "wb") as f:
-            stamp = asset_stamp(r.headers)
-            total = int(r.headers.get("Content-Length") or 0)
-            done, last = 0, 0
-            while True:
-                chunk = r.read(1 << 16)
-                if not chunk:
-                    break
-                f.write(chunk)
-                done += len(chunk)
-                if total and done * 10 // total > last:
-                    last = done * 10 // total
-                    self._log(f"… {last * 10} %")
-        img.chmod(0o755)
+        for pkg in s.get("host_pkgs", []):             # Bibliotheken, die das Programm vom System erwartet
+            if not xbps_installed(pkg):
+                self._log(f"benötigt {pkg} – wird installiert …")
+                if self._run(["sudo", "-n", PKG_HELPER, "install", pkg]) != 0:
+                    self._log(f"Hinweis: {pkg} konnte nicht installiert werden")
+        try:
+            rel = app_release(a)
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Download-Adresse nicht gefunden: {e}")
+            return False
+        url = rel["url"]
+        fmt = archive_format(a, url)
+        dl = APPDIR / f".{a['id']}.download"
+        self._log(f"Lade {url}")
+        try:
+            req = urllib.request.Request(url, headers=UA)
+            h = hashlib.sha256()
+            with urllib.request.urlopen(req, timeout=60) as r, open(dl, "wb") as f:
+                stamp = rel["stamp"] or asset_stamp(r.headers)
+                total = int(r.headers.get("Content-Length") or 0)
+                done, last = 0, 0.0
+                self._progress(0, total)
+                while True:
+                    chunk = r.read(1 << 16)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+                    h.update(chunk)
+                    done += len(chunk)
+                    now = time.monotonic()
+                    if now - last >= 0.5:              # Balken im Band (ohne Groessenangabe nur MB, z. B. GitLab)
+                        last = now
+                        self._progress(done, total)
+            self._progress(None)
+            self._log(f"geladen: {done / 1048576:.0f} MB")
+            if total and done != total:
+                raise RuntimeError(f"Download unvollständig ({done} von {total} Byte)")
+            if rel["sha256"] and h.hexdigest() != rel["sha256"]:
+                raise RuntimeError("Prüfsumme stimmt nicht")
+        except Exception as e:  # noqa: BLE001
+            self._progress(None)
+            dl.unlink(missing_ok=True)
+            self._log(f"Download fehlgeschlagen: {e}")
+            return False
         work = APPDIR / f".{a['id']}-extract"
         shutil.rmtree(work, ignore_errors=True)
         work.mkdir()
-        # Entpacken statt direkt starten: braucht kein FUSE und startet schneller
         self._log("Entpacke …")
-        subprocess.run([str(img), "--appimage-extract"], cwd=str(work),
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        root = work / "squashfs-root"
-        if not (root / "AppRun").exists():
-            self._log("Entpacken fehlgeschlagen")
+        try:
+            root = extract_app(dl, fmt, work, int(s.get("strip", 0)))
+            if fmt != "appimage":
+                app_launcher(root, a)
+        except Exception as e:  # noqa: BLE001
+            self._log(f"Entpacken fehlgeschlagen: {e}")
+            shutil.rmtree(work, ignore_errors=True)
+            dl.unlink(missing_ok=True)
             return False
         dest = APPDIR / a["id"]
-        shutil.rmtree(dest, ignore_errors=True)
+        old = APPDIR / f".{a['id']}-old"
+        rm_path(old)
+        if dest.exists() or dest.is_symlink():         # auch ein kaputter Link (Fehler bis 01.11.2026)
+            dest.rename(old)                           # erst tauschen, dann loeschen: nie ohne lauffaehige Fassung
         shutil.move(str(root), str(dest))
+        rm_path(old)
         shutil.rmtree(work, ignore_errors=True)
-        img.unlink(missing_ok=True)
+        dl.unlink(missing_ok=True)
         try:
             appimage_stampfile(a).write_text(stamp)    # Vergleichswert fuer die Update-Pruefung
         except OSError:
             pass
         self._log("installiert nach " + str(dest))
+        if s.get("was_flatpak"):                       # zuerst: Daten des Flatpaks uebernehmen ...
+            self._from_flatpak(a)
+        for js in s.get("json_set", []):               # ... dann z. B. Discord: eigenes Update-Fenster abschalten
+            try:
+                json_merge(Path(os.path.expanduser(js["path"])), js["values"])
+            except (OSError, ValueError) as e:
+                self._log(f"Hinweis: {js['path']} nicht angepasst ({e})")
         return True
+
+    def _from_flatpak(self, a):
+        """Wechsel Flatpak -> AppImage: Einstellungen, Spielstaende und Zwischenspeicher uebernehmen (nur, wo das
+        AppImage noch nichts hat), Kachel umstellen, Flatpak entfernen – seine Daten unter ~/.var/app bleiben als
+        Sicherung liegen."""
+        ref = a["source"]["was_flatpak"]
+        # Programme (nicht Emulatoren): Ordner aus ~/.var/app/<ref> verschieben statt kopieren – Spielebibliotheken
+        # (itch) waeren sonst doppelt auf der Platte. Am alten Ort bleibt ein Link, damit gespeicherte absolute Pfade
+        # (Heroic: Wine-Versionen unter config/heroic/tools, itch: Datenbank) weiter stimmen.
+        fp = Path.home() / ".var/app" / ref
+        for rel_src, rel_dst in a["source"].get("migrate", []):
+            src, dst = fp / rel_src, Path.home() / rel_dst
+            if not src.exists() or src.is_symlink():
+                continue
+            if dst.exists():
+                self._log(f"nicht übernommen (gibt es schon): {dst}")
+                continue
+            try:
+                dst.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(src), str(dst))
+                os.symlink(dst, src)
+                self._log(f"übernommen: {src} -> {dst}")
+            except OSError as e:
+                self._log(f"nicht übernommen: {src} ({e})")
+        for src, dst in emu_dirs(a["id"]):
+            if src.is_dir() and not dst.exists():
+                try:
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    shutil.copytree(src, dst, symlinks=True)
+                    self._log(f"übernommen: {src} -> {dst}")
+                except OSError as e:
+                    self._log(f"nicht übernommen: {src} ({e})")
+        emu_paths_refresh()
+        c = load_config()
+        changed = False
+        for g in c.get("groups", []):
+            for t in g.get("tiles", []):
+                cmd = t.get("cmd")
+                if t.get("id") == a["id"] and isinstance(cmd, list) and ref in cmd:
+                    t["cmd"] = app_cmd(a)
+                    changed = True
+        if changed:
+            config_save(c)
+            self._log("Kachel startet jetzt die entpackte Fassung")
+        if legacy_flatpak(a):
+            if self._run(["flatpak", "uninstall", "--user", "-y", "--noninteractive", ref]) == 0:
+                self._run(["flatpak", "uninstall", "--user", "-y", "--noninteractive", "--unused"])
+                self._log(f"Flatpak {ref} entfernt (Daten bleiben unter ~/.var/app/{ref})")
 
 
 # ---------------------------------------------------------------------------
@@ -4143,6 +5550,7 @@ class Jobs:
 URLFILE = Path("/usr/local/share/voidstation/update-url")
 CHANNELFILE = Path("/usr/local/share/voidstation/channel")
 CHANNELS = {"stable": "Stable", "main": "Testing"}
+OPTINFILE = Path("/usr/local/share/voidstation/testing-optin")   # Testing bewusst gewaehlt (vsctl channel testing)
 _VCACHE = {"t": 0.0, "remote": None, "error": None, "key": None}
 
 
@@ -4193,6 +5601,29 @@ def _fetch_remote(base):
     return {"version": None, "build": b, "history": []}
 
 
+def vs_channel_migrate():
+    """Seit 2026.11 gibt es Testing nur noch auf Wunsch (vsctl channel testing, Markierung testing-optin).
+    Geraete, die Testing frueher im Installer oder in den Einstellungen gewaehlt haben, wechseln zu Stable,
+    sobald Stable neuer ist als ihr eigener Stand – nie auf einen aelteren Stand. True = Kanal umgestellt."""
+    if LIVE or vs_channel() != "main" or OPTINFILE.exists():
+        return False
+    try:
+        tmpl = URLFILE.read_text().split()[0].rstrip("/")
+        stable = _fetch_remote(tmpl.replace("{channel}", "stable"))
+    except Exception:  # noqa: BLE001 – naechste Pruefung versucht es wieder
+        return False
+    lv, sv = vtuple(vs_version().get("version")), vtuple(stable.get("version"))
+    if not (lv and sv and sv > lv):
+        return False
+    r = run(["sudo", "-n", PKG_HELPER, "channel", "auto"], timeout=20)
+    if not r or r.returncode != 0 or vs_channel() != "stable":
+        log("Kanal: Wechsel zu Stable fehlgeschlagen:", ((r.stdout + r.stderr).strip() if r else "Zeitueberschreitung")[-200:])
+        return False
+    log(f"Kanal: Testing -> Stable (Stable {stable.get('version')} ist neuer als {vs_version().get('version')};"
+        " Testing gibt es nur noch auf Wunsch: vsctl channel testing)")
+    return True
+
+
 def vs_update_status(force=False):
     """Vergleicht die eigene Version mit dem Update-Kanal (hoechstens alle 10 min neu)."""
     try:
@@ -4204,6 +5635,8 @@ def vs_update_status(force=False):
             # ohne Netz gar nicht erst versuchen; naechster Aufruf prueft wieder (kein 10-min-Zwischenspeicher)
             _VCACHE.update(error="offline")
             return vs_state()
+        if vs_channel_migrate():
+            base = vs_update_base()
         try:
             _VCACHE.update(remote=_fetch_remote(base), error=None)
         except Exception as e:  # noqa: BLE001
@@ -4386,11 +5819,142 @@ def appimage_stampfile(a):
     return APPDIR / f".{a['id']}.stamp"
 
 
-def appimage_outdated(a):
+_AI_URL = {}                                           # App -> (Zeitpunkt, Ausgabe: Adresse, Vergleichswert, SHA256)
+
+
+def _http_get(url, timeout=20, head=False):
+    """Antwort einer Anfrage (HEAD: nur Kopf) – liefert (endgueltige Adresse nach Weiterleitungen, Inhalt bzw. b"")."""
+    req = urllib.request.Request(url, headers=UA, method="HEAD" if head else "GET")
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.geturl(), (b"" if head else r.read(8 << 20))
+
+
+def _url_exists(url):
     try:
-        req = urllib.request.Request(a["source"]["url"], headers=UA, method="HEAD")
-        with urllib.request.urlopen(req, timeout=20) as r:
-            remote = asset_stamp(r.headers)
+        _http_get(url, head=True)
+        return True
+    except urllib.error.HTTPError as e:
+        if e.code in (403, 404, 410):
+            return False
+        raise
+
+
+def _deb_version_key(v):
+    """Sortierschluessel fuer Debian-Versionen wie "1:1.2.95.453.g0eeebbed" (Epoche, dann Zahlenfolge)."""
+    epoch, _, rest = v.partition(":") if ":" in v else ("0", "", v)
+    return (int(epoch) if epoch.isdigit() else 0, [int(x) if x.isdigit() else -1 for x in re.split(r"[.+~-]", rest)])
+
+
+def app_release(a):
+    """Neueste Ausgabe einer App, die VoidStation selbst herunterlaedt und unter apps/<id> entpackt (Katalog-Quelle
+    "appimage" – AppImage, ZIP, Tarball oder .deb). Ergebnis: {"url", "stamp" (Vergleichswert fuer die Update-Pruefung),
+    "sha256" (oder None)}. Woher die Adresse kommt, steht in der Quelle:
+      "url"      feste Adresse (DuckStation: Tag "latest"); Vergleichswert aus ETag/Last-Modified/Groesse
+      "gh"       GitHub "besitzer/repo": /releases/latest leitet auf /releases/tag/<tag> um (ohne API, keine
+                 Anfragegrenze); "assets" = Dateinamen-Muster mit {tag} und {ver} (Tag ohne fuehrendes v), es gilt
+                 das erste, das es gibt
+      "api"      JSON der neuesten Ausgabe (Forgejo/Gitea wie librewolf.dev, GitLab-Permalink); "pick" = Muster fuer
+                 Dateiname bzw. Adresse
+      "ver"      {"url", "json": Schluessel | "re": Muster} liefert die Versionsnummer, "dl" = Adresse mit {ver}
+      "deb"      {"index": Packages-Datei, "pkg": Paketname, "base": Repo-Adresse} – mit SHA256 aus dem Index"""
+    s = a["source"]
+    if s.get("url"):
+        return {"url": s["url"], "stamp": None, "sha256": None}
+    hit = _AI_URL.get(a["id"])
+    if hit and time.time() - hit[0] < 600:
+        return hit[1]
+    rel = None
+    if s.get("gh"):
+        page = f"https://github.com/{s['gh']}/releases/latest"
+        final, _ = _http_get(page, head=True)
+        m = re.search(r"/releases/tag/([^/?#]+)/?$", final)
+        if not m:
+            raise RuntimeError(f"{a['name']}: keine Ausgabe auf GitHub gefunden")
+        tag = urllib.parse.unquote(m.group(1))
+        ver = tag[1:] if tag[:1] in "vV" and tag[1:2].isdigit() else tag
+        base = f"https://github.com/{s['gh']}/releases/download/{urllib.parse.quote(tag)}/"
+        for tpl in s.get("assets", []):
+            url = base + urllib.parse.quote(tpl.format(tag=tag, ver=ver))
+            if _url_exists(url):
+                rel = {"url": url, "stamp": url, "sha256": None}
+                break
+        if not rel:
+            raise RuntimeError(f"{a['name']}: keine passende Datei in {tag}")
+    elif s.get("api"):
+        _, body = _http_get(s["api"])
+        assets = json.loads(body).get("assets") or []
+        if isinstance(assets, dict):                   # GitLab: {"links": [...], "sources": [...]}
+            assets = assets.get("links") or []
+        pick = re.compile(s.get("pick", r"x86_64.*\.AppImage$"), re.I)
+        for it in assets:
+            url = it.get("browser_download_url") or it.get("direct_asset_url") or it.get("url") or ""
+            name = it.get("name") or url.rsplit("/", 1)[-1]
+            if url.startswith("https://") and (pick.search(name) or pick.search(url)):
+                rel = {"url": url, "stamp": url, "sha256": None}
+                break
+        if not rel:
+            raise RuntimeError(f"{a['name']}: keine passende Datei in der neuesten Ausgabe")
+    elif s.get("ver"):
+        v = s["ver"]
+        _, body = _http_get(v["url"])
+        txt = body.decode("utf-8", "replace")
+        if v.get("json"):
+            ver = str(json.loads(txt)[v["json"]])
+        else:
+            m = re.search(v.get("re", r"([0-9][0-9A-Za-z.+_-]*)"), txt)
+            ver = m.group(1) if m else ""
+        if not re.fullmatch(r"[0-9A-Za-z.+_-]{1,40}", ver):
+            raise RuntimeError(f"{a['name']}: Versionsnummer nicht lesbar")
+        url = s["dl"].format(ver=ver)
+        rel = {"url": url, "stamp": url, "sha256": None}
+    elif s.get("deb"):
+        d = s["deb"]
+        _, body = _http_get(d["index"])
+        best = None
+        for block in body.decode("utf-8", "replace").split("\n\n"):
+            f = dict(re.findall(r"^([A-Za-z0-9-]+):\s*(.*)$", block, re.M))
+            if f.get("Package") == d["pkg"] and f.get("Filename"):
+                if not best or _deb_version_key(f.get("Version", "")) > _deb_version_key(best.get("Version", "")):
+                    best = f
+        if not best:
+            raise RuntimeError(f"{a['name']}: {d['pkg']} nicht im Paketindex")
+        url = d["base"].rstrip("/") + "/" + best["Filename"].lstrip("/")
+        rel = {"url": url, "stamp": url, "sha256": (best.get("SHA256") or "").lower() or None}
+    else:
+        raise RuntimeError(f"{a['name']}: keine Download-Quelle im Katalog")
+    _AI_URL[a["id"]] = (time.time(), rel)
+    return rel
+
+
+def appimage_url(a):
+    return app_release(a)["url"]
+
+
+def archive_format(a, url):
+    """Art der heruntergeladenen Datei: "format" im Katalog, sonst nach der Endung."""
+    f = a["source"].get("format")
+    if f:
+        return f
+    low = urllib.parse.urlparse(url).path.lower()
+    if low.endswith(".zip"):
+        return "zip"
+    if low.endswith(".deb"):
+        return "deb"
+    if re.search(r"\.(tar(\.(gz|xz|bz2|zst))?|tgz|txz)$", low):
+        return "tar"
+    return "appimage"
+
+
+def appimage_outdated(a):
+    if a["source"].get("self_update"):                 # aktualisiert sich selbst (Discord: Client in ~/.config/discord)
+        return False
+    try:
+        if a["source"].get("url"):                     # feste Adresse: Vergleich ueber ETag/Last-Modified/Groesse
+            req = urllib.request.Request(a["source"]["url"], headers=UA, method="HEAD")
+            with urllib.request.urlopen(req, timeout=20) as r:
+                remote = asset_stamp(r.headers)
+        else:                                          # sonst enthaelt die Adresse die Version
+            remote = app_release(a)["stamp"]
     except Exception:  # noqa: BLE001
         return False
     try:
@@ -4400,13 +5964,182 @@ def appimage_outdated(a):
     return remote != local
 
 
+def rm_path(p):
+    """Ordner, Datei oder (auch kaputten) Link entfernen – rmtree allein laesst Links stehen."""
+    if p.is_symlink() or p.is_file():
+        p.unlink(missing_ok=True)
+    elif p.exists():
+        shutil.rmtree(p, ignore_errors=True)
+
+
+def _safe_member(work, name):
+    """Ziel eines Archiv-Eintrags – nur innerhalb des Entpack-Ordners."""
+    dest = (work / name).resolve()
+    if dest != work.resolve() and work.resolve() not in dest.parents:
+        raise RuntimeError(f"ungültiger Pfad im Archiv: {name}")
+    return dest
+
+
+def _extract_zip(path, work):
+    """ZIP mit Ausfuehrungsrechten und symbolischen Links entpacken (zipfile allein verliert beides);
+    setuid/setgid fallen weg (Brave: chrome-sandbox – Chromium nimmt dann die Namensraum-Sandbox)."""
+    import zipfile
+    with zipfile.ZipFile(path) as z:
+        for i in z.infolist():
+            mode = (i.external_attr >> 16) & 0o177777
+            dest = _safe_member(work, i.filename)
+            if i.is_dir():
+                dest.mkdir(parents=True, exist_ok=True)
+                continue
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            if (mode & 0o170000) == 0o120000:          # symbolischer Link – nur innerhalb des Archivs
+                target = z.read(i).decode("utf-8")
+                if target.startswith("/") or work.resolve() not in (dest.parent / target).resolve().parents:
+                    continue
+                dest.unlink(missing_ok=True)
+                os.symlink(target, dest)
+                continue
+            with z.open(i) as src, open(dest, "wb") as out:
+                shutil.copyfileobj(src, out, 1 << 20)
+            os.chmod(dest, (mode & 0o777) or 0o644)
+
+
+def _extract_tar(fileobj_or_path, work, stream=False):
+    kw = {"fileobj": fileobj_or_path, "mode": "r|*"} if stream else {"name": str(fileobj_or_path), "mode": "r:*"}
+    with tarfile.open(**kw) as t:
+        try:
+            t.extractall(work, filter="data")          # keine absoluten Pfade, kein setuid, Links nur nach innen
+        except TypeError:                              # aelteres Python ohne Filter
+            t.extractall(work)
+
+
+def _extract_deb(path, work):
+    """.deb = ar-Archiv: debian-binary, control.tar.*, data.tar.* – entpackt wird nur data.tar.* (ohne binutils)."""
+    with open(path, "rb") as f:
+        if f.read(8) != b"!<arch>\n":
+            raise RuntimeError("kein .deb-Paket")
+        while True:
+            hdr = f.read(60)
+            if len(hdr) < 60:
+                break
+            name = hdr[:16].decode("ascii", "replace").strip().rstrip("/")
+            size = int(hdr[48:58].decode("ascii").strip())
+            if name.startswith("data.tar"):
+                part = path.with_name(path.name + "." + name)
+                with open(part, "wb") as out:
+                    left = size
+                    while left:
+                        chunk = f.read(min(left, 1 << 20))
+                        if not chunk:
+                            raise RuntimeError(".deb unvollständig")
+                        out.write(chunk)
+                        left -= len(chunk)
+                try:
+                    if name.endswith(".zst"):          # Pythons tarfile kann (noch) kein zstd
+                        p = subprocess.Popen(["zstd", "-dcq", str(part)], stdout=subprocess.PIPE)
+                        try:
+                            _extract_tar(p.stdout, work, stream=True)
+                        finally:
+                            p.stdout.close()
+                            if p.wait() != 0:
+                                raise RuntimeError("zstd fehlgeschlagen")
+                    else:
+                        _extract_tar(part, work)
+                finally:
+                    part.unlink(missing_ok=True)
+                return
+            f.seek(size + (size & 1), 1)
+    raise RuntimeError("data.tar fehlt im .deb")
+
+
+def extract_app(path, fmt, work, strip=0):
+    """Heruntergeladene Datei nach work entpacken; Rueckgabe: Wurzelordner des Programms."""
+    if fmt == "appimage":
+        path.chmod(0o755)
+        subprocess.run([str(path), "--appimage-extract"], cwd=str(work),
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=900)
+        # Neuere AppImage-Startteile (Mission Center) entpacken nach AppDir/ und legen squashfs-root nur als Link
+        # darauf an – dann zaehlt der Ordner, auf den er zeigt (der Link selbst waere nach dem Verschieben kaputt)
+        root = work / "squashfs-root"
+        if not root.exists() and (work / "AppDir").is_dir():
+            root = work / "AppDir"
+        if root.is_symlink():
+            root = root.resolve()
+            if root.parent != work.resolve() or not root.is_dir():
+                raise RuntimeError("AppImage entpackt an einen unerwarteten Ort")
+        if not (root / "AppRun").exists():
+            raise RuntimeError("AppImage ließ sich nicht entpacken")
+        return root
+    root = work / "root"
+    root.mkdir()
+    if fmt == "zip":
+        _extract_zip(path, root)
+    elif fmt == "tar":
+        _extract_tar(path, root)
+    elif fmt == "deb":
+        _extract_deb(path, root)
+    else:
+        raise RuntimeError(f"unbekanntes Format {fmt}")
+    for _ in range(strip):                             # z. B. Discord: alles steckt in "Discord/"
+        inner = [x for x in root.iterdir()]
+        if len(inner) != 1 or not inner[0].is_dir():
+            raise RuntimeError("Archiv hat nicht den erwarteten Aufbau")
+        inner[0].rename(work / "inner")
+        root.rmdir()
+        (work / "inner").rename(root)
+    return root
+
+
+def app_launcher(root, a):
+    """Startskript AppRun fuer entpackte ZIP/Tarball/.deb-Programme: startet die Datei aus "run" (die erste, die es
+    gibt) – fuer Chromium/Electron mit --no-sandbox nur dann, wenn der Kernel keine Benutzer-Namensraeume erlaubt
+    (setuid-Helfer kann ein Download nicht haben). "links" legt symbolische Links an (Spotify: libcurl-gnutls)."""
+    s = a["source"]
+    runs = s["run"] if isinstance(s.get("run"), list) else [s.get("run")]
+    exe = next((r for r in runs if r and (root / r).is_file()), None)
+    if not exe:
+        raise RuntimeError(f"Programmdatei fehlt im Archiv ({', '.join(r for r in runs if r)})")
+    (root / exe).chmod((root / exe).stat().st_mode | 0o755)
+    for rel, target in (s.get("links") or {}).items():
+        lp = _safe_member(root, rel)
+        lp.parent.mkdir(parents=True, exist_ok=True)
+        if not lp.exists() and not lp.is_symlink():
+            os.symlink(target, lp)
+    sandbox = ('NS=\nunshare -Ur true 2>/dev/null || NS=--no-sandbox\n' if s.get("chromium") else "")
+    shell = "sh " if s.get("shell") else ""           # Startskript ohne #!-Zeile (Discord)
+    script = ("#!/bin/sh\n# von VoidStation angelegt – startet " + a["name"] + "\n"
+              'HERE=$(dirname "$(readlink -f "$0")")\n' + sandbox +
+              f'exec {shell}"$HERE/{exe}"' + (" $NS" if sandbox else "") + ' "$@"\n')
+    (root / "AppRun").write_text(script)
+    (root / "AppRun").chmod(0o755)
+
+
+def json_merge(path, values):
+    """Schluessel in eine JSON-Datei schreiben, Rest bleibt (legt die Datei bei Bedarf an)."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            data = {}
+    except (OSError, ValueError):
+        data = {}
+    if all(data.get(k) == v for k, v in values.items()):
+        return
+    data.update(values)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".vs-tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
 def _sys_check(sync, logf=None):
     """Sucht nach Updates ausser VoidStation selbst. Nur mit SYS_LOCK aufrufen!
     sync=False: nur Void-Pakete gegen die vorhandenen Paketlisten (schnell, ohne Netz)."""
     if LIVE:
         return
     res = {"pkgs": [], "error": None}
-    r = run(["sudo", "-n", PKG_HELPER, "check"] + ([] if sync else ["--nosync"]), timeout=300)
+    # Der Helfer begrenzt das Laden der Paketlisten selbst (90 s je Versuch, dazwischen Mirror-Wahl) – sudo hier
+    # abzuschiessen wuerde xbps darunter weiterlaufen lassen ("xbps beschaeftigt" beim naechsten Mal)
+    r = run(["sudo", "-n", PKG_HELPER, "check"] + ([] if sync else ["--nosync"]), timeout=240)
     if r is None:
         res["error"] = "xbps antwortet nicht"
     else:
@@ -4421,13 +6154,20 @@ def _sys_check(sync, logf=None):
     if sync:
         res.update(flatpak=[], appimage=[], proton=None)
         if shutil_which("flatpak"):
-            f = run(["flatpak", "remote-ls", "--user", "--updates", "--columns=application"], timeout=120)
+            f = run(["flatpak", "remote-ls", "--user", "--updates", "--columns=application"], timeout=45)
             if f and f.returncode == 0:
                 res["flatpak"] = [x.strip() for x in f.stdout.splitlines() if x.strip()]
         apps = catalog()["apps"]
         for a in apps:
-            if a["source"]["type"] == "appimage" and app_installed(a) and appimage_outdated(a):
+            if a["source"]["type"] != "appimage":
+                continue
+            if (APPDIR / a["id"] / "AppRun").exists():
+                if appimage_outdated(a):
+                    res["appimage"].append(a["id"])
+            elif legacy_flatpak(a):                    # noch das Flatpak: Wechsel auf die entpackte Fassung beim Update
                 res["appimage"].append(a["id"])
+                if logf:
+                    logf(f"{a['name']}: Wechsel vom Flatpak auf die entpackte Fassung steht an")
         if any("proton-ge" in a["source"].get("addons", []) and app_installed(a) for a in apps):
             try:
                 tag = proton_latest()["tag_name"]
@@ -4443,6 +6183,28 @@ def _sys_check(sync, logf=None):
     _SCACHE.update(res)
     if not res["pkgs"] and not res["error"]:
         sys_mark_current()                         # alles aktuell (auch nach Update im Terminal): Frist beginnt neu
+
+
+_SYS_BG = {"running": False}
+_SYS_BG_LOCK = threading.Lock()
+
+
+def sys_check_background():
+    """Pruefung mit frischen Paketlisten im Hintergrund starten (Einstellungen → Updates). Die Oberflaeche wartet
+    nicht darauf: Sie zeigt sofort den bekannten Stand und fragt nach, bis "checking" weg ist."""
+    with _SYS_BG_LOCK:
+        if _SYS_BG["running"]:
+            return
+        _SYS_BG["running"] = True
+
+    def _go():
+        try:
+            sys_check(sync=True)
+        except Exception as e:  # noqa: BLE001
+            log("Paketpruefung fehlgeschlagen:", e)
+        finally:
+            _SYS_BG["running"] = False
+    threading.Thread(target=_go, daemon=True).start()
 
 
 def sys_check(sync):
@@ -4477,15 +6239,22 @@ def sys_state():
     return {"pkgs": [p["name"] for p in pkgs], "kernel": kernel, "flatpak": len(_SCACHE["flatpak"]),
             "appimage": [names.get(i, i) for i in _SCACHE["appimage"]], "proton": _SCACHE["proton"],
             "count": count, "error": _SCACHE["error"], "checked": _SCACHE["t"] or None,
+            "checking": _SYS_BG["running"] or (SYS_LOCK.locked() and not JOBS.busy()),   # auch die 6-h-Pruefung
             "days": days, "due_at": due_at, "due": bool(due_at and time.time() >= due_at)}
 
 
 def updates_state(force=False):
-    """Gesamtstand fuer Einstellungen → Updates: VoidStation + System + Neustart."""
+    """Gesamtstand fuer Einstellungen → Updates: VoidStation + System + Neustart.
+    force: VoidStation-Stand jetzt holen (ein kleiner Abruf) und die Paketpruefung im Hintergrund anstossen –
+    die Antwort wartet nicht auf xbps (frueher bis zu 5 Minuten, wenn ein Mirror hing); system.checking zeigt,
+    dass die Pruefung noch laeuft."""
     vs = vs_update_status(force)          # ohne force: nur, wenn der letzte Stand aelter als 10 min ist
     busy = False
-    if force and not sys_check(sync=True):
-        busy = JOBS.busy() or xbps_busy()
+    if force and not LIVE:
+        if JOBS.busy() or xbps_busy():
+            busy = True
+        else:
+            sys_check_background()
     sysst = sys_state()
     return {**vs, "system": sysst, "reboot": reboot_needed(), "busy": busy,
             "any": bool(vs["available"] or sysst["count"]), "notify": bool(vs["available"] or sysst["due"])}
@@ -4591,19 +6360,26 @@ def _desktop_entry(path):
     return e
 
 
+def _bin_key(path):
+    """Vergleichsschluessel fuer Programme: der Dateiname – ausser bei entpackten AppImages, die alle "AppRun"
+    heissen; dort zaehlt der ganze Pfad (sonst verschwindet jedes selbst entpackte AppImage aus der Liste)."""
+    p = os.path.expanduser(str(path))
+    return p if Path(p).name == "AppRun" else Path(p).name
+
+
 def local_apps():
     """Programme mit .desktop-Datei, die weder im Katalog noch als eigene Kachel vorkommen."""
     lang = ui_lang().replace("-", "_")               # .desktop-Schluessel: Name[pt_BR], Name[fr]
     cat = catalog()
-    known_bins = {Path(str(a["cmd"][0])).name for a in cat["apps"] if isinstance(a.get("cmd"), list) and a["cmd"]}
+    known_bins = {_bin_key(a["cmd"][0]) for a in cat["apps"] if isinstance(a.get("cmd"), list) and a["cmd"]}
     known_bins |= {a["source"].get("pkg") for a in cat["apps"] if a["source"].get("pkg")}
     for a in cat["apps"]:                            # "for b in A B; do …" -> A und B
         m = re.match(r"for b in ([^;]+);", a.get("cmd")) if isinstance(a.get("cmd"), str) else None
         known_bins |= set(m.group(1).split()) if m else set()
     known_bins.discard("flatpak")                    # Flatpaks werden ueber ihre ID erkannt, nicht ueber "flatpak run"
-    known_refs = {a["source"]["ref"] for a in cat["apps"] if a["source"].get("ref")}
+    known_refs = {r for a in cat["apps"] for r in (a["source"].get("ref"), a["source"].get("was_flatpak")) if r}
     tiles = {t.get("id"): t for g in load_config().get("groups", []) for t in g.get("tiles", [])}
-    tile_bins = {Path(str(t["cmd"][0])).name for t in tiles.values() if isinstance(t.get("cmd"), list) and t["cmd"]}
+    tile_bins = {_bin_key(t["cmd"][0]) for t in tiles.values() if isinstance(t.get("cmd"), list) and t["cmd"]}
     out, seen = [], set()
     for d in DESKTOP_DIRS:
         for f in sorted(d.glob("*.desktop")) if d.is_dir() else []:
@@ -4621,7 +6397,7 @@ def local_apps():
                 continue
             if not args or args[0] == "env" and len(args) < 2:
                 continue
-            binary = Path(args[0]).name
+            binary = _bin_key(args[0])
             if e.get("TryExec") and not shutil.which(e["TryExec"]):
                 continue
             if not (shutil.which(args[0]) or Path(args[0]).exists()):
@@ -4633,7 +6409,7 @@ def local_apps():
                 continue                              # schon als Katalog-App oder Standard-Kachel vorhanden
             seen.add(stem)
             if e.get("Terminal") == "true":
-                args = ["xterm", "-fa", "DejaVu Sans Mono", "-fs", "14", "-e"] + args
+                args = ["xterm", "-e"] + args          # Schrift/Farben: ~/.Xresources (apply_appearance)
             cats = e.get("Categories", "")
             icon = next((i for k, i in LOCAL_ICONS if k in cats.split(";")), "globe")
             loc = lambda k: e.get(f"{k}[{lang}]") or e.get(f"{k}[{lang.split('_')[0]}]")   # pt_BR, sonst pt
@@ -4670,7 +6446,11 @@ def apps_payload():
     for a in cat["apps"]:
         item = {k: a[k] for k in ("id", "name", "desc", "cat")}
         item["type"] = a["source"]["type"]
+        if item["type"] == "appimage" and a["source"].get("run"):   # ZIP, Tarball, .deb: Beschriftung "Download"
+            item["type"] = "archive"
         item["installed"] = app_installed_in(a, pkgs, fps, tiles)
+        if not item["installed"] and (a.get("retired") or not app_supported(a)):
+            continue                                   # nicht mehr im Angebot bzw. nicht fuer diese Architektur (32 Bit)
         item["tile"] = a["id"] in tiles
         item["icon"] = a.get("tile", {}).get("icon", "globe")
         item["color"] = a.get("tile", {}).get("color", "#2f3238")
@@ -4788,7 +6568,8 @@ def resume_watcher():
             log(f"aus dem Standby zurueck (nach {dur(max(slept, 0))}) – geweckt von: {wake_sources(last_wake, wake)}")
             time.sleep(3)                               # Bildschirm und Treiber erst aufwachen lassen
             try:
-                apply_resolution(settings_load().get("resolution"))
+                apply_display()
+                DISPLAY_RATE.reapply()                  # laeuft vorn ein Video, wieder dessen Rate
             except Exception as e:  # noqa: BLE001
                 log("Aufloesung nach dem Standby:", e)
             g, cnt, wake = gap(), _suspend_counts(), _wakeup_counts()
@@ -4806,7 +6587,8 @@ def settings_payload():
                        "sizes": CURSOR_SIZES}, "displays": xrandr_info(),
             "audio": audio_info(), "volume": volume_get(), "net": net_info(), "share": share_info(),
             "sysupd_days": sysupd_days(s), "sysupd_choices": SYSUPD_DAYS,
-            "frontend": frontend(), "frontends": frontends(), "padmouse": bool(s.get("padmouse", True))}
+            "frontend": frontend(), "frontends": frontends(), "padmouse": bool(s.get("padmouse", True)),
+            "rate": s.get("rate"), "match_rate": bool(s.get("match_rate")), "region": region(s)}
 
 
 # ---------------------------------------------------------------------------
@@ -4847,7 +6629,14 @@ class Installer:
         p["screen"] = {"name": disp[0]["name"], "mode": disp[0]["current"], "rate": disp[0].get("rate")} if disp else None
         p["favs"] = {"radio": len(favs_load()), "tv": len(tvfavs_load())}
         p["live_home"] = str(Path.home())
-        p["lang"] = ui_lang() if ui_lang() in ("de", "en") else "en"   # Installer kennt bisher nur de/en
+        lang = ui_lang()
+        p["lang"] = lang
+        p["langs"] = [{"id": i, "label": n, "kb": INSTALL_DEFAULTS[i][0], "tz": INSTALL_DEFAULTS[i][1]} for i, n, _, _ in LANG_TABLE]
+        p["kbs"] = list(KEYMAPS)
+        kb = cmdline_value("voidstation.kb")              # Tastatur aus dem Startmenue des Sticks
+        if kb not in KEYMAPS:
+            kb = {"us": "us", "gb": "gb", "de": "de"}.get(x_keyboard_layout() or "", INSTALL_DEFAULTS.get(lang, ("de",))[0])
+        p["kb"] = kb
         self.probe_cache = p
         return p
 
@@ -4862,6 +6651,7 @@ class Installer:
             if not resume:
                 cfg = dict(cfg or {})
                 cfg["live_home"] = str(Path.home())
+                cfg["region"] = region_for(str(cfg.get("lang") or "de"), str(cfg.get("timezone") or ""))   # Radio/TV
                 self.state = {"state": "running", "pct": 0, "phase": None, "phases": {}, "detail": None,
                               "started": time.time(), "mode": cfg.get("mode")}
             else:
@@ -4967,7 +6757,20 @@ class Installer:
 
 
 INSTALL = Installer()
-KEYMAPS = {"de": ["de"], "us": ["us"], "gb": ["gb"]}
+# Tastaturen im Installer (Reihenfolge der Auswahl) -> setxkbmap; gleiche Kennungen wie voidstation.kb im Startmenue
+# des Sticks und KEYMAPS in voidstation-installer. Griechisch/Russisch/Ukrainisch mit US dazu, Alt+Umschalt wechselt.
+_GRP = ["-option", "", "-option", "grp:alt_shift_toggle"]
+KEYMAPS = {"de": ["-layout", "de", "-option", ""], "us": ["-layout", "us", "-option", ""], "gb": ["-layout", "gb", "-option", ""],
+           "fr": ["-layout", "fr", "-option", ""], "es": ["-layout", "es", "-option", ""], "it": ["-layout", "it", "-option", ""],
+           "lv": ["-layout", "lv", "-option", ""], "hu": ["-layout", "hu", "-option", ""], "pl": ["-layout", "pl", "-option", ""],
+           "br": ["-layout", "br", "-option", ""], "cz": ["-layout", "cz", "-option", ""], "sk": ["-layout", "sk", "-option", ""],
+           "gr": ["-layout", "us,gr"] + _GRP, "ru": ["-layout", "us,ru"] + _GRP, "ua": ["-layout", "us,ua"] + _GRP}
+# Vorgaben im Installer je Sprache: Tastatur und Zeitzone (aenderbar)
+INSTALL_DEFAULTS = {"de": ("de", "Europe/Berlin"), "en": ("us", "America/New_York"), "cs": ("cz", "Europe/Prague"),
+                    "es": ("es", "Europe/Madrid"), "fr": ("fr", "Europe/Paris"), "it": ("it", "Europe/Rome"),
+                    "lv": ("lv", "Europe/Riga"), "hu": ("hu", "Europe/Budapest"), "nl": ("us", "Europe/Amsterdam"),
+                    "pl": ("pl", "Europe/Warsaw"), "pt-BR": ("br", "America/Sao_Paulo"), "sk": ("sk", "Europe/Bratislava"),
+                    "el": ("gr", "Europe/Athens"), "ru": ("ru", "Europe/Moscow"), "uk": ("ua", "Europe/Kyiv")}
 
 
 # ---------------------------------------------------------------------------
@@ -4985,6 +6788,16 @@ class ROMManager:
         "ppsspp": "psp",
         "flycast": "dreamcast",
         "dolphin": "gamecube",
+        "vice": "c64",            # VICE (x64sc) startet die Datei direkt (Autostart)
+        "stella": "atari2600",
+        "pcsx2": "ps2",
+        "rmg": "n64",
+        "xemu": "xbox",
+        "azahar": "3ds",
+        "cemu": "wiiu",
+        "mame": "mame",
+        "dosbox": "dos",
+        "scummvm": "scummvm",
         "retroarch": "retroarch",
     }
     SYSTEM_TO_TILE = {v: k for k, v in TILE_TO_SYSTEM.items()}
@@ -5005,14 +6818,39 @@ class ROMManager:
         "nds": [".nds", ".zip"],
         "gamecube": [".iso", ".rvz", ".gcm"],
         "dreamcast": [".cdi", ".gdi", ".chd"],
-        "n64": [".z64", ".n64", ".v64"],
+        "n64": [".z64", ".n64", ".v64", ".zip", ".7z"],
+        "ps2": [".iso", ".chd", ".cso", ".zso", ".cue", ".gz", ".elf"],
+        "xbox": [".iso", ".xiso"],
+        "3ds": [".3ds", ".cci", ".cxi", ".3dsx", ".zcci", ".zcxi", ".z3dsx"],
+        "wiiu": [".wua", ".wux", ".wud", ".rpx"],
         "c64": [".d64", ".t64", ".prg", ".crt"],
         "atari2600": [".a26", ".bin"],
         "megadrive": [".md", ".bin", ".smd", ".gen", ".zip", ".7z"],
         "genesis": [".md", ".bin", ".smd", ".gen", ".zip", ".7z"],
         "scummvm": [".scummvm"],
-        "dos": [".conf", ".exe", ".bat"],
+        "dos": [".conf", ".exe", ".bat", ".com"],
+        "mame": [".zip", ".7z"],
+        "retroarch": [".zip", ".7z"],             # dazu alles, was die installierten Kerne lesen (retroarch_exts)
     }
+    # Ordner, in denen auch Unterordner als Spiel zaehlen (DOS-Spiel bzw. ScummVM-Spiel = Ordner)
+    DIR_SYSTEMS = {"dos", "scummvm"}
+    # Optionen direkt vor der Spieldatei (xemu: -dvd_path, Cemu: -g – sonst nimmt das Programm die Datei nicht)
+    ROM_ARGS = {"xbox": ["-dvd_path"], "wiiu": ["-g"]}
+
+    def rom_args(self, canon, target):
+        """Was hinter den Befehl des Emulators kommt, um genau dieses Spiel zu starten."""
+        if canon == "mame":                       # MAME will den Namen des ROM-Sets, nicht die Datei
+            return [target.stem]
+        if canon == "scummvm":                    # Spiel = Ordner (eine .scummvm-Datei liegt darin)
+            d = target if target.is_dir() else target.parent
+            return (["--fullscreen"] if emu_fullscreen_wanted("scummvm") else []) + [f"--path={d}", "--auto-detect"]
+        if canon == "retroarch":
+            core = retroarch_core(target)
+            if not core:
+                raise ValueError(f"Kein RetroArch-Kern fuer {target.suffix or target.name} – in RetroArch unter "
+                                 "Online-Aktualisierung einen Kern laden")
+            return ["-L", str(core), str(target)]
+        return self.ROM_ARGS.get(canon, []) + [str(target)]
     # Befehle aus catalog.json als Basis/Fallback
     EMULATOR_CMD = {
         "gba": ["mgba-qt"],
@@ -5022,7 +6860,7 @@ class ROMManager:
         "psx": ["~/.local/share/voidstation/apps/duckstation/AppRun"],
         "psp": ["PPSSPPSDL", "ppsspp", "PPSSPPQt"],   # erster vorhandener
         "nds": ["melonDS"],
-        "dreamcast": ["flatpak", "run", "org.flycast.Flycast"],
+        "dreamcast": ["~/.local/share/voidstation/apps/flycast/AppRun"],
         "gamecube": ["dolphin-emu"],
         "megadrive": ["mednafen"],
         "genesis": ["mednafen"],
@@ -5045,11 +6883,20 @@ class ROMManager:
         if not sys_dir.is_dir():
             return []
         valid_exts = set(self.EXTENSIONS.get(folder, [".zip"]))
+        if folder == "retroarch":
+            valid_exts |= retroarch_exts()
+        dirs = folder in self.DIR_SYSTEMS
+        names = mame_names([i.stem for i in sys_dir.iterdir() if i.is_file()]) if folder == "mame" else {}
         roms = []
         try:
             for item in sorted(sys_dir.iterdir()):
+                if dirs and item.is_dir() and not item.name.startswith(".") and item.name.casefold() not in ("bios", "cover"):
+                    roms.append({"id": hashlib.sha1(str(item).encode()).hexdigest()[:10], "name": item.name,
+                                 "filename": item.name, "system": folder, "folder": folder, "size": "", "bytes": 0,
+                                 "dir": True})
+                    continue
                 if item.is_file() and item.suffix.lower() in valid_exts:
-                    name = item.stem
+                    name = names.get(item.stem) or item.stem
                     clean_name = re.sub(r"\s*[\(\[][^()\[\]]*[\)\]]", "", name).strip() or name
                     size_bytes = item.stat().st_size
                     size_mb = round(size_bytes / (1024 * 1024), 1)
@@ -5087,7 +6934,7 @@ class ROMManager:
         for f in cands:
             sys_dir = (self.rom_dir / f).resolve()
             t = (sys_dir / safe_name).resolve()
-            if t.is_file() and t.is_relative_to(sys_dir):
+            if (t.is_file() or (canon in self.DIR_SYSTEMS and t.is_dir())) and t.is_relative_to(sys_dir) and t != sys_dir:
                 target = t
                 break
         if not target:
@@ -5099,7 +6946,7 @@ class ROMManager:
         tid = self.SYSTEM_TO_TILE.get(canon, canon)
         for src in (find_tile(system), find_tile(tid), catalog_app(system), catalog_app(tid)):
             if src and isinstance(src.get("cmd"), list):
-                cmd = expand(src["cmd"]) + [str(target)]
+                cmd = expand(src["cmd"]) + self.rom_args(canon, target)
                 break
         # 3. Fallback: erstes vorhandene Programm aus EMULATOR_CMD
         if not cmd and canon in self.EMULATOR_CMD:
@@ -5124,6 +6971,3138 @@ class ROMManager:
 
 
 ROMS = ROMManager()
+
+
+# ---------------------------------------------------------------------------
+#  Emulatoren: Vorgaben (Vollbild, Grafik, Controller), Spielstand-Sicherung, Cover in der Spieleliste
+# ---------------------------------------------------------------------------
+def ini_read(path):
+    """Einfache INI-Datei -> {abschnitt: {schluessel: wert}} (Gross-/Kleinschreibung bleibt, keine Interpolation)."""
+    out, sec = {}, None
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        s = line.strip()
+        if s.startswith("[") and s.endswith("]"):
+            sec = s[1:-1]
+            out.setdefault(sec, {})
+        elif sec is not None and "=" in s and not s.startswith((";", "#")):
+            k, v = s.split("=", 1)
+            out[sec][k.strip()] = v.strip()
+    return out
+
+
+def ini_update(path, section, values, remove=()):
+    """Schluessel in genau einem Abschnitt setzen bzw. entfernen; ein fehlender Abschnitt kommt ans Ende.
+    Alles andere in der Datei bleibt, wie es ist (anders als _ini_set, das Schluessel in allen Abschnitten loescht)."""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    head = f"[{section}]"
+    start = next((i for i, line in enumerate(lines) if line.strip() == head), None)
+    if start is None:
+        while lines and not lines[-1].strip():
+            lines.pop()
+        if lines:
+            lines.append("")
+        lines.append(head)
+        start = len(lines) - 1
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].strip().startswith("[")), len(lines))
+    todo, drop, body = dict(values), set(remove), []
+    for line in lines[start + 1:end]:
+        k = line.split("=", 1)[0].strip() if "=" in line else None
+        if k in drop:
+            continue
+        if k in todo:
+            body.append(f"{k}={todo.pop(k)}")
+            continue
+        body.append(line)
+    while body and not body[-1].strip():
+        body.pop()
+    body += [f"{k}={v}" for k, v in todo.items()]
+    new = lines[:start + 1] + body + ([""] if end < len(lines) else []) + lines[end:]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".vs-tmp")
+    tmp.write_text("\n".join(new) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+EMU_STATE = BASE / "emu-defaults.json"      # was VoidStation zuletzt in die Einstellungen der Emulatoren geschrieben hat
+EMU_LOCK = threading.Lock()
+
+
+def emu_state_load():
+    try:
+        st = json.loads(EMU_STATE.read_text(encoding="utf-8"))
+        return st if isinstance(st, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def emu_state_save(st):
+    try:
+        tmp = EMU_STATE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(st, ensure_ascii=False, indent=1), encoding="utf-8")
+        tmp.replace(EMU_STATE)
+    except OSError as e:
+        log("emu-defaults.json:", e)
+
+
+def ini_defaults(app, path, section, wanted, st):
+    """Vorgaben von VoidStation in eine INI schreiben – aber nur Schluessel, die fehlen oder noch genau den Wert
+    haben, den VoidStation zuletzt geschrieben hat. Was der Nutzer im Programm selbst umgestellt hat, bleibt."""
+    mine = st.setdefault(app, {}).setdefault(section, {})
+    cur = ini_read(path).get(section, {})
+    todo = {k: v for k, v in wanted.items() if (k not in cur or cur[k] == mine.get(k)) and cur.get(k) != v}
+    if todo:
+        ini_update(path, section, todo)
+        log(f"{app}: Vorgaben gesetzt:", ", ".join(f"{k}={v}" for k, v in todo.items()))
+    for k, v in wanted.items():
+        if k not in cur or cur[k] == mine.get(k) or cur[k] == v:
+            mine[k] = v
+
+
+# ---- Controller: welche Taste ist welche? ------------------------------------------------------------------
+# mGBA liest Controller roh ueber SDL (Tastennummern statt "A/B"), und die Nummern haengen am Treiber: Ein
+# PS4-Nachbau, ein DualSense und ein Xbox-Pad zaehlen ihre Tasten verschieden. Woher die Belegung kommt, der Reihe nach:
+#   1. SDL selbst (dieselbe Bibliothek, die mGBA laedt): SDL kennt die meisten Controller samt Nachbauten aus seiner
+#      Datenbank und sagt, welche rohe Taste "unten", "rechts", "oben" … ist (SDL_GameControllerGetBindForButton)
+#   2. Notfalls die Linux-Tastencodes (BTN_SOUTH = unten, BTN_EAST = rechts …)
+# Das ist die Vorgabe; was man je Emulator selbst belegt hat (Tastenbelegung in der Spieleliste), steht darueber.
+# Rollen nach Lage: south = unten (✕/A), east = rechts (○/B), west = links (□/X), north = oben (△/Y).
+# SDL zaehlt Tasten unter Linux so (joystick/linux/SDL_sysjoystick.c, ConfigJoystick): erst alle Codes ab
+# BTN_JOYSTICK (0x120) aufsteigend, dann die darunter; Achsen nach Nummer ohne digitale Steuerkreuze (ABS_HAT*).
+# Damit das gilt, starten Emulatoren mit SDL_JOYSTICK_HIDAPI=0 (sonst zaehlt SDL PS4/PS5/Switch ueber hidraw anders).
+SDL_PROBE = r'''
+import ctypes, ctypes.util, json, os, sys
+os.environ["SDL_JOYSTICK_HIDAPI"] = "0"
+os.environ.setdefault("SDL_VIDEODRIVER", "dummy")
+lib = None
+for n in ("libSDL2-2.0.so.0", ctypes.util.find_library("SDL2") or ""):
+    if n:
+        try:
+            lib = ctypes.CDLL(n)
+            break
+        except OSError:
+            pass
+if lib is None:
+    print("[]"); sys.exit()
+class Hat(ctypes.Structure):
+    _fields_ = [("hat", ctypes.c_int), ("mask", ctypes.c_int)]
+class Val(ctypes.Union):
+    _fields_ = [("button", ctypes.c_int), ("axis", ctypes.c_int), ("hat", Hat)]
+class Bind(ctypes.Structure):
+    _fields_ = [("type", ctypes.c_int), ("value", Val)]
+lib.SDL_Init.argtypes = [ctypes.c_uint32]
+if lib.SDL_Init(0x200 | 0x2000) != 0:              # JOYSTICK | GAMECONTROLLER
+    print("[]"); sys.exit()
+lib.SDL_JoystickNameForIndex.restype = ctypes.c_char_p
+has_path = hasattr(lib, "SDL_JoystickPathForIndex")
+if has_path:
+    lib.SDL_JoystickPathForIndex.restype = ctypes.c_char_p
+lib.SDL_GameControllerOpen.restype = ctypes.c_void_p
+lib.SDL_GameControllerNameForIndex.restype = ctypes.c_char_p
+lib.SDL_GameControllerClose.argtypes = [ctypes.c_void_p]
+class Guid(ctypes.Structure):
+    _fields_ = [("data", ctypes.c_uint8 * 16)]
+lib.SDL_JoystickGetDeviceGUID.restype = Guid
+lib.SDL_JoystickGetGUIDString.argtypes = [Guid, ctypes.c_char_p, ctypes.c_int]
+for f in ("SDL_GameControllerGetBindForButton", "SDL_GameControllerGetBindForAxis"):
+    getattr(lib, f).restype = Bind
+    getattr(lib, f).argtypes = [ctypes.c_void_p, ctypes.c_int]
+def enc(b):
+    if b.type == 1: return {"button": b.value.button}
+    if b.type == 2: return {"axis": b.value.axis}
+    if b.type == 3: return {"hat": b.value.hat.hat, "mask": b.value.hat.mask}
+    return None
+BTN = (("a", 0), ("b", 1), ("x", 2), ("y", 3), ("select", 4), ("guide", 5), ("start", 6), ("l3", 7), ("r3", 8),
+       ("lb", 9), ("rb", 10), ("up", 11), ("down", 12), ("left", 13), ("right", 14))
+AX = (("lx", 0), ("ly", 1), ("rx", 2), ("ry", 3), ("lt", 4), ("rt", 5))
+out = []
+for i in range(lib.SDL_NumJoysticks()):
+    d = {"index": i, "name": (lib.SDL_JoystickNameForIndex(i) or b"").decode("utf-8", "replace"),
+         "path": (lib.SDL_JoystickPathForIndex(i) or b"").decode() if has_path else ""}
+    buf = ctypes.create_string_buffer(64)
+    lib.SDL_JoystickGetGUIDString(lib.SDL_JoystickGetDeviceGUID(i), buf, 64)
+    d["guid"] = buf.value.decode()
+    if lib.SDL_IsGameController(i):
+        d["gcname"] = (lib.SDL_GameControllerNameForIndex(i) or b"").decode("utf-8", "replace")
+        c = lib.SDL_GameControllerOpen(i)
+        if c:
+            d["buttons"] = {n: enc(lib.SDL_GameControllerGetBindForButton(c, k)) for n, k in BTN}
+            d["axes"] = {n: enc(lib.SDL_GameControllerGetBindForAxis(c, k)) for n, k in AX}
+            lib.SDL_GameControllerClose(c)
+    out.append(d)
+lib.SDL_Quit()
+print(json.dumps(out))
+'''
+
+
+def sdl_probe():
+    """Was SDL ueber die angeschlossenen Controller weiss (Name wie in mGBA, Pfad, Belegung). [] wenn SDL fehlt."""
+    try:
+        r = subprocess.run([sys.executable, "-I", "-c", SDL_PROBE], capture_output=True, text=True, timeout=10,
+                           env=dict(os.environ, SDL_JOYSTICK_HIDAPI="0"))
+        out = json.loads(r.stdout.strip() or "[]")
+        return out if isinstance(out, list) else []
+    except (OSError, ValueError, subprocess.SubprocessError) as e:
+        log("SDL-Abfrage der Controller:", e)
+        return []
+
+
+def gamepads():
+    """Angeschlossene Gamepads (evdev) in der Reihenfolge, in der SDL sie findet (nach Geraetenummer)."""
+    try:
+        import evdev  # type: ignore
+        from evdev import ecodes as E
+    except ImportError:
+        return []
+    out = []
+    for p in sorted(evdev.list_devices(), key=lambda s: int(re.sub(r"\D", "", s) or 0)):
+        try:
+            d = evdev.InputDevice(p)
+            caps = d.capabilities()
+            name, info = d.name, d.info
+            d.close()
+        except OSError:
+            continue
+        keys = set(caps.get(E.EV_KEY, []))
+        axes = {a[0] if isinstance(a, (tuple, list)) else a for a in caps.get(E.EV_ABS, [])}
+        pen = keys & {E.BTN_TOUCH, E.BTN_TOOL_PEN, E.BTN_STYLUS, E.BTN_TOOL_FINGER}
+        pad = (E.BTN_SOUTH in keys or E.BTN_TRIGGER in keys) and not pen
+        if pad and (E.ABS_X in axes or E.ABS_HAT0X in axes or E.BTN_DPAD_UP in keys):
+            out.append({"path": p, "name": name, "id": f"{info.vendor:04x}:{info.product:04x}",
+                        "keys": keys, "axes": axes})
+    return out
+
+
+def sdl_indices(pad):
+    """(Tasten, Achsen) eines Gamepads als {evdev-Code: SDL-Nummer}."""
+    from evdev import ecodes as E
+    keys = pad["keys"]
+    order = sorted(k for k in keys if E.BTN_JOYSTICK <= k < E.KEY_MAX) + sorted(k for k in keys if k < E.BTN_JOYSTICK)
+    axes = sorted(a for a in pad["axes"] if not E.ABS_HAT0X <= a <= E.ABS_HAT3Y)
+    return {k: i for i, k in enumerate(order)}, {a: i for i, a in enumerate(axes)}
+
+
+def binding_label(b):
+    """Kurzbeschreibung einer Bindung fuer Log und Oberflaeche (z. B. "BTN_EAST", "ABS_Z+", "Kreuz ↑")."""
+    from evdev import ecodes as E
+    if not b:
+        return ""
+    def one(n):                                    # evdev nennt manche Codes mehrfach (BTN_A = BTN_SOUTH …)
+        if isinstance(n, (list, tuple)):
+            return next((x for x in n if x.endswith(("SOUTH", "EAST", "NORTH", "WEST"))), n[-1])
+        return n
+    if "key" in b:
+        return one(E.BTN.get(b["key"]) or E.KEY.get(b["key"]) or str(b["key"]))
+    if "abs" in b:
+        return one(E.ABS.get(b["abs"], str(b["abs"]))) + ("+" if b.get("dir", 1) > 0 else "-")
+    if "hat" in b:
+        return {("y", -1): "HAT ↑", ("y", 1): "HAT ↓", ("x", -1): "HAT ←", ("x", 1): "HAT →"}.get((b["hat"], b["dir"]), "HAT")
+    return ""
+
+
+def pad_roles(pad, probe=None):
+    """Rolle -> Bindung fuer ein Gamepad und woher sie stammt ("SDL", "Linux").
+    Rollen nach Lage (PAD_ROLES): south/east/west/north = unten/rechts/links/oben (✕/○/□/△ bzw. A/B/X/Y),
+    l1 r1 l2 r2 select start l3 r3 up down left right. Bindung: {"key": evdev-Code} | {"abs": Code, "dir": ±1}
+    (Schultertaste als Achse) | {"hat": "x"|"y", "dir": ±1} (Steuerkreuz als Achse)."""
+    from evdev import ecodes as E
+    btn, ax = sdl_indices(pad)
+    by_index = {i: c for c, i in btn.items()}
+    by_axis = {i: c for c, i in ax.items()}
+    sdl = next((d for d in (probe or []) if d.get("path") == pad["path"] and d.get("buttons")), None)
+    if sdl:
+        names = {"a": "south", "b": "east", "x": "west", "y": "north", "lb": "l1", "rb": "r1", "select": "select",
+                 "start": "start", "l3": "l3", "r3": "r3", "up": "up", "down": "down", "left": "left", "right": "right"}
+        binds = {}
+        for r, b in sdl["buttons"].items():
+            if r in names and b and "button" in b and b["button"] in by_index:
+                binds[names[r]] = {"key": by_index[b["button"]]}
+            elif r in names and b and "hat" in b and r in ("up", "down", "left", "right"):
+                binds[names[r]] = {"hat": "y" if r in ("up", "down") else "x", "dir": -1 if r in ("up", "left") else 1}
+        for r, role in (("lt", "l2"), ("rt", "r2")):
+            b = (sdl.get("axes") or {}).get(r)
+            if b and "axis" in b and b["axis"] in by_axis:
+                binds[role] = {"abs": by_axis[b["axis"]], "dir": 1}
+            elif b and "button" in b and b["button"] in by_index:
+                binds[role] = {"key": by_index[b["button"]]}
+        if E.ABS_HAT0X in pad["axes"]:                 # Kreuz, zu dem SDL nichts sagt: als Hat annehmen
+            for r, h, d in (("up", "y", -1), ("down", "y", 1), ("left", "x", -1), ("right", "x", 1)):
+                binds.setdefault(r, {"hat": h, "dir": d})
+        used = [b for b in binds.values()]
+        for role, axis, key in (("l2", E.ABS_Z, E.BTN_TL2), ("r2", E.ABS_RZ, E.BTN_TR2)):
+            if role not in binds:                      # Trigger, zu denen SDL nichts sagt: Linux-Achse bzw. -Taste
+                for cand in ({"abs": axis, "dir": 1} if axis in pad["axes"] else None,
+                             {"key": key} if key in pad["keys"] else None):
+                    if cand and cand not in used:
+                        binds[role] = cand
+                        used.append(cand)
+                        break
+        if "south" in binds and "east" in binds:
+            stick_roles(binds, pad, sdl, by_axis)
+            return binds, "SDL"
+    std = {"south": E.BTN_SOUTH, "east": E.BTN_EAST, "west": E.BTN_WEST, "north": E.BTN_NORTH, "l1": E.BTN_TL,
+           "r1": E.BTN_TR, "l2": E.BTN_TL2, "r2": E.BTN_TR2, "select": E.BTN_SELECT, "start": E.BTN_START,
+           "l3": E.BTN_THUMBL, "r3": E.BTN_THUMBR, "up": E.BTN_DPAD_UP, "down": E.BTN_DPAD_DOWN,
+           "left": E.BTN_DPAD_LEFT, "right": E.BTN_DPAD_RIGHT}
+    binds = {r: {"key": c} for r, c in std.items() if c in pad["keys"]}
+    for r, code in (("l2", E.ABS_Z), ("r2", E.ABS_RZ)):
+        if r not in binds and code in pad["axes"]:
+            binds[r] = {"abs": code, "dir": 1}
+    if E.ABS_HAT0X in pad["axes"]:
+        for r, h, d in (("up", "y", -1), ("down", "y", 1), ("left", "x", -1), ("right", "x", 1)):
+            binds.setdefault(r, {"hat": h, "dir": d})
+    stick_roles(binds, pad)
+    return binds, "Linux"
+
+
+# Rechter Stick als vier Richtungen (N64: C-Tasten) – zusaetzlich zu PAD_ROLES, nur als Vorgabe einzelner Konsolen
+STICK_ROLES = ["rs_up", "rs_down", "rs_left", "rs_right"]
+STICK_TEXT = {"rs_up": "R↑", "rs_down": "R↓", "rs_left": "R←", "rs_right": "R→"}
+
+
+def stick_roles(binds, pad, sdl=None, by_axis=None):
+    """rs_up/rs_down/rs_left/rs_right: Achsen des rechten Sticks (laut SDL, sonst ABS_RX/ABS_RY)."""
+    from evdev import ecodes as E
+    axes = (sdl or {}).get("axes") or {}
+    def code(name, fallback):
+        b = axes.get(name)
+        if b and "axis" in b and by_axis and b["axis"] in by_axis:
+            return by_axis[b["axis"]]
+        return fallback if fallback in pad["axes"] else None
+    rx, ry = code("rx", E.ABS_RX), code("ry", E.ABS_RY)
+    if rx is not None and ry is not None and rx != ry:
+        binds.update({"rs_up": {"abs": ry, "dir": -1}, "rs_down": {"abs": ry, "dir": 1},
+                      "rs_left": {"abs": rx, "dir": -1}, "rs_right": {"abs": rx, "dir": 1}})
+
+
+# ---- Tastenbelegung je Emulator (Spieleliste des Emulators -> "Tastenbelegung") ------------------------------
+# Die Oberflaeche (KeymapLayer.qml) zeigt eine Skizze der Konsole und fragt deren Tasten der Reihe nach ab; man drueckt
+# jeweils die Controllertaste, die dafuer gelten soll. Gilt nur fuer den Emulator – die Startseite liest das nie.
+# ~/.config/voidstation/emu-pads.json:
+#   {"emus": {"<Kachel>": {"<vid:pid>": {"name": …, "map": {"<Konsolentaste>": Bindung | null}}}}}
+# Gespeichert wird nur, was von der Vorgabe abweicht (Vorgabe: Rolle aus EMU_LAYOUTS -> Bindung aus pad_roles);
+# null = absichtlich frei gelassen (z. B. Savestate laden, damit man nicht aus Versehen drankommt).
+# Bindung: {"key": evdev-Code} | {"abs": Code, "dir": ±1} | {"hat": "x"|"y", "dir": ±1}, s. pad_roles.
+EMU_PADS = Path.home() / ".config/voidstation/emu-pads.json"
+PAD_ROLES = ["south", "east", "west", "north", "l1", "r1", "l2", "r2", "select", "start", "l3", "r3",
+             "up", "down", "left", "right"]
+# Je Kachel: Skizze der Konsole ("console", gezeichnet in ConsolePic.qml) und Tasten als (Kennung, Vorgabe-Rolle) in
+# der Reihenfolge, in der "Alle nacheinander" fragt; Vorgabe-Rolle "" = frei. Konsolentasten liegen nach Lage
+# (Nintendo: A rechts, B unten; PlayStation: ✕ unten …). Kennungen aus EMU_ACTIONS gibt es auf der Konsole nicht – die
+# erledigt VoidStation selbst (Taste an den Emulator, EMU_KEYS); wo die Konsole alle Tasten des Controllers braucht,
+# sind sie anfangs frei. "notes": Hinweise der Oberflaeche (keymap.note.*). Analogsticks belegt VoidStation fest mit.
+_DPAD = [("Up", "up"), ("Down", "down"), ("Left", "left"), ("Right", "right")]
+EMU_LAYOUTS = {
+    "gba": {"name": "mGBA", "sub": "Game Boy / Color / Advance", "console": "gba", "buttons": [
+        ("A", "east"), ("B", "south"), ("L", "l1"), ("R", "r1"), ("Start", "start"), ("Select", "select"),
+        *_DPAD, ("save", "north"), ("load", "west"), ("rewind", "l2"), ("ff", "r2")]},
+    "nestopia": {"name": "Nestopia", "sub": "NES", "console": "nes", "buttons": [
+        ("A", "east"), ("B", "south"), ("Start", "start"), ("Select", "select"),
+        *_DPAD, ("save", "north"), ("load", "west"), ("ff", "r2")]},
+    "snes9x": {"name": "Snes9x", "sub": "Super Nintendo", "console": "snes", "buttons": [
+        ("A", "east"), ("B", "south"), ("X", "north"), ("Y", "west"), ("L", "l1"), ("R", "r1"),
+        ("Start", "start"), ("Select", "select"), *_DPAD, ("save", ""), ("load", ""), ("ff", "r2")]},
+    "melonds": {"name": "melonDS", "sub": "Nintendo DS", "console": "nds", "buttons": [
+        ("A", "east"), ("B", "south"), ("X", "north"), ("Y", "west"), ("L", "l1"), ("R", "r1"),
+        ("Start", "start"), ("Select", "select"), *_DPAD, ("save", ""), ("load", ""), ("ff", "r2")]},
+    "duckstation": {"name": "DuckStation", "sub": "PlayStation", "console": "psx", "notes": ["sticks", "duckstation"],
+                    "buttons": [
+        ("Cross", "south"), ("Circle", "east"), ("Square", "west"), ("Triangle", "north"),
+        ("L1", "l1"), ("R1", "r1"), ("L2", "l2"), ("R2", "r2"), ("L3", "l3"), ("R3", "r3"),
+        ("Start", "start"), ("Select", "select"), *_DPAD, ("save", ""), ("load", ""), ("ff", "")]},
+    "ppsspp": {"name": "PPSSPP", "sub": "PSP", "console": "psp", "notes": ["sticks"], "buttons": [
+        ("Cross", "south"), ("Circle", "east"), ("Square", "west"), ("Triangle", "north"), ("L", "l1"), ("R", "r1"),
+        ("Start", "start"), ("Select", "select"), *_DPAD, ("save", ""), ("load", ""), ("ff", "r2")]},
+    "dolphin": {"name": "Dolphin", "sub": "GameCube", "console": "gc", "notes": ["sticks"], "buttons": [
+        ("A", "south"), ("B", "west"), ("X", "east"), ("Y", "north"), ("Z", "r1"), ("L", "l2"), ("R", "r2"),
+        ("Start", "start"), *_DPAD, ("save", ""), ("load", ""), ("ff", "l1")]},
+    "flycast": {"name": "Flycast", "sub": "Dreamcast", "console": "dc", "notes": ["sticks", "flycast"], "buttons": [
+        ("A", "south"), ("B", "east"), ("X", "west"), ("Y", "north"), ("L", "l2"), ("R", "r2"),
+        ("Start", "start"), *_DPAD, ("ff", "r1")]},
+    "pcsx2": {"name": "PCSX2", "sub": "PlayStation 2", "console": "ps2", "notes": ["sticks", "pcsx2"], "buttons": [
+        ("Cross", "south"), ("Circle", "east"), ("Square", "west"), ("Triangle", "north"),
+        ("L1", "l1"), ("R1", "r1"), ("L2", "l2"), ("R2", "r2"), ("L3", "l3"), ("R3", "r3"),
+        ("Start", "start"), ("Select", "select"), *_DPAD, ("save", ""), ("load", ""), ("ff", "")]},
+    # N64: A unten, B links (wie auf dem Original schraeg darueber), Z auf dem linken Trigger, C-Tasten auf dem rechten Stick
+    "rmg": {"name": "Rosalie's Mupen GUI", "sub": "Nintendo 64", "console": "n64", "notes": ["n64"], "buttons": [
+        ("A", "south"), ("B", "west"), ("Z", "l2"), ("L", "l1"), ("R", "r1"), ("Start", "start"),
+        ("CUp", "rs_up"), ("CDown", "rs_down"), ("CLeft", "rs_left"), ("CRight", "rs_right"), *_DPAD,
+        ("save", ""), ("load", ""), ("ff", "r2")]},
+    "xemu": {"name": "xemu", "sub": "Xbox", "console": "xbox", "notes": ["sticks", "xemu"], "buttons": [
+        ("A", "south"), ("B", "east"), ("X", "west"), ("Y", "north"), ("White", "l1"), ("Black", "r1"),
+        ("LT", "l2"), ("RT", "r2"), ("Back", "select"), ("Start", "start"), ("LS", "l3"), ("RS", "r3"), *_DPAD,
+        ("save", ""), ("load", "")]},
+    "azahar": {"name": "Azahar", "sub": "Nintendo 3DS", "console": "n3ds", "notes": ["sticks"], "buttons": [
+        ("A", "east"), ("B", "south"), ("X", "north"), ("Y", "west"), ("L", "l1"), ("R", "r1"), ("ZL", "l2"),
+        ("ZR", "r2"), ("Start", "start"), ("Select", "select"), *_DPAD, ("save", ""), ("load", ""), ("ff", "")]},
+    "cemu": {"name": "Cemu", "sub": "Wii U", "console": "wiiu", "notes": ["sticks", "cemu"], "buttons": [
+        ("A", "east"), ("B", "south"), ("X", "north"), ("Y", "west"), ("L", "l1"), ("R", "r1"), ("ZL", "l2"),
+        ("ZR", "r2"), ("Plus", "start"), ("Minus", "select"), ("L3", "l3"), ("R3", "r3"), *_DPAD]},
+    # Arcade: sechs Tasten in zwei Reihen (unten 1–3, oben 4–6 ≈ Controller unten/rechts/links/oben + Schultern)
+    "mame": {"name": "MAME", "sub": "Arcade", "console": "arcade", "notes": ["sticks", "mame"], "buttons": [
+        ("Button1", "south"), ("Button2", "east"), ("Button3", "west"), ("Button4", "north"), ("Button5", "l1"),
+        ("Button6", "r1"), ("Coin", "select"), ("Start", "start"), *_DPAD, ("save", ""), ("load", ""), ("ff", "r2")]},
+    # DOS: der Controller als Tastatur – die Tasten schickt VoidStation (EMU_KEYS), DOSBox selbst bleibt unveraendert
+    "dosbox": {"name": "DOSBox Staging", "sub": "DOS", "console": "keyboard", "notes": ["dosbox"], "buttons": [
+        ("Space", "south"), ("Ctrl", "east"), ("Alt", "west"), ("Shift", "north"), ("Enter", "start"),
+        ("Esc", "select"), ("KeyY", "l1"), ("KeyN", "r1"), ("Tab", "l2"), ("F1", "r2"), ("KeyUp", "up"),
+        ("KeyDown", "down"), ("KeyLeft", "left"), ("KeyRight", "right")]},
+    # RetroPad: Lage wie beim SNES-Pad (B unten, A rechts, Y links, X oben)
+    "retroarch": {"name": "RetroArch", "sub": "RetroPad", "console": "retropad", "notes": ["sticks", "retroarch"],
+                  "buttons": [
+        ("B", "south"), ("A", "east"), ("Y", "west"), ("X", "north"), ("L", "l1"), ("R", "r1"), ("L2", "l2"),
+        ("R2", "r2"), ("L3", "l3"), ("R3", "r3"), ("Start", "start"), ("Select", "select"), *_DPAD,
+        ("save", ""), ("load", ""), ("ff", ""), ("rewind", "")]},
+}
+EMU_ACTIONS = {"save", "load", "rewind", "ff"}
+# Was VoidStation fuer die Extras an das Fenster des Emulators schickt (tap = einmal, hold = solange gedrueckt).
+# Tasten aus dem Quelltext der Emulatoren bzw. von VoidStation gesetzt, wo der Emulator keine vorgibt (s. *_prepare):
+#   mGBA 0.10 Window.cpp · Snes9x 1.60 (keine Vorgabe) · Nestopia 1.53 inputmanager.cpp (F5/F7) · DuckStation
+#   hotkeys.cpp (F2/F1/Tab) · PPSSPP 1.20 (Speichern/Laden ohne Vorgabe, Tab) · melonDS 1.1 Window.cpp (Umschalt+F1/F1)
+#   · Dolphin 2609 HotkeyManager.cpp (Umschalt+F1/F1/Tab) · Flycast 2.7 keyboard_device.h (Leertaste)
+#   · PCSX2 2.8 Pad.cpp (F1/F3; Turbo halten setzt VoidStation auf Tab) · RMG 0.9 Settings.cpp (F5/F7; F4 schaltet die
+#   Geschwindigkeitsbremse – "toggle": beim Druecken und beim Loslassen je einmal) · xemu 0.8 main.cc (F5 laden,
+#   Umschalt+F5 speichern, sobald F5 einem Schnappschuss zugeordnet ist – macht VoidStation) · Azahar 2126 (Schnell-
+#   speichern/-laden und Turbo ohne Vorgabe, setzt VoidStation) · MAME 0.282 inpttype.ipp (Umschalt+F6/F7 Schnell-
+#   speichern/-laden, Einfg vorspulen) · RetroArch 1.22 config.def.keybinds.h (F2/F4, L halten, R zurueckspulen)
+#   · DOSBox: alle Tasten – der Controller tippt auf der Tastatur
+EMU_KEYS = {
+    "gba": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab"), "rewind": ("hold", "Scroll_Lock")},
+    "snes9x": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab")},
+    "nestopia": {"save": ("tap", "F5"), "load": ("tap", "F7"), "ff": ("hold", "Tab")},
+    "duckstation": {"save": ("tap", "F2"), "load": ("tap", "F1"), "ff": ("hold", "Tab")},
+    "ppsspp": {"save": ("tap", "F2"), "load": ("tap", "F4"), "ff": ("hold", "Tab")},
+    "melonds": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab")},
+    "dolphin": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab")},
+    "flycast": {"ff": ("hold", "space")},
+    "pcsx2": {"save": ("tap", "F1"), "load": ("tap", "F3"), "ff": ("hold", "Tab")},
+    "rmg": {"save": ("tap", "F5"), "load": ("tap", "F7"), "ff": ("toggle", "F4")},
+    "xemu": {"save": ("tap", "shift+F5"), "load": ("tap", "F5")},
+    "azahar": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("toggle", "F12")},
+    "mame": {"save": ("tap", "shift+F6"), "load": ("tap", "shift+F7"), "ff": ("hold", "Insert")},
+    "retroarch": {"save": ("tap", "F2"), "load": ("tap", "F4"), "ff": ("hold", "l"), "rewind": ("hold", "r")},
+    "dosbox": {"Space": ("hold", "space"), "Ctrl": ("hold", "Control_L"), "Alt": ("hold", "Alt_L"),
+               "Shift": ("hold", "Shift_L"), "Enter": ("hold", "Return"), "Esc": ("hold", "Escape"),
+               "KeyY": ("hold", "y"), "KeyN": ("hold", "n"), "Tab": ("hold", "Tab"), "F1": ("hold", "F1"),
+               "KeyUp": ("hold", "Up"), "KeyDown": ("hold", "Down"), "KeyLeft": ("hold", "Left"),
+               "KeyRight": ("hold", "Right")},
+}
+EMU_PADS_LOCK = threading.Lock()
+# Controllertasten zum Anzeigen, je nach Bauart (Steuerkreuz: Pfeile, die Oberflaeche setzt "Kreuz" davor)
+ROLE_TEXT = {
+    "ps": {"south": "✕", "east": "○", "west": "□", "north": "△", "l1": "L1", "r1": "R1", "l2": "L2", "r2": "R2",
+           "select": "Share", "start": "Options", "l3": "L3", "r3": "R3"},
+    "xbox": {"south": "A", "east": "B", "west": "X", "north": "Y", "l1": "LB", "r1": "RB", "l2": "LT", "r2": "RT",
+             "select": "Back", "start": "Start", "l3": "LS", "r3": "RS"},
+    # Nintendo: Tasten nach Lage belegt (hid-nintendo: untere Taste = BTN_SOUTH, beschriftet B)
+    "nintendo": {"south": "B", "east": "A", "west": "Y", "north": "X", "l1": "L", "r1": "R", "l2": "ZL", "r2": "ZR",
+                 "select": "−", "start": "+", "l3": "LS", "r3": "RS"},
+}
+DPAD_TEXT = {"up": "↑", "down": "↓", "left": "←", "right": "→"}
+
+
+def emu_pads_load():
+    try:
+        d = json.loads(EMU_PADS.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        d = {}
+    if not isinstance(d, dict):
+        d = {}
+    if not isinstance(d.get("emus"), dict):
+        d["emus"] = {}
+    return d
+
+
+def emu_pads_save(d):
+    EMU_PADS.parent.mkdir(parents=True, exist_ok=True)
+    tmp = EMU_PADS.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(EMU_PADS)
+
+
+def valid_bind(b):
+    if not isinstance(b, dict):
+        return None
+    if isinstance(b.get("key"), int):
+        return {"key": b["key"]}
+    if isinstance(b.get("abs"), int) and b.get("dir") in (1, -1):
+        return {"abs": b["abs"], "dir": b["dir"]}
+    if b.get("hat") in ("x", "y") and b.get("dir") in (1, -1):
+        return {"hat": b["hat"], "dir": b["dir"]}
+    return None
+
+
+def pad_style(name, pid=""):
+    """Beschriftung der Controllertasten: PlayStation-Symbole, Nintendo- oder Xbox-Buchstaben (wie
+    vscommon.pad_style der Qt-Oberflaeche; pid = "vendor:product")."""
+    vendor = str(pid).split(":")[0].lower()
+    if vendor == "057e" or re.search(r"nintendo|pro controller|joy-?con|\bswitch\b", name or "", re.I):
+        return "nintendo"
+    if vendor == "054c" or re.search(r"sony|playstation|wireless controller|dualsense|dualshock|\bps[345]\b", name or "", re.I):
+        return "ps"
+    return "xbox"
+
+
+def emu_binds(emu, pad, probe=None, roles=None):
+    """Konsolentaste -> Bindung fuer einen Controller (Vorgabe ueber pad_roles, darueber die eigene Belegung)
+    und ob es fuer diesen Controller eine eigene Belegung gibt."""
+    lay = EMU_LAYOUTS.get(emu)
+    if not lay:
+        return {}, False
+    if roles is None:
+        roles = pad_roles(pad, probe)[0]
+    ent = (emu_pads_load()["emus"].get(emu) or {}).get(pad["id"])
+    own = ent.get("map") if isinstance(ent, dict) and isinstance(ent.get("map"), dict) else {}
+    out = {}
+    for btn, role in lay["buttons"]:
+        out[btn] = valid_bind(own[btn]) if btn in own else roles.get(role)   # null bzw. Unbrauchbares: frei
+    return out, bool(own)
+
+
+def keymap_payload(emu, path=""):
+    """Fuer die Seite "Tastenbelegung": Konsole, Controller, je Konsolentaste die Controllertaste."""
+    emu_paths_refresh()
+    lay = EMU_LAYOUTS[emu]
+    pads = gamepads()
+    pad = next((p for p in pads if p["path"] == path), pads[0] if pads else None)
+    out = {"emu": emu, "name": lay["name"], "sub": lay.get("sub", ""), "console": lay["console"],
+           "notes": [n for n in lay.get("notes", []) if n not in KEYMAP_NOTE_READY or not KEYMAP_NOTE_READY[n]()],
+           "rstick": any(r in STICK_ROLES for _, r in lay["buttons"]),
+           "pads": [{"path": p["path"], "name": p["name"]} for p in pads], "pad": None, "custom": False}
+    roles, src, style, binds = {}, "", "xbox", {}
+    if pad:
+        roles, src = pad_roles(pad, sdl_probe())
+        style = pad_style(pad["name"], pad.get("id", ""))
+        binds, out["custom"] = emu_binds(emu, pad, roles=roles)
+        out["pad"] = {"path": pad["path"], "name": pad["name"], "id": pad["id"], "src": src}
+    btns = []
+    for btn, defrole in lay["buttons"]:
+        b = binds.get(btn)
+        role = next((r for r, x in roles.items() if x == b), "") if b else ""
+        label = DPAD_TEXT.get(role) or STICK_TEXT.get(role) or ROLE_TEXT[style].get(role) or (binding_label(b) if b else "")
+        btns.append({"id": btn, "action": btn in EMU_ACTIONS, "bind": b, "role": role, "label": label,
+                     "custom": bool(pad) and b != roles.get(defrole)})
+    out["buttons"] = btns
+    return out
+
+
+def keymap_pad(path):
+    pad = next((p for p in gamepads() if p["path"] == path), None)
+    if not pad:
+        raise ValueError("Kein Controller unter diesem Pfad")
+    return pad
+
+
+def keymap_set(emu, path, button, bind):
+    """Eine Konsolentaste auf eine Controllertaste legen (bind=None: frei lassen). Lag die Controllertaste schon auf
+    einer anderen Konsolentaste, tauschen die beiden (die andere bekommt die bisherige Taste).
+    -> Liste der getauschten Konsolentasten."""
+    lay = EMU_LAYOUTS.get(emu)
+    if not lay or button not in dict(lay["buttons"]):
+        raise ValueError("Unbekannte Taste")
+    if bind is not None:
+        bind = valid_bind(bind)
+        if not bind:
+            raise ValueError("Ungueltige Taste")
+    pad = keymap_pad(path)
+    roles = pad_roles(pad, sdl_probe())[0]
+    defs = {b: roles.get(r) for b, r in lay["buttons"]}
+    with EMU_PADS_LOCK:
+        cur, _ = emu_binds(emu, pad, roles=roles)
+        new, swapped = dict(cur), []
+        for other, ob in cur.items():
+            if bind and other != button and ob == bind:
+                new[other] = cur[button]
+                swapped.append(other)
+        new[button] = bind
+        m = {b: v for b, v in new.items() if v != defs[b]}
+        d = emu_pads_load()
+        emus = d["emus"].setdefault(emu, {})
+        if m:
+            emus[pad["id"]] = {"name": pad["name"], "map": m}
+        else:
+            emus.pop(pad["id"], None)
+        if not emus:
+            d["emus"].pop(emu, None)
+        emu_pads_save(d)
+    log(f"Tastenbelegung {emu} ({pad['name']}): {button} = {binding_label(bind) if bind else 'frei'}",
+        f"(getauscht mit {', '.join(swapped)})" if swapped else "")
+    return swapped
+
+
+def keymap_reset(emu, path):
+    """Eigene Belegung eines Controllers fuer einen Emulator verwerfen (zurueck zur Vorgabe)."""
+    pad = keymap_pad(path)
+    with EMU_PADS_LOCK:
+        d = emu_pads_load()
+        (d["emus"].get(emu) or {}).pop(pad["id"], None)
+        if not d["emus"].get(emu):
+            d["emus"].pop(emu, None)
+        emu_pads_save(d)
+    log(f"Tastenbelegung {emu} ({pad['name']}): zurueck auf Vorgabe")
+
+
+class PadCapture:
+    """Tastenbelegung: auf den naechsten Tastendruck eines Controllers warten. Das Geraet ist dabei exklusiv geoeffnet
+    (EVIOCGRAB), damit Startseite und Guide-Taste nichts davon mitbekommen – sonst wuerde jeder Druck auch die
+    Oberflaeche bedienen. Zwischen zwei Fragen bleibt es kurz gegriffen (LINGER), damit ein schneller Druck nicht doch
+    in der Oberflaeche landet. Guide/PS-Taste = abbrechen."""
+    LINGER = 2.0
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.dev = None
+        self.rest = {}                               # Achse -> (Ruhewert, min, max), beim Greifen gemerkt
+        self.gen = 0                                 # jede neue Frage / Abbrechen zaehlt hoch
+
+    def _device(self, path):
+        import evdev  # type: ignore
+        from evdev import ecodes as E
+        if self.dev is not None and self.dev.path == path:
+            return self.dev
+        self._release()
+        if path not in {p["path"] for p in gamepads()}:
+            raise ValueError("Kein Controller unter diesem Pfad")
+        dev = evdev.InputDevice(path)
+        dev.grab()
+        self.dev = dev
+        self.rest = {c: (0 if E.ABS_HAT0X <= c <= E.ABS_HAT3Y else i.value, i.min, i.max)
+                     for c, i in dev.capabilities().get(E.EV_ABS, [])}
+        return dev
+
+    def _release(self):
+        dev, self.dev = self.dev, None
+        if dev is not None:
+            try:
+                dev.ungrab()
+            except OSError:
+                pass
+            try:
+                dev.close()
+            except OSError:
+                pass
+
+    def _linger(self, gen):
+        time.sleep(self.LINGER)
+        with self.lock:
+            if self.gen == gen:
+                self._release()
+
+    def cancel(self):
+        with self.lock:
+            self.gen += 1
+            self._release()
+
+    def capture(self, path, timeout=10.0, rstick=False):
+        """-> {"bind", "label"} | {"timeout": True} (nichts gedrueckt) | {"cancel": True} (Guide/PS-Taste)
+        | {"cancelled": True} (von der Oberflaeche abgebrochen). rstick: auch der rechte Stick zaehlt (N64: C-Tasten),
+        sonst nie ein Stick – ein leichtes Wackeln soll keine Taste belegen."""
+        import select as sel
+        from evdev import ecodes as E
+        sticks = {E.ABS_X, E.ABS_Y} if rstick else {E.ABS_X, E.ABS_Y, E.ABS_RX, E.ABS_RY}
+        with self.lock:
+            self.gen += 1
+            gen = self.gen
+            dev = self._device(path)
+            rest = dict(self.rest)
+        try:
+            while sel.select([dev.fd], [], [], 0)[0]:  # Liegengebliebenes (Loslassen der vorigen Taste …) verwerfen
+                for _ev in dev.read():
+                    pass
+            held = set(dev.active_keys())             # noch gedrueckt: erst loslassen
+            armed = {}                                 # Achse muss erst in Ruhe sein, bevor sie zaehlt
+            for c, (v0, lo, hi) in rest.items():
+                armed[c] = abs(dev.absinfo(c).value - v0) / ((hi - lo) or 1) < 0.3
+            end = time.monotonic() + timeout
+            while time.monotonic() < end:
+                r, _, _ = sel.select([dev.fd], [], [], min(0.2, max(0.0, end - time.monotonic())))
+                if self.gen != gen:
+                    return {"cancelled": True}
+                if not r:
+                    continue
+                for ev in dev.read():
+                    if ev.type == E.EV_KEY:
+                        if ev.value == 0:
+                            held.discard(ev.code)
+                        elif ev.value == 1 and ev.code not in held:
+                            if ev.code == E.BTN_MODE:
+                                return {"cancel": True}
+                            b = {"key": ev.code}
+                            return {"bind": b, "label": binding_label(b)}
+                    elif ev.type == E.EV_ABS and ev.code not in sticks and ev.code in rest:
+                        if E.ABS_HAT0X <= ev.code <= E.ABS_HAT3Y:
+                            if ev.code in (E.ABS_HAT0X, E.ABS_HAT0Y):
+                                if ev.value == 0:
+                                    armed[ev.code] = True
+                                elif armed.get(ev.code):
+                                    b = {"hat": "x" if ev.code == E.ABS_HAT0X else "y", "dir": 1 if ev.value > 0 else -1}
+                                    return {"bind": b, "label": binding_label(b)}
+                            continue
+                        v0, lo, hi = rest[ev.code]
+                        x = abs(ev.value - v0) / ((hi - lo) or 1)
+                        if x < 0.3:
+                            armed[ev.code] = True
+                        elif x > 0.6 and armed.get(ev.code):    # deutlich gedrueckt (Schultertaste als Achse)
+                            b = {"abs": ev.code, "dir": 1 if ev.value > v0 else -1}
+                            return {"bind": b, "label": binding_label(b)}
+            return {"timeout": True}
+        except OSError:
+            if self.gen != gen:
+                return {"cancelled": True}
+            with self.lock:
+                self._release()
+            raise
+        finally:
+            threading.Thread(target=self._linger, args=(gen,), daemon=True).start()
+
+
+PAD_CAPTURE = PadCapture()
+
+
+# ---- mGBA (Kachel "gba"; geprueft am Quelltext von mGBA 0.10.5) ----------------------------------------------
+MGBA_CONFIG = Path.home() / ".config/mgba/config.ini"
+MGBA_QT = Path.home() / ".config/mgba/qt.ini"
+MGBA_PAD = "gba.input.SDLB"                  # Belegung fuer alle Controller ohne eigenes Profil
+# Namen, fuer die mGBA 0.10 eingebaute Profile mitbringt (src/platform/qt/InputProfile.cpp)
+MGBA_BUILTIN_RE = re.compile(r"^(XInput Controller #\d+|Microsoft X-Box 360 pad|Xbox Gamepad \(userspace driver\)|"
+                             r"Xbox 360 Wired Controller|(?:Sony Computer Entertainment )?Wireless Controller|"
+                             r"PLAYSTATION\(R\)3 Controller|Wiimote \(..-..-..-..-..-..\))$", re.M)
+MGBA_DEFAULTS = {
+    "autosave": "1",              # Stand alle 10 s und beim Beenden sichern (Platz 0) ...
+    "autoload": "1",              # ... und beim naechsten Start dort weitermachen
+    "lockAspectRatio": "1",       # Seitenverhaeltnis behalten
+    "lockIntegerScaling": "1",    # ganzzahlig vergroessern: gleich breite, scharfe Pixel (720p/1080p: wenig Rand)
+    "resampleVideo": "0",         # nicht weichzeichnen
+    "interframeBlending": "0",
+    "pauseOnFocusLost": "0",      # Anhalten im Hintergrund macht VoidStation selbst
+    "suspendScreensaver": "1",
+}
+MGBA_KEYS = ["A", "B", "Select", "Start", "Right", "Left", "Up", "Down", "R", "L"]     # GBA-Tastennummern 0…9
+# Zurueckspulen bekommt in mGBA eine Taste, die auf jedem Tastaturlayout gleich ist (Vorgabe ` ist auf deutschen
+# Tastaturen eine Tottaste); was VoidStation schickt, steht in EMU_KEYS
+MGBA_REWIND_KEY = "ScrollLock"               # QKeySequence-Name fuer qt.ini [shortcutKey] holdRewind
+
+
+def mgba_pad_map(pad, bmap):
+    """Belegung fuer mGBA aus Konsolentaste -> Bindung (emu_binds). Tasten -> keyX = SDL-Tastennummer,
+    Schultertasten als Achse -> axisX, Steuerkreuz als Achse -> hat0X. Der linke Stick steuert immer mit."""
+    from evdev import ecodes as E
+    btn, ax = sdl_indices(pad)
+    m = {f"key{k}": "-1" for k in MGBA_KEYS}
+    hat = {}
+    axes = {}
+    for k in MGBA_KEYS:
+        b = bmap.get(k) or {}
+        if "key" in b and b["key"] in btn:
+            m[f"key{k}"] = str(btn[b["key"]])
+        elif "hat" in b:
+            hat[{("y", -1): "Up", ("y", 1): "Down", ("x", -1): "Left", ("x", 1): "Right"}[(b["hat"], b["dir"])]] = \
+                str(MGBA_KEYS.index(k))
+        elif "abs" in b and b["abs"] in ax:
+            axes[k] = (ax[b["abs"]], b["dir"])
+    m.update({f"hat0{d}": hat.get(d, "-1") for d in ("Up", "Right", "Down", "Left")})
+    stick = {}
+    if E.ABS_X in ax:
+        stick["Left"], stick["Right"] = (ax[E.ABS_X], -1), (ax[E.ABS_X], 1)
+    if E.ABS_Y in ax:
+        stick["Up"], stick["Down"] = (ax[E.ABS_Y], -1), (ax[E.ABS_Y], 1)
+    for k, (a, d) in {**stick, **axes}.items():
+        m[f"axis{k}Value"] = str(16384 * d)
+        m[f"axis{k}Axis"] = ("+" if d > 0 else "-") + str(a)
+    return m
+
+
+MGBA_AXIS_KEYS = [f"axis{k}{s}" for k in MGBA_KEYS for s in ("Value", "Axis")]
+
+
+def qt_ini_group(name):
+    """Gruppenname so maskiert, wie QSettings (IniFormat) ihn schreibt (Leerzeichen -> %20 usw.)."""
+    return "".join(c if c.isascii() and (c.isalnum() or c in "_-.") else "".join(f"%{b:02X}" for b in c.encode())
+                   if ord(c) <= 0xFF else f"%U{ord(c):04X}" for c in name)
+
+
+def ini_section_once(app, path, section, values, st, key, remove=()):
+    """Ganzen Abschnitt schreiben, solange er fehlt oder noch so aussieht, wie VoidStation ihn zuletzt schrieb."""
+    cur = ini_read(path).get(section)
+    last = st.get(app, {}).get(key)
+    if cur and cur != last:
+        return False                               # vom Nutzer in mGBA geaendert: bleibt
+    if cur != values:
+        ini_update(path, section, values, remove=remove)
+    st.setdefault(app, {})[key] = dict(values)
+    return True
+
+
+def mgba_prepare():
+    """Vor jedem Start von mGBA: Grundeinstellungen und Controller-Belegung.
+    Hat man in VoidStation eine eigene Tastenbelegung festgelegt, gilt sie immer (sie ist ja ausdruecklich so
+    gewollt); sonst die Vorgabe, aber nur, wo der Nutzer in mGBA selbst nichts geaendert hat."""
+    emu_mute_apply("gba")
+    with EMU_LOCK:
+        st = emu_state_load()
+        wanted = dict(MGBA_DEFAULTS)
+        if SYS_ARCH != "i686":                 # Zurueckspulen kostet jedes Bild Rechenzeit – auf alten Rechnern nicht
+            wanted["rewindEnable"] = "1"
+        ini_defaults("mgba", MGBA_CONFIG, "ports.qt", wanted, st)
+        pads = gamepads()
+        sdl_name = ""
+        if pads:
+            pad = pads[0]
+            probe = sdl_probe()
+            roles, src = pad_roles(pad, probe)
+            bmap, custom = emu_binds("gba", pad, roles=roles)
+            m = mgba_pad_map(pad, bmap)
+            rm = [k for k in MGBA_AXIS_KEYS if k not in m]
+            sdl_name = next((d["name"] for d in probe if d.get("path") == pad["path"]), "") or \
+                (probe[0]["name"] if len(probe) == 1 else "")
+            sections = [(MGBA_PAD, "pad")] + ([(f"gba.input-profile.{sdl_name}", f"profile:{sdl_name}")] if sdl_name else [])
+            for sec, key in sections:
+                if custom:
+                    ini_update(MGBA_CONFIG, sec, m, remove=rm)
+                    st.setdefault("mgba", {})[key] = dict(m)
+                elif not ini_section_once("mgba", MGBA_CONFIG, sec, m, st, key, rm):
+                    log(f"mGBA: eigene Belegung in [{sec}] bleibt")
+            log(f"mGBA: Controller-Belegung fuer {pad['name']} ({src}{', eigene Tastenbelegung' if custom else ''}):", m)
+        # Eingebaute Profile von mGBA (InputProfile.cpp) legen Kurzbefehle auf Controller-Tasten – gezaehlt wie unter
+        # Windows/macOS. Beim PS4-Controller ("Wireless Controller") lag "Laden" auf ✕. Savestates und Spulen macht
+        # jetzt VoidStation (EMU_KEYS, frei belegbar), deshalb alle vier abschalten – fuer den Namen von SDL und
+        # alle, unter denen mGBA schon ein Profil gespeichert hat. Nur, wo der Nutzer nichts eingestellt hat.
+        names = {n for n in MGBA_BUILTIN_RE.findall("\n".join(
+            s[len("gba.input-profile."):] for s in ini_read(MGBA_CONFIG) if s.startswith("gba.input-profile."))) if n}
+        if sdl_name and MGBA_BUILTIN_RE.fullmatch(sdl_name):
+            names.add(sdl_name)
+        for n in sorted(names):
+            grp = "shortcutProfileButton." + qt_ini_group(n)
+            cur = ini_read(MGBA_QT).get(grp, {})
+            fix = {k: "-1" for k in ("loadState", "saveState", "holdFastForward", "holdRewind") if k not in cur}
+            if fix:
+                ini_update(MGBA_QT, grp, fix)
+                log(f"mGBA: Kurzbefehle des eingebauten Profils fuer {n!r} aus:", fix)
+        for k in [k for k in st.setdefault("mgba", {}) if k.startswith(("shortcuts:", "shortcutaxes:"))]:
+            st["mgba"].pop(k, None)                   # Merker aelterer Fassungen
+        # Zurueckspulen (gehalten) auf eine Taste, die xdotool auf jedem Layout schicken kann
+        keys = ini_read(MGBA_QT).get("shortcutKey", {})
+        if "holdRewind" not in keys or (keys["holdRewind"] == MGBA_REWIND_KEY):
+            if keys.get("holdRewind") != MGBA_REWIND_KEY:
+                ini_update(MGBA_QT, "shortcutKey", {"holdRewind": MGBA_REWIND_KEY})
+        emu_state_save(st)
+
+
+# ---- Tastenbelegung in die Emulatoren schreiben (vor jedem Start, emu_prepare) -------------------------------
+# Je Emulator das eigene Format, jeweils am Quelltext der installierten Fassung geprueft. Geschrieben wird
+#   * immer, wenn es in VoidStation eine eigene Belegung fuer den Controller gibt (sie ist ja so gewollt),
+#   * sonst die Vorgabe, aber nur, solange der Nutzer die Belegung im Emulator nicht selbst geaendert hat
+#     (keymap_once: verglichen mit dem, was VoidStation zuletzt geschrieben hat).
+# Rohe Tasten-/Achsennummern zaehlt VoidStation wie SDL unter Linux (sdl_indices); dafuer starten die Emulatoren
+# mit SDL_JOYSTICK_HIDAPI=0. Wo der Emulator SDL-Controllernamen versteht (DuckStation, PPSSPP, Dolphin), schreibt
+# VoidStation diese – dann ist die Zaehlung egal.
+GC_ROLE = {"south": "a", "east": "b", "west": "x", "north": "y", "l1": "lb", "r1": "rb", "l2": "lt", "r2": "rt",
+           "select": "back", "start": "start", "l3": "l3", "r3": "r3",
+           "up": "up", "down": "down", "left": "left", "right": "right"}
+HAT_DIRS = {("y", -1): "up", ("y", 1): "down", ("x", -1): "left", ("x", 1): "right"}
+
+
+def keymap_context(tile):
+    """Erster Controller mit Rollen und Belegung fuer `tile` -> dict oder None (kein Controller)."""
+    pads = gamepads()
+    if not pads:
+        return None
+    pad = pads[0]
+    probe = sdl_probe()
+    roles, src = pad_roles(pad, probe)
+    bmap, custom = emu_binds(tile, pad, roles=roles)
+    info = next((d for d in probe if d.get("path") == pad["path"]), None) or (probe[0] if len(probe) == 1 else {})
+    btn, ax = sdl_indices(pad)
+    return {"pad": pad, "roles": roles, "src": src, "bmap": bmap, "custom": custom, "sdl": info,
+            "index": int(info.get("index", 0) or 0), "btn": btn, "ax": ax}
+
+
+def bind_role(b, roles):
+    """Rolle (PAD_ROLES) einer Bindung, "" fuer alles andere (auch Richtungen des rechten Sticks)."""
+    return next((r for r in PAD_ROLES if roles.get(r) == b), "") if b else ""
+
+
+def bind_raw(ctx, b):
+    """Bindung -> ("button", n) | ("axis", n, ±1) | ("hat", Richtung) | None, gezaehlt wie SDL-Joysticks."""
+    if not b:
+        return None
+    if "key" in b and b["key"] in ctx["btn"]:
+        return ("button", ctx["btn"][b["key"]])
+    if "abs" in b and b["abs"] in ctx["ax"]:
+        return ("axis", ctx["ax"][b["abs"]], b["dir"])
+    if "hat" in b:
+        return ("hat", HAT_DIRS[(b["hat"], b["dir"])])
+    return None
+
+
+def stick_axes(ctx):
+    """SDL-Achsennummern der Sticks: {"lx", "ly", "rx", "ry"} (soweit vorhanden)."""
+    from evdev import ecodes as E
+    return {n: ctx["ax"][c] for n, c in (("lx", E.ABS_X), ("ly", E.ABS_Y), ("rx", E.ABS_RX), ("ry", E.ABS_RY))
+            if c in ctx["ax"]}
+
+
+def keymap_once(app, key, current, wanted, force):
+    """Belegung schreiben? force (eigene Belegung), nichts da, oder noch genau das, was VoidStation zuletzt schrieb.
+    Merkt sich das Geschriebene in emu-defaults.json. -> True, wenn geschrieben werden soll."""
+    st = emu_state_load()
+    last = st.get(app, {}).get(key)
+    empty = not any(v not in (None, "", "-1", -1, "Unset") for v in (current or {}).values())
+    if not (force or empty or current == last or current == wanted):
+        log(f"{app}: eigene Belegung im Emulator bleibt")
+        return False
+    st.setdefault(app, {})[key] = wanted
+    emu_state_save(st)
+    return True
+
+
+def ini_multi_set(path, section, wanted, drop):
+    """Abschnitt mit mehrfachen Schluesseln (DuckStation: "Cross = Keyboard/X" und "Cross = SDL-0/A"): fuer jeden
+    Schluessel aus `wanted` Zeilen entfernen, deren Wert drop(wert) erfuellt, und den neuen Wert (falls nicht None)
+    anhaengen. Alles andere bleibt, wie es ist."""
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    head = f"[{section}]"
+    start = next((i for i, line in enumerate(lines) if line.strip() == head), None)
+    if start is None:
+        lines += ([""] if lines else []) + [head]
+        start = len(lines) - 1
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].strip().startswith("[")), len(lines))
+    body = []
+    for line in lines[start + 1:end]:
+        k, sep, v = line.partition("=")
+        if sep and k.strip() in wanted and drop(v.strip()):
+            continue
+        body.append(line)
+    while body and not body[-1].strip():
+        body.pop()
+    body += [f"{k} = {v}" for k, v in wanted.items() if v is not None]
+    new = lines[:start + 1] + body + ([""] if end < len(lines) else []) + lines[end:]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".vs-tmp")
+    tmp.write_text("\n".join(new) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def ini_multi_get(path, section, keys, keep):
+    """Werte mehrfacher Schluessel eines Abschnitts, die keep(wert) erfuellen -> {Schluessel: Wert | None}."""
+    out = {k: None for k in keys}
+    sec = None
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        t = line.strip()
+        if t.startswith("[") and t.endswith("]"):
+            sec = t[1:-1]
+        elif sec == section and "=" in t:
+            k, _, v = t.partition("=")
+            if k.strip() in out and keep(v.strip()):
+                out[k.strip()] = v.strip()
+    return out
+
+
+# -- DuckStation (AppImage, SDL3; settings.ini [Pad1], src/util/sdl_input_source.cpp, src/core/analog_controller.cpp)
+DUCK_INI = Path.home() / ".local/share/duckstation/settings.ini"
+DUCK_GC = {"a": "A", "b": "B", "x": "X", "y": "Y", "back": "Back", "start": "Start", "l3": "LeftStick",
+           "r3": "RightStick", "lb": "LeftShoulder", "rb": "RightShoulder", "up": "DPadUp", "down": "DPadDown",
+           "left": "DPadLeft", "right": "DPadRight", "lt": "+LeftTrigger", "rt": "+RightTrigger"}
+DUCK_HAT = {"up": "North", "right": "East", "down": "South", "left": "West"}
+
+
+def duck_name(ctx, b):
+    role = bind_role(b, ctx["roles"])
+    if role:
+        return f"SDL-0/{DUCK_GC[GC_ROLE[role]]}"
+    raw = bind_raw(ctx, b)
+    if not raw:
+        return None
+    if raw[0] == "button":
+        return f"SDL-0/Button{raw[1]}"
+    if raw[0] == "axis":
+        return f"SDL-0/{'+' if raw[2] > 0 else '-'}Axis{raw[1]}"
+    return f"SDL-0/Hat0{DUCK_HAT[raw[1]]}"
+
+
+def duck_ready():
+    """DuckStation schon eingerichtet (settings.ini mit [Pad1])? Vorher schreibt VoidStation nichts hinein."""
+    try:
+        return "[Pad1]" in DUCK_INI.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return False
+
+
+def duckstation_prepare(ctx):
+    """[Pad1]: SDL-Belegung neben der Tastatur. Erst, wenn DuckStation einmal gelaufen ist (Einrichtungsassistent
+    legt settings.ini samt [Pad1] an) – vorher wuerde DuckStation die Datei als neu behandeln."""
+    if not duck_ready():
+        log("DuckStation: noch nicht eingerichtet – Belegung beim naechsten Start")
+        return
+    wanted = {b: duck_name(ctx, ctx["bmap"].get(b)) for b, _ in EMU_LAYOUTS["duckstation"]["buttons"]
+              if b not in EMU_ACTIONS}
+    wanted.update({"LLeft": "SDL-0/-LeftX", "LRight": "SDL-0/+LeftX", "LUp": "SDL-0/-LeftY",
+                   "LDown": "SDL-0/+LeftY", "RLeft": "SDL-0/-RightX", "RRight": "SDL-0/+RightX",
+                   "RUp": "SDL-0/-RightY", "RDown": "SDL-0/+RightY"})
+    is_sdl = lambda v: v.startswith("SDL-")
+    cur = ini_multi_get(DUCK_INI, "Pad1", list(wanted), is_sdl)
+    if keymap_once("duckstation", "pad", cur, wanted, ctx["custom"]):
+        ini_multi_set(DUCK_INI, "Pad1", wanted, is_sdl)
+        log("DuckStation: Controller-Belegung", wanted)
+
+
+# -- Snes9x 1.60 (GTK, SDL2-Joystick; snes9x.conf [Joypad 0], gtk_binding.cpp, gtk_control.cpp)
+def snes9x_conf():
+    legacy, new = Path.home() / ".snes9x", Path.home() / ".config/snes9x"
+    return (legacy if legacy.is_dir() and not new.is_dir() else new) / "snes9x.conf"
+
+
+def snes9x_value(ctx, b):
+    """Binding::to_string: "Joystick 1 Button 3", "Joystick 1 Axis 2 + 50%"; Steuerkreuz = Achsen hinter den echten
+    (num_axes + 2*hat: hoch +, runter −; num_axes + 2*hat + 1: links −, rechts +)."""
+    raw, dev = bind_raw(ctx, b), ctx["index"] + 1
+    if not raw:
+        return "Unset"
+    if raw[0] == "button":
+        return f"Joystick {dev} Button {raw[1]}"
+    if raw[0] == "axis":
+        return f"Joystick {dev} Axis {raw[1]} {'+' if raw[2] > 0 else '-'} 50%"
+    n = len(ctx["ax"])
+    axis, sign = {"up": (n, "+"), "down": (n, "-"), "left": (n + 1, "-"), "right": (n + 1, "+")}[raw[1]]
+    return f"Joystick {dev} Axis {axis} {sign} 50%"
+
+
+def snes9x_prepare(ctx):
+    path = snes9x_conf()
+    wanted = {b: snes9x_value(ctx, ctx["bmap"].get(b)) for b, _ in EMU_LAYOUTS["snes9x"]["buttons"]
+              if b not in EMU_ACTIONS}
+    cur = {k: v for k, v in ini_read(path).get("Joypad 0", {}).items() if k in wanted}
+    if keymap_once("snes9x", "pad", cur, wanted, ctx["custom"]):
+        ini_update(path, "Joypad 0", wanted)
+        log("Snes9x: Controller-Belegung", wanted)
+    # Tasten fuer die Extras (EMU_KEYS) – Snes9x gibt keine vor; nur, wo noch nichts eingestellt ist
+    sc = ini_read(path).get("Shortcuts", {})
+    fix = {k: v for k, v in (("QuickSave000", "Keyboard Shift+F1"), ("QuickLoad000", "Keyboard F1"),
+                             ("EmuTurbo", "Keyboard Tab")) if sc.get(k, "Unset") in ("", "Unset")}
+    if fix:
+        ini_update(path, "Shortcuts", fix)
+
+
+# -- Nestopia 1.53 (FLTK, SDL2-Joystick; input.conf [nespad1j], fltkui/inputmanager.cpp; mINI: Kleinschreibung)
+NESTOPIA_INPUT = Path.home() / ".config/nestopia/input.conf"
+
+
+def nestopia_value(ctx, b):
+    raw, port = bind_raw(ctx, b), ctx["index"]
+    if not raw:
+        return ""
+    if raw[0] == "button":
+        return f"j{port}b{raw[1]}"
+    if raw[0] == "axis":
+        return f"j{port}a{raw[1] * 2 + (1 if raw[2] > 0 else 0)}"
+    return f"j{port}h{['up', 'down', 'left', 'right'].index(raw[1])}"
+
+
+def nestopia_prepare(ctx):
+    wanted = {b.lower(): nestopia_value(ctx, ctx["bmap"].get(b)) for b, _ in EMU_LAYOUTS["nestopia"]["buttons"]
+              if b not in EMU_ACTIONS}
+    ini = ini_read(NESTOPIA_INPUT)
+    cur = {k: v for k, v in ini.get("nespad1j", {}).items() if k in wanted}
+    if keymap_once("nestopia", "pad", cur, wanted, ctx["custom"]):
+        ini_update(NESTOPIA_INPUT, "nespad1j", wanted)
+        log("Nestopia: Controller-Belegung", wanted)
+    # Vorspulen: Vorgabe ` ist auf deutschen Tastaturen eine Tottaste -> Tab (FLTK FL_Tab), nur ueber der Vorgabe
+    if ini.get("ui", {}).get("fastforward", "96") in ("", "96"):
+        ini_update(NESTOPIA_INPUT, "ui", {"fastforward": "65289"})
+
+
+# -- PPSSPP 1.20 (SDL2-GameController; PSP/SYSTEM/controls.ini [ControlMapping], Core/KeyMap.cpp, SDL/SDLJoystick.cpp)
+PPSSPP_CTRL = Path.home() / ".config/ppsspp/PSP/SYSTEM/controls.ini"
+PPSSPP_PAD = {"y": 188, "a": 189, "b": 190, "x": 191, "rb": 192, "lb": 193, "back": 196, "start": 197, "l3": 106,
+              "r3": 107, "up": 19, "down": 20, "left": 21, "right": 22, "lt": 4008, "rt": 4010}   # NKCODE / 4000+Achse*2
+# Vorgaben von PPSSPP (RestoreDefault: Tastatur QWERTY + DEFAULT_MAPPING_PAD), aus KeyMapDefaults.cpp erzeugt. Fehlt
+# ein Schluessel, sobald [ControlMapping] existiert, gilt er als unbelegt – deshalb beim ersten Mal alle schreiben.
+PPSSPP_DEFAULTS = {
+    "Up": "1-19,10-19", "Down": "1-20,10-20", "Left": "1-21,10-21", "Right": "1-22,10-22", "Circle": "1-52,10-190",
+    "Cross": "1-54,10-189", "Square": "1-29,10-191", "Triangle": "1-47,10-188", "Start": "1-62,10-197",
+    "Select": "1-50,1-66,10-196", "L": "1-45,10-194", "R": "1-51,10-195", "An.Up": "1-37,10-4003",
+    "An.Down": "1-39,10-4002", "An.Left": "1-38,10-4001", "An.Right": "1-40,10-4000", "Analog limiter": "1-60",
+    "RapidFire": "1-59", "Fast-forward": "1-61", "Pause": "1-111,10-109,10-104,10-4034", "Pause (no menu)": "1-138",
+    "SpeedToggle": "1-68", "Analog speed": "10-4036", "Rewind": "1-67", "Toggle Debugger": "1-142",
+}
+PPSSPP_KEYS = ["Cross", "Circle", "Square", "Triangle", "L", "R", "Start", "Select", "Up", "Down", "Left", "Right"]
+
+
+def ppsspp_prepare(ctx):
+    ini = ini_read(PPSSPP_CTRL)
+    has = "ControlMapping" in ini
+    sec = ini["ControlMapping"] if has else dict(PPSSPP_DEFAULTS)
+    pad_of = lambda v: ",".join(x.strip() for x in v.split(",") if x.strip().startswith("10-")) or None
+    wanted = {}
+    for b in PPSSPP_KEYS:
+        role = bind_role(ctx["bmap"].get(b), ctx["roles"])
+        wanted[b] = f"10-{PPSSPP_PAD[GC_ROLE[role]]}" if role else None
+    cur = {b: pad_of(sec.get(b, "")) for b in PPSSPP_KEYS}
+    stock = {b: pad_of(PPSSPP_DEFAULTS[b]) for b in PPSSPP_KEYS}
+    values = {}
+    # PPSSPPs eigene Vorgabe legt L/R auf Tasten, die SDL nie meldet -> die gilt nicht als eigene Einstellung
+    if keymap_once("ppsspp", "pad", cur, wanted, ctx["custom"] or cur == stock):
+        for b in PPSSPP_KEYS:
+            keep = [x.strip() for x in sec.get(b, "").split(",") if x.strip() and not x.strip().startswith("10-")]
+            values[b] = ",".join(keep + ([wanted[b]] if wanted[b] else []))
+    for k, code in (("Save State", "1-132"), ("Load State", "1-134")):   # F2 / F4 (EMU_KEYS), wo nichts belegt ist
+        if not sec.get(k, "").strip():
+            values[k] = code
+    if not has:
+        values = {**PPSSPP_DEFAULTS, **values}
+    if values:
+        ini_update(PPSSPP_CTRL, "ControlMapping", values)
+        log("PPSSPP: Controller-Belegung", {k: values[k] for k in values if k in PPSSPP_KEYS})
+
+
+# -- melonDS 1.1 (SDL2-Joystick; melonDS.toml [Instance0.Joystick], EmuInstanceInput.cpp)
+MELONDS_TOML = Path.home() / ".config/melonDS/melonDS.toml"
+MELONDS_HAT = {"up": 0x1, "right": 0x2, "down": 0x4, "left": 0x8}
+
+
+def melonds_value(ctx, b):
+    """Taste = Nummer; Steuerkreuz = 0x100 | Hat<<4 | Richtung; Achse = 0xFFFF | 0x10000 | Achse<<24 | Richtung<<20
+    (0 = positiv, 1 = negativ); -1 = frei."""
+    raw = bind_raw(ctx, b)
+    if not raw:
+        return -1
+    if raw[0] == "button":
+        return raw[1]
+    if raw[0] == "axis":
+        return 0xFFFF | 0x10000 | (raw[1] << 24) | ((0 if raw[2] > 0 else 1) << 20)
+    return 0x100 | MELONDS_HAT[raw[1]]
+
+
+def toml_dump(d):
+    """Kleiner TOML-Schreiber fuer melonDS.toml und xemu.toml (Tabellen, Listen von Tabellen, Zahlen,
+    Wahrheitswerte, Texte, Listen davon)."""
+    def key(k):
+        return k if re.fullmatch(r"[A-Za-z0-9_-]+", k) else json.dumps(k, ensure_ascii=False)
+
+    def val(v):
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, (int, float)):
+            return repr(v)
+        if isinstance(v, str):
+            return json.dumps(v, ensure_ascii=False)
+        if isinstance(v, list) and not any(isinstance(x, (dict, list)) for x in v):
+            return "[" + ", ".join(val(x) for x in v) + "]"
+        raise ValueError(f"TOML: {type(v)}")
+
+    out = []
+    is_tables = lambda v: isinstance(v, list) and bool(v) and all(isinstance(x, dict) for x in v)
+
+    def table(t, path, head=True):
+        scal = [(k, v) for k, v in t.items() if not isinstance(v, dict) and not is_tables(v)]
+        subs = [(k, v) for k, v in t.items() if isinstance(v, dict) or is_tables(v)]
+        if head and path and (scal or not subs):
+            out.append("\n[" + ".".join(key(p) for p in path) + "]")
+        out.extend(f"{key(k)} = {val(v)}" for k, v in scal)
+        for k, v in subs:
+            if isinstance(v, dict):
+                table(v, path + [k])
+            else:
+                for item in v:
+                    out.append("\n[[" + ".".join(key(p) for p in path + [k]) + "]]")
+                    table(item, path + [k], head=False)
+    table(d, [])
+    return "\n".join(out).lstrip("\n") + "\n"
+
+
+def melonds_prepare(ctx):
+    import tomllib
+    if not MELONDS_TOML.exists() and (MELONDS_TOML.parent / "melonDS.ini").exists():
+        return                                    # alte ini: melonDS uebernimmt sie selbst beim ersten Start
+    try:
+        root = tomllib.loads(MELONDS_TOML.read_text(encoding="utf-8")) if MELONDS_TOML.exists() else {}
+    except (OSError, ValueError) as e:
+        log("melonDS.toml nicht lesbar, Belegung bleibt:", e)
+        return
+    inst = root.setdefault("Instance0", {})
+    joy = inst.setdefault("Joystick", {})
+    wanted = {b: melonds_value(ctx, ctx["bmap"].get(b)) for b, _ in EMU_LAYOUTS["melonds"]["buttons"]
+              if b not in EMU_ACTIONS}
+    cur = {b: joy.get(b) for b in wanted if b in joy}
+    changed = False
+    if keymap_once("melonds", "pad", cur, wanted, ctx["custom"]):
+        joy.update(wanted)
+        inst["JoystickID"] = ctx["index"]
+        changed = True
+    kb = inst.setdefault("Keyboard", {})
+    if kb.get("HK_FastForward", -1) == -1:        # Vorspulen auf Tab (Qt::Key_Tab), wie in EMU_KEYS
+        kb["HK_FastForward"] = 0x01000001
+        changed = True
+    if changed:
+        try:
+            text = toml_dump(root)
+        except ValueError as e:                   # z. B. Tabellen-Listen: lieber nichts schreiben als zerstoeren
+            log("melonDS.toml: unbekannter Aufbau, Belegung bleibt:", e)
+            return
+        MELONDS_TOML.parent.mkdir(parents=True, exist_ok=True)
+        tmp = MELONDS_TOML.with_suffix(".vs-tmp")
+        tmp.write_text(text, encoding="utf-8")
+        tmp.replace(MELONDS_TOML)
+        log("melonDS: Controller-Belegung", wanted)
+
+
+# -- Dolphin 2609 (SDL3-Gamepad; GCPadNew.ini [GCPad1], ControllerInterface/SDL/SDLGamepad.h, Core/HW/GCPadEmu.cpp)
+DOLPHIN_GC = {"a": "Button S", "b": "Button E", "x": "Button W", "y": "Button N", "back": "Back", "start": "Start",
+              "l3": "Thumb L", "r3": "Thumb R", "lb": "Shoulder L", "rb": "Shoulder R", "up": "Pad N",
+              "down": "Pad S", "left": "Pad W", "right": "Pad E", "lt": "Trigger L", "rt": "Trigger R"}
+
+
+def dolphin_dir():
+    legacy = Path.home() / ".dolphin-emu"
+    return legacy if legacy.is_dir() else Path.home() / ".config/dolphin-emu"
+
+
+def dolphin_expr(name):
+    """Wie MappingCommon::GetExpressionForControl: Namen mit Nicht-Buchstaben in Backticks."""
+    return name if name.isalpha() else f"`{name}`"
+
+
+def dolphin_prepare(ctx):
+    name = ctx["sdl"].get("gcname") or ctx["sdl"].get("name") or ""
+    if not name:
+        log("Dolphin: SDL kennt den Controller nicht – Belegung bleibt")
+        return
+    path = dolphin_dir() / "GCPadNew.ini"
+    m = {}
+    for b, _ in EMU_LAYOUTS["dolphin"]["buttons"]:
+        if b in EMU_ACTIONS:
+            continue
+        role = bind_role(ctx["bmap"].get(b), ctx["roles"])
+        m[b] = dolphin_expr(DOLPHIN_GC[GC_ROLE[role]]) if role else ""
+    wanted = {"Device": f"SDL/0/{name}"}
+    wanted.update({f"Buttons/{b}": m[b] for b in ("A", "B", "X", "Y", "Z", "Start")})
+    wanted.update({f"D-Pad/{b}": m[b] for b in ("Up", "Down", "Left", "Right")})
+    wanted.update({"Triggers/L": m["L"], "Triggers/R": m["R"], "Triggers/L-Analog": m["L"],
+                   "Triggers/R-Analog": m["R"]})
+    for grp, ax in (("Main Stick", "Left"), ("C-Stick", "Right")):   # SDLGamepad: Hochachsen umgedreht (Y+ = hoch)
+        wanted.update({f"{grp}/Up": f"`{ax} Y+`", f"{grp}/Down": f"`{ax} Y-`", f"{grp}/Left": f"`{ax} X-`",
+                       f"{grp}/Right": f"`{ax} X+`"})
+    cur = {k: v for k, v in ini_read(path).get("GCPad1", {}).items() if k in wanted}
+    if cur.get("Device", "").startswith(("XInput2/", "Keyboard")):
+        cur = {}                                  # Tastatur (Vorgabe von Dolphin) gilt als nichts eingestellt
+    if keymap_once("dolphin", "pad", cur, wanted, ctx["custom"]):
+        ini_update(path, "GCPad1", wanted)
+        log("Dolphin: Controller-Belegung", wanted)
+
+
+# -- Flycast 2.7 (Flatpak, SDL2-Joystick; mappings/SDL_<Name>.cfg, core/input/mapping.cpp, sdl/sdl.cpp)
+FLYCAST_MAPPINGS = Path.home() / ".var/app/org.flycast.Flycast/config/flycast/mappings"
+FLYCAST_KEYS = {"A": "btn_a", "B": "btn_b", "X": "btn_x", "Y": "btn_y", "Start": "btn_start",
+                "Up": "btn_dpad1_up", "Down": "btn_dpad1_down", "Left": "btn_dpad1_left", "Right": "btn_dpad1_right",
+                "L": "trigger_left", "R": "trigger_right"}
+
+
+def flycast_file(name):
+    """GamepadDevice::make_mapping_filename: "SDL_" + Name, Sonderzeichen -> "-"."""
+    return FLYCAST_MAPPINGS / ("SDL_" + re.sub(r'[/\\\\:?*|"<>]', "-", name) + ".cfg")
+
+
+def flycast_text(ctx, name):
+    dig, ana, trig = [], [], []
+    for b, opt in FLYCAST_KEYS.items():
+        raw = bind_raw(ctx, ctx["bmap"].get(b))
+        if not raw:
+            continue
+        if raw[0] == "button":
+            dig.append(f"{raw[1]}:{'btn_' + opt if opt.startswith('trigger') else opt}")
+        elif raw[0] == "hat":                     # sdl.cpp: (Hat + 1) << 8 | hoch 0, runter 1, links 2, rechts 3
+            dig.append(f"{(1 << 8) | ['up', 'down', 'left', 'right'].index(raw[1])}:"
+                       f"{'btn_' + opt if opt.startswith('trigger') else opt}")
+        elif opt.startswith("trigger"):
+            ana.append(f"{raw[1]}{'+' if raw[2] > 0 else '-'}:axis_{opt}")
+            trig.append(str(raw[1]))
+        else:                                     # Taste auf einer Achse kennt Flycast so nicht -> frei
+            log(f"Flycast: {b} auf einer Achse wird nicht unterstuetzt")
+    sel = ctx["roles"].get("select")              # Select oeffnet das Flycast-Menue (wie Flycasts eigene Vorgabe)
+    raw = bind_raw(ctx, sel)
+    if raw and raw[0] == "button" and not any(x.startswith(f"{raw[1]}:") for x in dig):
+        dig.append(f"{raw[1]}:btn_menu")
+    st = stick_axes(ctx)
+    if "lx" in st and "ly" in st:
+        ana += [f"{st['lx']}-:axis_left", f"{st['lx']}+:axis_right", f"{st['ly']}-:axis_up", f"{st['ly']}+:axis_down"]
+    lines = ["[emulator]", f"mapping_name = {name}", "dead_zone = 10", "saturation = 100", "rumble_power = 100",
+             "version = 4"] + ([f"triggers = {','.join(trig)}"] if trig else [])
+    lines += ["", "[digital]"] + [f"bind{i} = {x}" for i, x in enumerate(dig)]
+    lines += ["", "[analog]"] + [f"bind{i} = {x}" for i, x in enumerate(ana)]
+    return "\n".join(lines) + "\n"
+
+
+def flycast_prepare(ctx):
+    name = ctx["sdl"].get("name") or ctx["pad"]["name"]
+    path = flycast_file(name)
+    text = flycast_text(ctx, name)
+    cur = path.read_text(encoding="utf-8", errors="replace") if path.exists() else ""
+    if keymap_once("flycast", "pad", {"file": cur or None}, {"file": text}, ctx["custom"]):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(text, encoding="utf-8")
+        log("Flycast: Controller-Belegung", path.name)
+
+
+# -- BIOS: je System ein eigener Ordner share/ROMs/<system>/bios, vom PC aus befuellt. Jeder Emulator liest nur
+# seinen Ordner – so kommen sich gleich grosse Dateien verschiedener Konsolen nicht in die Quere (Saturn- und
+# PS1-BIOS haben beide 512 KiB, die DS-Firmware so viel wie ein Xbox-Flash). VoidStation stellt den Emulator vor dem
+# Start darauf ein, solange er in seinem eigenen Ordner bzw. Pfad nichts Brauchbares findet. Erkannt wird wie in den
+# Emulatoren selbst, der Name ist egal (ausser bei Flycast):
+#   PlayStation 512 KiB (DuckStation bios.h) · PlayStation 2 4–8 MiB (PCSX2 BiosTools.cpp) · Xbox: MCPX-Boot-ROM
+#   512 Byte, Flash-BIOS 256 KiB oder 1 MiB, Festplatte .qcow2 (xemu) · Dreamcast: dc_boot.bin bzw. dc_bios.bin
+#   (Flycast 2.7 sucht nur nach dem Namen, nvmem.cpp) · DS: ARM9 4 KiB, ARM7 16 KiB, Firmware 128/256/512 KiB
+#   (melonDS 1.1 verifyDSBIOS/verifyDSFirmware) · GBA 16 KiB mit Sprungtabelle (mGBA GBAIsBIOS) · Game Boy (Color)
+#   Boot-ROMs nach CRC32 (mGBA GBIsBIOS).
+# In jedem Ordner liegt ein Hinweis in der Sprache der Oberflaeche, ob das BIOS noetig oder optional ist (bios_sync).
+ROMS_DIR = Path.home() / "share" / "ROMs"
+BIOS_OLD = Path.home() / "share" / "BIOS"        # bis Oktober 2026 ein gemeinsamer Ordner – bios_migrate raeumt ihn auf
+BIOS_SYSTEMS = {"psx": True, "ps2": True, "xbox": True,                       # Ordner -> Pflicht?
+                "dreamcast": False, "nds": False, "gba": False, "gbc": False}
+BIOS_NOT = {".txt", ".md", ".nfo", ".url", ".htm", ".html", ".pdf", ".jpg", ".jpeg", ".png", ".ini", ".cfg", ".zip",
+            ".7z", ".rar"}                       # Hinweise und Beiwerk zaehlen nie als BIOS (z. B. 512-Byte-Textdatei)
+GB_BOOT = {0xC2F5CC97: "gb", 0x59C8598E: "gb", 0xE6920754: "gb", 0xEC8A83B9: "sgb", 0x53D0DD63: "sgb",
+           0x41884E46: "gbc", 0xE8EF5318: "gbc", 0xE95DC95D: "gbc", 0xFFD6B0F1: "gbc", 0x570337EA: "gbc"}
+
+
+def _gba_bios(f):
+    """mGBA GBAIsBIOS: die ersten 7 Woerter sind ARM-Sprungbefehle (…xx 00 EA)."""
+    try:
+        with open(f, "rb") as fh:
+            t = fh.read(28)
+    except OSError:
+        return False
+    return len(t) == 28 and all(t[4 * i + 3] == 0xEA and t[4 * i + 2] == 0 for i in range(7))
+
+
+def _gb_boot(f, n):
+    """Game-Boy-Boot-ROM nach CRC32 wie mGBA: "gb" (DMG/MGB), "sgb" oder "gbc" (CGB/AGB), sonst None."""
+    if not 0 < n <= 0x4000:
+        return None
+    try:
+        return GB_BOOT.get(zlib.crc32(f.read_bytes()) & 0xFFFFFFFF)
+    except OSError:
+        return None
+
+
+BIOS_KINDS = {  # Art -> (Ordner unter share/ROMs, Test(Datei, Groesse))
+    "psx": ("psx", lambda f, n: n == 0x80000),
+    # PS2: Hauptteil (.bin, vom Dumper oft .ROM0); .rom1/.rom2/.erom (DVD-Player usw.) laedt PCSX2 selbst dazu
+    "ps2": ("ps2", lambda f, n: 4 << 20 <= n <= 8 << 20 and f.suffix.lower() not in (
+        ".qcow2", ".iso", ".chd", ".rom1", ".rom2", ".erom", ".diff", ".mec", ".nvm")),
+    "mcpx": ("xbox", lambda f, n: n == 512),
+    "flash": ("xbox", lambda f, n: n in (0x40000, 0x100000)),
+    "hdd": ("xbox", lambda f, n: f.suffix.lower() == ".qcow2"),
+    "dc": ("dreamcast", lambda f, n: f.name in ("dc_boot.bin", "dc_bios.bin")),
+    "bios9": ("nds", lambda f, n: n == 0x1000),
+    "bios7": ("nds", lambda f, n: n == 0x4000),
+    "firmware": ("nds", lambda f, n: n in (0x20000, 0x40000, 0x80000)),
+    "gba": ("gba", lambda f, n: n == 0x4000 and _gba_bios(f)),
+    "gb": ("gbc", lambda f, n: _gb_boot(f, n) == "gb"),
+    "sgb": ("gbc", lambda f, n: _gb_boot(f, n) == "sgb"),
+    "gbc": ("gbc", lambda f, n: _gb_boot(f, n) == "gbc"),
+}
+
+
+def bios_dir(system):
+    return ROMS_DIR / system / "bios"
+
+
+def bios_find(kind, root=None, deep=True):
+    """Dateien einer Art im bios-Ordner ihres Systems (bzw. root), mit einer Ebene Unterordnern; oben vor tief,
+    nach Name."""
+    system, test = BIOS_KINDS[kind]
+    root = Path(root) if root else bios_dir(system)
+    out = []
+    try:
+        level = [root]
+        for _ in range(2 if deep else 1):
+            nxt = []
+            for d in level:
+                for f in sorted(d.iterdir(), key=lambda x: x.name.casefold()):
+                    if f.name.startswith("."):
+                        continue
+                    if f.is_dir():
+                        nxt.append(f)
+                    elif f.is_file() and f.suffix.lower() not in BIOS_NOT and test(f, f.stat().st_size):
+                        out.append(f)
+            level = nxt
+    except OSError:
+        pass
+    return out
+
+
+def portal_path(p):
+    """Pfad aus dem Dokumenten-Portal (Dateidialog eines Flatpaks: <Laufzeitordner>/doc/<id>/…)? Von aussen erreichbar,
+    im Flatpak aber nicht (VoidStation hat einen eigenen Laufzeitordner) – solche Pfade gelten als nicht gesetzt."""
+    s = str(p)
+    roots = {os.environ.get("XDG_RUNTIME_DIR", ""), f"/run/user/{os.getuid()}", f"/tmp/voidstation-runtime-{os.getuid()}"}
+    return any(r and s.startswith(r.rstrip("/") + "/doc/") for r in roots) or s.startswith("/run/flatpak/doc/")
+
+
+def bios_dir_has(kind, d):
+    return bool(d) and not portal_path(d) and Path(d).is_dir() and bool(bios_find(kind, d, deep=False))
+
+
+# Je Kachel: was gebraucht wird und wo der Emulator gerade sucht (Ordner bzw. Datei je Art)
+def _duck_bios_dir():
+    v = ini_read(DUCK_INI).get("BIOS", {}).get("SearchDirectory", "bios") or "bios"
+    p = Path(v).expanduser()
+    return p if p.is_absolute() else DUCK_INI.parent / p
+
+
+def _pcsx2_bios_dir():
+    v = ini_read(PCSX2_INI).get("Folders", {}).get("Bios", "bios") or "bios"
+    p = Path(v).expanduser()
+    return p if p.is_absolute() else PCSX2_INI.parent.parent / p
+
+
+def bios_status(tile):
+    """Fuer die Spieleliste: {"ok", "missing": [Art …], "folder"} – None, wenn der Emulator kein BIOS braucht
+    (optionale BIOS-Dateien melden nichts: es fehlt ja nichts)."""
+    tile = {v: k for k, v in ROMS.TILE_TO_SYSTEM.items()}.get(tile, tile)      # auch Ordnername erlaubt
+    emu_paths_refresh()
+    if tile == "duckstation":
+        ok = bios_dir_has("psx", _duck_bios_dir()) or bios_dir_has("ps2", _duck_bios_dir()) or bool(bios_find("psx"))
+        return {"ok": ok, "missing": [] if ok else ["bios"], "folder": "psx"}
+    if tile == "pcsx2":
+        ok = bios_dir_has("ps2", _pcsx2_bios_dir()) or bool(bios_find("ps2"))
+        return {"ok": ok, "missing": [] if ok else ["bios"], "folder": "ps2"}
+    if tile == "xemu":
+        files = xemu_files(xemu_load())
+        miss = [k for k in ("mcpx", "flash", "hdd") if not files.get(k) and not bios_find(k)]
+        return {"ok": not miss, "missing": miss, "folder": "xbox"}
+    return None
+
+
+def bios_prepare(tile):
+    """Vor dem Start: Emulator auf seinen bios-Ordner stellen, wenn er selbst nichts findet."""
+    with EMU_LOCK:
+        if tile == "duckstation" and duck_ready():
+            cur = _duck_bios_dir()
+            if not (bios_dir_has("psx", cur) or bios_dir_has("ps2", cur)):
+                hit = (bios_find("psx") or [None])[0]
+                if hit:
+                    ini_update(DUCK_INI, "BIOS", {"SearchDirectory": str(hit.parent)})
+                    log("DuckStation: BIOS aus", hit.parent)
+        elif tile == "pcsx2" and pcsx2_ready():
+            cur = _pcsx2_bios_dir()
+            if not bios_dir_has("ps2", cur):
+                hit = (bios_find("ps2") or [None])[0]
+                if hit:
+                    ini_update(PCSX2_INI, "Folders", {"Bios": str(hit.parent)})
+                    log("PCSX2: BIOS aus", hit.parent)
+                    cur = hit.parent
+            # Gewaehltes BIOS ([Filenames] BIOS): fehlt es oder liegt es nicht im Ordner (Einrichtung ohne BIOS
+            # abgeschlossen, Datei umbenannt), das erste aus dem Ordner nehmen
+            name = ini_read(PCSX2_INI).get("Filenames", {}).get("BIOS", "")
+            have = bios_find("ps2", cur, deep=False) if Path(cur).is_dir() else []
+            if have and not any(f.name == name for f in have):
+                ini_update(PCSX2_INI, "Filenames", {"BIOS": have[0].name})
+                log("PCSX2: BIOS-Datei", have[0].name)
+        elif tile == "xemu":
+            xemu_bios()
+        elif tile == "gba":
+            mgba_bios()
+        elif tile == "melonds":
+            melonds_bios()
+        elif tile == "flycast":
+            flycast_bios()
+
+
+# mGBA 0.10: [ports.qt] gba.bios / gb.bios / sgb.bios / gbc.bios (SettingsView.cpp), Rueckfall <config>/<art>_bios.bin
+# (gba/core.c, gb/core.c). Ob das Startlogo laeuft ("useBios", "skipBios"), bleibt mGBAs Sache.
+MGBA_BIOS = {"gba": "gba.bios", "gb": "gb.bios", "sgb": "sgb.bios", "gbc": "gbc.bios"}
+
+
+def mgba_bios():
+    cur = ini_read(MGBA_CONFIG).get("ports.qt", {})
+    todo = {}
+    for kind, key in MGBA_BIOS.items():
+        if cur.get(key) and Path(cur[key]).is_file():
+            continue                                  # in mGBA eingestellt (oder schon von VoidStation) und da
+        if (MGBA_CONFIG.parent / f"{kind}_bios.bin").is_file():
+            continue                                  # mGBAs eigener Ordner
+        hit = (bios_find(kind) or [None])[0]
+        if hit:
+            todo[key] = str(hit)
+    if todo:
+        ini_update(MGBA_CONFIG, "ports.qt", todo)
+        log("mGBA: BIOS", todo)
+
+
+# melonDS 1.1: [Emu] ExternalBIOSEnable, [DS] BIOS9Path/BIOS7Path/FirmwarePath (Config.cpp). Mit eigenem BIOS braucht
+# melonDS alle drei, sonst startet es gar nicht (verifySetup) – deshalb nur einschalten, wenn alle drei da sind, und
+# wieder aus, wenn VoidStation es eingeschaltet hatte und sie fehlen. Selbst in melonDS eingerichtet: bleibt.
+def melonds_bios():
+    import tomllib
+    if not MELONDS_TOML.exists() and (MELONDS_TOML.parent / "melonDS.ini").exists():
+        return                                        # alte ini: melonDS uebernimmt sie selbst beim ersten Start
+    try:
+        root = tomllib.loads(MELONDS_TOML.read_text(encoding="utf-8")) if MELONDS_TOML.exists() else {}
+    except (OSError, ValueError) as e:
+        log("melonDS.toml nicht lesbar, BIOS bleibt:", e)
+        return
+    emu, ds = root.setdefault("Emu", {}), root.setdefault("DS", {})
+    st = emu_state_load()
+    mine = bool(st.get("melonds", {}).get("bios"))
+    hits = {k: (bios_find(k) or [None])[0] for k in ("bios9", "bios7", "firmware")}
+    changed = False
+    if all(hits.values()):
+        if emu.get("ExternalBIOSEnable") and not mine:
+            return                                    # in melonDS selbst eingerichtet
+        want = {"BIOS9Path": str(hits["bios9"]), "BIOS7Path": str(hits["bios7"]),
+                "FirmwarePath": str(hits["firmware"])}
+        if any(ds.get(k) != v for k, v in want.items()) or emu.get("ExternalBIOSEnable") is not True:
+            ds.update(want)
+            emu["ExternalBIOSEnable"] = True
+            changed = True
+            log("melonDS: BIOS und Firmware", want)
+        st.setdefault("melonds", {})["bios"] = True
+    elif mine:
+        emu["ExternalBIOSEnable"] = False             # Dateien weg: zurueck zum eingebauten BIOS
+        st.setdefault("melonds", {}).pop("bios", None)
+        changed = True
+        log("melonDS: BIOS-Dateien fehlen – eingebautes BIOS")
+    if not changed:
+        emu_state_save(st)
+        return
+    try:
+        text = toml_dump(root)
+    except ValueError as e:
+        log("melonDS.toml: unbekannter Aufbau, BIOS bleibt:", e)
+        return
+    MELONDS_TOML.parent.mkdir(parents=True, exist_ok=True)
+    tmp = MELONDS_TOML.with_suffix(".vs-tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(MELONDS_TOML)
+    emu_state_save(st)
+
+
+# Flycast 2.7: emu.cfg [config] Dreamcast.BiosPath (Liste mit ";", option.h), sucht dort zuerst dc_boot.bin bzw.
+# dc_bios.bin (oslib.cpp findFlash) – nur im Ordner selbst, nicht darunter.
+FLYCAST_CFG = Path.home() / ".var/app/org.flycast.Flycast/config/flycast/emu.cfg"
+
+
+def flycast_bios():
+    d = bios_dir("dreamcast")
+    if not bios_find("dc", deep=False):
+        return
+    cur = ini_read(FLYCAST_CFG).get("config", {}).get("Dreamcast.BiosPath", "")
+    if str(d) in [p.strip().strip('"') for p in cur.split(";")]:
+        return
+    ini_update_spaced(FLYCAST_CFG, "config", {"Dreamcast.BiosPath": f"{cur};{d}" if cur else str(d)})
+    log("Flycast: BIOS-Ordner", d)
+
+
+def bios_migrate():
+    """Alter gemeinsamer Ordner share/BIOS: PlayStation-, PS2- und Xbox-Dateien (mehr stand dort nie beschrieben) und
+    Dreamcast-BIOS nach Namen in den Ordner ihres Systems verschieben. Was nicht eindeutig ist, bleibt liegen; ein
+    leerer Ordner verschwindet. Die Emulatoren stellt bios_prepare beim naechsten Start auf den neuen Ort."""
+    if not BIOS_OLD.is_dir():
+        return
+    for kind in ("psx", "ps2", "mcpx", "flash", "hdd", "dc"):
+        for f in bios_find(kind, BIOS_OLD):
+            if kind == "flash" and "firm" in f.name.lower():
+                continue                              # 256 KiB: eher DS-Firmware – lieber liegen lassen
+            dest = bios_dir(BIOS_KINDS[kind][0])
+            try:
+                dest.mkdir(parents=True, exist_ok=True)
+                t = dest / f.name
+                if t.exists():
+                    if t.stat().st_size == f.stat().st_size and t.read_bytes() == f.read_bytes():
+                        f.unlink()
+                    continue
+                shutil.move(str(f), str(t))
+                log("BIOS verschoben:", f, "->", t)
+            except OSError as e:
+                log("BIOS nicht verschoben:", f, e)
+    for d in sorted((p for p in BIOS_OLD.rglob("*") if p.is_dir()), key=lambda p: -len(p.parts)) + [BIOS_OLD]:
+        try:
+            d.rmdir()                                 # nur, wenn leer
+        except OSError:
+            pass
+
+
+_I18N = {}
+
+
+def i18n_text(key, lang):
+    """Text aus web/i18n wie in der Oberflaeche: Sprache, dann Englisch, dann Deutsch."""
+    for l in (lang, "en", "de"):
+        if l not in _I18N:
+            try:
+                _I18N[l] = json.loads((WEB / "i18n" / f"{l}.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                _I18N[l] = {}
+        if key in _I18N[l]:
+            return _I18N[l][key]
+    return ""
+
+
+BIOS_SYNC_LOCK = threading.Lock()
+
+
+def bios_sync():
+    """Beim Start und nach einem Sprachwechsel: alten Ordner share/BIOS aufloesen, je System einen bios-Ordner mit
+    Hinweis anlegen ("BIOS noetig – LIESMICH.txt" bzw. "BIOS optional – …", in der Sprache der Oberflaeche). Fassungen
+    in anderen Sprachen raeumt er weg; andere Dateien im Ordner bleiben unberuehrt."""
+    with BIOS_SYNC_LOCK:
+        try:
+            bios_migrate()
+        except Exception as e:  # noqa: BLE001 – darf den Start nie stoeren
+            log("BIOS: alter Ordner:", e)
+        lang = ui_lang()
+        names = {i18n_text(f"bios.file.{k}", l["id"]) for l in LANGS for k in ("req", "opt")} - {""}
+        for system, req in BIOS_SYSTEMS.items():
+            if not (ROMS_DIR / system).is_dir():
+                continue
+            d = bios_dir(system)
+            name = i18n_text("bios.file." + ("req" if req else "opt"), lang)
+            body = i18n_text(f"bios.readme.{system}", lang)
+            if not name or not body:
+                continue
+            data = (body.replace("\r\n", "\n").replace("\n", "\r\n") + "\r\n").encode("utf-8")   # auch fuer Windows
+            try:
+                d.mkdir(exist_ok=True)
+                for old in names - {name}:
+                    (d / old).unlink(missing_ok=True)
+                f = d / name
+                if not f.exists() or f.read_bytes() != data:
+                    f.write_bytes(data)
+            except OSError as e:
+                log(f"BIOS-Hinweis {system}:", e)
+
+
+# -- PCSX2 2.8 (Flatpak, SDL3-Gamepad; inis/PCSX2.ini [Pad1], pcsx2/Input/SDLInputSource.cpp, SIO/Pad/PadDualshock2.cpp)
+PCSX2_INI = Path.home() / ".var/app/net.pcsx2.PCSX2/config/PCSX2/inis/PCSX2.ini"
+PCSX2_GC = {"a": "FaceSouth", "b": "FaceEast", "x": "FaceWest", "y": "FaceNorth", "back": "Back", "start": "Start",
+            "l3": "LeftStick", "r3": "RightStick", "lb": "LeftShoulder", "rb": "RightShoulder", "up": "DPadUp",
+            "down": "DPadDown", "left": "DPadLeft", "right": "DPadRight", "lt": "+LeftTrigger", "rt": "+RightTrigger"}
+
+
+def pcsx2_name(ctx, b):
+    """ConvertKeyToString: "SDL-0/FaceSouth", roh "SDL-0/JoyButton3", "SDL-0/+JoyAxis2", "SDL-0/Hat0North"."""
+    role = bind_role(b, ctx["roles"])
+    if role:
+        return f"SDL-0/{PCSX2_GC[GC_ROLE[role]]}"
+    raw = bind_raw(ctx, b)
+    if not raw:
+        return None
+    if raw[0] == "button":
+        return f"SDL-0/JoyButton{raw[1]}"
+    if raw[0] == "axis":
+        return f"SDL-0/{'+' if raw[2] > 0 else '-'}JoyAxis{raw[1]}"
+    return f"SDL-0/Hat0{DUCK_HAT[raw[1]]}"
+
+
+def pcsx2_ready():
+    """PCSX2 eingerichtet (PCSX2.ini da, Einrichtungsassistent durch)? Vorher behandelt PCSX2 die Datei als neu."""
+    ini = ini_read(PCSX2_INI)
+    return "Pad1" in ini and ini.get("UI", {}).get("SetupWizardIncomplete", "false").lower() != "true"
+
+
+def pcsx2_prepare(ctx):
+    if not pcsx2_ready():
+        log("PCSX2: noch nicht eingerichtet – Belegung beim naechsten Start")
+        return
+    wanted = {b: pcsx2_name(ctx, ctx["bmap"].get(b)) for b, _ in EMU_LAYOUTS["pcsx2"]["buttons"] if b not in EMU_ACTIONS}
+    wanted.update({"LLeft": "SDL-0/-LeftX", "LRight": "SDL-0/+LeftX", "LUp": "SDL-0/-LeftY", "LDown": "SDL-0/+LeftY",
+                   "RLeft": "SDL-0/-RightX", "RRight": "SDL-0/+RightX", "RUp": "SDL-0/-RightY",
+                   "RDown": "SDL-0/+RightY"})
+    is_sdl = lambda v: v.startswith("SDL-")
+    cur = ini_multi_get(PCSX2_INI, "Pad1", list(wanted), is_sdl)
+    if keymap_once("pcsx2", "pad", cur, wanted, ctx["custom"]):
+        ini_multi_set(PCSX2_INI, "Pad1", wanted, is_sdl)
+        log("PCSX2: Controller-Belegung", wanted)
+    hk = ini_read(PCSX2_INI).get("Hotkeys", {})
+    if not hk.get("HoldTurbo"):                   # Vorspulen halten (EMU_KEYS) – PCSX2 gibt dafuer nichts vor
+        ini_update(PCSX2_INI, "Hotkeys", {"HoldTurbo": "Keyboard/Tab"})
+
+
+# -- Rosalie's Mupen GUI 0.9 (Flatpak, SDL3; RMG/mupen64plus.cfg, RMG-Input/main.cpp, RMG-Core/Settings.cpp)
+RMG_CFG = Path.home() / ".var/app/com.github.Rosalie241.RMG/config/RMG/mupen64plus.cfg"
+RMG_SECTION = "Rosalie's Mupen GUI - Input Plugin Profile 0"
+RMG_KEYS = {"A": "A", "B": "B", "Z": "ZTrigger", "L": "LeftShoulder", "R": "RightShoulder", "Start": "Start",
+            "CUp": "CButtonUp", "CDown": "CButtonDown", "CLeft": "CButtonLeft", "CRight": "CButtonRight",
+            "Up": "DpadUp", "Down": "DpadDown", "Left": "DpadLeft", "Right": "DpadRight"}
+# SDL_GamepadButton bzw. SDL_GamepadAxis (SDL3, gleiche Nummern wie SDL2) und deren Namen
+SDL_GC_BUTTON = {"a": 0, "b": 1, "x": 2, "y": 3, "back": 4, "guide": 5, "start": 6, "l3": 7, "r3": 8, "lb": 9, "rb": 10,
+                 "up": 11, "down": 12, "left": 13, "right": 14}
+SDL_GC_BUTTON_NAME = {"a": "a", "b": "b", "x": "x", "y": "y", "back": "back", "start": "start", "l3": "leftstick",
+                      "r3": "rightstick", "lb": "leftshoulder", "rb": "rightshoulder", "up": "dpup", "down": "dpdown",
+                      "left": "dpleft", "right": "dpright"}
+SDL_GC_AXIS = {"lt": 4, "rt": 5}
+STICK_AXIS = {"rs_up": (3, 0), "rs_down": (3, 1), "rs_left": (2, 0), "rs_right": (2, 1)}   # (Achse, 1 = positiv)
+SDL_HAT_MASK = {"up": 1, "right": 2, "down": 4, "left": 8}
+
+
+def stick_role(b, roles):
+    return next((r for r in STICK_ROLES if roles.get(r) == b), "") if b else ""
+
+
+def rmg_mapping(ctx, b):
+    """-> (InputType, Name, Data, ExtraData) als Texte; InputType: 0 Gamepad-Taste, 1 Gamepad-Achse,
+    2 Joystick-Taste, 3 Joystick-Achse, 4 Joystick-Hat (RMG-Input common.hpp). Frei: alles leer."""
+    role = bind_role(b, ctx["roles"])
+    if role:
+        gc = GC_ROLE[role]
+        if gc in SDL_GC_AXIS:
+            return ("1", ("lefttrigger" if gc == "lt" else "righttrigger") + "+", str(SDL_GC_AXIS[gc]), "1")
+        return ("0", SDL_GC_BUTTON_NAME[gc], str(SDL_GC_BUTTON[gc]), "0")
+    st = stick_role(b, ctx["roles"])
+    if st:
+        ax, pos = STICK_AXIS[st]
+        return ("1", ("rightx" if ax == 2 else "righty") + ("+" if pos else "-"), str(ax), str(pos))
+    raw = bind_raw(ctx, b)
+    if not raw:
+        return ("", "", "", "")
+    if raw[0] == "button":
+        return ("2", f"button {raw[1]}", str(raw[1]), "0")
+    if raw[0] == "axis":
+        return ("3", f"axis {raw[1]}{'+' if raw[2] > 0 else '-'}", str(raw[1]), "1" if raw[2] > 0 else "0")
+    return ("4", f"hat 0 {raw[1]}", "0", str(SDL_HAT_MASK[raw[1]]))
+
+
+def m64_str(v):
+    return '"' + str(v).replace('"', "") + '"'
+
+
+def rmg_prepare(ctx):
+    sec = ini_read(RMG_CFG).get(RMG_SECTION, {})
+    wanted = {}
+    for b, key in RMG_KEYS.items():
+        t, name, data, extra = rmg_mapping(ctx, ctx["bmap"].get(b))
+        wanted.update({f"{key}_InputType": m64_str(t), f"{key}_Name": m64_str(name), f"{key}_Data": m64_str(data),
+                       f"{key}_ExtraData": m64_str(extra)})
+    for key, ax, pos in (("AnalogStickUp", 1, 0), ("AnalogStickDown", 1, 1), ("AnalogStickLeft", 0, 0),
+                         ("AnalogStickRight", 0, 1)):
+        wanted.update({f"{key}_InputType": '"1"', f"{key}_Name": m64_str(("leftx" if ax == 0 else "lefty") + "-+"[pos]),
+                       f"{key}_Data": m64_str(ax), f"{key}_ExtraData": m64_str(pos)})
+    cur = {k: sec[k] for k in wanted if k in sec}
+    # Ohne Abschnitt ist bei RMG kein Controller eingesteckt – dann alles anlegen ("Automatic": erstes Gamepad)
+    plugged = sec.get("PluggedIn", "False") == "True" and sec.get("DeviceType") in ("2", "4")
+    if keymap_once("rmg", "pad", cur, wanted, ctx["custom"] or not plugged):
+        base = {} if plugged else {"PluggedIn": "True", "DeviceName": '"Automatic"', "DeviceType": "2",
+                                   "DevicePath": '""', "DeviceSerial": '""', "Deadzone": "9", "Sensitivity": "100",
+                                   "Pak": "0", "RemoveDuplicateMappings": "True", "FilterEventsForButtons": "True",
+                                   "FilterEventsForAxis": "True"}
+        ini_update_spaced(RMG_CFG, RMG_SECTION, {**base, **wanted})
+        log("RMG: Controller-Belegung", {k: wanted[k] for k in wanted if k.endswith("_Name")})
+
+
+def ini_update_spaced(path, section, values):
+    """ini_update fuer Dateien im Stil "Schluessel = Wert" (mupen64plus.cfg): vorhandene Zeilen bleiben, wie sie sind."""
+    ini_update(path, section, values)
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return
+    out, sec = [], None
+    for line in lines:
+        t = line.strip()
+        if t.startswith("[") and t.endswith("]"):
+            sec = t[1:-1]
+        elif sec == section and "=" in line and " = " not in line:
+            k, _, v = line.partition("=")
+            if k.strip() in values:
+                line = f"{k.strip()} = {v.strip()}"
+        out.append(line)
+    tmp = path.with_name(path.name + ".vs-tmp")
+    tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+# -- xemu 0.8 (Flatpak, SDL3-Gamepad; xemu.toml, config_spec.yml, ui/xemu-input.c) – auch BIOS-Pfade und Savestate-Taste
+XEMU_TOML = Path.home() / ".var/app/app.xemu.xemu/data/xemu/xemu/xemu.toml"
+XEMU_KEYS = {"A": "a", "B": "b", "X": "x", "Y": "y", "White": "lshoulder", "Black": "rshoulder", "Back": "back",
+             "Start": "start", "LS": "lstick_btn", "RS": "rstick_btn", "Up": "dpad_up", "Down": "dpad_down",
+             "Left": "dpad_left", "Right": "dpad_right"}
+XEMU_DEFAULT = {"a": 0, "b": 1, "x": 2, "y": 3, "back": 4, "guide": 5, "start": 6, "lstick_btn": 7, "rstick_btn": 8,
+                "lshoulder": 9, "rshoulder": 10, "dpad_up": 11, "dpad_down": 12, "dpad_left": 13, "dpad_right": 14,
+                "axis_left_x": 0, "axis_left_y": 1, "axis_right_x": 2, "axis_right_y": 3, "axis_trigger_left": 4,
+                "axis_trigger_right": 5}
+XEMU_SNAPSHOT = "VoidStation"
+
+
+def xemu_load():
+    import tomllib
+    try:
+        return tomllib.loads(XEMU_TOML.read_text(encoding="utf-8")) if XEMU_TOML.exists() else {}
+    except (OSError, ValueError) as e:
+        log("xemu.toml nicht lesbar:", e)
+        return None
+
+
+def xemu_files(root):
+    """Gesetzte und vorhandene Dateien aus [sys.files] -> {"mcpx", "flash", "hdd"}."""
+    f = ((root or {}).get("sys") or {}).get("files") or {}
+    out = {}
+    for k, key in (("mcpx", "bootrom_path"), ("flash", "flashrom_path"), ("hdd", "hdd_path")):
+        v = f.get(key)
+        if isinstance(v, str) and v and not portal_path(v) and Path(v).is_file():
+            out[k] = v
+    return out
+
+
+def xemu_mapping(ctx):
+    """controller_mapping fuer den ersten Controller: Xbox-Taste -> SDL-Gamepad-Taste (-1 = frei). xemu kann nur
+    Gamepad-Tasten tauschen; LT/RT nur auf Trigger-Achsen."""
+    m = {}
+    for b, key in XEMU_KEYS.items():
+        bind = ctx["bmap"].get(b)
+        gc = GC_ROLE.get(bind_role(bind, ctx["roles"]), "")
+        if gc in SDL_GC_BUTTON:
+            m[key] = SDL_GC_BUTTON[gc]
+        else:
+            if bind:
+                log(f"xemu: {b} geht nur auf eine Controllertaste – bleibt frei")
+            m[key] = -1
+    for b, key, dflt in (("LT", "axis_trigger_left", 4), ("RT", "axis_trigger_right", 5)):
+        bind = ctx["bmap"].get(b)
+        gc = GC_ROLE.get(bind_role(bind, ctx["roles"]), "")
+        m[key] = SDL_GC_AXIS[gc] if gc in SDL_GC_AXIS else (-1 if not bind else dflt)
+    return m
+
+
+def xemu_prepare(ctx):
+    root = xemu_load()
+    if root is None:
+        return
+    changed = False
+    # Savestates: F5 auf einen Schnappschuss legen (F5 laden, Umschalt+F5 speichern, s. EMU_KEYS)
+    sc = root.setdefault("general", {}).setdefault("snapshots", {}).setdefault("shortcuts", {})
+    if not sc.get("f5"):
+        sc["f5"] = XEMU_SNAPSHOT
+        changed = True
+    guid = (ctx.get("sdl") or {}).get("guid", "")
+    if guid:
+        maps = root.setdefault("input", {}).setdefault("gamepad_mappings", [])
+        ent = next((m for m in maps if isinstance(m, dict) and m.get("gamepad_id") == guid), None)
+        cm = dict(XEMU_DEFAULT, **((ent or {}).get("controller_mapping") or {}))
+        wanted = xemu_mapping(ctx)
+        cur = {k: cm.get(k) for k in wanted}
+        stock = {k: XEMU_DEFAULT[k] for k in wanted}
+        if keymap_once("xemu", "pad", cur, wanted, ctx["custom"] or cur == stock):
+            if ent is None:
+                ent = {"gamepad_id": guid}
+                maps.append(ent)
+            ent.setdefault("controller_mapping", {}).update(wanted)
+            changed = True
+            log("xemu: Controller-Belegung", wanted)
+    if changed:
+        xemu_save(root)
+
+
+def xemu_save(root):
+    try:
+        text = toml_dump(root)
+    except ValueError as e:
+        log("xemu.toml: unbekannter Aufbau, bleibt:", e)
+        return
+    XEMU_TOML.parent.mkdir(parents=True, exist_ok=True)
+    tmp = XEMU_TOML.with_suffix(".vs-tmp")
+    tmp.write_text(text, encoding="utf-8")
+    tmp.replace(XEMU_TOML)
+
+
+def xemu_bios():
+    """BIOS-Dateien aus share/ROMs/xbox/bios, wo xemu noch nichts (Vorhandenes) eingetragen hat – auch ohne
+    Controller (die Belegung schreibt xemu_prepare nur mit einem)."""
+    root = xemu_load()
+    if root is None:
+        return
+    files = root.setdefault("sys", {}).setdefault("files", {})
+    have = xemu_files(root)
+    changed = False
+    for k, key in (("mcpx", "bootrom_path"), ("flash", "flashrom_path"), ("hdd", "hdd_path")):
+        hit = (bios_find(k) or [None])[0]
+        if k not in have and hit:
+            files[key] = str(hit)
+            changed = True
+            log(f"xemu: {key} =", hit)
+    if changed:
+        xemu_save(root)
+
+
+# -- Azahar 2126 (Flatpak, SDL2-GameController; azahar-emu/qt-config.ini [Controls] profiles\N\…, QSettings-Format)
+AZAHAR_INI = Path.home() / ".var/app/org.azahar_emu.Azahar/config/azahar-emu/qt-config.ini"
+AZAHAR_KEYS = {"A": "button_a", "B": "button_b", "X": "button_x", "Y": "button_y", "Up": "button_up",
+               "Down": "button_down", "Left": "button_left", "Right": "button_right", "L": "button_l", "R": "button_r",
+               "Start": "button_start", "Select": "button_select", "ZL": "button_zl", "ZR": "button_zr"}
+# Schnellspeichern/-laden und Turbo (EMU_KEYS): Azahar gibt keine Tasten vor
+AZAHAR_HOTKEYS = {"Quick Save": "Shift+F1", "Quick Load": "F1", "Toggle Turbo Mode": "F12"}
+
+
+def azahar_param(ctx, b):
+    """ParamPackage (Schluessel alphabetisch, wie Azahar es schreibt). Gamepad-Tasten fuer alle Controller
+    (maptype:all), rohe Tasten fuer genau diesen (guid+port)."""
+    role = bind_role(b, ctx["roles"])
+    if role:
+        gc = GC_ROLE[role]
+        if gc in SDL_GC_AXIS:
+            return f"api:controller,axis:{SDL_GC_AXIS[gc]},direction:+,engine:sdl,guid:0,maptype:all,port:0,threshold:0.5"
+        return f"api:controller,button:{SDL_GC_BUTTON[gc]},engine:sdl,guid:0,maptype:all,port:0"
+    raw = bind_raw(ctx, b)
+    guid = (ctx.get("sdl") or {}).get("guid", "")
+    if not raw or not guid:
+        return "code:0,engine:keyboard"            # frei (leer hiesse: Azahars Tastatur-Vorgabe)
+    if raw[0] == "button":
+        return f"button:{raw[1]},engine:sdl,guid:{guid},port:0"
+    if raw[0] == "axis":
+        return f"axis:{raw[1]},direction:{'+' if raw[2] > 0 else '-'},engine:sdl,guid:{guid},port:0,threshold:0.5"
+    return f"direction:{raw[1]},engine:sdl,guid:{guid},hat:0,port:0"
+
+
+def qt_unquote(v):
+    v = (v or "").strip()
+    return v[1:-1] if len(v) >= 2 and v[0] == v[-1] == '"' else v
+
+
+def azahar_prepare(ctx):
+    ini = ini_read(AZAHAR_INI)
+    ctl = ini.get("Controls", {})
+    try:
+        idx = int(qt_unquote(ctl.get("profile", "0")) or 0) + 1
+        size = int(qt_unquote(ctl.get("profiles\\size", "0")) or 0)
+    except ValueError:
+        idx, size = 1, 0
+    if idx > max(size, 1):
+        idx = 1
+    pre = f"profiles\\{idx}\\"
+    wanted = {pre + k: azahar_param(ctx, ctx["bmap"].get(b)) for b, k in AZAHAR_KEYS.items()}
+    wanted[pre + "circle_pad"] = "api:controller,axis_x:0,axis_y:1,deadzone:0.100000,engine:sdl,guid:0,maptype:all,port:0"
+    wanted[pre + "c_stick"] = "api:controller,axis_x:2,axis_y:3,deadzone:0.100000,engine:sdl,guid:0,maptype:all,port:0"
+    # Wert mit "\default=true" gilt als Vorgabe (Tastatur) – also nichts eingestellt
+    cur = {k: (None if ctl.get(k + "\\default", "false") == "true" else qt_unquote(ctl.get(k)) or None) for k in wanted}
+    values = {}
+    if keymap_once("azahar", "pad", cur, wanted, ctx["custom"]):
+        for k, v in wanted.items():
+            values[k] = f'"{v}"'
+            values[k + "\\default"] = "false"
+        if size < 1:
+            values.update({"profiles\\size": "1", pre + "name": "Default", pre + "name\\default": "false"})
+        values.update({pre + "input_maptype": "0", pre + "input_maptype\\default": "false"})
+    if values:
+        ini_update(AZAHAR_INI, "Controls", values)
+        log("Azahar: Controller-Belegung", {k[len(pre):]: v for k, v in wanted.items()})
+    sc = ini_read(AZAHAR_INI).get("Shortcuts", {})
+    fix = {}
+    for name, keyseq in AZAHAR_HOTKEYS.items():
+        k = "Main%20Window\\" + name.replace(" ", "%20") + "\\KeySeq"
+        if sc.get(k + "\\default", "true") == "true" or not qt_unquote(sc.get(k)):
+            fix.update({k: keyseq, k + "\\default": "false"})
+    if fix:
+        ini_update(AZAHAR_INI, "Shortcuts", fix)
+
+
+# -- Cemu 2.6 (Flatpak, SDL2-GameController; Cemu/controllerProfiles/controller0.xml, input/InputManager.cpp,
+#    input/emulated/VPADController.h, input/api/Controller.h)
+CEMU_PROFILE = Path.home() / ".var/app/info.cemu.Cemu/config/Cemu/controllerProfiles/controller0.xml"
+CEMU_VPAD = {"A": 1, "B": 2, "X": 3, "Y": 4, "L": 5, "R": 6, "ZL": 7, "ZR": 8, "Plus": 9, "Minus": 10, "Up": 11,
+             "Down": 12, "Left": 13, "Right": 14, "L3": 15, "R3": 16}
+CEMU_STICKS = {17: 45, 18: 39, 19: 44, 20: 38, 21: 47, 22: 41, 23: 46, 24: 40}   # Sticks: kAxis*/kRotation*
+CEMU_TRIGGER = {"lt": 42, "rt": 43}                                               # kTriggerXP / kTriggerYP
+
+
+def cemu_mapping(ctx):
+    """VPAD-Taste -> Cemu-Tastennummer (SDL-Gamepad-Taste n = kButton n). Rohe Tasten kennt Cemu so nicht -> frei."""
+    m = {}
+    for b, vp in CEMU_VPAD.items():
+        bind = ctx["bmap"].get(b)
+        gc = GC_ROLE.get(bind_role(bind, ctx["roles"]), "")
+        if gc in CEMU_TRIGGER:
+            m[vp] = CEMU_TRIGGER[gc]
+        elif gc in SDL_GC_BUTTON:
+            m[vp] = SDL_GC_BUTTON[gc]
+        elif bind:
+            log(f"Cemu: {b} geht nur auf eine Controllertaste – bleibt frei")
+    m.update(CEMU_STICKS)
+    return m
+
+
+def cemu_prepare(ctx):
+    import xml.etree.ElementTree as ET
+    guid = (ctx.get("sdl") or {}).get("guid", "")
+    root = None
+    if CEMU_PROFILE.exists():
+        try:
+            root = ET.parse(CEMU_PROFILE).getroot()
+        except (OSError, ET.ParseError) as e:
+            log("Cemu: controller0.xml nicht lesbar, bleibt:", e)
+            return
+        if (root.findtext("type") or "").strip() != "Wii U GamePad":
+            log("Cemu: anderer Controller-Typ eingestellt – Belegung bleibt")
+            return
+    ctl = None
+    if root is not None:
+        ctl = next((c for c in root.findall("controller") if (c.findtext("api") or "").strip() == "SDLController"), None)
+    wanted = cemu_mapping(ctx)
+    cur = {}
+    if ctl is not None:
+        for e in ctl.findall("mappings/entry"):
+            try:
+                cur[int(e.findtext("mapping"))] = int(e.findtext("button"))
+            except (TypeError, ValueError):
+                pass
+    stock = {1: 1, 2: 0, 3: 3, 4: 2, 5: 9, 6: 10, 7: 42, 8: 43, 9: 6, 10: 4, 11: 11, 12: 12, 13: 13, 14: 14, 15: 7, 16: 8,
+             **CEMU_STICKS}                         # Cemus eigene Vorgabe fuer SDL-Controller (VPADController.cpp)
+    if not keymap_once("cemu", "pad", {str(k): v for k, v in cur.items()}, {str(k): v for k, v in wanted.items()},
+                       ctx["custom"] or cur == stock):
+        return
+    if ctl is None and not guid:
+        log("Cemu: SDL kennt den Controller nicht – Belegung bleibt")
+        return
+    if root is None:
+        root = ET.Element("emulated_controller")
+        ET.SubElement(root, "type").text = "Wii U GamePad"
+    if ctl is None:                                # Tastatur o. Ae. bleibt daneben
+        ctl = ET.SubElement(root, "controller")
+        ET.SubElement(ctl, "api").text = "SDLController"
+        ET.SubElement(ctl, "uuid").text = f"0_{guid}"
+        ET.SubElement(ctl, "display_name").text = (ctx.get("sdl") or {}).get("gcname") or ctx["pad"]["name"]
+        for grp, dz in (("axis", "0.25"), ("rotation", "0.25"), ("trigger", "0.25")):
+            g = ET.SubElement(ctl, grp)
+            ET.SubElement(g, "deadzone").text = dz
+            ET.SubElement(g, "range").text = "1"
+    old = ctl.find("mappings")
+    if old is not None:
+        ctl.remove(old)
+    maps = ET.SubElement(ctl, "mappings")
+    for vp, btn in sorted(wanted.items()):
+        e = ET.SubElement(maps, "entry")
+        ET.SubElement(e, "mapping").text = str(vp)
+        ET.SubElement(e, "button").text = str(btn)
+    ET.indent(root, space="\t")
+    CEMU_PROFILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CEMU_PROFILE.with_suffix(".vs-tmp")
+    tmp.write_text('<?xml version="1.0" encoding="UTF-8"?>\n' + ET.tostring(root, encoding="unicode") + "\n",
+                   encoding="utf-8")
+    tmp.replace(CEMU_PROFILE)
+    log("Cemu: Controller-Belegung", wanted)
+
+
+# -- MAME 0.282 (SDL2-GameController mit -joystickprovider sdlgame; ~/.mame/cfg/default.cfg, osd/modules/input/
+#    input_sdl.cpp, emu/inpttype.ipp, emu/input.cpp). Void startet MAME ueber /usr/bin/mame (Skript): beim allerersten
+#    Aufruf legt es nur ~/.mame samt mame.ini an und beendet sich – das erledigt VoidStation vorher (mame_setup).
+MAME_DIR = Path.home() / ".mame"
+MAME_CFG = MAME_DIR / "cfg" / "default.cfg"
+# Port -> Tastatur-/Maus-Vorgabe von MAME (inpttype.ipp), bleibt vor der Controllertaste stehen
+MAME_PORTS = {"Button1": ("P1_BUTTON1", "KEYCODE_LCONTROL OR MOUSECODE_1_BUTTON1 OR GUNCODE_1_BUTTON1"),
+              "Button2": ("P1_BUTTON2", "KEYCODE_LALT OR MOUSECODE_1_BUTTON3 OR GUNCODE_1_BUTTON2"),
+              "Button3": ("P1_BUTTON3", "KEYCODE_SPACE OR MOUSECODE_1_BUTTON2"),
+              "Button4": ("P1_BUTTON4", "KEYCODE_LSHIFT"), "Button5": ("P1_BUTTON5", "KEYCODE_Z"),
+              "Button6": ("P1_BUTTON6", "KEYCODE_X"), "Coin": ("COIN1", "KEYCODE_5"), "Start": ("START1", "KEYCODE_1"),
+              "Up": ("P1_JOYSTICK_UP", "KEYCODE_UP"), "Down": ("P1_JOYSTICK_DOWN", "KEYCODE_DOWN"),
+              "Left": ("P1_JOYSTICK_LEFT", "KEYCODE_LEFT"), "Right": ("P1_JOYSTICK_RIGHT", "KEYCODE_RIGHT")}
+MAME_STICK = {"Up": "JOYCODE_1_YAXIS_UP_SWITCH", "Down": "JOYCODE_1_YAXIS_DOWN_SWITCH",
+              "Left": "JOYCODE_1_XAXIS_LEFT_SWITCH", "Right": "JOYCODE_1_XAXIS_RIGHT_SWITCH"}
+
+
+def mame_items(sdl):
+    """SDL-Gamepad-Taste (GC_ROLE-Name) -> MAME-Eingabe. Nummeriert werden nur vorhandene Tasten, der Reihe nach
+    A, B, X, Y, LB, RB, (Trigger, wenn SDL sie als Taste meldet), L3, R3 – wie input_sdl.cpp; analoge Trigger sind
+    SLIDER1/2 (gedrueckt negativ)."""
+    btns, axes = (sdl or {}).get("buttons"), (sdl or {}).get("axes") or {}
+    have = (lambda n: btns.get(n) is not None) if isinstance(btns, dict) else (lambda n: True)
+    out, n = {}, 1
+    for name in ("a", "b", "x", "y", "lb", "rb", "lt", "rt", "l3", "r3"):
+        if name in ("lt", "rt"):
+            b = axes.get(name)
+            if b and "button" in b:
+                out[name], n = f"BUTTON{n}", n + 1
+            elif b is not None or not isinstance(btns, dict):
+                out[name] = "SLIDER1_NEG_SWITCH" if name == "lt" else "SLIDER2_NEG_SWITCH"
+        elif have(name):
+            out[name], n = f"BUTTON{n}", n + 1
+    out.update({"back": "SELECT", "start": "START", "up": "HAT1UP", "down": "HAT1DOWN", "left": "HAT1LEFT",
+                "right": "HAT1RIGHT"})
+    return out
+
+
+def mame_seqs(ctx):
+    items = mame_items(ctx.get("sdl"))
+    out = {}
+    for b, (port, kb) in MAME_PORTS.items():
+        bind = ctx["bmap"].get(b)
+        gc = GC_ROLE.get(bind_role(bind, ctx["roles"]), "")
+        seq = kb + (f" OR JOYCODE_1_{items[gc]}" if gc in items else "")
+        if bind and gc not in items:
+            log(f"MAME: {b} geht nur auf eine Controllertaste – bleibt frei")
+        if b in MAME_STICK:
+            seq += f" OR {MAME_STICK[b]}"         # linker Stick steuert immer mit
+        out[port] = seq
+    return out
+
+
+def mame_setup():
+    """Erster Start: mame.ini und Ordner anlegen lassen (das Skript von Void tut beim ersten Aufruf nur das)."""
+    if (MAME_DIR / "mame.ini").exists() or not shutil.which("mame"):
+        return
+    try:
+        subprocess.run(["mame"], cwd=str(Path.home()), stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                       stderr=subprocess.DEVNULL, timeout=60)
+        log("MAME: Grundeinstellung angelegt")
+    except (OSError, subprocess.SubprocessError) as e:
+        log("MAME: Grundeinstellung:", e)
+
+
+def mame_prepare(ctx):
+    import xml.etree.ElementTree as ET
+    mame_setup()
+    root = None
+    if MAME_CFG.exists():
+        try:
+            root = ET.parse(MAME_CFG).getroot()
+        except (OSError, ET.ParseError) as e:
+            log("MAME: default.cfg nicht lesbar, bleibt:", e)
+            return
+    wanted = mame_seqs(ctx)
+    inp = None
+    if root is not None:
+        sysn = next((x for x in root.findall("system") if x.get("name") == "default"), None)
+        inp = sysn.find("input") if sysn is not None else None
+    cur = {}
+    if inp is not None:
+        for port in inp.findall("port"):
+            if port.get("type") in wanted:
+                cur[port.get("type")] = " ".join((port.findtext("newseq") or "").split())
+    if not keymap_once("mame", "pad", cur, wanted, ctx["custom"]):
+        return
+    if root is None:
+        root = ET.Element("mameconfig", version="10")
+    sysn = next((x for x in root.findall("system") if x.get("name") == "default"), None)
+    if sysn is None:
+        sysn = ET.SubElement(root, "system", name="default")
+    inp = sysn.find("input")
+    if inp is None:
+        inp = ET.SubElement(sysn, "input")
+    for port in [x for x in inp.findall("port") if x.get("type") in wanted]:
+        inp.remove(port)
+    for t, seq in wanted.items():
+        port = ET.SubElement(inp, "port", type=t)
+        ET.SubElement(port, "newseq", type="standard").text = seq
+    ET.indent(root, space="    ")
+    MAME_CFG.parent.mkdir(parents=True, exist_ok=True)
+    tmp = MAME_CFG.with_suffix(".vs-tmp")
+    tmp.write_text('<?xml version="1.0"?>\n' + ET.tostring(root, encoding="unicode") + "\n", encoding="utf-8")
+    tmp.replace(MAME_CFG)
+    log("MAME: Controller-Belegung", wanted)
+
+
+MAME_NAMES = BASE / "cache" / "mame-names.json"
+
+
+def mame_names(sets):
+    """ROM-Set -> Spielname (mame -listfull), zwischengespeichert je MAME-Fassung. Unbekannte Sets fehlen einfach."""
+    exe = shutil.which("mame")
+    if not sets or not exe:
+        return {}
+    try:
+        stamp = str(Path("/usr/libexec/mame/mame").stat().st_mtime_ns)
+    except OSError:
+        stamp = exe
+    try:
+        cache = json.loads(MAME_NAMES.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cache = {}
+    if cache.get("stamp") != stamp:
+        cache = {"stamp": stamp, "names": {}}
+    names = cache["names"]
+    todo = [x for x in sets if x not in names]
+    if todo:
+        r = run(["/usr/libexec/mame/mame" if Path("/usr/libexec/mame/mame").exists() else exe, "-listfull", *todo],
+                timeout=30)
+        for line in (r.stdout if r else "").splitlines()[1:]:
+            m = re.match(r'^(\S+)\s+"(.*)"\s*$', line)
+            if m:
+                names[m.group(1)] = m.group(2)
+        for x in todo:
+            names.setdefault(x, "")              # unbekannt: nicht jedes Mal neu fragen
+        try:
+            MAME_NAMES.parent.mkdir(parents=True, exist_ok=True)
+            MAME_NAMES.write_text(json.dumps(cache, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
+    return {k: v for k, v in names.items() if k in sets and v}
+
+
+# -- RetroArch 1.22 (udev-Joypad; ~/.config/retroarch/retroarch.cfg input_player1_*, input/drivers_joypad/udev_joypad.c)
+RETROARCH_CFG = Path.home() / ".config/retroarch/retroarch.cfg"
+RETROARCH_KEYS = {"B": "b", "A": "a", "Y": "y", "X": "x", "L": "l", "R": "r", "L2": "l2", "R2": "r2", "L3": "l3",
+                  "R3": "r3", "Start": "start", "Select": "select", "Up": "up", "Down": "down", "Left": "left",
+                  "Right": "right"}
+
+
+def retroarch_cfg_read(path=None):
+    out = {}
+    try:
+        for line in (path or RETROARCH_CFG).read_text(encoding="utf-8", errors="replace").splitlines():
+            k, sep, v = line.partition("=")
+            if sep and not k.strip().startswith("#"):
+                out[k.strip()] = v.strip().strip('"')
+    except OSError:
+        pass
+    return out
+
+
+def retroarch_cfg_write(values, path=None):
+    """Schluessel in retroarch.cfg setzen ("key = \\"wert\\""), Rest bleibt."""
+    path = path or RETROARCH_CFG
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    todo = dict(values)
+    for i, line in enumerate(lines):
+        k = line.partition("=")[0].strip()
+        if k in todo:
+            lines[i] = f'{k} = "{todo.pop(k)}"'
+    lines += [f'{k} = "{v}"' for k, v in todo.items()]
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(path.name + ".vs-tmp")
+    tmp.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    tmp.replace(path)
+
+
+def retroarch_indices(pad):
+    """(Tasten, Achsen) wie RetroArchs udev-Joypad: KEY_UP..KEY_DOWN, BTN_MISC.., dann der Rest; Achsen ohne Hats."""
+    from evdev import ecodes as E
+    keys = sorted(pad["keys"])
+    order = [k for k in keys if E.KEY_UP <= k <= E.KEY_DOWN] + [k for k in keys if k >= E.BTN_MISC] \
+        + [k for k in keys if k < E.KEY_UP] + [k for k in keys if E.KEY_DOWN < k < E.BTN_MISC]
+    axes = sorted(a for a in pad["axes"] if a < E.ABS_MISC and not E.ABS_HAT0X <= a <= E.ABS_HAT3Y)
+    return {k: i for i, k in enumerate(order)}, {a: i for i, a in enumerate(axes)}
+
+
+def retroarch_prepare(ctx):
+    cfg = retroarch_cfg_read()
+    if cfg.get("input_joypad_driver", "udev") == "udev":
+        btn, ax = retroarch_indices(ctx["pad"])
+    else:
+        btn, ax = ctx["btn"], ctx["ax"]
+    wanted = {}
+    for b, k in RETROARCH_KEYS.items():
+        bind = ctx["bmap"].get(b)
+        v_btn = v_ax = "nul"
+        if bind and "key" in bind and bind["key"] in btn:
+            v_btn = str(btn[bind["key"]])
+        elif bind and "abs" in bind and bind["abs"] in ax:
+            v_ax = f"{'+' if bind['dir'] > 0 else '-'}{ax[bind['abs']]}"
+        elif bind and "hat" in bind:
+            v_btn = "h0" + HAT_DIRS[(bind["hat"], bind["dir"])]
+        wanted[f"input_player1_{k}_btn"] = v_btn
+        wanted[f"input_player1_{k}_axis"] = v_ax
+    cur = {k: (None if cfg.get(k, "nul") == "nul" else cfg[k]) for k in wanted}
+    values = {}
+    if keymap_once("retroarch", "pad", cur, wanted, ctx["custom"]):
+        values.update(wanted)
+    if ctx["bmap"].get("rewind") and cfg.get("rewind_enable", "false") != "true":
+        values["rewind_enable"] = "true"           # Zurueckspulen belegt: in RetroArch einschalten
+    if values:
+        retroarch_cfg_write(values)
+        log("RetroArch: Controller-Belegung", {k: v for k, v in values.items() if k.endswith("_btn") and v != "nul"})
+
+
+def retroarch_dirs():
+    cfg = retroarch_cfg_read()
+    exp = lambda v: Path(os.path.expanduser(v.replace(":/", "~/.config/retroarch/", 1) if v.startswith(":/") else v))
+    cores = [exp(cfg["libretro_directory"])] if cfg.get("libretro_directory") not in (None, "", "default") else []
+    cores += [Path.home() / ".config/retroarch/cores", Path("/usr/lib/libretro")]
+    infos = [exp(cfg["libretro_info_path"])] if cfg.get("libretro_info_path") not in (None, "", "default") else []
+    infos += [Path.home() / ".config/retroarch/cores", Path.home() / ".config/retroarch/info",
+              Path("/usr/share/libretro/info")]
+    return cores, infos
+
+
+# Bevorzugte Kerne je Endung, wenn mehrere passen (sonst der erste nach Namen)
+RETROARCH_PREFER = ["mgba", "snes9x", "nestopia", "genesis_plus_gx", "picodrive", "mupen64plus_next", "pcsx_rearmed",
+                    "beetle_psx", "mednafen_pce_fast", "fbneo", "stella", "prosystem", "handy", "mednafen_ngp",
+                    "mednafen_wswan", "gambatte", "melonds", "ppsspp"]
+
+
+def retroarch_cores():
+    """Installierte Kerne -> Endungen aus ihren .info-Dateien (supported_extensions)."""
+    cores, infos = retroarch_dirs()
+    out = {}
+    for d in cores:
+        try:
+            for so in sorted(d.glob("*_libretro.so")):
+                out.setdefault(so, set())
+        except OSError:
+            pass
+    for so in out:
+        for d in infos:
+            info = d / (so.stem + ".info")
+            try:
+                m = re.search(r'^supported_extensions\s*=\s*"([^"]*)"', info.read_text(errors="replace"), re.M)
+            except OSError:
+                continue
+            if m:
+                out[so] = {"." + e.lower() for e in m.group(1).split("|") if e}
+                break
+    return out
+
+
+def retroarch_exts():
+    exts = set()
+    for e in retroarch_cores().values():
+        exts |= e
+    return exts
+
+
+def retroarch_core(target):
+    ext = target.suffix.lower()
+    cands = [so for so, e in retroarch_cores().items() if ext in e]
+    if not cands:
+        return None
+    rank = lambda so: next((i for i, p in enumerate(RETROARCH_PREFER) if so.stem == f"{p}_libretro"), 99)
+    return sorted(cands, key=lambda so: (rank(so), so.name))[0]
+
+
+# ---- Flatpak oder AppImage: wo die Emulatoren ihre Einstellungen haben ---------------------------------------
+# Seit Oktober 2026 kommen PCSX2, xemu, Flycast, Azahar, Cemu und RMG als AppImage (entpackt unter apps/<id>, wie
+# DuckStation): ohne Sandbox, ohne Dokumenten-Portal, Dateidialoge wie gewohnt. Ein frueher installiertes Flatpak laeuft
+# weiter, bis das naechste Update wechselt (_from_flatpak kopiert die Ordner). Die Pfade der Belegungs- und BIOS-
+# Funktionen richten sich danach, welche Fassung gerade installiert ist (emu_paths_refresh).
+_H = Path.home()
+_FP = _H / ".var/app"
+EMU_DIRS = {  # Kachel -> [(Ordner im Flatpak, Ordner beim AppImage)], der erste traegt die Einstellungsdatei
+    "pcsx2": [(_FP / "net.pcsx2.PCSX2/config/PCSX2", _H / ".config/PCSX2")],
+    "xemu": [(_FP / "app.xemu.xemu/data/xemu", _H / ".local/share/xemu")],
+    "flycast": [(_FP / "org.flycast.Flycast/config/flycast", _H / ".config/flycast"),
+                (_FP / "org.flycast.Flycast/data/flycast", _H / ".local/share/flycast")],
+    "azahar": [(_FP / "org.azahar_emu.Azahar/config/azahar-emu", _H / ".config/azahar-emu"),
+               (_FP / "org.azahar_emu.Azahar/data/azahar-emu", _H / ".local/share/azahar-emu")],
+    "cemu": [(_FP / "info.cemu.Cemu/config/Cemu", _H / ".config/Cemu"), (_FP / "info.cemu.Cemu/data/Cemu", _H / ".local/share/Cemu"),
+             (_FP / "info.cemu.Cemu/cache/Cemu", _H / ".cache/Cemu")],
+    "rmg": [(_FP / "com.github.Rosalie241.RMG/config/RMG", _H / ".config/RMG"),
+            (_FP / "com.github.Rosalie241.RMG/data/RMG", _H / ".local/share/RMG"),
+            (_FP / "com.github.Rosalie241.RMG/cache/RMG", _H / ".cache/RMG")],
+}
+
+
+def emu_dirs(tid):
+    return EMU_DIRS.get(tid, [])
+
+
+def emu_native(tid):
+    """Laeuft die Kachel als AppImage (entpackt)? Sonst (noch) als Flatpak."""
+    return (APPDIR / tid / "AppRun").exists()
+
+
+def emu_dir(tid, i=0):
+    fp, nat = EMU_DIRS[tid][i]
+    return nat if emu_native(tid) else fp
+
+
+def emu_paths_refresh():
+    global PCSX2_INI, RMG_CFG, XEMU_TOML, AZAHAR_INI, CEMU_PROFILE, FLYCAST_MAPPINGS, FLYCAST_CFG
+    PCSX2_INI = emu_dir("pcsx2") / "inis/PCSX2.ini"
+    RMG_CFG = emu_dir("rmg") / "mupen64plus.cfg"
+    XEMU_TOML = emu_dir("xemu") / "xemu/xemu.toml"
+    AZAHAR_INI = emu_dir("azahar") / "qt-config.ini"
+    CEMU_PROFILE = emu_dir("cemu") / "controllerProfiles/controller0.xml"
+    FLYCAST_MAPPINGS = emu_dir("flycast") / "mappings"
+    FLYCAST_CFG = emu_dir("flycast") / "emu.cfg"
+
+
+emu_paths_refresh()
+
+
+KEYMAP_WRITERS = {"duckstation": duckstation_prepare, "snes9x": snes9x_prepare, "nestopia": nestopia_prepare,
+                  "ppsspp": ppsspp_prepare, "melonds": melonds_prepare, "dolphin": dolphin_prepare,
+                  "flycast": flycast_prepare, "pcsx2": pcsx2_prepare, "rmg": rmg_prepare, "xemu": xemu_prepare,
+                  "azahar": azahar_prepare, "cemu": cemu_prepare, "mame": mame_prepare, "retroarch": retroarch_prepare}
+# Hinweise der Tastenbelegung, die nur gelten, solange der Emulator noch nicht eingerichtet ist
+KEYMAP_NOTE_READY = {"duckstation": lambda: duck_ready(), "pcsx2": lambda: pcsx2_ready()}
+
+
+def keymap_prepare(tile):
+    """Vor dem Start eines Emulators (ausser mGBA, s. mgba_prepare): Belegung in dessen Einstellungen schreiben."""
+    fn = KEYMAP_WRITERS.get(tile)
+    if not fn:
+        return
+    with EMU_LOCK:
+        ctx = keymap_context(tile)
+    if not ctx:
+        return
+    with EMU_LOCK:
+        fn(ctx)
+
+
+# ---- Ton aus je Emulator (Spieleliste: "Spiel stumm") ----------------------------------------------------------
+# Geschaltet wird der Schalter des Emulators selbst, damit VoidStation und das Menue des Emulators uebereinstimmen.
+# mGBA 0.10: [ports.qt] mute (Window.cpp Audio -> Stumm; CoreController liest es beim Start).
+# Laeuft der Emulator gerade, schreibt er beim Beenden seine Einstellungen zurueck – deshalb merkt sich VoidStation
+# den Wunsch zusaetzlich und setzt ihn vor dem naechsten Start noch einmal (emu_mute_apply).
+EMU_MUTE = {"gba": lambda: (MGBA_CONFIG, "ports.qt", "mute")}
+
+
+def emu_muted(tile):
+    """True/False fuer Emulatoren, die VoidStation stumm schalten kann, sonst None."""
+    spec = EMU_MUTE.get(tile)
+    if not spec:
+        return None
+    path, sec, key = spec()
+    return ini_read(path).get(sec, {}).get(key, "0").strip().lower() not in ("0", "", "false")
+
+
+def emu_set_mute(tile, on):
+    spec = EMU_MUTE.get(tile)
+    if not spec:
+        raise ValueError("Dieser Emulator laesst sich nicht stumm schalten")
+    path, sec, key = spec()
+    with EMU_LOCK:
+        ini_update(path, sec, {key: "1" if on else "0"})
+        st = emu_state_load()
+        st.setdefault("mute", {})[tile] = bool(on)
+        emu_state_save(st)
+    log(f"{tile}: Ton {'aus' if on else 'an'}")
+
+
+def emu_mute_apply(tile):
+    """Vor dem Start: einen in VoidStation gesetzten Wunsch (noch) einmal schreiben, danach gilt wieder der Emulator."""
+    spec = EMU_MUTE.get(tile)
+    if not spec:
+        return
+    with EMU_LOCK:
+        st = emu_state_load()
+        want = (st.get("mute") or {}).pop(tile, None)
+        if want is None:
+            return
+        path, sec, key = spec()
+        ini_update(path, sec, {key: "1" if want else "0"})
+        emu_state_save(st)
+
+
+def emu_front(tile):
+    """True, wenn das aktive Fenster wirklich zur Kachel `tile` gehoert (laeuft und ist vorn)."""
+    if not tile or APPS.front() != tile:
+        return False
+    proc = APPS._get(tile)
+    act = active_window()
+    return bool(proc and act and any(int(w[0], 16) == act for w in APPS._windows_of(tile, proc)))
+
+
+EMU_HELD = set()                              # gerade gehaltene Tasten (keydown bzw. Umschalter an), werden sicher geloest
+
+
+def emu_action(action, down):
+    """Extra aus der Tastenbelegung ("<Kachel>:<save|load|ff|rewind>"): Taste an den Emulator schicken (EMU_KEYS).
+    Nur, wenn genau dieser Emulator vorn ist; eine gehaltene Taste wird beim Loslassen immer freigegeben."""
+    tile, _, act = str(action).partition(":")
+    spec = EMU_KEYS.get(tile, {}).get(act)
+    if not spec or not shutil.which("xdotool"):
+        return
+    how, key = spec
+    if how in ("hold", "toggle") and not down:
+        if key in EMU_HELD:
+            EMU_HELD.discard(key)
+            if how == "hold":
+                run(["xdotool", "keyup", key])
+            elif emu_front(tile):                 # Umschalter: zweiter Druck stellt zurueck
+                run(["xdotool", "key", "--clearmodifiers", key])
+        return
+    if not down or not emu_front(tile):
+        return
+    if how == "tap":
+        run(["xdotool", "key", "--clearmodifiers", key])
+    elif how == "toggle":
+        EMU_HELD.add(key)
+        run(["xdotool", "key", "--clearmodifiers", key])
+    else:
+        EMU_HELD.add(key)
+        run(["xdotool", "keydown", key])
+    log(f"{tile}:", act)
+
+
+# ---- Vollbild ------------------------------------------------------------------------------------------------
+# Programm -> (Startoption, Taste zum Umschalten). Beide aus dem Quelltext der Programme: mGBA (commandline.c "-f",
+# Window.cpp Strg+F), DuckStation (qthost.cpp "-fullscreen", hotkeys.cpp F11).
+EMU_FULLSCREEN = {"mgba-qt": ("-f", "ctrl+f"), "duckstation": ("-fullscreen", "F11")}
+# Dasselbe je Kachel fuer Flatpaks (Programm ist dort "flatpak"): PCSX2 (QtHost.cpp "-fullscreen", Alt+Enter),
+# RMG (main.cpp "-f", Alt+Enter), xemu (QEMU "-full-screen", F11), Azahar (citra_qt.cpp "-f", F11), Cemu
+# (LaunchSettings.cpp "-f", MainWindow.cpp F11). Die Option steht vor der Spieldatei (und ROM_ARGS).
+EMU_FULLSCREEN_TILE = {"pcsx2": ("-fullscreen", "alt+Return"), "rmg": ("-f", "alt+Return"), "xemu": ("-full-screen", "F11"),
+                       "azahar": ("-f", "F11"), "cemu": ("-f", "F11")}
+# Emulatoren mit einem einzigen Fenster ohne eigene Vollbild-Startoption: Vollbild ueber den Fenstermanager
+EMU_WM_FULLSCREEN = {"snes9x", "nestopia", "melonds", "stella", "vice", "retroarch"}
+FS_HOLD = 0.8                                # L3 so lange halten -> Vollbild an/aus
+SAVESTATE_HOLD = 0.5                         # Savestate speichern/laden erst nach so langem Halten (nicht aus Versehen)
+HOLD_ACTIONS = {"fullscreen": FS_HOLD, "save": SAVESTATE_HOLD, "load": SAVESTATE_HOLD}   # je Aktion (Kachel egal)
+
+
+def emu_kind(args):
+    p = Path(str(args[0]))
+    return p.parent.name.lower() if p.name == "AppRun" else p.name
+
+
+def emu_fullscreen_wanted(tid):
+    t = find_tile(tid) or {}
+    if isinstance(t.get("fullscreen"), bool):
+        return t["fullscreen"]
+    return bool(settings_load().get("emu_fullscreen", True))
+
+
+# ---- Einrichtungsassistenten vorwegnehmen ------------------------------------------------------------------
+# PCSX2 und DuckStation schreiben beim allerersten Start sofort ihre Standardeinstellungen (QtHost::InitializeConfig,
+# Core::InitializeBaseSettingsLayer) und zeigen erst danach den Assistenten, solange ein Merkzeichen
+# (SetupWizardIncomplete) gesetzt ist. VoidStation startet das Programm deshalb einmal unsichtbar
+# (QT_QPA_PLATFORM=offscreen, Rueckfall xcb), wartet auf die Datei, beendet es und traegt ein, was der Assistent
+# abfragt: Merkzeichen aus, Spieleordner; BIOS und Controller setzen bios_prepare und die Belegung wie bei jedem
+# Start. Cemu (wxWidgets) zeigt "Getting started", solange settings.xml fehlt – die legt VoidStation selbst an.
+def _first_run_patch_pcsx2(ini):
+    cur = ini_read(ini)
+    ini_update(ini, "UI", {"SetupWizardIncomplete": "false"})
+    gl = cur.get("GameList", {})
+    if not gl.get("Paths") and not gl.get("RecursivePaths"):
+        ini_update(ini, "GameList", {"RecursivePaths": str(ROMS.rom_dir / "ps2")})
+
+
+def _first_run_patch_duck(ini):
+    cur = ini_read(ini)
+    ini_update(ini, "Main", {"SetupWizardIncomplete": "false"})
+    gl = cur.get("GameList", {})
+    if not gl.get("Paths") and not gl.get("RecursivePaths"):
+        ini_update(ini, "GameList", {"RecursivePaths": str(ROMS.rom_dir / "psx")})
+
+
+FIRST_RUN = {  # Kachel -> (Einstellungsdatei, Abschnitt mit dem Merkzeichen, Eintragen)
+    "pcsx2": (lambda: PCSX2_INI, "UI", _first_run_patch_pcsx2),
+    "duckstation": (lambda: DUCK_INI, "Main", _first_run_patch_duck),
+}
+
+
+def _first_run_pass(args, ini):
+    """Das Programm unsichtbar starten, bis seine Einstellungsdatei samt Controller-Abschnitt steht (hoechstens 20 s)."""
+    flat = args[:2] == ["flatpak", "run"]
+    plat = "QT_QPA_PLATFORM=offscreen;xcb"
+    if flat:
+        ref = next((a for a in args[2:] if not str(a).startswith("-")), None)
+        if not ref:
+            return False
+        cmd = ["flatpak", "run", f"--env={plat}", ref]
+    else:
+        cmd = [args[0]]
+    env = app_env()
+    env["QT_QPA_PLATFORM"] = "offscreen;xcb"
+    log("Erster Start ohne Assistent:", " ".join(map(str, cmd)))
+    try:
+        proc = subprocess.Popen(cmd, cwd=str(Path.home()), env=env, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as e:
+        log("Erster Start:", e)
+        return False
+    ok, last, t0 = False, None, time.monotonic()
+    while time.monotonic() - t0 < 20 and proc.poll() is None:
+        time.sleep(0.25)
+        try:
+            text = ini.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if "[Pad1]" in text:
+            if text == last:                       # zweimal gleich: fertig geschrieben
+                ok = True
+                break
+            last = text
+    for sig, wait in ((signal.SIGTERM, 3), (signal.SIGKILL, 2)):
+        if proc.poll() is not None:
+            break
+        try:
+            os.killpg(proc.pid, sig)
+        except OSError:
+            pass
+        try:
+            proc.wait(timeout=wait)
+        except subprocess.TimeoutExpired:
+            pass
+    return ok or ini.exists()
+
+
+def first_run(tid, args):
+    if tid == "cemu":
+        f = emu_dir("cemu") / "settings.xml"
+        if not f.exists():                          # ohne settings.xml zeigt Cemu "Getting started" (CemuApp.cpp)
+            f.parent.mkdir(parents=True, exist_ok=True)
+            games = ROMS.rom_dir / "wiiu"
+            f.write_text('<?xml version="1.0" encoding="UTF-8"?>\n<content>\n    <GamePaths>\n'
+                         f'        <Entry>{html_escape(str(games))}</Entry>\n    </GamePaths>\n</content>\n',
+                         encoding="utf-8")
+            log("Cemu: Einstellungen angelegt (ohne Assistent), Spiele aus", games)
+        return
+    spec = FIRST_RUN.get(tid)
+    if not spec:
+        return
+    ini, section, patch = spec[0](), spec[1], spec[2]
+    if not ini.exists():
+        with EMU_LOCK:
+            if not ini.exists() and not _first_run_pass(args, ini):
+                log(f"{tid}: unsichtbarer erster Start ohne Ergebnis – der Assistent erscheint wie gewohnt")
+                return
+    sec = ini_read(ini).get(section, {})
+    flag = sec.get("SetupWizardIncomplete", "").strip().lower()
+    # DuckStation zeigt den Assistenten auch, wenn weder das Merkzeichen noch SettingsVersion da ist (dsqthost.cpp)
+    if flag in ("true", "1") or (tid == "duckstation" and "SetupWizardIncomplete" not in sec
+                                 and "SettingsVersion" not in sec):
+        patch(ini)
+        log(f"{tid}: Einrichtungsassistent uebersprungen")
+
+
+def emu_prepare(tid, args):
+    """Vor dem Start: Vorgaben schreiben, Vollbild-Option einsetzen. -> (args, Umgebung, Vollbild ueber Fenstermanager)"""
+    emu_paths_refresh()
+    kind = emu_kind(args)
+    env, wm_fs = {}, False
+    try:
+        first_run(tid, args)
+    except Exception as e:  # noqa: BLE001 – darf den Start nie verhindern
+        log(f"{tid}: erster Start:", e)
+    if kind == "mgba-qt":
+        try:
+            mgba_prepare()
+        except Exception as e:  # noqa: BLE001 – Vorgaben duerfen den Start nie verhindern
+            log("mGBA-Vorgaben:", e)
+        env["SDL_JOYSTICK_HIDAPI"] = "0"
+    try:
+        bios_prepare(tid)
+    except Exception as e:  # noqa: BLE001
+        log(f"{tid}: BIOS:", e)
+    if tid == "mame" and "-joystickprovider" not in args:   # SDL-Gamepad-Namen wie in mame_items
+        args = [args[0], "-joystickprovider", "sdlgame"] + list(args[1:])
+    flat = args[:2] == ["flatpak", "run"]
+    if flat:
+        # Dateidialoge (Dokumenten-Portal) liefern Pfade unter <Laufzeitordner>/doc/… – VoidStation hat einen eigenen
+        # Laufzeitordner, den das Flatpak nicht kennt (es bekommt das Portal nur unter /run/user/<uid>/doc). Den Ordner
+        # unter seinem Namen freigeben, damit gewaehlte Dateien und Ordner im Programm auch ankommen.
+        rt = os.environ.get("XDG_RUNTIME_DIR", "")
+        if rt and rt.rstrip("/") != f"/run/user/{os.getuid()}" and os.path.ismount(os.path.join(rt, "doc")):
+            opt = f"--filesystem={os.path.join(rt, 'doc')}"
+            if opt not in args:
+                args = ["flatpak", "run", opt] + list(args[2:])
+    if tid in KEYMAP_WRITERS:
+        try:
+            keymap_prepare(tid)
+        except Exception as e:  # noqa: BLE001 – die Belegung darf den Start nie verhindern
+            log(f"{tid}: Controller-Belegung:", e)
+        env["SDL_JOYSTICK_HIDAPI"] = "0"          # rohe Tastennummern wie in sdl_indices (s. SDL_PROBE)
+        if flat and not any(str(a).startswith("--env=SDL_JOYSTICK_HIDAPI") for a in args):
+            args = ["flatpak", "run", "--env=SDL_JOYSTICK_HIDAPI=0"] + list(args[2:])
+    if flat and tid in EMU_LAYOUTS:
+        # Spiele und BIOS liegen in der Freigabe: manche Flatpaks sehen das Home gar nicht (RMG) oder nur lesend
+        # (xemu braucht das Festplatten-Image in share/ROMs/xbox/bios zum Schreiben)
+        share = f"--filesystem={Path.home() / 'share'}"
+        if share not in args:
+            args = ["flatpak", "run", share] + list(args[2:])
+    # Nur mit Spiel (aus der Spieleliste): "Emulator ohne Spiel starten" bleibt im Fenster, dort will man die Menues
+    game = len(args) > 1 and Path(str(args[-1])).suffix.lower() in {e for x in ROMS.EXTENSIONS.values() for e in x}
+    if game and emu_fullscreen_wanted(tid):
+        spec = EMU_FULLSCREEN_TILE.get(tid) if (flat or kind == tid) else None
+        spec = spec or EMU_FULLSCREEN.get(kind)
+        if spec and flat:
+            if spec[0] not in args:                 # vor der Spieldatei samt ihrer Option (ROM_ARGS)
+                n = 1 + len(next((v for v in ROMS.ROM_ARGS.values() if list(args[-1 - len(v):-1]) == v), []))
+                args = list(args[:-n]) + [spec[0]] + list(args[-n:])
+        elif spec:
+            if spec[0] not in args:
+                args = [args[0], spec[0]] + list(args[1:])
+        elif tid in EMU_WM_FULLSCREEN:
+            wm_fs = True
+    return args, env, wm_fs
+
+
+def emu_toggle_fullscreen():
+    """L3 lang gedrueckt: Vollbild des Emulators vorn an/aus (zum Beispiel, um an die Menues von mGBA zu kommen).
+    Nur, wenn das aktive Fenster wirklich zu einem Emulator gehoert – nie in Firefox, Steam oder der Startseite."""
+    tid = APPS.front()
+    if not tid or not app_suspendable(tid):
+        return
+    proc = APPS._get(tid)
+    act = active_window()
+    if not proc or not act or not any(int(w[0], 16) == act for w in APPS._windows_of(tid, proc)):
+        return
+    key = (EMU_FULLSCREEN_TILE.get(tid) or EMU_FULLSCREEN.get(APPS.kinds.get(tid, ""), (None, None)))[1]
+    if key and shutil.which("xdotool"):
+        run(["xdotool", "key", "--clearmodifiers", key])
+    else:
+        run(["wmctrl", "-i", "-r", hex(act), "-b", "toggle,fullscreen"])
+    log("Vollbild umgeschaltet:", tid)
+
+
+# ---- Spielstand-Sicherung -------------------------------------------------------------------------------------
+class SaveBackup:
+    """Sichert alle 30 Minuten (und kurz nach dem Beenden eines Emulators) die Spielstaende nach
+    ~/share/Spielstand-Backups/<Datum_Uhrzeit>/ – vom PC aus ueber die Freigabe erreichbar.
+      * nur, wenn sich seit der letzten Sicherung etwas geaendert hat
+      * unveraenderte Dateien sind harte Links auf die vorige Sicherung (kostet keinen Platz)
+      * behaelt alle Sicherungen der letzten 24 Stunden, danach eine pro Tag fuer 30 Tage
+    Gesichert werden Speicherstaende neben den Spielen (share/ROMs: .sav, .srm, Savestates .ss0–.ss9 …) und die
+    bekannten Ordner der Emulatoren, soweit vorhanden. Abschalten: "save_backup": false in settings.json."""
+    INTERVAL = 1800
+    KEEP_ALL = 24 * 3600
+    KEEP_DAYS = 30
+    MAX_FILE = 512 * 1024 * 1024
+    SAVE_EXT = re.compile(r"\.(sav|srm|sra|eep|fla|rtc|mpk|dsv|mcr|mcd|ss\d|st\d|state\d*|oops)$", re.I)
+    ROOT = Path.home() / "share" / "Spielstand-Backups"
+    H = Path.home()
+    # (Name im Backup, Ordner, nur Speicherstaende?) – fehlende Ordner werden uebersprungen
+    SOURCES = [
+        ("ROMs", H / "share" / "ROMs", True),                                # mGBA, melonDS, Snes9x … neben dem Spiel
+        ("DuckStation", H / ".local/share/duckstation/memcards", False),
+        ("DuckStation-Savestates", H / ".local/share/duckstation/savestates", False),
+        ("PPSSPP", H / ".config/ppsspp/PSP/SAVEDATA", False),
+        ("PPSSPP-Savestates", H / ".config/ppsspp/PSP/PPSSPP_STATE", False),
+        ("Dolphin-GC", H / ".local/share/dolphin-emu/GC", False),
+        ("Dolphin-Savestates", H / ".local/share/dolphin-emu/StateSaves", False),
+        ("RetroArch", H / ".config/retroarch/saves", False),
+        ("RetroArch-Savestates", H / ".config/retroarch/states", False),
+        ("PCSX2", H / ".config/PCSX2/memcards", False),                       # AppImage
+        ("PCSX2-Savestates", H / ".config/PCSX2/sstates", False),
+        ("Flycast", H / ".local/share/flycast", True),
+        ("RMG", H / ".local/share/RMG/Save", False),
+        ("Azahar-Savestates", H / ".local/share/azahar-emu/states", False),
+        ("Cemu", H / ".local/share/Cemu/mlc01/usr/save", False),
+        ("PCSX2", H / ".var/app/net.pcsx2.PCSX2/config/PCSX2/memcards", False),     # Flatpak (bis zum Wechsel)
+        ("PCSX2-Savestates", H / ".var/app/net.pcsx2.PCSX2/config/PCSX2/sstates", False),
+        ("Flycast", H / ".var/app/org.flycast.Flycast/data/flycast", True),
+        ("RMG", H / ".var/app/com.github.Rosalie241.RMG/data/RMG/Save", False),           # Game/ und State/
+        ("Azahar-Savestates", H / ".var/app/org.azahar_emu.Azahar/data/azahar-emu/states", False),
+        ("Cemu", H / ".var/app/info.cemu.Cemu/data/Cemu/mlc01/usr/save", False),
+        ("MAME", H / ".mame/nvram", False),
+        ("MAME-Savestates", H / ".mame/sta", False),
+        ("Mednafen", H / ".mednafen/sav", False),
+        ("Mednafen-Savestates", H / ".mednafen/mcs", False),
+        ("Nestopia", H / ".nestopia/save", False),
+        ("ScummVM", H / ".local/share/scummvm/saves", False),
+    ]
+    STAMP = "%Y-%m-%d_%H-%M-%S"
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.last_sig = None
+        self.last_run = 0.0
+        self.last_result = None
+
+    def enabled(self):
+        return bool(settings_load().get("save_backup", True))
+
+    def _files(self):
+        """[(Pfad im Backup, Datei, Groesse, mtime_ns)] aller zu sichernden Dateien."""
+        out = []
+        for name, root, saves_only in self.SOURCES:
+            if not root.is_dir():
+                continue
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = [d for d in dirnames if not d.startswith(".") and d != "Cover"]
+                for fn in filenames:
+                    if saves_only and not self.SAVE_EXT.search(fn):
+                        continue
+                    p = Path(dirpath) / fn
+                    try:
+                        s = p.stat()
+                    except OSError:
+                        continue
+                    if s.st_size > self.MAX_FILE or not p.is_file():
+                        continue
+                    out.append((f"{name}/{p.relative_to(root)}", p, s.st_size, s.st_mtime_ns))
+        out.sort()
+        return out
+
+    def snapshots(self):
+        try:
+            return sorted(d for d in self.ROOT.iterdir() if d.is_dir() and re.fullmatch(r"\d{4}-\d\d-\d\d_\d\d-\d\d-\d\d", d.name))
+        except OSError:
+            return []
+
+    def run_once(self, why=""):
+        if not self.enabled():
+            return None
+        with self.lock:
+            self.last_run = time.time()
+            files = self._files()
+            if not files:
+                return None
+            sig = hashlib.sha1(json.dumps([(r, sz, mt) for r, _, sz, mt in files]).encode()).hexdigest()
+            snaps = self.snapshots()
+            if self.last_sig is None:
+                try:
+                    self.last_sig = (snaps[-1] / ".signatur").read_text().strip() if snaps else ""
+                except OSError:
+                    self.last_sig = ""
+            if sig == self.last_sig:
+                return None
+            prev = snaps[-1] if snaps else None
+            name = datetime.datetime.now().strftime(self.STAMP)
+            tmp = self.ROOT / f".{name}.tmp"
+            shutil.rmtree(tmp, ignore_errors=True)
+            copied = linked = 0
+            try:
+                for rel, src, size, mtime in files:
+                    dst = tmp / rel
+                    dst.parent.mkdir(parents=True, exist_ok=True)
+                    old = prev / rel if prev else None
+                    try:
+                        if old and old.is_file():
+                            os_ = old.stat()
+                            if os_.st_size == size and os_.st_mtime_ns == mtime:
+                                os.link(old, dst)
+                                linked += 1
+                                continue
+                    except OSError:
+                        pass
+                    shutil.copy2(src, dst)
+                    copied += 1
+                (tmp / ".signatur").write_text(sig)
+                tmp.rename(self.ROOT / name)
+            except OSError as e:
+                log("Spielstand-Sicherung fehlgeschlagen:", e)
+                shutil.rmtree(tmp, ignore_errors=True)
+                return None
+            self.last_sig = sig
+            self._readme()
+            self._prune()
+            self.last_result = {"name": name, "copied": copied, "linked": linked}
+            log(f"Spielstaende gesichert ({why}): {name}, {copied} neu, {linked} unveraendert")
+            return self.last_result
+
+    def _prune(self):
+        now = datetime.datetime.now()
+        keep_day = set()
+        for d in reversed(self.snapshots()):
+            try:
+                t = datetime.datetime.strptime(d.name, self.STAMP)
+            except ValueError:
+                continue
+            age = (now - t).total_seconds()
+            day = t.date()
+            if age <= self.KEEP_ALL:
+                keep_day.add(day)
+                continue
+            if age <= self.KEEP_DAYS * 86400 and day not in keep_day:
+                keep_day.add(day)                    # neueste Sicherung dieses Tages behalten
+                continue
+            shutil.rmtree(d, ignore_errors=True)
+
+    def _readme(self):
+        f = self.ROOT / "LIESMICH.txt"
+        if f.exists():
+            return
+        try:
+            f.write_text(
+                "VoidStation – Spielstand-Sicherung / save backups\n"
+                "=================================================\n"
+                "Alle 30 Minuten (und kurz nach dem Beenden eines Emulators) landet hier ein Ordner mit Datum und\n"
+                "Uhrzeit – aber nur, wenn sich ein Spielstand geaendert hat. Behalten werden alle Sicherungen der\n"
+                "letzten 24 Stunden und danach eine pro Tag fuer 30 Tage.\n"
+                "Zurueckholen: Emulator beenden, Datei aus dem gewuenschten Ordner an ihren alten Platz kopieren\n"
+                "(ROMs/... = Freigabe-Ordner ROMs; mGBA: .sav = Spielstand im Spiel, .ss0 = automatischer Stand).\n\n"
+                "Every 30 minutes (and shortly after an emulator closes) a dated folder appears here – only if a save\n"
+                "changed. All backups of the last 24 hours are kept, then one per day for 30 days.\n"
+                "To restore: close the emulator and copy the file back to where it came from.\n", encoding="utf-8")
+        except OSError:
+            pass
+
+    def watcher(self):
+        """Hintergrund-Thread: alle 30 Minuten, und 10 s nachdem ein Emulator beendet wurde."""
+        time.sleep(180)
+        emus_before = set()
+        due_at = 0.0
+        while True:
+            try:
+                emus = {t for t in APPS.running() if app_suspendable(t)}
+                if emus_before - emus:
+                    due_at = time.time() + 10
+                emus_before = emus
+                if due_at and time.time() >= due_at:
+                    due_at = 0.0
+                    self.run_once("Emulator beendet")
+                elif time.time() - self.last_run >= self.INTERVAL:
+                    self.run_once("alle 30 Minuten")
+            except Exception as e:  # noqa: BLE001 – der Waechter darf nie sterben
+                log("Spielstand-Sicherung:", e)
+            time.sleep(15)
+
+
+SAVES = SaveBackup()
+
+
+# ---- Cover in der Spieleliste ----------------------------------------------------------------------------------
+class RomCovers:
+    """Bild zu jedem Spiel der Spieleliste. Reihenfolge:
+      1. eigenes Bild: ROMs/<system>/Cover/<Name des Spiels>.png|.jpg|.jpeg|.webp (oder gleichnamig neben dem Spiel)
+      2. sonst online gesucht und dauerhaft als ROMs/<system>/Cover/<Name>.png gespeichert – Quelle sind die
+         Boxbilder von libretro-thumbnails (dieselben wie in RetroArch), Liste ueber GitHub, Rueckfall
+         thumbnails.libretro.com
+    Gesucht wird nach dem genauen Dateinamen (No-Intro-Namen wie "Pokemon - Crystal Version (USA, Europe)"), dann
+    nach dem Titel ohne Klammern (Region der eigenen Sprache bevorzugt), dann aehnlich geschrieben. ROM-Hacks und
+    selbst benannte Dateien finden oft nichts – dafuer ist Punkt 1 da. Nicht Gefundenes wird 14 Tage nicht erneut
+    gesucht. Abschalten: "rom_covers": false in settings.json."""
+    SYSTEMS = {                                  # Ordner unter share/ROMs -> System bei libretro
+        "gba": "Nintendo - Game Boy Advance", "gbc": "Nintendo - Game Boy Color", "gb": "Nintendo - Game Boy",
+        "snes": "Nintendo - Super Nintendo Entertainment System", "nes": "Nintendo - Nintendo Entertainment System",
+        "psx": "Sony - PlayStation", "psp": "Sony - PlayStation Portable", "nds": "Nintendo - Nintendo DS",
+        "gamecube": "Nintendo - GameCube", "dreamcast": "Sega - Dreamcast", "n64": "Nintendo - Nintendo 64",
+        "megadrive": "Sega - Mega Drive - Genesis", "genesis": "Sega - Mega Drive - Genesis",
+        "atari2600": "Atari - 2600", "c64": "Commodore - 64", "ps2": "Sony - PlayStation 2", "xbox": "Microsoft - Xbox",
+        "3ds": "Nintendo - Nintendo 3DS",
+        "dos": "DOS", "scummvm": "ScummVM", "mame": "MAME",
+    }
+    BY_EXT = {".gba": "gba", ".gbc": "gbc", ".gb": "gb"}     # mGBA-Ordner enthalten alle drei
+    IMG_EXT = (".png", ".jpg", ".jpeg", ".webp")
+    LIST_AGE = 30 * 86400
+    MISS_AGE = 14 * 86400
+    CACHE = BASE / "cache" / "romcovers"
+    REGIONS = {"de": ("Germany", "Europe", "World", "USA"), "en": ("USA", "World", "Europe")}
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.list_locks = {}
+        self.lists = {}                          # System -> {"names": set, "by_key": {schluessel: [namen]}}
+        self.list_fail = {}                      # System -> Zeitpunkt des letzten Fehlschlags
+        self.dl = threading.Semaphore(3)
+        self.miss = None
+
+    def enabled(self):
+        return bool(settings_load().get("rom_covers", True))
+
+    @staticmethod
+    def key(name):
+        """Vergleichsschluessel: ohne Klammern, Akzente, "The", Satzzeichen."""
+        s = re.sub(r"\s*[\(\[][^()\[\]]*[\)\]]", "", name)
+        s = unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode().lower().replace("&", " and ")
+        s = re.sub(r"\bthe\b", " ", s)
+        return re.sub(r"[^a-z0-9]", "", s)
+
+    @staticmethod
+    def thumb_name(stem):
+        return re.sub(r'[&*/:`<>?\\|"]', "_", stem)
+
+    def system_of(self, folder, filename):
+        return self.SYSTEMS.get(self.BY_EXT.get(Path(filename).suffix.lower(), folder))
+
+    def own_image(self, folder, filename):
+        stem = Path(filename).stem
+        base = ROMS.rom_dir / folder
+        for d in (base / "Cover", base):
+            for ext in self.IMG_EXT:
+                p = d / (stem + ext)
+                if p.is_file():
+                    return p
+        game = base / filename                    # DOS/ScummVM: Spiel = Ordner – Bild auch darin (cover.jpg …)
+        if folder in ROMS.DIR_SYSTEMS and game.is_dir():
+            for n in ("cover", "folder", "box", "boxart", "front"):
+                for ext in self.IMG_EXT:
+                    for cand in (n + ext, n.upper() + ext.upper()):
+                        p = game / cand
+                        if p.is_file():
+                            return p
+        return None
+
+    def lookup_name(self, folder, filename):
+        """Name, unter dem das Spiel gesucht wird: Dateiname ohne Endung, Ordnername bei DOS/ScummVM, bei MAME der
+        Spieltitel statt des Set-Namens (libretro-thumbnails/MAME ist nach Titeln benannt: "Street Fighter II_ …")."""
+        stem = filename if folder in ROMS.DIR_SYSTEMS else Path(filename).stem
+        if folder == "mame":
+            stem = mame_names([stem]).get(stem) or stem
+        return stem
+
+    def url(self, rom):
+        """Adresse fuer die Oberflaeche; ?v= wechselt, sobald ein Bild da ist (sonst haelt Qt das alte Ergebnis)."""
+        f = rom.get("folder") or rom.get("system") or ""
+        own = self.own_image(f, rom["filename"])
+        v = int(own.stat().st_mtime) if own else 0
+        return ("/api/roms/cover?folder=" + urllib.parse.quote(f) + "&file=" + urllib.parse.quote(rom["filename"])
+                + f"&v={v}")
+
+    # -- Liste der vorhandenen Bilder eines Systems --
+    def _repo(self, system):
+        return system.replace(" ", "_")
+
+    def _load_list(self, system):
+        with self.lock:
+            lk = self.list_locks.setdefault(system, threading.Lock())
+        with lk:
+            if system in self.lists:
+                return self.lists[system]
+            if time.time() - self.list_fail.get(system, 0) < 600:
+                return None
+            self.CACHE.mkdir(parents=True, exist_ok=True)
+            cf = self.CACHE / (self._repo(system) + ".json")
+            names = None
+            try:
+                if time.time() - cf.stat().st_mtime < self.LIST_AGE:
+                    names = json.loads(cf.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                pass
+            if names is None:
+                names = self._fetch_list(system)
+                if names:
+                    try:
+                        cf.write_text(json.dumps(names, ensure_ascii=False), encoding="utf-8")
+                    except OSError:
+                        pass
+                else:
+                    try:                            # offline: lieber alte Liste als keine
+                        names = json.loads(cf.read_text(encoding="utf-8"))
+                    except (OSError, ValueError):
+                        self.list_fail[system] = time.time()
+                        return None
+            by_key = {}
+            for n in names:
+                by_key.setdefault(self.key(n), []).append(n)
+            self.lists[system] = {"names": set(names), "by_key": by_key}
+            return self.lists[system]
+
+    def _fetch_list(self, system):
+        repo = self._repo(system)
+        try:                                        # GitHub: eine Anfrage je System (ohne Konto 60 pro Stunde)
+            req = urllib.request.Request(
+                f"https://api.github.com/repos/libretro-thumbnails/{repo}/git/trees/master?recursive=1",
+                headers={**UA, "Accept": "application/vnd.github+json"})
+            with urllib.request.urlopen(req, timeout=30) as r:
+                tree = json.loads(r.read().decode("utf-8"))
+            names = [t["path"][len("Named_Boxarts/"):-4] for t in tree.get("tree", [])
+                     if t.get("path", "").startswith("Named_Boxarts/") and t["path"].endswith(".png")]
+            if names:
+                return names
+        except (OSError, ValueError, KeyError) as e:
+            log("Cover-Liste (GitHub):", system, e)
+        try:                                        # Rueckfall: Verzeichnisliste von thumbnails.libretro.com
+            req = urllib.request.Request(
+                "https://thumbnails.libretro.com/" + urllib.parse.quote(system) + "/Named_Boxarts/", headers=UA)
+            with urllib.request.urlopen(req, timeout=30) as r:
+                html = r.read().decode("utf-8", "replace")
+            return [urllib.parse.unquote(h)[:-4] for h in re.findall(r'href="([^"?/]+\.png)"', html)]
+        except OSError as e:
+            log("Cover-Liste (libretro):", system, e)
+        return []
+
+    def _pick(self, lst, stem):
+        tn = self.thumb_name(stem)
+        if tn in lst["names"]:
+            return tn
+        k = self.key(stem)
+        cands = lst["by_key"].get(k)
+        if not cands and len(k) >= 6:              # "Pokemon Smaragd" -> "Pokemon - Smaragd-Edition", nur wenn eindeutig
+            longer = [x for x in lst["by_key"] if x.startswith(k)]
+            if len(longer) == 1:
+                cands = lst["by_key"][longer[0]]
+        if not cands and len(k) >= 4:
+            import difflib
+            close = difflib.get_close_matches(k, list(lst["by_key"]), n=1, cutoff=0.88)
+            cands = lst["by_key"][close[0]] if close else None
+        if not cands:
+            return None
+        own = set(re.findall(r"\(([^)]*)\)", stem))
+        pref = self.REGIONS.get(ui_lang(), self.REGIONS["en"])
+
+        def score(n):
+            tags = re.findall(r"\(([^)]*)\)", n)
+            regs = [r.strip() for t in tags[:1] for r in t.split(",")]
+            s = len(own & set(tags)) * 10
+            for i, r in enumerate(pref):
+                if r in regs:
+                    s += (len(pref) - i)
+                    break
+            return (s, -len(n))
+        return max(cands, key=score)
+
+    def _download(self, system, name, depth=0):
+        """PNG-Daten des Boxbilds. libretro-thumbnails enthaelt Verweise (Symlinks): GitHub liefert dann statt des
+        Bildes nur den Namen des Zielbilds – dem wird gefolgt (hoechstens zweimal)."""
+        repo = self._repo(system)
+        for u in (f"https://raw.githubusercontent.com/libretro-thumbnails/{repo}/master/Named_Boxarts/"
+                  + urllib.parse.quote(name + ".png"),
+                  "https://thumbnails.libretro.com/" + urllib.parse.quote(system) + "/Named_Boxarts/"
+                  + urllib.parse.quote(name + ".png")):
+            try:
+                with self.dl:
+                    with urllib.request.urlopen(urllib.request.Request(u, headers=UA), timeout=30) as r:
+                        data = r.read(8 * 1024 * 1024)
+            except OSError:
+                continue
+            if data[:8] == b"\x89PNG\r\n\x1a\n":
+                return data
+            link = data.strip()
+            if len(link) < 300 and link.endswith(b".png") and depth < 2:
+                return self._download(system, link.decode("utf-8", "replace").split("/")[-1][:-4], depth + 1)
+        return None
+
+    def _miss_load(self):
+        if self.miss is None:
+            try:
+                self.miss = json.loads((self.CACHE / "miss.json").read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                self.miss = {}
+        return self.miss
+
+    def _miss_set(self, k, on):
+        with self.lock:
+            m = self._miss_load()
+            if on:
+                m[k] = time.time()
+            else:
+                m.pop(k, None)
+            try:
+                self.CACHE.mkdir(parents=True, exist_ok=True)
+                (self.CACHE / "miss.json").write_text(json.dumps(m), encoding="utf-8")
+            except OSError:
+                pass
+
+    def get(self, folder, filename):
+        """Pfad zum Bild des Spiels oder None (holt es bei Bedarf aus dem Netz – kann einige Sekunden dauern)."""
+        if folder not in ROMS.EXTENSIONS or os.path.basename(filename) != filename:
+            return None
+        rom = (ROMS.rom_dir / folder / filename)
+        if not (rom.is_file() or (folder in ROMS.DIR_SYSTEMS and rom.is_dir())):
+            return None
+        own = self.own_image(folder, filename)
+        if own or not self.enabled():
+            return own
+        system = self.system_of(folder, filename)
+        if not system:
+            return None
+        mk = f"{folder}/{filename}"
+        with self.lock:
+            t = self._miss_load().get(mk, 0)
+        if time.time() - t < self.MISS_AGE:
+            return None
+        lst = self._load_list(system)
+        if not lst:
+            return None                              # offline – naechstes Mal wieder versuchen
+        name = self._pick(lst, self.lookup_name(folder, filename))
+        data = self._download(system, name) if name else None
+        if not data:
+            if not name:                             # nichts Passendes: 14 Tage Ruhe; Downloadfehler: bald wieder
+                self._miss_set(mk, True)
+            return None
+        out = ROMS.rom_dir / folder / "Cover" / (Path(filename).stem + ".png")
+        try:
+            out.parent.mkdir(parents=True, exist_ok=True)
+            tmp = out.with_name(out.name + ".part")
+            tmp.write_bytes(data)
+            tmp.replace(out)
+        except OSError as e:
+            log("Cover nicht gespeichert:", out, e)
+            return None
+        self._miss_set(mk, False)
+        log("Cover gespeichert:", out.name, "<-", name)
+        return out
+
+
+ROM_COVERS = RomCovers()
 
 
 # ---------------------------------------------------------------------------
@@ -5775,6 +10754,800 @@ BLUETOOTH = BluetoothManager()
 
 
 # ---------------------------------------------------------------------------
+#  YouTube Light (Player-Modus --yt, Kachel "ytlight"): YouTube ohne Browser und ohne Google-Konto.
+#  Suche, Kanaele, Playlists und Stream-Adressen ueber yt-dlp; Abos lokal ueber die RSS-Feeds der Kanaele
+#  (Import aus Google Takeout, NewPipe, FreeTube); Verlauf, Weiterschauen und "Spaeter ansehen" lokal.
+#  Shorts bleiben draussen (Feed: Playlist-Feed UULF… = nur normale Videos; Suche: /shorts/-Adressen und <= 60 s).
+#  Kein Google-Login: die Data-API verbietet Fremd-Player, Cookies aus einem Browser gefaehrden das Konto.
+# ---------------------------------------------------------------------------
+YT_VID = re.compile(r"[A-Za-z0-9_-]{11}")
+YT_CID = re.compile(r"UC[A-Za-z0-9_-]{22}")
+YT_PID = re.compile(r"[A-Za-z0-9_-]{10,80}")
+YT_QUALITIES = ("auto", "1080", "720", "480", "360")
+YT_IMG_HOSTS = re.compile(r"^https://(i\d?\.ytimg\.com|yt3\.ggpht\.com|yt3\.googleusercontent\.com|i\.ytimg\.com)/")
+# Fehlermeldungen von yt-dlp -> Grund fuer die Anzeige (yt.err.<grund>)
+YT_ERRORS = [
+    (re.compile(r"(?i)confirm your age|age-restricted|inappropriate for some users"), "age"),
+    (re.compile(r"(?i)not a bot|sign in to confirm"), "bot"),
+    (re.compile(r"(?i)private video"), "private"),
+    (re.compile(r"(?i)members[- ]only|join this channel"), "members"),
+    (re.compile(r"(?i)not available in your country|blocked it in your country|geo"), "geo"),
+    (re.compile(r"(?i)premieres? in|live event will begin|upcoming"), "upcoming"),
+    (re.compile(r"(?i)video unavailable|has been removed|does not exist|account.*terminated|no longer available"), "gone"),
+    (re.compile(r"(?i)requested format is not available|nsig|n challenge|signature|js runtime|javascript|"
+                r"some formats may be missing|unable to extract|http error 403"), "outdated"),
+    (re.compile(r"(?i)timed out|temporary failure in name resolution|network is unreachable|"
+                r"name or service not known|connection (refused|reset)|urlopen error|unable to download|"
+                r"unable to connect|proxy"), "offline"),
+]
+
+
+class YtError(Exception):
+    def __init__(self, reason, msg=""):
+        super().__init__(msg or reason)
+        self.reason = reason
+
+
+def yt_classify(text):
+    for rx, reason in YT_ERRORS:
+        if rx.search(text or ""):
+            return reason
+    return "failed"
+
+
+class YtLight:
+    SUBS = BASE / "yt-subs.json"
+    HIST = BASE / "yt-history.json"
+    LATER = BASE / "yt-later.json"
+    LOCAL = BASE / "bin" / "yt-dlp"                     # eigene, aktuelle yt-dlp-Kopie (Knopf "yt-dlp aktualisieren")
+    CACHE = Path.home() / ".cache" / "voidstation" / "yt"
+    RSS = "https://www.youtube.com/feeds/videos.xml?"
+    YTDLP_URL = "https://github.com/yt-dlp/yt-dlp/releases/latest/download/"
+    NS = {"a": "http://www.w3.org/2005/Atom", "yt": "http://www.youtube.com/xml/schemas/2015",
+          "m": "http://search.yahoo.com/mrss/"}
+    # Seiten von youtube.com ohne Zustimmungsdialog (EU): Cookie "Notwendige" wie nach "Alle ablehnen"
+    WEB_HEADERS = {"User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:140.0) Gecko/20100101 Firefox/140.0",
+                   "Accept-Language": "en-US,en;q=0.8", "Cookie": "SOCS=CAI; CONSENT=PENDING+999"}
+    MAX_HIST = 500
+    MAX_LATER = 500
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.cache = {}                                  # (art, schluessel) -> (zeit, daten)
+        self.feed = {"items": [], "t": 0, "refreshing": False, "errors": 0}
+        self.upd = {"state": "idle", "msg": "", "t": 0}
+        self.ver = ("", 0.0)
+        self.avatar_busy = False
+
+    # ---- Dateien ----
+    @staticmethod
+    def _load(path, default):
+        try:
+            d = json.loads(path.read_text(encoding="utf-8"))
+            return d if isinstance(d, type(default)) else default
+        except (OSError, ValueError):
+            return default
+
+    @staticmethod
+    def _save(path, data):
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            tmp = path.with_suffix(".tmp")
+            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
+            tmp.replace(path)
+        except OSError as e:
+            log("YouTube Light:", path.name, e)
+
+    # ---- Einstellungen und Werkzeuge ----
+    @staticmethod
+    def weak():
+        v = os.environ.get("VS_WEAK", "")
+        return v == "1" if v in ("0", "1") else os.uname().machine in ("i386", "i486", "i586", "i686")
+
+    def settings(self):
+        d = settings_load().get("yt") or {}
+        q = str(d.get("quality") or "auto")
+        return {"accepted": bool(d.get("accepted")), "quality": q if q in YT_QUALITIES else "auto"}
+
+    def save_settings(self, body):
+        s = settings_load()
+        d = dict(s.get("yt") or {})
+        if "accepted" in body:
+            d["accepted"] = bool(body.get("accepted"))
+        if body.get("quality") in YT_QUALITIES:
+            d["quality"] = body["quality"]
+        s["yt"] = d
+        settings_save(s)
+        return self.state()
+
+    def tool(self):
+        if os.environ.get("VS_YTDLP"):
+            return os.environ["VS_YTDLP"]
+        if self.LOCAL.is_file() and os.access(self.LOCAL, os.X_OK):
+            return str(self.LOCAL)
+        return shutil.which("yt-dlp")
+
+    def version(self):
+        v, t = self.ver
+        if time.time() - t < 600:
+            return v
+        exe = self.tool()
+        r = run([exe, "--version"], timeout=40) if exe else None
+        v = r.stdout.strip() if r and r.returncode == 0 else ""
+        self.ver = (v, time.time())
+        return v
+
+    def base_args(self):
+        exe = self.tool()
+        if not exe:
+            raise YtError("noytdlp", "yt-dlp fehlt")
+        args = [exe, "--ignore-config", "--no-warnings", "--no-progress"]
+        if shutil.which("node"):                        # JS-Aufgaben von YouTube (yt-dlp-ejs), Node.js >= 22
+            args += ["--js-runtimes", "node"]
+        return args
+
+    def state(self):
+        self._auto_update()
+        return dict(self.settings(), weak=self.weak(), subs=len(self._load(self.SUBS, [])),
+                    tools={"ytdlp": self.version(), "local": self.LOCAL.is_file(), "node": bool(shutil.which("node"))},
+                    update=dict(self.upd))
+
+    def _ytdlp(self, args, timeout=60):
+        """yt-dlp mit -J aufrufen und das JSON zurueckgeben; Fehler als YtError mit Grund."""
+        full = self.base_args() + args
+        t0 = time.monotonic()
+        try:
+            r = subprocess.run(full, capture_output=True, text=True, timeout=timeout, stdin=subprocess.DEVNULL)
+        except subprocess.TimeoutExpired:
+            raise YtError("timeout", "yt-dlp antwortet nicht")
+        except OSError as e:
+            raise YtError("noytdlp", str(e))
+        if r.returncode != 0 or not r.stdout.strip():
+            err = [ln for ln in (r.stderr or "").splitlines() if "ERROR" in ln] or (r.stderr or "").strip().splitlines()
+            msg = (err[-1] if err else "yt-dlp-Fehler").replace("ERROR: ", "")
+            log(f"YouTube Light: yt-dlp ({time.monotonic() - t0:.1f} s):", msg[:300])
+            raise YtError(yt_classify(r.stderr), msg[:300])
+        try:
+            d = json.loads(r.stdout)
+        except ValueError:
+            raise YtError("failed", "Antwort von yt-dlp nicht lesbar")
+        if not isinstance(d, dict):
+            raise YtError("failed", "Antwort von yt-dlp nicht lesbar")
+        # Netzfehler bei Listen: yt-dlp meldet ERROR, liefert aber trotzdem JSON mit leeren Eintraegen ([null])
+        ents = d.get("entries")
+        if ents is not None:
+            d["entries"] = [e for e in ents if isinstance(e, dict)]
+            if not d["entries"] and "ERROR" in (r.stderr or ""):
+                err = [ln for ln in r.stderr.splitlines() if "ERROR" in ln]
+                log("YouTube Light: yt-dlp:", err[-1][:300])
+                raise YtError(yt_classify(r.stderr), err[-1].replace("ERROR: ", "")[:300])
+        return d
+
+    def _cached(self, kind, key, ttl, fn):
+        now = time.time()
+        with self.lock:
+            hit = self.cache.get((kind, key))
+            if hit and now - hit[0] < ttl:
+                return hit[1]
+        data = fn()
+        with self.lock:
+            self.cache[(kind, key)] = (now, data)
+            if len(self.cache) > 300:
+                for k, _ in sorted(self.cache.items(), key=lambda kv: kv[1][0])[:100]:
+                    self.cache.pop(k, None)
+        return data
+
+    # ---- Eintraege ----
+    @staticmethod
+    def _thumb_url(thumbs, square=False):
+        best, bw = "", 0
+        for t in thumbs or []:
+            if not isinstance(t, dict) or not t.get("url"):
+                continue
+            w = int(t.get("width") or 0)
+            h = int(t.get("height") or 0)
+            if square and w and h and abs(w - h) > 4:
+                continue
+            if w > 900 or (bw and w < bw):
+                continue
+            best, bw = t["url"], w
+        if best.startswith("//"):
+            best = "https:" + best
+        return best
+
+    @staticmethod
+    def img_url(u):
+        return "/api/yt/img?u=" + urllib.parse.quote(u, safe="") if u else ""
+
+    def video(self, e):
+        """Eintrag aus yt-dlp (flach) -> Video fuer die Oberflaeche; None fuer Shorts und Unbrauchbares."""
+        vid = str(e.get("id") or "")
+        url = str(e.get("url") or e.get("webpage_url") or "")
+        if not YT_VID.fullmatch(vid) or "/shorts/" in url:
+            return None
+        live = e.get("live_status") == "is_live" or bool(e.get("is_live"))
+        if e.get("live_status") in ("is_upcoming", "post_live") and not live:
+            return None
+        dur = int(e.get("duration") or 0)
+        if 0 < dur <= 60:                                  # Shorts tauchen in der Suche auch als normale Videos auf
+            return None
+        ts = e.get("timestamp") or e.get("release_timestamp") or 0
+        return {"kind": "video", "id": vid, "title": str(e.get("title") or "")[:200],
+                "channel": str(e.get("channel") or e.get("uploader") or "")[:100],
+                "channel_id": str(e.get("channel_id") or "") if YT_CID.fullmatch(str(e.get("channel_id") or "")) else "",
+                "duration": dur, "views": int(e.get("view_count") or 0), "published": int(ts or 0), "live": live,
+                "thumb": f"/api/yt/img?v={vid}"}
+
+    def channel_item(self, e):
+        cid = str(e.get("channel_id") or e.get("id") or "")
+        if not YT_CID.fullmatch(cid):
+            m = YT_CID.search(str(e.get("url") or ""))
+            cid = m.group(0) if m else ""
+        if not cid:
+            return None
+        return {"kind": "channel", "id": cid, "title": str(e.get("channel") or e.get("title") or "")[:100],
+                "followers": int(e.get("channel_follower_count") or 0),
+                "thumb": self.img_url(self._thumb_url(e.get("thumbnails"), square=True))}
+
+    def playlist_item(self, e):
+        url = str(e.get("url") or "")
+        m = re.search(r"[?&]list=([A-Za-z0-9_-]+)", url)
+        pid = m.group(1) if m else str(e.get("id") or "")
+        if not YT_PID.fullmatch(pid) or YT_VID.fullmatch(pid):
+            return None
+        thumb = self._thumb_url(e.get("thumbnails"))
+        return {"kind": "playlist", "id": pid, "title": str(e.get("title") or "")[:200],
+                "channel": str(e.get("channel") or e.get("uploader") or "")[:100],
+                "count": int(e.get("playlist_count") or 0), "thumb": self.img_url(thumb)}
+
+    def entry(self, e):
+        url = str(e.get("url") or "")
+        if "list=" in url and "watch?" not in url:
+            return self.playlist_item(e)
+        if "/channel/" in url or "/@" in url or YT_CID.fullmatch(str(e.get("id") or "")):
+            return self.channel_item(e)
+        return self.video(e)
+
+    def annotate(self, items):
+        """Fortschritt (Verlauf), Spaeter-Markierung und Abo-Status ergaenzen."""
+        hist = {h["id"]: h for h in self._load(self.HIST, []) if isinstance(h, dict) and h.get("id")}
+        later = {x.get("id") for x in self._load(self.LATER, []) if isinstance(x, dict)}
+        subs = {x.get("id") for x in self._load(self.SUBS, []) if isinstance(x, dict)}
+        out = []
+        for it in items:
+            if not it:
+                continue
+            it = dict(it)
+            if it["kind"] == "video":
+                h = hist.get(it["id"])
+                if h and not it.get("live"):
+                    it["pos"], it["dur"] = h.get("pos", 0), h.get("dur", 0)
+                it["later"] = it["id"] in later
+            elif it["kind"] == "channel":
+                it["sub"] = it["id"] in subs
+            out.append(it)
+        return out
+
+    # ---- Suche, Kanaele, Playlists ----
+    def search(self, q, kind="video"):
+        q = " ".join(str(q or "").split())[:200]
+        if not q:
+            return {"items": []}
+        if kind not in ("video", "channel", "playlist"):
+            kind = "video"
+
+        def fetch():
+            if kind == "video":
+                d = self._ytdlp(["-J", "--flat-playlist", f"ytsearch40:{q}"], timeout=90)
+                items = [self.video(e) for e in d.get("entries") or []]
+            else:
+                sp = "EgIQAg==" if kind == "channel" else "EgIQAw=="
+                url = "https://www.youtube.com/results?" + urllib.parse.urlencode({"search_query": q, "sp": sp})
+                d = self._ytdlp(["-J", "--flat-playlist", "--playlist-end", "30", url], timeout=90)
+                items = [self.entry(e) for e in d.get("entries") or []]
+                items = [x for x in items if x and x["kind"] == kind]
+            seen, out = set(), []
+            for x in items:
+                if x and (x["kind"], x["id"]) not in seen:
+                    seen.add((x["kind"], x["id"]))
+                    out.append(x)
+            return out
+        return {"items": self.annotate(self._cached("search", (kind, q.lower()), 600, fetch)), "q": q, "kind": kind}
+
+    def channel(self, cid, tab="videos"):
+        if not YT_CID.fullmatch(cid or ""):
+            raise YtError("gone", "ungueltige Kanal-ID")
+        tab = tab if tab in ("videos", "streams", "playlists") else "videos"
+
+        def fetch():
+            d = self._ytdlp(["-J", "--flat-playlist", "--playlist-end", "60",
+                             f"https://www.youtube.com/channel/{cid}/{tab}"], timeout=90)
+            ents = d.get("entries") or []
+            items = [self.playlist_item(e) if tab == "playlists" else self.video(e) for e in ents]
+            if tab == "streams":                           # vergangene Livestreams sind normale Videos
+                items = [x for x in items if x]
+            name = str(d.get("channel") or d.get("uploader") or d.get("title") or "")
+            name = re.sub(r"\s+-\s+(Videos|Live|Playlists)$", "", name)
+            thumb = self._thumb_url([t for t in d.get("thumbnails") or [] if "avatar" in str(t.get("id", ""))]
+                                    or d.get("thumbnails"), square=True)
+            return {"id": cid, "title": name[:100], "followers": int(d.get("channel_follower_count") or 0),
+                    "thumb": self.img_url(thumb), "tab": tab, "items": [x for x in items if x]}
+        r = dict(self._cached("channel", (cid, tab), 900, fetch))
+        self._sub_touch(cid, r.get("title"), r.get("thumb"))
+        r["sub"] = cid in {x.get("id") for x in self._load(self.SUBS, []) if isinstance(x, dict)}
+        r["items"] = self.annotate(r["items"])
+        return r
+
+    def playlist(self, pid):
+        if not YT_PID.fullmatch(pid or ""):
+            raise YtError("gone", "ungueltige Playlist-ID")
+
+        def fetch():
+            d = self._ytdlp(["-J", "--flat-playlist", "--playlist-end", "300",
+                             f"https://www.youtube.com/playlist?list={pid}"], timeout=120)
+            items = [self.video(e) for e in d.get("entries") or []]
+            return {"id": pid, "title": str(d.get("title") or "")[:200],
+                    "channel": str(d.get("channel") or d.get("uploader") or "")[:100],
+                    "channel_id": str(d.get("channel_id") or "") if YT_CID.fullmatch(str(d.get("channel_id") or "")) else "",
+                    "items": [x for x in items if x]}
+        r = dict(self._cached("playlist", pid, 900, fetch))
+        r["items"] = self.annotate(r["items"])
+        r["count"] = len(r["items"])
+        return r
+
+    # ---- Abspielen ----
+    def resolve(self, vid, quality="auto", lang="de"):
+        """Stream-Adressen fuer mpv: Bild und Ton getrennt (DASH) oder eine Adresse (Livestream: HLS)."""
+        if not YT_VID.fullmatch(vid or ""):
+            raise YtError("gone", "ungueltige Video-ID")
+        if quality not in YT_QUALITIES:
+            quality = self.settings()["quality"]
+        weak = self.weak()
+        h = (480 if weak else 1080) if quality == "auto" else int(quality)
+        # H.264 ist am billigsten zu dekodieren (und kann fast jede Grafikkarte); auf schwacher Hardware hoechstens 30 fps
+        sort = f"res:{h},vcodec:h264,acodec:aac" + (",fps:30" if weak else "")
+
+        def fetch():
+            d = self._ytdlp(["-J", "--no-playlist", "-f", "bv+ba/b", "-S", sort,
+                             f"https://www.youtube.com/watch?v={vid}"], timeout=150 if weak else 75)
+            rf = d.get("requested_formats") or []
+            vf = next((f for f in rf if f.get("vcodec") not in (None, "none")), None)
+            af = next((f for f in rf if f.get("vcodec") in (None, "none") and f.get("acodec") not in (None, "none")), None)
+            main = vf or d
+            url = str(main.get("url") or "")
+            if not url.startswith("http"):
+                raise YtError("failed", "keine Stream-Adresse")
+            hdr = main.get("http_headers") or d.get("http_headers") or {}
+            heights = sorted({int(f.get("height") or 0) for f in d.get("formats") or []
+                              if f.get("vcodec") not in (None, "none") and 144 <= int(f.get("height") or 0) <= 2160},
+                             reverse=True)
+            subs = []
+            for code, tracks in (d.get("subtitles") or {}).items():   # nur echte Untertitel, keine automatischen
+                vtt = next((t for t in tracks or [] if t.get("ext") == "vtt" and t.get("url")), None)
+                if vtt and code != "live_chat":
+                    subs.append({"lang": code, "name": str(vtt.get("name") or code), "url": vtt["url"]})
+            want = [lang.split("-")[0], "en", str(d.get("language") or "")]
+            subs.sort(key=lambda s: next((i for i, w in enumerate(want) if w and s["lang"].split("-")[0] == w), 9))
+            live = bool(d.get("is_live"))
+            return {"id": vid, "title": str(d.get("title") or "")[:200],
+                    "channel": str(d.get("channel") or d.get("uploader") or "")[:100],
+                    "channel_id": str(d.get("channel_id") or "") if YT_CID.fullmatch(str(d.get("channel_id") or "")) else "",
+                    "duration": int(d.get("duration") or 0), "live": live,
+                    "url": url, "audio": str(af.get("url") or "") if af else "",
+                    "ua": str(hdr.get("User-Agent") or ""), "referer": str(hdr.get("Referer") or ""),
+                    "height": int(main.get("height") or 0), "vcodec": str(main.get("vcodec") or ""),
+                    "heights": heights, "quality": quality, "subs": subs[:3],
+                    "thumb": f"/api/yt/img?v={vid}"}
+        t0 = time.monotonic()
+        key = ("resolve", (vid, quality, lang))
+        with self.lock:
+            hit = self.cache.get(key)
+        # Adressen gelten bei YouTube etwa 6 Stunden; Livestreams nur kurz aufheben
+        if hit and time.time() - hit[0] < (600 if hit[1].get("live") else 5400):
+            return hit[1]
+        r = fetch()
+        with self.lock:
+            self.cache[key] = (time.time(), r)
+        log(f"YouTube Light: {vid} aufgeloest in {time.monotonic() - t0:.1f} s ({r.get('height')}p {r.get('vcodec')})")
+        return r
+
+    # ---- Verlauf, Spaeter, Weiterschauen ----
+    @staticmethod
+    def _meta(body):
+        vid = str(body.get("id") or "")
+        if not YT_VID.fullmatch(vid):
+            raise ValueError("ungueltige Video-ID")
+        cid = str(body.get("channel_id") or "")
+        return {"kind": "video", "id": vid, "title": str(body.get("title") or "")[:200],
+                "channel": str(body.get("channel") or "")[:100], "channel_id": cid if YT_CID.fullmatch(cid) else "",
+                "duration": int(float(body.get("duration") or body.get("dur") or 0)), "live": bool(body.get("live")),
+                "thumb": f"/api/yt/img?v={vid}"}
+
+    def progress(self, body):
+        it = self._meta(body)
+        pos, dur = float(body.get("pos") or 0), float(body.get("dur") or 0)
+        with self.lock:
+            hist = [h for h in self._load(self.HIST, []) if isinstance(h, dict) and h.get("id") != it["id"]]
+            it.update({"pos": 0 if it["live"] else round(pos, 1), "dur": round(dur, 1), "t": int(time.time())})
+            hist.insert(0, it)
+            self._save(self.HIST, hist[:self.MAX_HIST])
+        return {"ok": True}
+
+    def history(self):
+        return {"items": self.annotate(self._load(self.HIST, []))}
+
+    def history_remove(self, vid):
+        with self.lock:
+            hist = self._load(self.HIST, [])
+            self._save(self.HIST, [h for h in hist if isinstance(h, dict) and h.get("id") != vid] if vid else [])
+        return self.history()
+
+    def resume_list(self):
+        out = []
+        for h in self._load(self.HIST, []):
+            if isinstance(h, dict) and not h.get("live") and h.get("dur", 0) > 0 and 30 < h.get("pos", 0) < 0.95 * h["dur"]:
+                out.append(h)
+        return self.annotate(out[:20])
+
+    def later(self):
+        return {"items": self.annotate(self._load(self.LATER, []))}
+
+    def later_set(self, body):
+        it = self._meta(body.get("item") or {})
+        with self.lock:
+            lst = [x for x in self._load(self.LATER, []) if isinstance(x, dict) and x.get("id") != it["id"]]
+            if body.get("on"):
+                lst.insert(0, it)
+            self._save(self.LATER, lst[:self.MAX_LATER])
+        return {"on": bool(body.get("on")), "n": len(lst)}
+
+    # ---- Abos ----
+    def subs(self):
+        lst = [x for x in self._load(self.SUBS, []) if isinstance(x, dict) and YT_CID.fullmatch(str(x.get("id") or ""))]
+        lst.sort(key=lambda x: str(x.get("title") or "").lower())
+        if any(not x.get("thumb") for x in lst):
+            self._fetch_avatars()
+        return [{"kind": "channel", "id": x["id"], "title": x.get("title") or x["id"], "thumb": x.get("thumb") or "",
+                 "sub": True} for x in lst]
+
+    def sub_set(self, body):
+        it = body.get("item") or {}
+        cid = str(it.get("id") or it.get("channel_id") or "")
+        if not YT_CID.fullmatch(cid):
+            raise ValueError("ungueltige Kanal-ID")
+        on = bool(body.get("on"))
+        with self.lock:
+            lst = [x for x in self._load(self.SUBS, []) if isinstance(x, dict) and x.get("id") != cid]
+            if on:
+                lst.append({"id": cid, "title": str(it.get("title") or it.get("channel") or "")[:100],
+                            "thumb": str(it.get("thumb") or ""), "t": int(time.time())})
+            self._save(self.SUBS, lst)
+            self.feed["t"] = 0                             # Feed beim naechsten Abruf neu holen
+        log("YouTube Light: Abo", "an" if on else "aus", cid)
+        return {"on": on, "n": len(lst)}
+
+    def _sub_touch(self, cid, title, thumb):
+        """Name und Bild eines abonnierten Kanals nachtragen (Import liefert oft nur die ID)."""
+        with self.lock:
+            lst = self._load(self.SUBS, [])
+            changed = False
+            for x in lst:
+                if isinstance(x, dict) and x.get("id") == cid:
+                    if title and not x.get("title"):
+                        x["title"], changed = title, True
+                    if thumb and not x.get("thumb"):
+                        x["thumb"], changed = thumb, True
+            if changed:
+                self._save(self.SUBS, lst)
+
+    def _fetch_avatars(self):
+        """Fehlende Kanalbilder nachladen (og:image der Kanalseite), eins pro Sekunde, im Hintergrund."""
+        if self.avatar_busy:
+            return
+        self.avatar_busy = True
+
+        def work():
+            try:
+                for x in self._load(self.SUBS, []):
+                    if not isinstance(x, dict) or x.get("thumb") or not YT_CID.fullmatch(str(x.get("id") or "")):
+                        continue
+                    if x.get("nothumb", 0) > time.time() - 86400:
+                        continue
+                    thumb, title = "", ""
+                    try:
+                        req = urllib.request.Request(f"https://www.youtube.com/channel/{x['id']}", headers=self.WEB_HEADERS)
+                        with urllib.request.urlopen(req, timeout=15) as r:
+                            html = r.read(1_500_000).decode("utf-8", "replace")
+                        m = re.search(r'<meta property="og:image" content="([^"]+)"', html)
+                        thumb = self.img_url(m.group(1).replace("&amp;", "&")) if m and YT_IMG_HOSTS.match(m.group(1)) else ""
+                        m = re.search(r'<meta property="og:title" content="([^"]+)"', html)
+                        title = m.group(1) if m else ""
+                    except (OSError, ValueError) as e:
+                        log("YouTube Light: Kanalbild", x["id"], e)
+                    with self.lock:
+                        lst = self._load(self.SUBS, [])
+                        for y in lst:
+                            if isinstance(y, dict) and y.get("id") == x["id"]:
+                                if thumb:
+                                    y["thumb"] = thumb
+                                else:
+                                    y["nothumb"] = int(time.time())
+                                if title and not y.get("title"):
+                                    y["title"] = html_unescape(title)[:100]
+                        self._save(self.SUBS, lst)
+                    time.sleep(1)
+            finally:
+                self.avatar_busy = False
+        threading.Thread(target=work, daemon=True).start()
+
+    def import_subs(self):
+        """Abos aus Dateien uebernehmen: Google Takeout (subscriptions.csv / Abos.csv, auch im ZIP), NewPipe
+        (newpipe_subscriptions*.json), FreeTube (profiles.db / *subscriptions*.db). Gesucht wird in ~/share und auf
+        USB-Laufwerken; vorhandene Abos bleiben."""
+        import zipfile
+        found, chans = [], {}
+
+        def take(text, name):
+            n0 = len(chans)
+            lines = text.splitlines()
+            if name.lower().endswith(".csv"):
+                for ln in lines[1:]:
+                    m = YT_CID.search(ln)
+                    if m:
+                        cols = next(csv.reader([ln]), [])
+                        title = next((c for c in reversed(cols) if c and "youtube.com" not in c and not YT_CID.fullmatch(c)), "")
+                        chans.setdefault(m.group(0), title.strip())
+            else:
+                try:
+                    objs = [json.loads(text)]
+                except ValueError:
+                    objs = []
+                    for ln in lines:                       # FreeTube: eine JSON-Zeile pro Profil
+                        try:
+                            objs.append(json.loads(ln))
+                        except ValueError:
+                            pass
+                for o in objs:
+                    for s in (o.get("subscriptions") or []) if isinstance(o, dict) else []:
+                        if not isinstance(s, dict):
+                            continue
+                        m = YT_CID.search(str(s.get("id") or s.get("url") or ""))
+                        if m:
+                            chans.setdefault(m.group(0), str(s.get("name") or "").strip())
+            if len(chans) > n0:
+                found.append(name)
+
+        def wanted(p):
+            n = p.name.lower()
+            return (n.endswith(".csv") and ("subscription" in n or n.startswith("abo"))) or \
+                   (n.endswith(".json") and "newpipe" in n and "subscription" in n) or \
+                   (n.endswith(".db") and ("profiles" in n or "subscription" in n)) or \
+                   (n.endswith(".zip") and n.startswith("takeout"))
+        roots = [Path.home() / "share"] + [p for d in ("/run/media", "/media") for p in Path(d).glob("*/*") if p.is_dir()]
+        for root in roots:
+            base_depth = len(root.parts)
+            for dirpath, dirs, files in os.walk(root):
+                if len(Path(dirpath).parts) - base_depth >= 4:
+                    dirs[:] = []
+                dirs[:] = [d for d in dirs if not d.startswith(".")]
+                for fn in files:
+                    p = Path(dirpath) / fn
+                    if not wanted(p):
+                        continue
+                    try:
+                        if p.stat().st_size > 50_000_000:
+                            continue
+                        if p.suffix.lower() == ".zip":
+                            with zipfile.ZipFile(p) as z:
+                                for zn in z.namelist():
+                                    low = zn.lower().rsplit("/", 1)[-1]
+                                    if low.endswith(".csv") and ("subscription" in low or low.startswith("abo")):
+                                        take(z.read(zn).decode("utf-8-sig", "replace"), f"{p.name}/{low}")
+                        else:
+                            take(p.read_text(encoding="utf-8-sig", errors="replace"), p.name)
+                    except (OSError, zipfile.BadZipFile, UnicodeError) as e:
+                        log("YouTube Light: Import", p, e)
+        added = 0
+        with self.lock:
+            lst = [x for x in self._load(self.SUBS, []) if isinstance(x, dict)]
+            have = {x.get("id") for x in lst}
+            for cid, title in chans.items():
+                if cid not in have:
+                    lst.append({"id": cid, "title": title[:100], "thumb": "", "t": int(time.time())})
+                    added += 1
+            self._save(self.SUBS, lst)
+            if added:
+                self.feed["t"] = 0
+        log(f"YouTube Light: Import aus {', '.join(found) or 'nichts gefunden'} – {added} neue Kanaele")
+        if added:
+            self._fetch_avatars()
+        return {"files": found, "found": len(chans), "added": added, "total": len(lst)}
+
+    # ---- Abo-Feed (RSS) ----
+    def _rss(self, cid):
+        """Neueste Videos eines Kanals. Zuerst der Playlist-Feed UULF… (nur normale Videos, ohne Shorts und
+        Livestreams), sonst der Kanal-Feed ohne /shorts/-Eintraege. Bei Fehlern der letzte gute Stand."""
+        cache = self.CACHE / "feeds" / f"{cid}.json"
+        old = self._load(cache, {})
+        items, err = None, ""
+        for q, shorts_filter in ((f"playlist_id=UULF{cid[2:]}", False), (f"channel_id={cid}", True)):
+            try:
+                req = urllib.request.Request(self.RSS + q, headers=UA)
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    root = ET.fromstring(r.read(3_000_000))
+            except urllib.error.HTTPError as e:
+                err = f"HTTP {e.code}"
+                if e.code == 404:
+                    continue
+                break
+            except (OSError, ET.ParseError) as e:
+                err = str(e)
+                break
+            items = []
+            title = (root.findtext("a:title", "", self.NS) or "").strip()
+            for en in root.findall("a:entry", self.NS):
+                vid = en.findtext("yt:videoId", "", self.NS)
+                link = en.find("a:link", self.NS)
+                href = link.get("href", "") if link is not None else ""
+                if not YT_VID.fullmatch(vid or "") or (shorts_filter and "/shorts/" in href):
+                    continue
+                stats = en.find("m:group/m:community/m:statistics", self.NS)
+                pub = en.findtext("a:published", "", self.NS)
+                try:
+                    ts = int(datetime.datetime.fromisoformat(pub.replace("Z", "+00:00")).timestamp())
+                except ValueError:
+                    ts = 0
+                items.append({"kind": "video", "id": vid, "title": (en.findtext("a:title", "", self.NS) or "")[:200],
+                              "channel": (en.findtext("a:author/a:name", "", self.NS) or title)[:100], "channel_id": cid,
+                              "duration": 0, "views": int(stats.get("views") or 0) if stats is not None else 0,
+                              "published": ts, "live": False, "thumb": f"/api/yt/img?v={vid}"})
+            break
+        if items is None:
+            return old.get("items") or [], err or "kein Feed"
+        self._save(cache, {"t": int(time.time()), "items": items})
+        return items, ""
+
+    def _refresh_feed(self):
+        from concurrent.futures import ThreadPoolExecutor
+        subs = [x for x in self._load(self.SUBS, []) if isinstance(x, dict) and YT_CID.fullmatch(str(x.get("id") or ""))]
+        t0 = time.monotonic()
+        errors, allv = 0, []
+        try:
+            with ThreadPoolExecutor(max_workers=6) as ex:
+                for items, err in ex.map(lambda s: self._rss(s["id"]), subs):
+                    allv += items
+                    errors += 1 if err else 0
+            seen, uniq = set(), []
+            for v in sorted(allv, key=lambda v: v["published"], reverse=True):
+                if v["id"] not in seen:
+                    seen.add(v["id"])
+                    uniq.append(v)
+            with self.lock:
+                self.feed.update(items=uniq[:300], t=time.time(), errors=errors)
+            log(f"YouTube Light: Feed aus {len(subs)} Kanaelen in {time.monotonic() - t0:.1f} s"
+                + (f", {errors} nicht erreichbar" if errors else ""))
+        finally:
+            with self.lock:
+                self.feed["refreshing"] = False
+
+    def feed_get(self, limit=150, force=False):
+        has_subs = bool(self._load(self.SUBS, []))
+        with self.lock:
+            stale = force or time.time() - self.feed["t"] > 900
+            if stale and has_subs and not self.feed["refreshing"]:
+                self.feed["refreshing"] = True
+                threading.Thread(target=self._refresh_feed, daemon=True).start()
+            items = list(self.feed["items"][:limit])
+            state = {"refreshing": self.feed["refreshing"], "errors": self.feed["errors"], "t": int(self.feed["t"])}
+        if not items and not self.feed["t"]:                # gleich nach dem Start: letzter Stand aus den Dateien
+            allv = []
+            for x in self._load(self.SUBS, []):
+                if isinstance(x, dict) and x.get("id"):
+                    allv += self._load(self.CACHE / "feeds" / f"{x['id']}.json", {}).get("items") or []
+            items = sorted({v["id"]: v for v in allv}.values(), key=lambda v: v["published"], reverse=True)[:limit]
+        return dict(state, items=self.annotate(items))
+
+    def home(self):
+        f = self.feed_get(60)
+        later = self._load(self.LATER, [])
+        return {"resume": self.resume_list(), "feed": f["items"], "refreshing": f["refreshing"], "errors": f["errors"],
+                "later": self.annotate(later[:30]), "laterCount": len(later), "subs": self.subs(),
+                "historyCount": len(self._load(self.HIST, []))}
+
+    # ---- Bilder (Zwischenspeicher, damit alte Rechner nicht alles neu laden) ----
+    def img(self, vid="", url=""):
+        if vid:
+            if not YT_VID.fullmatch(vid):
+                return None
+            url = f"https://i.ytimg.com/vi/{vid}/mqdefault.jpg"
+        if not YT_IMG_HOSTS.match(url or ""):
+            return None
+        f = self.CACHE / "img" / (hashlib.sha1(url.encode()).hexdigest()[:20] + ".jpg")
+        try:
+            if f.is_file() and f.stat().st_size:
+                return f.read_bytes()
+        except OSError:
+            pass
+        try:
+            req = urllib.request.Request(url, headers=UA)
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = r.read(2_000_000)
+                if not str(r.headers.get("Content-Type", "")).startswith("image/"):
+                    return None
+        except (OSError, ValueError):
+            return None
+        try:
+            f.parent.mkdir(parents=True, exist_ok=True)
+            f.write_bytes(data)
+            if random.random() < 0.02:                     # ab und zu aufraeumen: hoechstens ~4000 Bilder
+                files = sorted(f.parent.glob("*.jpg"), key=lambda p: p.stat().st_mtime)
+                for p in files[:max(0, len(files) - 4000)]:
+                    p.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return data
+
+    # ---- yt-dlp aktualisieren (eigene Kopie, Prüfsumme von GitHub) ----
+    def update_ytdlp(self, quiet=False):
+        with self.lock:
+            if self.upd["state"] == "running":
+                return dict(self.upd)
+            self.upd = {"state": "running", "msg": "", "t": int(time.time()), "quiet": quiet}
+
+        def work():
+            tmp = self.LOCAL.with_suffix(".new")
+            try:
+                req = urllib.request.Request(self.YTDLP_URL + "SHA2-256SUMS", headers=UA)
+                with urllib.request.urlopen(req, timeout=30) as r:
+                    sums = r.read(200_000).decode("utf-8", "replace")
+                want = next((ln.split()[0] for ln in sums.splitlines()
+                             if len(ln.split()) == 2 and ln.split()[1].lstrip("*") == "yt-dlp"), "")
+                if not re.fullmatch(r"[0-9a-f]{64}", want):
+                    raise RuntimeError("Pruefsumme nicht gefunden")
+                self.LOCAL.parent.mkdir(parents=True, exist_ok=True)
+                h = hashlib.sha256()
+                req = urllib.request.Request(self.YTDLP_URL + "yt-dlp", headers=UA)
+                with urllib.request.urlopen(req, timeout=120) as r, open(tmp, "wb") as fh:
+                    while True:
+                        b = r.read(65536)
+                        if not b:
+                            break
+                        h.update(b)
+                        fh.write(b)
+                if h.hexdigest() != want:
+                    raise RuntimeError("Pruefsumme stimmt nicht")
+                tmp.chmod(0o755)
+                r = run([str(tmp), "--version"], timeout=60)
+                if not r or r.returncode != 0:
+                    raise RuntimeError("neue Version startet nicht")
+                tmp.replace(self.LOCAL)
+                self.ver = ("", 0.0)
+                with self.lock:
+                    self.cache = {k: v for k, v in self.cache.items() if k[0] != "resolve"}
+                    self.upd = {"state": "done", "msg": r.stdout.strip(), "t": int(time.time()), "quiet": quiet}
+                log("YouTube Light: yt-dlp aktualisiert auf", r.stdout.strip())
+            except (OSError, RuntimeError, ValueError) as e:
+                tmp.unlink(missing_ok=True)
+                with self.lock:
+                    self.upd = {"state": "error", "msg": str(e)[:200], "t": int(time.time()), "quiet": quiet}
+                log("YouTube Light: yt-dlp-Aktualisierung fehlgeschlagen:", e)
+        threading.Thread(target=work, daemon=True).start()
+        return dict(self.upd)
+
+    def _auto_update(self):
+        """Gibt es schon eine eigene yt-dlp-Kopie, wird sie woechentlich still aktualisiert (YouTube aendert oft etwas)."""
+        try:
+            age = time.time() - self.LOCAL.stat().st_mtime
+        except OSError:
+            return
+        if age > 7 * 86400 and self.upd["state"] != "running" and time.time() - self.upd.get("t", 0) > 86400:
+            self.update_ytdlp(quiet=True)
+
+
+YT = YtLight()
+
+
+# ---------------------------------------------------------------------------
 #  HTTP
 # ---------------------------------------------------------------------------
 class Handler(BaseHTTPRequestHandler):
@@ -5808,6 +11581,51 @@ class Handler(BaseHTTPRequestHandler):
             return json.loads(self.rfile.read(n))
         except ValueError:
             return {}
+
+    def _keymap_post(self, rest, b):
+        """Tastenbelegung je Emulator: Taste abfragen (capture), belegen (set), zuruecksetzen (reset), abbrechen."""
+        try:
+            if rest == ["capture"]:
+                return self._json(200, PAD_CAPTURE.capture(str(b.get("path", "")), min(30.0, float(b.get("timeout") or 10)),
+                                                           bool(b.get("rstick"))))
+            if rest == ["cancel"]:
+                PAD_CAPTURE.cancel()
+                return self._json(200, {"ok": True})
+            emu = str(b.get("emu", ""))
+            if emu not in EMU_LAYOUTS:
+                return self._json(404, {"error": "Unbekannter Emulator"})
+            path = str(b.get("path", ""))
+            if rest == ["set"]:
+                swapped = keymap_set(emu, path, str(b.get("button", "")), b.get("bind"))
+                return self._json(200, dict(keymap_payload(emu, path), swapped=swapped))
+            if rest == ["reset"]:
+                keymap_reset(emu, path)
+                return self._json(200, keymap_payload(emu, path))
+        except (ValueError, OSError) as e:
+            return self._json(400, {"error": str(e)})
+        return self._json(404, {"error": "unbekannt"})
+
+    def _yt_get(self, what, qs):
+        """YouTube Light (GET): Zustand, Startseite, Feed, Suche, Kanal, Playlist, Verlauf, Spaeter, Abos, Bilder."""
+        g = lambda k: qs.get(k, [""])[0]
+        try:
+            if what == "img":
+                data = YT.img(vid=g("v"), url=g("u"))
+                return self._send(200, data, "image/jpeg") if data else self._send(404)
+            res = {"state": YT.state, "home": YT.home, "history": YT.history, "later": YT.later,
+                   "subs": lambda: {"items": YT.subs()},
+                   "feed": lambda: YT.feed_get(300, force=g("force") == "1"),
+                   "search": lambda: YT.search(g("q"), g("kind") or "video"),
+                   "channel": lambda: YT.channel(g("id"), g("tab") or "videos"),
+                   "playlist": lambda: YT.playlist(g("id"))}.get(what)
+            if not res:
+                return self._send(404)
+            return self._json(200, res())
+        except YtError as e:
+            return self._json(502, {"error": e.reason, "msg": str(e)})
+        except (ValueError, OSError) as e:
+            log("YouTube Light:", e)
+            return self._json(500, {"error": "failed", "msg": str(e)})
 
     def do_GET(self):
         if not self._host_ok():
@@ -5848,6 +11666,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, MEDIA.listdir(urllib.parse.parse_qs(url.query).get("path", [""])[0]))
             except (ValueError, FileNotFoundError, OSError) as e:
                 return self._json(404, {"error": str(e)})
+        if path == "/api/media/dvd":                 # Startseite der Mediathek: Disc eingelegt/entnommen?
+            return self._json(200, {"discs": DVD.discs()})
         if path == "/api/media/nextfolder":
             try:
                 return self._json(200, MEDIA.next_folder(urllib.parse.parse_qs(url.query).get("path", [""])[0]) or {})
@@ -5857,6 +11677,8 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, MUSICDL.payload())
         if path == "/api/dl/status":
             return self._json(200, MUSICDL.status())
+        if path.startswith("/api/yt/"):
+            return self._yt_get(path[8:], urllib.parse.parse_qs(url.query))
         if path == "/api/media/covers":
             return self._json(200, COVERS.status())
         if path == "/api/media/thumb":
@@ -5885,6 +11707,12 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, JOBS.current() or {})
         if path == "/api/radio/favs":
             return self._json(200, favs_load())
+        if path == "/api/radio/popular":
+            cc = region()
+            try:
+                return self._json(200, {"country": cc, "stations": radio_popular(cc)})
+            except RuntimeError as e:
+                return self._json(502, {"error": str(e), "country": cc})
         if path == "/api/radio/search":
             q = urllib.parse.parse_qs(url.query).get("q", [""])[0].strip()
             if not q:
@@ -5934,8 +11762,26 @@ class Handler(BaseHTTPRequestHandler):
                         summary[s] = len(r)
                 return self._json(200, {"systems": summary})
             roms = ROMS.list_roms(system)
+            for r in roms:
+                r["cover"] = ROM_COVERS.url(r)
             return self._json(200, {"system": ROMS.canonical_system(system), "folders": ROMS.folders(system),
-                                    "count": len(roms), "roms": roms})
+                                    "count": len(roms), "roms": roms, "keymap": system in EMU_LAYOUTS,
+                                    "mute": emu_muted(system), "bios": bios_status(system)})
+        if path == "/api/keymap":                  # Tastenbelegung eines Emulators (Konsole, Controller, Tasten)
+            qs = urllib.parse.parse_qs(url.query)
+            emu = qs.get("emu", [""])[0]
+            if emu not in EMU_LAYOUTS:
+                return self._json(404, {"error": "Unbekannter Emulator"})
+            return self._json(200, keymap_payload(emu, qs.get("path", [""])[0]))
+        if path == "/api/roms/cover":              # Bild zum Spiel (eigenes oder online gesucht, s. RomCovers)
+            qs = urllib.parse.parse_qs(url.query)
+            try:
+                f = ROM_COVERS.get(qs.get("folder", [""])[0], qs.get("file", [""])[0])
+                if f:
+                    return self._send(200, f.read_bytes(), MIME.get(f.suffix.lower(), "image/png"))
+            except OSError as e:
+                log("Cover:", e)
+            return self._send(404)
         if path == "/api/bluetooth/status":
             return self._json(200, BLUETOOTH.status())
         if path == "/tiles.json":
@@ -6004,6 +11850,20 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"ok": True})
             if parts == ["api", "dl", "settings"]:
                 return self._json(200, MUSICDL.save_settings(self._body().get("sources")))
+            if parts[:2] == ["api", "yt"]:                        # YouTube Light
+                b = self._body()
+                act = "/".join(parts[2:])
+                res = {"settings": lambda: YT.save_settings(b),
+                       "resolve": lambda: YT.resolve(str(b.get("id") or ""), str(b.get("quality") or ""),
+                                                     str(b.get("lang") or "de")),
+                       "progress": lambda: YT.progress(b), "later": lambda: YT.later_set(b),
+                       "sub": lambda: YT.sub_set(b), "import": YT.import_subs,
+                       "history/remove": lambda: YT.history_remove(str(b.get("id") or "") or "-"),
+                       "history/clear": lambda: YT.history_remove(""),
+                       "update": lambda: YT.update_ytdlp()}.get(act)
+                if not res:
+                    return self._send(404)
+                return self._json(200, res())
             if parts == ["api", "dl", "search"]:
                 return self._json(200, MUSICDL.search(self._body().get("q")))
             if parts == ["api", "dl", "get"]:
@@ -6028,6 +11888,8 @@ class Handler(BaseHTTPRequestHandler):
                 if s["covers_embed"]:
                     MEDIA.art_done.clear()               # beim naechsten Oeffnen der Ordner alle Titel einmal pruefen
                 return self._json(200, COVERS.status())
+            if parts == ["api", "media", "eject"]:
+                return self._json(200, {"ok": DVD.eject(str(self._body().get("dev") or ""))})
             if parts == ["api", "media", "now"]:
                 b = self._body()
                 MEDIA_NOW.clear()
@@ -6084,9 +11946,10 @@ class Handler(BaseHTTPRequestHandler):
                 log("Fernzugriff (SSH):", "an" if on else "aus")
                 return self._json(200, {"ssh": ssh_state()})
             if parts == ["api", "selfupdate", "channel"]:
+                # Seit 2026.11 nur noch zurueck zu Stable; Testing gibt es nur im Terminal (vsctl channel testing)
                 ch = str(self._body().get("channel", ""))
-                if ch not in CHANNELS:
-                    return self._json(400, {"error": "unbekannter Kanal"})
+                if ch != "stable":
+                    return self._json(400, {"error": "Testing nur noch im Terminal: vsctl channel testing"})
                 r = subprocess.run(["sudo", "-n", PKG_HELPER, "channel", ch], capture_output=True, text=True, timeout=20)
                 if r.returncode != 0:
                     return self._json(500, {"error": (r.stdout + r.stderr).strip() or "fehlgeschlagen"})
@@ -6106,6 +11969,10 @@ class Handler(BaseHTTPRequestHandler):
                         a = catalog_app(str(self._body().get("id", "")))
                         if not a:
                             return self._json(404, {"error": "unbekannte App"})
+                        if act == "install" and a.get("retired"):
+                            return self._json(409, {"error": f"{a['name']} gibt es im AppCenter nicht mehr"})
+                        if act == "install" and not app_supported(a):
+                            return self._json(409, {"error": f"{a['name']} gibt es nicht für {SYS_ARCH}"})
                         JOBS.start(act, a)
                     elif act == "update":               # alle Updates (Einstellungen → Updates, vsctl update)
                         if LIVE:
@@ -6129,6 +11996,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(400, {"error": "unbekannte Sprache"})
                 s = settings_load(); s["lang"] = lang; settings_save(s)
                 log("Sprache:", lang)
+                threading.Thread(target=bios_sync, daemon=True).start()      # Hinweise in den bios-Ordnern
                 return self._json(200, {"lang": lang})
             if parts == ["api", "settings", "scale"]:
                 val = float(self._body().get("scale", 1.75))
@@ -6169,12 +12037,33 @@ class Handler(BaseHTTPRequestHandler):
                 restart_home_later()
                 return self._json(200, settings_payload())
             if parts == ["api", "settings", "resolution"]:
-                res = str(self._body().get("mode", ""))
-                if not any(res in o["modes"] for o in xrandr_info()):
+                b = self._body()
+                res = str(b.get("mode", ""))
+                outs = [o for o in xrandr_info() if res in o["modes"]]
+                if not outs:
                     return self._json(400, {"error": "Aufloesung nicht verfuegbar"})
-                apply_resolution(res)
-                s = settings_load(); s["resolution"] = res; settings_save(s)
+                rate = None                                 # ohne Angabe: wieder automatisch (~60 Hz)
+                if b.get("rate") not in (None, "", 0):
+                    try:
+                        rate = round(float(b["rate"]), 2)
+                    except (TypeError, ValueError):
+                        return self._json(400, {"error": "ungueltige Bildrate"})
+                    if not any(abs(r - rate) < 0.005 for o in outs for r in o["rates"].get(res, [])):
+                        return self._json(400, {"error": "Bildrate nicht verfuegbar"})
+                with DISPLAY_RATE.lock:
+                    DISPLAY_RATE.base = {}                  # die neue Wahl gilt als Desktop-Rate
+                    apply_resolution(res, rate)
+                s = settings_load(); s["resolution"] = res; s["rate"] = rate; settings_save(s)
                 return self._json(200, settings_payload())
+            if parts == ["api", "settings", "matchrate"]:
+                on = bool(self._body().get("on"))
+                s = settings_load(); s["match_rate"] = on; settings_save(s)
+                log("Bildrate an Video anpassen:", "an" if on else "aus")
+                DISPLAY_RATE.reapply()
+                return self._json(200, settings_payload())
+            if parts == ["api", "display", "video"]:
+                b = self._body()
+                return self._json(200, DISPLAY_RATE.request(b.get("fps"), str(b.get("src") or "")))
             if parts[:2] == ["api", "audio"] and len(parts) == 3 and parts[2] in ("device", "format", "mic"):
                 b = self._body()
                 key = str(b.get("key") or "")
@@ -6188,6 +12077,22 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "audio", "auto"]:
                 s = settings_load(); s["audio_auto"] = bool(self._body().get("on")); settings_save(s)
                 return self._json(200, settings_payload())
+            if parts == ["api", "net", "prefer"]:
+                try:
+                    net_prefer_set(str(self._body().get("mode", "")))
+                except ValueError as e:
+                    return self._json(400, {"error": str(e)})
+                time.sleep(2)                     # Routen stehen nach reapply erst nach einem Moment
+                return self._json(200, settings_payload())
+            if parts in (["api", "net", "disconnect"], ["api", "net", "connect"]):
+                kind = self._body().get("type")
+                if kind not in ("wired", "wifi") or (parts[2] == "connect" and kind != "wired"):
+                    return self._json(400, {"error": "unbekannte Verbindungsart"})
+                try:
+                    (net_connect if parts[2] == "connect" else net_disconnect)(kind)
+                except RuntimeError as e:
+                    return self._json(502, {"error": str(e)})
+                return self._json(200, settings_payload())
             if parts == ["api", "wifi", "connect"]:
                 b = self._body()
                 if not b.get("ssid"):
@@ -6197,6 +12102,15 @@ class Handler(BaseHTTPRequestHandler):
                 except RuntimeError as e:
                     return self._json(502, {"error": str(e)})
                 return self._json(200, settings_payload())
+            if parts[:2] == ["api", "keymap"]:
+                return self._keymap_post(parts[2:], self._body())
+            if parts == ["api", "roms", "mute"]:      # Spieleliste: "Spiel stumm"
+                b = self._body()
+                try:
+                    emu_set_mute(str(b.get("system", "")), bool(b.get("on")))
+                except (ValueError, OSError) as e:
+                    return self._json(400, {"error": str(e)})
+                return self._json(200, {"mute": emu_muted(str(b.get("system", "")))})
             if parts == ["api", "roms", "launch"]:
                 b = self._body()
                 sys_id = str(b.get("system", ""))
@@ -6269,6 +12183,8 @@ class Handler(BaseHTTPRequestHandler):
                 APPS.close_all()
                 subprocess.Popen(POWER[parts[2]])
                 return self._json(200, {"ok": True})
+        except YtError as e:
+            return self._json(502, {"error": e.reason, "msg": str(e)})
         except Exception as e:  # noqa: BLE001
             log("Fehler:", e)
             return self._json(500, {"error": str(e)})
@@ -6282,6 +12198,13 @@ class Handler(BaseHTTPRequestHandler):
 #  Gamepad: Guide-Taste -> Startseite nach vorn
 # ---------------------------------------------------------------------------
 def gamepad_watcher():
+    """Controller-Tasten, die VoidStation selbst auswertet (auch wenn ein Programm vorn ist):
+      * Guide/Home: Startseite nach vorn
+      * L3 lang halten: Vollbild des Emulators vorn an/aus (emu_toggle_fullscreen)
+      * Aktionen aus der Tastenbelegung des Emulators, z. B. mGBA: △ speichern, □ laden (je eine halbe Sekunde
+        halten, SAVESTATE_HOLD – Antippen tut nichts), L2/R2 halten = spulen
+    Welche Taste welche Rolle hat, kommt aus pad_roles (SDL, Linux-Codes) und emu_binds. Waehrend die Seite
+    "Tastenbelegung" eine Taste abfragt, haelt PadCapture das Geraet exklusiv – dann kommt hier nichts an."""
     try:
         import evdev  # type: ignore
         from evdev import ecodes
@@ -6290,37 +12213,114 @@ def gamepad_watcher():
         log("python3-evdev fehlt, Gamepad-Home-Taste deaktiviert")
         return
     sel = selectors.DefaultSelector()
-    known = {}
+    known = {}                                     # Pfad -> Geraet
+    acts = {}                                      # Pfad -> [(Bindung, Aktion)]
+    rests = {}                                     # Pfad -> {Achse: (Ruhe, min, max)}
+    state = {}                                     # (Pfad, Aktion) -> gedrueckt
+    stamp = [None]                                 # Stand von emu-pads.json (Aenderung -> neu zuordnen)
 
-    def rescan():
+    def actions_for(pad, probe):
+        roles, src = pad_roles(pad, probe)
+        out = [(roles["l3"], "fullscreen")] if roles.get("l3") else []
+        own = []
+        for tile, keys in EMU_KEYS.items():                    # Extras jedes Emulators; ausgeloest nur, wenn er vorn ist
+            bmap, custom = emu_binds(tile, pad, roles=roles)
+            own += [tile] if custom else []
+            out += [(bmap[a], f"{tile}:{a}") for a in keys if bmap.get(a)]
+        return out, src + (f" + eigene Tastenbelegung ({', '.join(own)})" if own else "")
+
+    def pads_stamp():
+        try:
+            return EMU_PADS.stat().st_mtime_ns
+        except OSError:
+            return 0
+
+    def rescan(force=False):
+        pads = {p["path"]: p for p in gamepads()}
+        new = [p for p in pads if p not in known or force]
+        probe = sdl_probe() if new else []
         for path in evdev.list_devices():
-            if path in known:
+            if path in known and not force:
                 continue
             try:
-                dev = evdev.InputDevice(path)
-                if ecodes.BTN_MODE in dev.capabilities().get(ecodes.EV_KEY, []):
+                if path in known:
+                    dev = known[path]
+                else:
+                    dev = evdev.InputDevice(path)
+                    if not (path in pads or ecodes.BTN_MODE in dev.capabilities().get(ecodes.EV_KEY, [])):
+                        dev.close()
+                        continue
                     known[path] = dev
                     sel.register(dev, selectors.EVENT_READ)
-                    log("Gamepad erkannt:", dev.name)
+                if path in pads:
+                    acts[path], src = actions_for(pads[path], probe)
+                    rests[path] = {c: (i.value, i.min, i.max) for c, i in dev.capabilities().get(ecodes.EV_ABS, [])}
+                    log("Gamepad erkannt:", dev.name, f"[{pads[path]['id']}] Belegung: {src};",
+                        ", ".join(f"{a}={binding_label(b)}" for b, a in acts[path]))
                 else:
-                    dev.close()
+                    acts[path] = [({"key": ecodes.BTN_THUMBL}, "fullscreen")]
+                    log("Gamepad erkannt:", dev.name)
             except OSError:
                 pass
 
+    def drop(path):
+        known.pop(path, None)
+        acts.pop(path, None)
+        rests.pop(path, None)
+        for k in [k for k in state if k[0] == path]:
+            if state.pop(k):
+                emu_action(k[1], False)
+
+    def fire(path, action, on, ev_time):
+        k = (path, action)
+        was = state.get(k, False)
+        if on == was:
+            return
+        state[k] = on
+        if action.rpartition(":")[2] in HOLD_ACTIONS:   # erst nach langem Halten (Vollbild, Savestates)
+            if on:
+                hold_since[k] = ev_time
+            else:
+                hold_since.pop(k, None)
+                done.discard(k)
+        else:
+            threading.Thread(target=emu_action, args=(action, on), daemon=True).start()
+
     last_scan = 0.0
+    hold_since = {}                                # Halte-Aktionen (HOLD_ACTIONS): seit wann gehalten
+    done = set()                                   # langes Halten hat schon ausgeloest (einmal je Druck)
     while True:
         if time.time() - last_scan > 5:
-            rescan()
+            st_now = pads_stamp()
+            rescan(force=st_now != stamp[0] and stamp[0] is not None)
+            stamp[0] = st_now
             last_scan = time.time()
-        for key, _ in sel.select(timeout=1):
+        for key, _ in sel.select(timeout=0.1 if hold_since else 1):
             dev = key.fileobj
             try:
                 for ev in dev.read():
                     if ev.type == ecodes.EV_KEY and ev.code == ecodes.BTN_MODE and ev.value == 1:
                         raise_home()
+                        continue
+                    if ev.type not in (ecodes.EV_KEY, ecodes.EV_ABS):
+                        continue
+                    for b, action in acts.get(dev.path, []):
+                        if ev.type == ecodes.EV_KEY and b.get("key") == ev.code and ev.value in (0, 1):
+                            fire(dev.path, action, ev.value == 1, time.monotonic())
+                        elif ev.type == ecodes.EV_ABS and "abs" in b and b["abs"] == ev.code:
+                            v0, lo, hi = rests.get(dev.path, {}).get(ev.code, (0, 0, 1))
+                            fire(dev.path, action, (ev.value - v0) * b["dir"] / ((hi - lo) or 1) > 0.4, time.monotonic())
+                        elif ev.type == ecodes.EV_ABS and "hat" in b and \
+                                ev.code == (ecodes.ABS_HAT0X if b["hat"] == "x" else ecodes.ABS_HAT0Y):
+                            fire(dev.path, action, ev.value * b["dir"] > 0, time.monotonic())
             except OSError:
                 sel.unregister(dev)
-                known.pop(dev.path, None)
+                drop(dev.path)
+        for k, t in list(hold_since.items()):
+            if k not in done and time.monotonic() - t >= HOLD_ACTIONS[k[1].rpartition(":")[2]]:
+                done.add(k)
+                fn, args = (emu_toggle_fullscreen, ()) if k[1] == "fullscreen" else (emu_action, (k[1], True))
+                threading.Thread(target=fn, args=args, daemon=True).start()
 
 
 def app_prefs():
@@ -6368,14 +12368,17 @@ def main():
     app_prefs()
     s = settings_load()
     apply_appearance(s)
-    apply_resolution(s.get("resolution"))
+    apply_display(s)
     threading.Thread(target=gamepad_watcher, daemon=True).start()
     threading.Thread(target=resume_watcher, daemon=True).start()
     BLUETOOTH.start()                               # Kopplungs-Agent (BlueZ ueber D-Bus)
     threading.Thread(target=AUDIO_WATCH.run, daemon=True).start()   # neue Kopfhoerer, HDMI-Vorgabe Stereo
+    threading.Thread(target=bios_sync, daemon=True).start()         # bios-Ordner je System samt Hinweis
     if not LIVE:                                    # im Live-System gibt es keine Updates
         threading.Thread(target=updates_background_check, daemon=True).start()
         threading.Thread(target=kernel_autopurge, daemon=True).start()
+        threading.Thread(target=SAVES.watcher, daemon=True).start()   # Spielstaende alle 30 Minuten sichern
+        threading.Thread(target=flathub_ensure, daemon=True).start()  # Flathub fuer selbst installierte Flatpaks
     httpd = ThreadingHTTPServer((HOST, PORT), Handler)
     log(f"laeuft auf http://{HOST}:{PORT}/")
     try:

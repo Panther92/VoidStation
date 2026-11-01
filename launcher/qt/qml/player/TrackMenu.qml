@@ -15,7 +15,10 @@ Rectangle {
     property string repeatMode: ""               // Musik: Wiederholen-Abschnitt (leer = keiner)
     property int shuffleState: -1                // Musik: Zufall (-1 = kein Eintrag, 0 aus, 1 an)
     property string homeSub: ""
+    property var qualityList: []                 // eigene Qualitaetsstufen [{v, label, sub}] statt Beste/Sparsam
+    property var extraRows: []                   // weitere Eintraege unter "Weiteres" [{id, label, sub}]
     signal qualityChosen(string v)
+    signal extraChosen(string id)
     signal repeatChosen(string m)
     signal shuffleToggled()
     signal homeChosen()
@@ -30,7 +33,10 @@ Rectangle {
     MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: function (w) { w.accepted = true } }
 
     function trackLabel(t) {
-        var name = t.title || app.langName(t.lang) || Ui.t("player.track", { n: t.id })
+        var title = t.title || ""
+        // externe Spur ohne echten Namen (YouTube: "videoplayback", Testdateien: "a.m4a") -> Sprache bzw. "Spur n"
+        if (t.external && /^videoplayback|\.(m4a|mp4|webm|opus|aac|mka)$/i.test(title)) title = ""
+        var name = title || app.langName(t.lang) || Ui.t("player.track", { n: t.id })
         return name
     }
     function trackSub(t) {
@@ -80,12 +86,19 @@ Rectangle {
             out.push({ label: "4:3", sub: "", on: asp === "4:3", act: { kind: "aspect", v: "4:3" } })
             out.push({ label: Ui.t("player.aspect.zoom"), sub: "", on: asp === "zoom", act: { kind: "aspect", v: "zoom" } })
         }
-        if (withQuality) {
+        if (withQuality && qualityList.length) {
+            out.push({ head: Ui.t("player.menu.quality") })
+            for (i = 0; i < qualityList.length; i++)
+                out.push({ label: qualityList[i].label, sub: qualityList[i].sub || "", on: quality === qualityList[i].v,
+                           act: { kind: "quality", v: qualityList[i].v } })
+        } else if (withQuality) {
             out.push({ head: Ui.t("player.menu.quality") })
             out.push({ label: Ui.t("player.quality.best"), sub: "", on: quality === "max", act: { kind: "quality", v: "max" } })
             out.push({ label: Ui.t("player.quality.low"), sub: "", on: quality === "min", act: { kind: "quality", v: "min" } })
         }
         out.push({ head: Ui.t("player.menu.more") })
+        for (i = 0; i < extraRows.length; i++)
+            out.push({ label: extraRows[i].label, sub: extraRows[i].sub || "", on: false, act: { kind: "extra", id: extraRows[i].id } })
         if (repeatMode)                              // Musik: falsches oder fehlendes Cover
             out.push({ label: Ui.t("player.menu.recover"), sub: Ui.t("player.menu.recover.sub"), on: false, act: { kind: "recover" } })
         out.push({ label: Ui.t("player.menu.home"), sub: homeSub, on: false, act: { kind: "home" } })
@@ -129,6 +142,9 @@ Rectangle {
             repeatChosen(act.v)
         } else if (act.kind === "home") {
             return homeChosen()
+        } else if (act.kind === "extra") {
+            hide()
+            return extraChosen(act.id)
         } else if (act.kind === "recover") {
             hide()
             return coverRefresh()

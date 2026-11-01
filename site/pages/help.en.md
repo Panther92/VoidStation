@@ -163,6 +163,27 @@ Choose **Load all covers** on the library's start page. If a cover is wrong, ope
 
 Thirteen: Deutsch, English, Español, Français, Italiano, Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Ελληνικά, Русский and Українська – **Settings → Language**. Apart from German and English, the translations are machine-made; corrections are welcome as a [pull request](seite:contribute#translating). The installer and the stick's boot menu are German and English only for now.
 
+### Adding your own programs as tiles {#own-programs}
+
+Programs you installed yourself show up in the AppCenter under **Installed → On this device**. **Add tile** gives them a tile – games go into the *Games* group, everything else into *Programs*. Void packages and Flatpaks bring the launcher entry they need (a `.desktop` file) with them and appear there by themselves.
+
+An **AppImage** still needs that entry. Put the file into the shared folder, then in the terminal (adjust the name, the short `ID` without spaces and the file name):
+
+```
+NAME="My Program"; ID=myprogram
+FILE=~/share/MyProgram-x86_64.AppImage
+
+mkdir -p ~/Apps ~/.local/bin ~/.local/share/applications && cd ~/Apps
+chmod +x "$FILE" && "$FILE" --appimage-extract
+rm -rf "$ID" && mv squashfs-root "$ID"
+printf '#!/bin/sh\nexec "%s" "$@"\n' "$HOME/Apps/$ID/AppRun" > ~/.local/bin/$ID
+chmod +x ~/.local/bin/$ID
+printf '[Desktop Entry]\nType=Application\nName=%s\nExec=%s\nCategories=Utility;\n' \
+  "$NAME" "$HOME/.local/bin/$ID" > ~/.local/share/applications/$ID.desktop
+```
+
+For a game, use `Categories=Game;` instead of `Utility;`. Extracting the AppImage means it doesn't need FUSE. VoidStation doesn't update such programs: get the new file and run the commands again.
+
 ### The interface doesn't start – what now?
 
 After two failed starts, VoidStation reinstalls the XLibre display server once. If it still fails, a rescue console appears. `sudo /usr/local/sbin/voidstation-pkg xserver status` helps there.
@@ -170,6 +191,17 @@ After two failed starts, VoidStation reinstalls the XLibre display server once. 
 ### Where are the logs?
 
 In `~/.local/share/voidstation/logs/`. During installation, the installer's log is at `/run/voidstation-installer/install.log` and can be saved straight to a USB stick.
+
+### 4K TV: only 30 Hz or a lower resolution
+
+Many TVs ship with their HDMI inputs set to a narrow bandwidth. 4K then tops out at 30 Hz, and only lower resolutions run smoothly. The fix is a setting on the TV – for exactly the input the VoidStation PC is plugged into:
+
+- **Samsung:** *External Device Manager → Input Signal Plus* (up to 2018: *HDMI UHD Color*)
+- **LG:** *HDMI ULTRA HD Deep Colour*
+- **Sony:** *HDMI signal format → Enhanced format*
+- **Philips:** *HDMI Ultra HD → Optimal*
+
+Other brands use similar names (*HDMI 2.0*, *Enhanced*). Then pick the full resolution under **Settings → Display**. If it still doesn't work, it's usually the cable: 4K at 60 Hz needs one rated for 18 Gbit/s (*Premium High Speed*). To check, run `xrandr` in the terminal – `3840x2160` must list `60.00`.
 
 ### Is VoidStation an official Void Linux project?
 

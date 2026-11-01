@@ -22,7 +22,7 @@ LANG = os.environ.get("VS_LANG", "de")
 _src = (REPO / "launcher" / "launcher.py").read_text(encoding="utf-8")
 _tab = _src[_src.index("LANG_TABLE = ["):]
 LANGS = [{"id": i, "label": n} for i, n in re.findall(r'^\s*\("([A-Za-z-]+)", "([^"]+)"', _tab[:_tab.index("\n]")], re.M)]
-INSTALLED = {"steam", "retroarch", "duckstation", "kodi", "youtube-tv", "supertuxkart", "jellyfin", "netflix"}
+INSTALLED = {"steam", "retroarch", "duckstation", "kodi", "ard", "supertuxkart", "jellyfin", "netflix"}
 
 RADIO_NOW = {"station": {"name": "Deutschlandfunk", "url": "https://example.invalid/dlf"}, "title": "Nachrichten"}
 RADIO_FAVS = [
@@ -71,7 +71,10 @@ SETTINGS = {
     "cursor": {"theme": "Bibata-Modern-Ice", "size": 48,
                "themes": [{"id": "Bibata-Modern-Ice", "label": "Hell"}, {"id": "Bibata-Modern-Classic", "label": "Dunkel"}],
                "sizes": [32, 48, 64, 80, 96]},
-    "displays": [{"name": "HDMI-1", "current": "1280x720", "rate": 60.0, "modes": ["1920x1080i", "1280x720", "720x576"]}],
+    "displays": [{"name": "HDMI-1", "current": "1280x720", "rate": 60.0, "preferred": "1920x1080i",
+                  "modes": ["1920x1080i", "1280x720", "720x576"],
+                  "rates": {"1920x1080i": [60.0, 50.0, 59.94], "1280x720": [60.0, 50.0, 59.94], "720x576": [50.0]}}],
+    "rate": None, "match_rate": False,
     "audio": {"ok": True, "auto": True, "devices": [
         {"key": "alsa_card.pci-0000_00_1f.3#hdmi0", "kind": "hdmi", "name": "", "num": 0, "active": True,
          "formats": [{"id": "stereo", "key": "audio.fmt.stereo", "label": ""}, {"id": "surround-51", "key": "audio.fmt.surround", "label": "5.1"},
@@ -83,7 +86,10 @@ SETTINGS = {
          "formats": [{"id": "a2dp:auto", "key": "audio.fmt.auto", "label": ""}, {"id": "a2dp:aac", "key": "", "label": "AAC"},
                      {"id": "a2dp:sbc", "key": "", "label": "SBC"}], "format": "a2dp:auto", "mic": False, "micAvail": True}]},
     "volume": {"level": 40, "muted": False},
-    "net": {"hostname": "wohnzimmer", "addresses": [{"iface": "enp1s0", "ip": "192.168.178.42"}]},
+    "net": {"hostname": "wohnzimmer", "addresses": [{"iface": "enp1s0", "ip": "192.168.178.42"}],
+            "links": [{"dev": "enp1s0", "type": "wired", "connected": True, "name": "Kabelgebundene Verbindung 1",
+                       "ip": "192.168.178.42", "internet": True}],
+            "has_wired": True, "has_wifi": True, "prefer": "wired"},
     "share": {"path": "/home/paul/share", "exists": True, "samba": True, "name": "share", "user": "paul"},
 }
 

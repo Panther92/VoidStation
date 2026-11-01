@@ -62,7 +62,10 @@
         "sub": "Big Picture"
       },
       "note": "Beim ersten Start lädt Steam sich selbst herunter (ca. 300 MB). Für Windows-Spiele einmalig in Steam: Einstellungen → Kompatibilität → GE-Proton wählen.",
-      "start_hint": "Beim ersten Start lädt Steam Updates herunter und richtet sich ein – das kann einige Minuten dauern. Danach geht es deutlich schneller."
+      "start_hint": "Beim ersten Start lädt Steam Updates herunter und richtet sich ein – das kann einige Minuten dauern. Danach geht es deutlich schneller.",
+      "arch": [
+        "x86_64"
+      ]
     },
     {
       "id": "heroic",
@@ -70,13 +73,38 @@
       "cat": "Gaming",
       "desc": "Spiele von Epic, GOG und Amazon Prime Gaming in einem Launcher – Windows-Spiele laufen über Wine/Proton, das Heroic selbst verwaltet.",
       "source": {
-        "type": "flatpak",
-        "ref": "com.heroicgameslauncher.hgl"
+        "type": "appimage",
+        "gh": "Heroic-Games-Launcher/HeroicGamesLauncher",
+        "assets": [
+          "Heroic-{ver}-linux-x86_64.AppImage"
+        ],
+        "host_pkgs": [
+          "gtk+3",
+          "nss",
+          "libcups",
+          "libgbm",
+          "at-spi2-core",
+          "alsa-lib",
+          "libxkbcommon"
+        ],
+        "was_flatpak": "com.heroicgameslauncher.hgl",
+        "migrate": [
+          [
+            "config/heroic",
+            ".config/heroic"
+          ],
+          [
+            "config/legendary",
+            ".config/legendary"
+          ],
+          [
+            "config/nile",
+            ".config/nile"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "com.heroicgameslauncher.hgl"
+        "~/.local/share/voidstation/apps/heroic/AppRun"
       ],
       "tile": {
         "group": "Spiele",
@@ -112,13 +140,34 @@
       "cat": "Gaming",
       "desc": "Indie-Spiele von itch.io kaufen, herunterladen und starten – viele davon kostenlos.",
       "source": {
-        "type": "flatpak",
-        "ref": "io.itch.itch"
+        "type": "appimage",
+        "ver": {
+          "url": "https://broth.itch.zone/itch/linux-amd64/LATEST",
+          "re": "([0-9][0-9.]*[0-9])"
+        },
+        "dl": "https://broth.itch.zone/itch/linux-amd64/{ver}/archive/default",
+        "format": "zip",
+        "run": "itch",
+        "chromium": true,
+        "host_pkgs": [
+          "gtk+3",
+          "nss",
+          "libcups",
+          "libgbm",
+          "at-spi2-core",
+          "alsa-lib",
+          "libxkbcommon"
+        ],
+        "was_flatpak": "io.itch.itch",
+        "migrate": [
+          [
+            "config/itch",
+            ".config/itch"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "io.itch.itch"
+        "~/.local/share/voidstation/apps/itch/AppRun"
       ],
       "tile": {
         "group": "Spiele",
@@ -147,7 +196,10 @@
         "color": "#2f4a2a",
         "icon": "cube",
         "sub": "Minecraft"
-      }
+      },
+      "arch": [
+        "x86_64"
+      ]
     },
     {
       "id": "moonlight",
@@ -155,13 +207,21 @@
       "cat": "Gaming",
       "desc": "Spiele vom Gaming-PC auf den Fernseher streamen (braucht Sunshine oder NVIDIA GameStream auf dem PC).",
       "source": {
-        "type": "flatpak",
-        "ref": "com.moonlight_stream.Moonlight"
+        "type": "appimage",
+        "gh": "moonlight-stream/moonlight-qt",
+        "assets": [
+          "Moonlight-{ver}-x86_64.AppImage"
+        ],
+        "was_flatpak": "com.moonlight_stream.Moonlight",
+        "migrate": [
+          [
+            "config/Moonlight Game Streaming Project",
+            ".config/Moonlight Game Streaming Project"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "com.moonlight_stream.Moonlight"
+        "~/.local/share/voidstation/apps/moonlight/AppRun"
       ],
       "tile": {
         "group": "Spiele",
@@ -191,7 +251,8 @@
         "color": "#1b2838",
         "icon": "monitor",
         "sub": "PC-Streaming"
-      }
+      },
+      "retired": true
     },
     {
       "id": "discord",
@@ -199,13 +260,56 @@
       "cat": "Gaming",
       "desc": "Sprach- und Text-Chat für Spielerunden.",
       "source": {
-        "type": "flatpak",
-        "ref": "com.discordapp.Discord"
+        "type": "appimage",
+        "ver": {
+          "url": "https://discord.com/api/updates/stable?platform=linux",
+          "json": "name"
+        },
+        "dl": "https://dl.discordapp.net/apps/linux/{ver}/discord-{ver}.tar.gz",
+        "strip": 1,
+        "run": [
+          "discord",
+          "Discord"
+        ],
+        "shell": true,
+        "chromium": true,
+        "self_update": true,
+        "host_pkgs": [
+          "gtk+3",
+          "nss",
+          "libcups",
+          "libgbm",
+          "at-spi2-core",
+          "alsa-lib",
+          "libxkbcommon",
+          "libnotify",
+          "libXScrnSaver",
+          "libXtst",
+          "libcxx",
+          "libatomic",
+          "dbus-glib",
+          "xdg-utils",
+          "zenity"
+        ],
+        "json_set": [
+          {
+            "path": "~/.config/discord/settings.json",
+            "values": {
+              "SKIP_HOST_UPDATE": false,
+              "SKIP_MODULE_UPDATE": false
+            }
+          }
+        ],
+        "was_flatpak": "com.discordapp.Discord",
+        "migrate": [
+          [
+            "config/discord",
+            ".config/discord"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "com.discordapp.Discord"
+        "~/.local/share/voidstation/apps/discord/AppRun"
       ],
       "tile": {
         "group": "Programme",
@@ -239,7 +343,7 @@
       "id": "duckstation",
       "name": "DuckStation",
       "cat": "Emulatoren",
-      "desc": "PlayStation 1. Sehr genau und schnell, braucht BIOS-Dateien im Ordner share/bios.",
+      "desc": "PlayStation 1. Sehr genau und schnell, braucht ein BIOS aus der eigenen Konsole im Ordner share/ROMs/psx/bios.",
       "source": {
         "type": "appimage",
         "url": "https://github.com/stenzek/duckstation/releases/download/latest/DuckStation-x64.AppImage"
@@ -259,15 +363,17 @@
       "id": "pcsx2",
       "name": "PCSX2",
       "cat": "Emulatoren",
-      "desc": "PlayStation 2. Braucht ein BIOS aus der eigenen Konsole und einen kräftigeren Rechner – auf schwacher Hardware laufen nur leichte Spiele flüssig.",
+      "desc": "PlayStation 2. Braucht ein BIOS aus der eigenen Konsole (Ordner share/ROMs/ps2/bios) und einen kräftigeren Rechner – auf schwacher Hardware laufen nur leichte Spiele flüssig.",
       "source": {
-        "type": "flatpak",
-        "ref": "net.pcsx2.PCSX2"
+        "type": "appimage",
+        "gh": "PCSX2/pcsx2",
+        "assets": [
+          "pcsx2-{tag}-linux-appimage-x64-Qt.AppImage"
+        ],
+        "was_flatpak": "net.pcsx2.PCSX2"
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "net.pcsx2.PCSX2"
+        "~/.local/share/voidstation/apps/pcsx2/AppRun"
       ],
       "tile": {
         "group": "Spiele",
@@ -307,7 +413,7 @@
       "cmd": [
         "mgba-qt"
       ],
-      "mouse": true,
+      "mouse": false,
       "tile": {
         "group": "Spiele",
         "size": "wide",
@@ -363,13 +469,15 @@
       "cat": "Emulatoren",
       "desc": "Nintendo 64 – moderne Oberfläche für Mupen64Plus, gut mit dem Controller bedienbar.",
       "source": {
-        "type": "flatpak",
-        "ref": "com.github.Rosalie241.RMG"
+        "type": "appimage",
+        "gh": "Rosalie241/RMG",
+        "assets": [
+          "RMG-Portable-Linux64-{tag}.AppImage"
+        ],
+        "was_flatpak": "com.github.Rosalie241.RMG"
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "com.github.Rosalie241.RMG"
+        "~/.local/share/voidstation/apps/rmg/AppRun"
       ],
       "tile": {
         "group": "Spiele",
@@ -406,13 +514,15 @@
       "cat": "Emulatoren",
       "desc": "Nintendo 3DS (Nachfolger von Citra und Lime3DS). Spiele müssen entschlüsselt sein.",
       "source": {
-        "type": "flatpak",
-        "ref": "org.azahar_emu.Azahar"
+        "type": "appimage",
+        "gh": "azahar-emu/azahar",
+        "assets": [
+          "azahar.AppImage"
+        ],
+        "was_flatpak": "org.azahar_emu.Azahar"
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "org.azahar_emu.Azahar"
+        "~/.local/share/voidstation/apps/azahar/AppRun"
       ],
       "tile": {
         "group": "Spiele",
@@ -428,13 +538,16 @@
       "cat": "Emulatoren",
       "desc": "Sega Dreamcast, Naomi und Atomiswave.",
       "source": {
-        "type": "flatpak",
-        "ref": "org.flycast.Flycast"
+        "type": "appimage",
+        "gh": "flyinghead/flycast",
+        "assets": [
+          "flycast-x86_64-{ver}.AppImage",
+          "flycast-x86_64.AppImage"
+        ],
+        "was_flatpak": "org.flycast.Flycast"
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "org.flycast.Flycast"
+        "~/.local/share/voidstation/apps/flycast/AppRun"
       ],
       "tile": {
         "group": "Spiele",
@@ -470,13 +583,15 @@
       "cat": "Emulatoren",
       "desc": "Wii U. Anspruchsvoll – braucht Vulkan und eine kräftige Grafik; auf schwacher Hardware eher zum Ausprobieren.",
       "source": {
-        "type": "flatpak",
-        "ref": "info.cemu.Cemu"
+        "type": "appimage",
+        "gh": "cemu-project/Cemu",
+        "assets": [
+          "Cemu-{ver}-x86_64.AppImage"
+        ],
+        "was_flatpak": "info.cemu.Cemu"
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "info.cemu.Cemu"
+        "~/.local/share/voidstation/apps/cemu/AppRun"
       ],
       "tile": {
         "group": "Spiele",
@@ -484,6 +599,30 @@
         "color": "#25465a",
         "icon": "gamepad",
         "sub": "Wii U"
+      }
+    },
+    {
+      "id": "xemu",
+      "name": "xemu",
+      "cat": "Emulatoren",
+      "desc": "Original-Xbox. Braucht MCPX-Boot-ROM, BIOS und Festplatten-Image aus der eigenen Konsole im Ordner share/ROMs/xbox/bios.",
+      "source": {
+        "type": "appimage",
+        "gh": "xemu-project/xemu",
+        "assets": [
+          "xemu-{ver}-x86_64.AppImage"
+        ],
+        "was_flatpak": "app.xemu.xemu"
+      },
+      "cmd": [
+        "~/.local/share/voidstation/apps/xemu/AppRun"
+      ],
+      "tile": {
+        "group": "Spiele",
+        "size": "medium",
+        "color": "#2d4a2c",
+        "icon": "gamepad",
+        "sub": "Xbox"
       }
     },
     {
@@ -814,7 +953,8 @@
         "color": "#4a3a1a",
         "icon": "film",
         "sub": "Medienserver"
-      }
+      },
+      "retired": true
     },
     {
       "id": "spotify",
@@ -822,13 +962,42 @@
       "cat": "Medien",
       "desc": "Musik und Podcasts streamen. Steuerung auch vom Handy aus (Spotify Connect).",
       "source": {
-        "type": "flatpak",
-        "ref": "com.spotify.Client"
+        "type": "appimage",
+        "deb": {
+          "index": "https://repository.spotify.com/dists/stable/non-free/binary-amd64/Packages",
+          "pkg": "spotify-client",
+          "base": "https://repository.spotify.com"
+        },
+        "run": "usr/share/spotify/spotify",
+        "links": {
+          "usr/share/spotify/libcurl-gnutls.so.4": "/usr/lib/libcurl.so.4"
+        },
+        "host_pkgs": [
+          "gtk+3",
+          "nss",
+          "libcups",
+          "libgbm",
+          "at-spi2-core",
+          "alsa-lib",
+          "libxkbcommon",
+          "libcurl",
+          "libayatana-appindicator",
+          "libatomic"
+        ],
+        "was_flatpak": "com.spotify.Client",
+        "migrate": [
+          [
+            "config/spotify",
+            ".config/spotify"
+          ],
+          [
+            "cache/spotify",
+            ".cache/spotify"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "com.spotify.Client"
+        "~/.local/share/voidstation/apps/spotify/AppRun"
       ],
       "tile": {
         "group": "Unterhaltung",
@@ -839,18 +1008,60 @@
       }
     },
     {
+      "id": "ytlight",
+      "name": "YouTube Light",
+      "cat": "Medien",
+      "desc": "YouTube ohne Browser und ohne Google-Konto: suchen, Kanäle abonnieren, Playlists, Später ansehen und Weiterschauen – abgespielt mit dem VoidStation-Player, ganz mit dem Controller. Läuft auch auf alten Rechnern flüssig. Abos lassen sich aus Google Takeout, NewPipe und FreeTube übernehmen; alles bleibt auf dem Gerät.",
+      "source": {
+        "type": "builtin",
+        "pkgs": [
+          "yt-dlp",
+          "mpv",
+          "nodejs"
+        ]
+      },
+      "cmd": [
+        "~/.local/share/voidstation/qt/voidstation-player.py",
+        "--yt"
+      ],
+      "tile": {
+        "group": "Unterhaltung",
+        "size": "medium",
+        "color": "#6e2b2b",
+        "icon": "play",
+        "sub": "YouTube ohne Browser"
+      }
+    },
+    {
       "id": "freetube",
       "name": "FreeTube",
       "cat": "Medien",
       "desc": "YouTube ohne Werbung und ohne Google-Konto – Abos bleiben auf dem Gerät.",
       "source": {
-        "type": "flatpak",
-        "ref": "io.freetubeapp.FreeTube"
+        "type": "appimage",
+        "gh": "FreeTubeApp/FreeTube",
+        "assets": [
+          "freetube-{ver}-amd64.AppImage"
+        ],
+        "host_pkgs": [
+          "gtk+3",
+          "nss",
+          "libcups",
+          "libgbm",
+          "at-spi2-core",
+          "alsa-lib",
+          "libxkbcommon"
+        ],
+        "was_flatpak": "io.freetubeapp.FreeTube",
+        "migrate": [
+          [
+            "config/FreeTube",
+            ".config/FreeTube"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "io.freetubeapp.FreeTube"
+        "~/.local/share/voidstation/apps/freetube/AppRun"
       ],
       "tile": {
         "group": "Unterhaltung",
@@ -920,26 +1131,6 @@
         "icon": "image",
         "sub": "Bilder",
         "label": "Bilder"
-      }
-    },
-    {
-      "id": "youtube-tv",
-      "name": "YouTube TV-Oberfläche",
-      "cat": "Streaming",
-      "desc": "Experimentell: youtube.com/tv mit großer Fernbedienungs-Oberfläche und Koppeln mit dem Handy. Kann Google jederzeit sperren.",
-      "source": {
-        "type": "web",
-        "url": "https://www.youtube.com/tv",
-        "ua": "Mozilla/5.0 (SMART-TV; Linux; Tizen 6.0) AppleWebKit/537.36 (KHTML, like Gecko) SamsungBrowser/4.0 Chrome/76.0.3809.146 TV Safari/537.36"
-      },
-      "mouse": false,
-      "tile": {
-        "group": "Unterhaltung",
-        "size": "medium",
-        "color": "#5b2626",
-        "icon": "play",
-        "sub": "TV-Modus",
-        "label": "YouTube TV"
       }
     },
     {
@@ -1166,13 +1357,39 @@
       "cat": "Browser",
       "desc": "Browser auf Chromium-Basis mit eingebautem Werbe- und Tracking-Blocker.",
       "source": {
-        "type": "flatpak",
-        "ref": "com.brave.Browser"
+        "type": "appimage",
+        "gh": "brave/brave-browser",
+        "assets": [
+          "brave-browser-{ver}-linux-amd64.zip"
+        ],
+        "run": [
+          "brave-browser",
+          "brave"
+        ],
+        "chromium": true,
+        "host_pkgs": [
+          "gtk+3",
+          "nss",
+          "libcups",
+          "libgbm",
+          "at-spi2-core",
+          "alsa-lib",
+          "libxkbcommon"
+        ],
+        "was_flatpak": "com.brave.Browser",
+        "migrate": [
+          [
+            "config/BraveSoftware",
+            ".config/BraveSoftware"
+          ],
+          [
+            ".pki",
+            ".pki"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "com.brave.Browser"
+        "~/.local/share/voidstation/apps/brave/AppRun"
       ],
       "tile": {
         "group": "Programme",
@@ -1188,13 +1405,23 @@
       "cat": "Browser",
       "desc": "Firefox-Ableger mit Fokus auf Privatsphäre, uBlock Origin ist schon dabei.",
       "source": {
-        "type": "flatpak",
-        "ref": "io.gitlab.librewolf-community"
+        "type": "appimage",
+        "api": "https://librewolf.dev/api/v1/repos/librewolf/bsys6/releases/latest",
+        "pick": "-linux-x86_64-appimage\\.AppImage$",
+        "was_flatpak": "io.gitlab.librewolf-community",
+        "migrate": [
+          [
+            ".librewolf",
+            ".librewolf"
+          ],
+          [
+            "config/librewolf",
+            ".config/librewolf"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "io.gitlab.librewolf-community"
+        "~/.local/share/voidstation/apps/librewolf/AppRun"
       ],
       "tile": {
         "group": "Programme",
@@ -1215,14 +1442,6 @@
       },
       "cmd": [
         "xterm",
-        "-fa",
-        "Monospace",
-        "-fs",
-        "13",
-        "-bg",
-        "#111316",
-        "-fg",
-        "#dcdcdc",
         "-e",
         "htop"
       ],
@@ -1241,13 +1460,13 @@
       "cat": "Werkzeuge",
       "desc": "Grafischer Systemmonitor: Prozessor, Speicher, Grafik, Netzwerk und laufende Programme auf einen Blick.",
       "source": {
-        "type": "flatpak",
-        "ref": "io.missioncenter.MissionCenter"
+        "type": "appimage",
+        "api": "https://gitlab.com/api/v4/projects/mission-center-devs%2Fmission-center/releases/permalink/latest",
+        "pick": "x86_64.*AppImage|AppImage.*x86_64",
+        "was_flatpak": "io.missioncenter.MissionCenter"
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "io.missioncenter.MissionCenter"
+        "~/.local/share/voidstation/apps/missioncenter/AppRun"
       ],
       "tile": {
         "group": "System",
@@ -1263,13 +1482,21 @@
       "cat": "Werkzeuge",
       "desc": "Fotos, Videos und Dateien vom Handy oder PC im WLAN aufs Gerät schicken – ohne Kabel und ohne Cloud. Die App gibt es für Android, iOS, Windows und macOS.",
       "source": {
-        "type": "flatpak",
-        "ref": "org.localsend.localsend_app"
+        "type": "appimage",
+        "gh": "localsend/localsend",
+        "assets": [
+          "LocalSend-{ver}-linux-x86-64.AppImage"
+        ],
+        "was_flatpak": "org.localsend.localsend_app",
+        "migrate": [
+          [
+            "data/org.localsend.localsend_app",
+            ".local/share/org.localsend.localsend_app"
+          ]
+        ]
       },
       "cmd": [
-        "flatpak",
-        "run",
-        "org.localsend.localsend_app"
+        "~/.local/share/voidstation/apps/localsend/AppRun"
       ],
       "tile": {
         "group": "System",

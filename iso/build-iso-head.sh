@@ -13,6 +13,12 @@
 #  Startmenue mit Logo (Start / Start NVIDIA only / Reboot), Startbild per Plymouth.
 #  NVIDIA-Treiber (offene Kernel-Module, DKMS) ist dabei, laedt aber nur ueber
 #  den Eintrag "NVIDIA only" – sonst laufen die freien Treiber.
+#
+#  32-Bit (experimentell):  sudo bash build-iso.sh --arch i686
+#    -> ~/share/ISO/voidstation-<version>-i686-JJJJMMTT.iso
+#    ohne NVIDIA und Plymouth, Startmenue nur fuer BIOS-Rechner sinnvoll,
+#    Kernel-Parameter forcepae (Pentium M melden PAE nicht, koennen es aber).
+#    Gebaut wird trotzdem auf einem x86_64-Rechner (void-mklive -a i686).
 # =====================================================================
 set -euo pipefail
 
@@ -25,6 +31,22 @@ VS_VERSION="__VS_RELEASE__"
 say()  { printf '\n\033[1;36m==> %s\033[0m\n' "$*"; }
 warn() { printf '\033[1;33m[!] %s\033[0m\n' "$*"; }
 die()  { printf '\n\033[1;31m[x] %s\033[0m\n' "$*"; exit 1; }
+
+# Zielarchitektur: x86_64 (Standard) oder i686 (experimentell); auch per Umgebung VS_ARCH=i686
+ARCH="${VS_ARCH:-x86_64}"
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --arch)   [ $# -ge 2 ] || die "--arch braucht einen Wert (x86_64 oder i686)"; ARCH="$2"; shift 2 ;;
+    --arch=*) ARCH="${1#--arch=}"; shift ;;
+    --i686)   ARCH=i686; shift ;;
+    *) die "Unbekannte Option: $1  (erlaubt: --arch x86_64|i686)" ;;
+  esac
+done
+case "$ARCH" in
+  x86_64) ARCHTAG="" ;;
+  i686)   ARCHTAG="-i686" ;;
+  *) die "Architektur $ARCH wird nicht unterstuetzt (x86_64 oder i686)." ;;
+esac
 
 [ "$(id -u)" -eq 0 ] || die "Bitte mit sudo starten: sudo bash build-iso.sh"
 # ISOs nur aus freigegebenen Staenden (Zweig stable) – der Testing-Stand traegt "+testing" in der Version
@@ -84,22 +106,21 @@ PLY="$INC/usr/share/plymouth/themes/voidstation"
 install -d "$PLY"
 install -m 644 "$SRC/art/plymouth/"* "$PLY/"
 
-# Schriften fuer das Startmenue (UEFI) – fehlen sie, nimmt GRUB seine eigene (klein, aber lesbar)
+# Schriften fuer das Startmenue (UEFI) – fehlen sie, nimmt GRUB seine eigene (klein, aber lesbar).
+# Zeichen: Latein mit Akzenten (cs, lv, hu, pl, sk …), Griechisch und Kyrillisch (el, ru, uk), Striche, Pfeile
 mkfont() {  # <ttf> <name> <groesse> <datei>
   [ -f "$1" ] || { warn "Schrift fehlt: $1"; return 0; }
-  grub-mkfont -n "$2" -s "$3" -r 0x20-0x7E,0xA0-0x17F,0x2010-0x2027,0x2190-0x2193 -o "$SRC/art/grub/$4" "$1" \
+  grub-mkfont -n "$2" -s "$3" -r 0x20-0x7E,0xA0-0x17F,0x370-0x3FF,0x400-0x4FF,0x2010-0x2027,0x2190-0x2193 -o "$SRC/art/grub/$4" "$1" \
     || warn "grub-mkfont: $4 nicht erzeugt"
 }
 NOTO=/usr/share/fonts/noto/NotoSans-Regular.ttf
 mkfont "$NOTO" VoidStation 20 vs-20.pf2
+mkfont "$NOTO" VoidStation 24 vs-24.pf2
 mkfont "$NOTO" VoidStation 30 vs-30.pf2
 mkfont /usr/share/fonts/TTF/DejaVuSansMono.ttf "VoidStation Mono" 20 vs-mono-20.pf2
 
-# Eigene Favoriten (Radio, TV) mitnehmen, falls vorhanden – im Live-System schon da
-PERS="$SRC/personal"; mkdir -p "$PERS"
-for f in radio.json tvfavs.json; do
-  [ -f "$HOMEDIR/.local/share/voidstation/$f" ] && cp "$HOMEDIR/.local/share/voidstation/$f" "$PERS/" && echo "nehme mit: $f"
-done
+# Keine eigenen Favoriten (Radio, TV) auf dem Stick: Radio schlaegt die beliebtesten Sender des Landes vor,
+# Fernsehen zeigt die Sender des Landes – beides nach der Sprache aus dem Startmenue (region in launcher.py)
 
 # Signaturschluessel der XLibre-Quelle (derselbe wie in voidstation-pkg) fuer den Bau
 sed -n "/^  cat <<'KEYEOF'$/,/^KEYEOF$/p" "$SRC/voidstation-pkg" | sed '1d;$d' > "$MK/keys/$XLIBRE_KEYFP.plist"
@@ -114,34 +135,56 @@ eval "$(sed -n '/^PKGS="/,/"$/p' "$SRC/install.sh" | head -20)"
 # nvidia = NVIDIA-Treiber (nonfree, offene Kernel-Module per DKMS, GeForce GTX 16xx / RTX 20xx und neuer);
 #          bringt dkms, gcc und die Kernel-Header mit. Der Installer entfernt das alles wieder, wenn der Stick
 #          nicht ueber "NVIDIA only" gestartet wurde.
-# plymouth = Startbild mit Logo (nur auf dem Stick, der Installer entfernt es)
-LIVE_PKGS="$PKGS void-repo-nonfree intel-ucode xlibre-minimal linux-firmware linux-firmware-nvidia nvidia plymouth \
-  grub grub-x86_64-efi efibootmgr dracut sudo \
+# plymouth = Startbild mit Logo (Stick und installiertes System; dort richtet es voidstation-splash ein)
+# i686 (experimentell): ohne NVIDIA (kein 32-Bit-Treiber), ohne Plymouth (spart Zeit und RAM beim Start
+# auf alten Rechnern) und ohne GRUB fuer 64-Bit-UEFI – 32-Bit-Rechner starten praktisch immer per BIOS.
+LIVE_PKGS="$PKGS void-repo-nonfree intel-ucode xlibre-minimal linux-firmware grub efibootmgr dracut sudo \
   gparted ntfs-3g btrfs-progs dosfstools e2fsprogs xfsprogs gptfdisk pciutils util-linux tar curl"
+REQUIRED="xlibre-minimal firefox python3 python3-pyside6-declarative NetworkManager grub"
+CMDLINE="live.user=tv live.shell=/bin/bash quiet loglevel=3"
+if [ "$ARCH" = x86_64 ]; then
+  LIVE_PKGS="$LIVE_PKGS linux-firmware-nvidia nvidia plymouth grub-x86_64-efi"
+  REQUIRED="$REQUIRED grub-x86_64-efi nvidia"
+else
+  # Pentium M (Banias, fruehe Dothan) koennen PAE, melden es aber nicht – ohne forcepae startet kein PAE-Kernel.
+  # Auf CPUs, die PAE melden, aendert der Parameter nichts.
+  # rd.live.overlay.overlayfs=1: Schreibschicht per OverlayFS statt Device-Mapper-Snapshot. void-mklive setzt
+  # dafuer rd.overlayfs=1, das kennt dracut aber nicht (dort rd.overlay / rd.live.overlay.overlayfs) – ohne
+  # bleibt der i686-Start beim Anlegen des Snapshots haengen (udev-Timeout fuer loop1/dm-0 nach 180 s,
+  # gefunden in QEMU am 22.10.2026). Spart ausserdem den 32-GB-Overlay-Loop.
+  CMDLINE="$CMDLINE forcepae rd.live.overlay.overlayfs=1"
+  # 2D-Treiber fuer alte Grafik (ATI, Intel, NVIDIA, VIA): Xv fuer den Player ohne 3D-Treiber (s. install.sh)
+  LIVE_PKGS="$LIVE_PKGS xlibre-xf86-video-ati xlibre-xf86-video-intel xlibre-xf86-video-nouveau xlibre-xf86-video-openchrome"
+fi
 LIVE_PKGS="$(echo $LIVE_PKGS | tr ' ' '\n' | awk 'NF && !seen[$0]++' | tr '\n' ' ')"
 # Pakete, die es in den Quellen nicht (mehr) gibt, weglassen statt den ganzen Bau abzubrechen
-xbps-install -S >/dev/null 2>&1 || warn "Paketlisten konnten nicht aktualisiert werden"
+# (XBPS_ARCH: die Paketlisten der Zielarchitektur pruefen, nicht die des Bau-Rechners)
+XBPS_ARCH="$ARCH" xbps-install -S >/dev/null 2>&1 || warn "Paketlisten konnten nicht aktualisiert werden"
 OK_PKGS="" SKIPPED=""
 for p in $LIVE_PKGS; do
-  if xbps-query -R "$p" >/dev/null 2>&1; then OK_PKGS="$OK_PKGS $p"; else SKIPPED="$SKIPPED $p"; fi
+  if XBPS_ARCH="$ARCH" xbps-query -R "$p" >/dev/null 2>&1; then OK_PKGS="$OK_PKGS $p"; else SKIPPED="$SKIPPED $p"; fi
 done
-[ -n "$SKIPPED" ] && warn "nicht in den Paketquellen, weggelassen:$SKIPPED"
-for p in xlibre-minimal firefox python3 python3-pyside6-declarative NetworkManager grub grub-x86_64-efi nvidia; do
-  case " $OK_PKGS " in *" $p "*) ;; *) die "Pflichtpaket fehlt in den Paketquellen: $p" ;; esac
+[ -n "$SKIPPED" ] && warn "nicht in den Paketquellen ($ARCH), weggelassen:$SKIPPED"
+for p in $REQUIRED; do
+  case " $OK_PKGS " in *" $p "*) ;; *) die "Pflichtpaket fehlt in den Paketquellen ($ARCH): $p" ;; esac
 done
 LIVE_PKGS="${OK_PKGS# }"
-echo "$(echo $LIVE_PKGS | wc -w) Pakete"
+echo "$(echo $LIVE_PKGS | wc -w) Pakete fuer $ARCH"
 
 # ---------------------------------------------------------------------
-say "4/5  ISO bauen (Download ca. 2 GB, NVIDIA-Modul kompilieren, Komprimieren – ca. 25–50 Minuten)"
+if [ "$ARCH" = x86_64 ]; then
+  say "4/5  ISO bauen (Download ca. 2 GB, NVIDIA-Modul kompilieren, Komprimieren – ca. 25–50 Minuten)"
+else
+  say "4/5  ISO bauen fuer $ARCH (experimentell; Download ca. 1,5 GB, Komprimieren – ca. 20–40 Minuten)"
+fi
 STAMP="$(date +%Y%m%d)"
-ISO="voidstation-${VS_VERSION}-${STAMP}.iso"
-export VOIDSTATION_SRC="$SRC"
+ISO="voidstation-${VS_VERSION}${ARCHTAG}-${STAMP}.iso"
+export VOIDSTATION_SRC="$SRC" VOIDSTATION_ARCH="$ARCH"
 cd "$MK"
-./mklive.sh -a x86_64 \
+./mklive.sh -a "$ARCH" \
   -r "$REPO" -r "$REPO/nonfree" -r "$XLIBRE_REPO" \
   -k de -l de_DE.UTF-8 -T "VoidStation" \
-  -C "live.user=tv live.shell=/bin/bash quiet loglevel=3" \
+  -C "$CMDLINE" \
   -p "$LIVE_PKGS" -S "dbus NetworkManager chronyd" \
   -I "$INC" -x "$SRC/postsetup.sh" -o "$WORK/$ISO.raw"
 
@@ -171,5 +214,15 @@ cat <<EOF
  Paket-Cache bleibt in $MK (naechster Bau geht schneller).
 ---------------------------------------------------------------------
 EOF
+if [ "$ARCH" = i686 ]; then
+  cat <<EOF
+ 32-Bit-ISO (experimentell). Probelauf ohne PAE-Flag wie auf einem Pentium M:
+   qemu-system-i386 -enable-kvm -cpu qemu32,+sse2,-pae -m 1024 -vga std -boot d -cdrom $OUT/$ISO
+ (ohne KVM-Zugriff -enable-kvm weglassen, dann langsam). Im Live-System:  dmesg | grep -i pae
+ Veroeffentlichen nur ausdruecklich:  vspub --iso $OUT/$ISO
+ (die Webseite bietet weiter die x86_64-ISO an).
+---------------------------------------------------------------------
+EOF
+fi
 exit 0
 __PAYLOAD_BELOW__

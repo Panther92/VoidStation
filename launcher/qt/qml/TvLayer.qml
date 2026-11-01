@@ -10,7 +10,8 @@ Layer {
     title: Ui.t("tv.title")
     track: trk
     property string query: ""
-    property string country: "DE"
+    property string country: ""               // "" bis der Launcher das Land meldet (status.region), "*" = alle
+    property bool countryPicked: false         // selbst gewaehlt: bleibt, solange die Startseite laeuft
     property string cat: ""
     property bool more: false
     property var favs: []
@@ -46,7 +47,10 @@ Layer {
     function isFav(key) { for (var i = 0; i < favs.length; i++) if (favs[i].key === key) return true; return false }
     function where() { return country === "*" ? Ui.t("tv.allCountriesLower") : Ui.regionName(country) }
     function countries() {
-        var top = ["DE", "AT", "CH"], out = top.slice()
+        // Schnellwahl: Land der Sprache, in der VoidStation installiert ist, und Nachbarn (status.quick vom Launcher)
+        var top = (status && status.quick && status.quick.length) ? status.quick.slice() : ["DE", "AT", "CH"]
+        if (country && country !== "*" && top.indexOf(country) < 0) top.push(country)
+        var out = top.slice()
         if (more && status && status.countries) {
             var rest = status.countries.map(function (c) { return c.code }).filter(function (c) { return top.indexOf(c) < 0 }).slice(0, 16)
             out = out.concat(rest)
@@ -58,6 +62,7 @@ Layer {
     function load() {
         Api.get("/api/tv/status", function (s) {
             status = s
+            if (!countryPicked) country = s.region || "DE"
             Api.get("/api/tv/favs", function (f) { favs = f || [] })
             app.setTvNow(s.now)
             if (s.state === "loading" || s.state === "idle") { msg = Ui.t("tv.loading"); results = []; waitReady.start() }
@@ -187,10 +192,10 @@ Layer {
                     Repeater {
                         model: tvl.countries()
                         Pill { property string fk: "c" + modelData; text: Ui.regionName(modelData); on: tvl.country === modelData
-                               onTriggered: tvl.setFilter(function () { tvl.country = modelData }, fk) }
+                               onTriggered: tvl.setFilter(function () { tvl.country = modelData; tvl.countryPicked = true }, fk) }
                     }
                     Pill { property string fk: "c*"; text: Ui.t("tv.allCountries"); on: tvl.country === "*"
-                           onTriggered: tvl.setFilter(function () { tvl.country = "*" }, fk) }
+                           onTriggered: tvl.setFilter(function () { tvl.country = "*"; tvl.countryPicked = true }, fk) }
                     Pill { property string fk: "more"; text: tvl.more ? Ui.t("tv.less") : Ui.t("tv.more")
                            onTriggered: { tvl.more = !tvl.more; Qt.callLater(function () { var it = Nav.collect(filterGroup); for (var i = 0; i < it.length; i++) if (it[i].fk === "more") app.setFocus(it[i], true) }) } }
                 }

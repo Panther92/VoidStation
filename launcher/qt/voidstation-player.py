@@ -10,6 +10,7 @@ Theme, Sprachen, Gamepad zuerst, Tastatur und Maus gehen auch.
 Aufruf (startet der Launcher):
   voidstation-player.py --tv [<sender>]          Fernsehen: Senderliste, Favoriten und EPG kommen vom Launcher
   voidstation-player.py --media [<datei|ordner>] Videos & Musik aus ~/share/Videos, ~/share/Musik, USB-Laufwerken
+  voidstation-player.py --yt [<video-id|url>]    YouTube Light: YouTube ohne Browser (Launcher: /api/yt/…, yt-dlp)
 
 Darstellungsstufen (VS_PLAYER_LEVEL setzt der Launcher, sonst 0):
   0  Video in der Oberflaeche (libmpv ueber OpenGL, Qt mit EGL), Hardware-Decoding direkt (VA-API, NVDEC)
@@ -18,6 +19,9 @@ Darstellungsstufen (VS_PLAYER_LEVEL setzt der Launcher, sonst 0):
      Steuer-Schnittstelle bedient (Gamepad geht weiter). Von selbst ohne /dev/dri/renderD*, ohne python3-mpv
      oder wenn das Einbetten scheitert (Tests ohne Render-Knoten, z. B. Xvfb: VS_PLAYER_FORCE=1).
 Der Launcher stuft nach Abstuerzen hoch (0 -> 1 -> 2, beim Fernsehen zuletzt das nackte mpv wie frueher).
+Schwache Hardware (32-Bit-Rechner, fest per VS_WEAK=1/0): immer Stufe 2, mpv gibt ueber Xv aus (Skalieren und
+Farbumrechnung macht die Grafikkarte, auch ohne 3D-Treiber), sonst x11 mit schnellem Skalierer; Oberflaeche mit
+Qt-Software-Backend, Fernsehen startet mit Qualitaet "Sparsam".
 
 Steuerung von aussen: lokaler Socket ~/.local/share/voidstation/player-<modus>.sock, je Zeile ein JSON-Befehl:
   {"cmd": "tune", "key": "<sender>"}   {"cmd": "open", "path": "<datei|ordner>"}   {"cmd": "quit"}
@@ -39,7 +43,7 @@ from pathlib import Path
 T0 = time.monotonic()
 HERE = Path(__file__).resolve().parent
 BASE = Path(os.environ.get("VS_BASE") or HERE.parent)
-MODE = "tv" if "--tv" in sys.argv else "media"
+MODE = "tv" if "--tv" in sys.argv else "yt" if "--yt" in sys.argv else "media"
 ARGS = [a for a in sys.argv[1:] if not a.startswith("--")]
 START_ARG = ARGS[0] if ARGS else ""
 SOCK = BASE / f"player-{MODE}.sock"
@@ -51,12 +55,25 @@ def _early_log(*a):
     print("[player]", *a, file=sys.stderr, flush=True)
 
 
+def weak_hw():
+    """Schwache Hardware? Bisher: 32-Bit-Rechner (i686). Deren Grafik (Radeon 7500/9000, Intel bis i915 …) hat in
+    aktuellem Mesa keinen 3D-Treiber mehr – OpenGL liefe in Software (llvmpipe), das Einbetten des Videos ueber
+    OpenGL waere auf einem Pentium M viel zu langsam. VS_WEAK=1 erzwingt, VS_WEAK=0 schaltet ab."""
+    v = os.environ.get("VS_WEAK", "")
+    if v in ("0", "1"):
+        return v == "1"
+    return os.uname().machine in ("i386", "i486", "i586", "i686")
+
+
+WEAK = weak_hw()
+
+
 def pick_level():
     """Darstellungsstufe vor dem Start von Qt festlegen (siehe oben)."""
     v = os.environ.get("VS_PLAYER_LEVEL", "")
     level = int(v) if v in ("0", "1", "2") else 0
     no_gpu = not glob.glob("/dev/dri/renderD*") and os.environ.get("VS_PLAYER_FORCE") != "1"   # FORCE: nur fuer Tests
-    if no_gpu or os.environ.get("VS_QT_SOFTWARE") == "1":
+    if no_gpu or WEAK or os.environ.get("VS_QT_SOFTWARE") == "1":
         level = 2
     if level < 2:
         try:
@@ -83,7 +100,8 @@ if LEVEL < 2:
                 os.environ["QT_XCB_GL_INTEGRATION"] = "xcb_egl"    # VA-API direkt braucht EGL
         except Exception as e:  # noqa: BLE001
             _early_log("EGL-Pruefung:", e)
-elif (not glob.glob("/dev/dri/renderD*") and os.environ.get("VS_PLAYER_FORCE") != "1") or os.environ.get("VS_QT_SOFTWARE") == "1":
+elif (not glob.glob("/dev/dri/renderD*") and os.environ.get("VS_PLAYER_FORCE") != "1") or WEAK \
+        or os.environ.get("VS_QT_SOFTWARE") == "1":
     os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 sys.path.insert(0, str(HERE))
@@ -117,7 +135,7 @@ PROPS = {"pause": "paused", "paused-for-cache": "buffering", "playback-time": "p
          "estimated-vf-fps": "fps", "video-codec": "codec", "hwdec-current": "hwdec", "frame-drop-count": "dropped",
          "playlist-pos": "plpos", "playlist-count": "plcount", "metadata": "meta", "video-aspect-override": "aspect",
          "panscan": "panscan", "audio-codec-name": "acodec", "audio-bitrate": "abitrate", "audio-params": "aparams",
-         "current-ao": "ao"}
+         "current-ao": "ao", "current-vo": "vo", "container-fps": "cfps"}
 
 
 def mpv_options(ui_lang="de"):
@@ -126,12 +144,25 @@ def mpv_options(ui_lang="de"):
     langs = ",".join(dict.fromkeys([ui_lang.split("-")[0], "en"]))
     return {
         "hwdec": hw, "cache": "yes", "demuxer-max-bytes": "64MiB", "demuxer-readahead-secs": "10",
-        "network-timeout": "10", "stream-lavf-o": "reconnect=1,reconnect_streamed=1,reconnect_delay_max=5",
+        # kein stream-lavf-o=reconnect…: das gilt bei HLS fuer jedes einzelne Segment und liess den Puffer leerlaufen
+        # (3sat am 22.10.2026: ohne 8,8 s Puffer bei 350 KiB/s, mit 0,1 s bei 0 B/s). Abbrueche faengt der Player ab
+        # (Stream-Ende -> einmal neu verbinden).
+        "network-timeout": "10",
         "keep-open": "no", "idle": "yes", "ytdl": "no", "sub-auto": "fuzzy", "slang": langs, "alang": langs,
         "audio-display": "no", "volume": "100", "volume-max": "130", "input-default-bindings": "no",
         "osc": "no", "osd-level": "0", "save-position-on-quit": "no", "hls-bitrate": "max",
+        **(WEAK_OPTS if WEAK else {}),
         **({"ao": os.environ["VS_PLAYER_AO"]} if os.environ.get("VS_PLAYER_AO") else {}),   # Tests ohne Tonausgabe: null
     }
+
+
+# Schwache Hardware (siehe weak_hw): Decoding in Software (alte Grafik kann kein H.264), schnellere Decoder-Abkuerzungen
+# (vd-lavc-fast; Deblocking nur bei Bildern, auf die sich keine anderen beziehen – Fehler pflanzen sich nicht fort),
+# fuer den Rueckfall auf vo=x11 der schnelle Skalierer von ffmpeg statt zimg (Lanczos waere auf einem Pentium M zu
+# teuer), kleinerer Puffer fuer 1 GB RAM. Die Ausgabe (vo=xv,x11) setzt nur das mpv-Fenster der Stufe 2.
+WEAK_OPTS = {"hwdec": "no", "vd-lavc-fast": "yes", "vd-lavc-skiploopfilter": "nonref",
+             "sws-scaler": "fast-bilinear", "sws-fast": "yes", "sws-allow-zimg": "no",
+             "demuxer-max-bytes": "32MiB", "demuxer-max-back-bytes": "8MiB"}
 
 
 def opt_list(opts):
@@ -176,7 +207,7 @@ class Engine(QObject):
                     "title": "", "cache": 0, "tracks": [], "aid": None, "sid": None, "vid": None, "vw": 0, "vh": 0,
                     "fps": 0, "codec": "", "hwdec": "", "dropped": 0, "plpos": -1, "plcount": 0, "meta": {},
                     "aspect": "", "panscan": 0, "level": LEVEL, "embedded": self.embeddedVideo, "active": False,
-                    "acodec": "", "abitrate": 0, "asr": 0, "ach": 0, "ao": ""}
+                    "acodec": "", "abitrate": 0, "asr": 0, "ach": 0, "ao": "", "vo": "", "cfps": 0, "drate": 0}
         self.last_err = ""
         self.is_started = False
         self.cur = None               # (url, opts) der laufenden Datei – fuer reload()
@@ -278,7 +309,7 @@ class Engine(QObject):
         self.is_started = False
         for k, v in (("position", 0), ("duration", 0), ("buffering", False), ("title", ""), ("tracks", []),
                      ("dropped", 0), ("active", True), ("meta", {}), ("vw", 0), ("vh", 0), ("acodec", ""),
-                     ("abitrate", 0), ("asr", 0), ("ach", 0)):
+                     ("abitrate", 0), ("asr", 0), ("ach", 0), ("cfps", 0), ("fps", 0)):
             self._st[k] = v
         self.stChanged.emit()
 
@@ -580,6 +611,8 @@ class IpcEngine(Engine):
             pass
         opts = mpv_options(self.lang)
         opts.update({"input-default-bindings": "yes", "osc": "yes", "osd-level": "1"})   # Maus/Tastatur im mpv-Fenster
+        if WEAK:
+            opts["vo"] = "xv,x11"                        # Xv: Grafikkarte skaliert; fehlt Xv, nimmt mpv x11
         args = ["mpv", "--fs", "--force-window=yes", "--no-terminal", f"--title={self.title}",
                 f"--input-ipc-server={self.path}"] + [f"--{k}={v}" for k, v in opts.items()]
         log("mpv im eigenen Fenster:", " ".join(args[:6]))
@@ -602,6 +635,46 @@ class IpcEngine(Engine):
             self._send(["observe_property", i, name])
         self._send(["request_log_messages", "warn"])
         threading.Thread(target=self._reader, args=(self.sock, self.proc), daemon=True).start()
+        threading.Thread(target=self._raise_window, args=(self.proc,), daemon=True).start()
+
+    def _raise_window(self, proc):
+        """Das mpv-Fenster nach vorn holen, sobald es da ist. Der Launcher holt beim Start nur das erste Fenster
+        des Players nach vorn (das Qt-Fenster); mpv erscheint erst mit dem ersten Sender und landete sonst
+        dahinter – Ton lief, das Bild kam erst nach erneutem Waehlen der Kachel."""
+        def find():
+            try:
+                r = subprocess.run(["wmctrl", "-lp"], capture_output=True, text=True, timeout=1)
+            except (OSError, subprocess.SubprocessError):
+                return None
+            for line in r.stdout.splitlines():
+                p = line.split(None, 3)
+                if len(p) >= 3 and p[2] == str(proc.pid):
+                    return p[0]
+            return None
+
+        def activate(wid):
+            try:
+                subprocess.run(["wmctrl", "-i", "-a", wid], capture_output=True, timeout=2)
+            except (OSError, subprocess.SubprocessError):
+                pass
+
+        wid = None
+        for _ in range(150):                             # hoechstens 15 s auf das Fenster warten
+            if proc.poll() is not None:
+                return
+            wid = find()
+            if wid:
+                break
+            time.sleep(0.1)
+        if not wid:
+            log("mpv-Fenster nicht gefunden – bleibt, wo der Fenstermanager es hinlegt")
+            return
+        activate(wid)
+        time.sleep(1.2)                                  # der Launcher holt das Qt-Fenster evtl. erst jetzt nach vorn
+        self._front_t = 0.0                              # frisch abfragen, nicht aus dem Zwischenspeicher
+        if proc.poll() is None and not self.child_in_front():
+            activate(wid)
+        log("mpv-Fenster vorn:", wid)
 
     def _send(self, cmd):
         with self.lock:
@@ -802,6 +875,78 @@ class Bridge(VsBase):
             self._engine.title = t or "Player"
 
 
+class RateReporter(QObject):
+    """Bildrate an das Video anpassen (Einstellung im Launcher, Standard aus): meldet dem Launcher die Bildrate des
+    Videos, das gerade vorn laeuft – erst wenn sie 2 s feststeht (Zappen, Pufferphasen), und 0, sobald kein Video mehr
+    vorn laeuft (Ende, Musik, Startseite). Ob umgeschaltet wird, entscheidet der Launcher (POST /api/display/video)."""
+    STABLE = 2.0
+
+    def __init__(self, app):
+        super().__init__()
+        self.app = app
+        self.sent = 0.0
+        self.cand, self.since = 0.0, time.monotonic()
+        self.t = QTimer(self)
+        self.t.setInterval(1000)
+        self.t.timeout.connect(self.tick)
+        self.t.start()
+
+    @staticmethod
+    def same(a, b):
+        return (not a and not b) or bool(a and b and abs(a - b) / max(a, b) < 0.01)   # gemessene fps schwanken
+
+    def want(self):
+        st = self.app.engine._st
+        if not st.get("active") or not st.get("vw") or st.get("idle"):
+            return 0.0
+        if not any(t.get("type") == "video" and t.get("selected") and not t.get("albumart") for t in st.get("tracks") or []):
+            return 0.0                                     # Musik (auch mit Cover)
+        if os.environ.get("VS_FRONT") != "1" and not self.app._pad_active():
+            return 0.0                                     # Startseite oder anderes Programm vorn
+        for key in ("cfps", "fps"):                        # Angabe des Containers, sonst gemessen
+            try:
+                fps = float(st.get(key) or 0)
+            except (TypeError, ValueError):
+                fps = 0.0
+            if 10 <= fps <= 121:
+                return round(fps, 3)
+        return 0.0
+
+    def tick(self):
+        w = self.want()
+        now = time.monotonic()
+        if not self.same(w, self.cand):
+            self.cand, self.since = w, now
+            return
+        if now - self.since >= self.STABLE and not self.same(self.cand, self.sent):
+            self.send(self.cand)
+
+    def send(self, fps, wait=False):
+        self.sent = fps
+        body = json.dumps({"fps": fps, "src": MODE}).encode()
+
+        def post():
+            import urllib.request
+            try:
+                req = urllib.request.Request(vscommon.API + "/api/display/video", data=body,
+                                             headers={"Content-Type": "application/json"})
+                with urllib.request.urlopen(req, timeout=8) as r:
+                    j = json.loads(r.read().decode() or "{}")
+                self.app.engine._upd.emit("drate", float(j.get("rate") or 0))
+            except (OSError, ValueError) as e:
+                log("Bildrate melden:", e)
+        if wait:
+            post()
+        else:
+            threading.Thread(target=post, daemon=True).start()
+
+    def release(self):
+        """Beim Beenden: Desktop-Rate sofort (der Launcher setzt sie spaetestens zurueck, wenn der Prozess endet)."""
+        self.t.stop()
+        if self.sent:
+            self.send(0.0, wait=True)
+
+
 class PlayerApp:
     def __init__(self):
         QGuiApplication.setApplicationName("voidstation-player")
@@ -830,9 +975,9 @@ class PlayerApp:
         self.vs._engine = self.engine
         self.pad = Gamepad()
         self.pump = PadPump(self.pad, self._pad_active)
-        self.pump.key.connect(self.vs.padKey)
-        self.pump.connected.connect(self.vs.padConnected)
+        self.vs.attach_pump(self.pump)
         self.server = None
+        self.rates = None
 
     @staticmethod
     def _lang():
@@ -922,6 +1067,7 @@ class PlayerApp:
         ctx.setContextProperty("vsApi", vscommon.API)
         ctx.setContextProperty("vsMode", MODE)
         ctx.setContextProperty("vsArg", START_ARG)
+        ctx.setContextProperty("vsWeak", WEAK)
         ctx.setContextProperty("vsLogo", QUrl.fromLocalFile(str(WEB / "logo.png")).toString())
         size = os.environ.get("VS_SIZE", "")
         w, _, h = size.partition("x")
@@ -938,12 +1084,16 @@ class PlayerApp:
             self.video.failed.connect(self._fallback)
             self.win.setProperty("videoItem", self.video)
         self._serve()
+        self.rates = RateReporter(self)
         self.qapp.aboutToQuit.connect(self._shutdown)
-        log(f"Player ({MODE}) bereit nach {time.monotonic() - T0:.2f} s, Stufe {LEVEL}")
+        log(f"Player ({MODE}) bereit nach {time.monotonic() - T0:.2f} s, Stufe {LEVEL}"
+            + (" (schwache Hardware: Xv, sparsam)" if WEAK else ""))
         self._test_hooks()
         return self.qapp.exec()
 
     def _shutdown(self):
+        if self.rates is not None:
+            self.rates.release()
         try:
             self.engine.stop()
         except Exception:  # noqa: BLE001

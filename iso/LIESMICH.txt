@@ -8,12 +8,17 @@ Starten
   das geht auch, dann installiert VoidStation aber nur auf eine ganze SSD.
 
 Startmenü
-  Zuerst die Sprache wählen (Deutsch / English), darunter die beiden Einträge:
+  Zuerst die Sprache wählen: Deutsch, English, Français – alle weiteren (Čeština, Español, Italiano,
+  Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Slovenčina, Ελληνικά, Русский,
+  Українська) stehen unter „Other Languages“. Darunter die beiden Einträge:
   VoidStation Live starten                Live-System (nichts wird installiert), freie Grafiktreiber
   VoidStation Live starten (nur NVIDIA)   mit NVIDIA-Treiber – für GeForce GTX 16xx, RTX 20xx und neuer
   Reboot                                  Neustart
-  Die Sprache gilt für Oberfläche, Installer und Tastatur (English: US-Tastatur); ändern lässt
-  sie sich im Live-System unter Einstellungen und für das System im Installer. Esc führt zurück.
+  Die Sprache gilt für Oberfläche, Installer und Tastatur (English: US-Tastatur; Griechisch, Russisch,
+  Ukrainisch: zusätzlich US, Alt+Umschalt wechselt); ändern lässt sie sich im Live-System unter
+  Einstellungen und für das System im Installer. Esc führt zurück.
+  Im BIOS-Modus kann das Menü nicht jeden Buchstaben zeigen: Griechisch, Russisch und Ukrainisch
+  stehen dort in lateinischen Buchstaben, ihre Starteinträge auf Englisch.
   Mit NVIDIA-Karte über „nur NVIDIA“ starten und von dort installieren – dann bekommt auch
   das installierte System den NVIDIA-Treiber. Startet die Oberfläche damit nicht, den ersten
   Eintrag nehmen.

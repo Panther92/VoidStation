@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// VoidStation Player (voidstation-player.py): Fernsehen (vsMode "tv") und Videos & Musik ("media").
+// VoidStation Player (voidstation-player.py): Fernsehen (vsMode "tv"), Videos & Musik ("media"), YouTube Light ("yt").
 // Das Video zeichnet mpv unter diese Oberflaeche (Stufe 0/1) – alles hier liegt darueber und ist dort durchsichtig,
 // wo das Bild zu sehen sein soll. Stufe 2: mpv hat ein eigenes Fenster, die Oberflaeche bleibt fuer Listen & Co.
 import QtQuick
@@ -29,7 +29,7 @@ Window {
         readonly property bool embedded: player ? player.embedded : false
         property bool started: false
         property var sett: null
-        readonly property Item view: vsMode === "tv" ? tvView : mediaView
+        readonly property Item view: vsMode === "tv" ? tvView : vsMode === "yt" ? ytView : mediaView
         // fuer VS-Bausteine (Focusable, Layer, Track): wie die Startseite
         property string layerName: "player"
         readonly property Item layerRoot: osk.open ? osk : (view.navRoot || view)
@@ -171,6 +171,8 @@ Window {
 
         TvView { id: tvView; anchors.fill: parent; visible: vsMode === "tv"; enabled: visible }
         MediaView { id: mediaView; anchors.fill: parent; visible: vsMode === "media"; enabled: visible }
+        Loader { id: ytLoader; anchors.fill: parent; active: vsMode === "yt"; source: "player/YtView.qml" }
+        readonly property Item ytView: ytLoader.item
 
         VolumeOsd { id: volOsd }
         Osk { id: osk; anchors.fill: parent }

@@ -85,7 +85,7 @@ Window {
         Connections { target: hint; function onHeightChanged() { Qt.callLater(app.layout) } }
 
         // ------------------------------------------------------------ Ebenen
-        readonly property var layerOrder: [osk, adlg, powerDlg, roms, tv, apps, radio, settings, inst]
+        readonly property var layerOrder: [osk, adlg, powerDlg, keymap, roms, tv, apps, radio, settings, inst]
         property string layerName: "home"
         property Item layerRoot: homeView
         function updateLayer() {
@@ -93,6 +93,7 @@ Window {
             if (osk.open) { n = "osk"; r = osk }
             else if (adlg.open) { n = "adlg"; r = adlg }
             else if (powerDlg.open) { n = "dialog"; r = powerDlg }
+            else if (keymap.open) { n = "keymap"; r = keymap }
             else if (roms.open) { n = "roms"; r = roms }
             else if (tv.open) { n = "tv"; r = tv }
             else if (apps.open) { n = "apps"; r = apps }
@@ -104,7 +105,7 @@ Window {
             if (relayout) layout()
         }
         function curTrack() {
-            return ({ home: homeTrack, radio: radio.track, tv: tv.track, apps: null, settings: settings.track, roms: roms.track, inst: inst.track })[layerName] || null
+            return ({ home: homeTrack, radio: radio.track, tv: tv.track, apps: null, settings: settings.track, roms: roms.track, keymap: keymap.track, inst: inst.track })[layerName] || null
         }
         function navItems() { return Nav.collect(layerRoot) }
         function setFocus(item, instant) { Nav.setFocus(item, instant, layerName) }
@@ -236,6 +237,11 @@ Window {
 
         Keys.onPressed: function (e) {
             var k = e.key
+            if (updScreen.shown) {                // Updates im Vollbild: nur Esc / B (im Hintergrund weiter)
+                if (k === Qt.Key_Escape || k === Qt.Key_Backspace || k === Qt.Key_Back) updScreen.toBackground()
+                e.accepted = true
+                return
+            }
             if (layerName === "osk" && osk.key(e)) { e.accepted = true; return }
             if (layerRoot.keyFilter && layerRoot.keyFilter(e)) { e.accepted = true; return }
             if ((k === Qt.Key_Return || k === Qt.Key_Enter || k === Qt.Key_Space) && !e.isAutoRepeat) keyHeld = true
@@ -257,6 +263,7 @@ Window {
         Connections {
             target: vs
             function onPadKey(k) {
+                if (updScreen.shown) { if (k === "b") updScreen.toBackground(); return }
                 if (app.layerName === "osk") return osk.pad(k)
                 if (app.layerRoot.padFilter && app.layerRoot.padFilter(k)) return
                 if (k === "a") app.activate()
@@ -354,7 +361,7 @@ Window {
         }
 
         // ------------------------------------------------------------ Programme
-        readonly property var emuSystems: ["gba", "snes", "snes9x", "nes", "nestopia", "psx", "duckstation", "psp", "ppsspp", "nds", "melonds", "dreamcast", "flycast", "gamecube", "dolphin", "c64", "vice", "atari2600", "stella"]
+        readonly property var emuSystems: ["gba", "snes", "snes9x", "nes", "nestopia", "psx", "duckstation", "psp", "ppsspp", "nds", "melonds", "dreamcast", "flycast", "gamecube", "dolphin", "c64", "vice", "atari2600", "stella", "ps2", "pcsx2", "n64", "rmg", "xbox", "xemu", "3ds", "azahar", "wiiu", "cemu", "mame", "dos", "dosbox", "scummvm", "retroarch"]
         function tileActivate(t, el) {
             if (t.type === "radio") return openLayer(radio)
             if (t.type === "settings") return openLayer(settings)
@@ -365,7 +372,8 @@ Window {
             // Emulator laeuft schon (auch mit Spiel aus der Liste): zurueck dorthin statt Spieleliste / neuer Instanz
             if (emuSystems.indexOf(t.id) >= 0 && running.indexOf(t.id) < 0) {
                 return Api.get("/api/roms?system=" + encodeURIComponent(t.id), function (r) {
-                    if (r && (r.count > 0 || (r.roms && r.roms.length))) roms.openFor(t); else launch(t)
+                    // Spieleliste mit Spielen – oder ohne, wenn es dort die Tastenbelegung gibt
+                    if (r && (r.count > 0 || (r.roms && r.roms.length) || r.keymap)) roms.openFor(t); else launch(t)
                 }, function () { launch(t) })
             }
             launch(t)
@@ -399,6 +407,7 @@ Window {
         }
 
         // ------------------------------------------------------------ Heisse Ecke (Maus unten rechts)
+        // Was als Ecke zaehlt (Randstreifen + kleines Quadrat), entscheidet vs.cornerHit() in voidstation-home.py.
         // Zeiger alle 150 ms abfragen (eine kurze X-Anfrage), unabhaengig davon, ob der Launcher das Programm kennt
         // („Startseite“ geht immer). Das Feld kommt erst, wenn die Maus rund 0,3 s in der Ecke bleibt – dort liegen
         // oft Player-Knoepfe (Vollbild & Co.). Ob die Startseite selbst vorn ist, entscheidet nicht win.active
@@ -497,7 +506,10 @@ Window {
             Api.post("/api/apps/" + action, a ? { id: a.id } : null, function (j) { jobState = j; watchJob() },
                      function (e) { toast(e, true) })
         }
-        function watchJob() { jobBand.watch() }
+        function watchJob() {
+            if (jobState && jobState.action === "update" && jobState.state === "running") updScreen.open()   // Updates: Vollbild
+            jobBand.watch()
+        }
 
         function openOsk(field) { osk.openFor(field) }
         function dialog(title, text, buttons) { adlg.openDlg(title, text, buttons) }
@@ -598,6 +610,7 @@ Window {
         AppsLayer { id: apps; anchors.fill: parent }
         TvLayer { id: tv; anchors.fill: parent }
         RomsLayer { id: roms; anchors.fill: parent }
+        KeymapLayer { id: keymap; anchors.fill: parent }
 
         JobBand { id: jobBand }
         HintBar { id: hint }
@@ -611,6 +624,7 @@ Window {
         MouseHint { id: mouseHint }
         Osk { id: osk; anchors.fill: parent }
         Splash { id: splash; anchors.fill: parent; tile: app.splashTile }
+        UpdateScreen { id: updScreen; anchors.fill: parent }
         Toast { id: toastBox }
         LoadSplash { id: loadSplash; anchors.fill: parent; done: !!app.cfg && app.shown }
     }

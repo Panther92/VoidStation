@@ -3,8 +3,93 @@
 # vsctl launch <id>     -> Kachel starten (id aus tiles.json)
 # vsctl status          -> was laeuft gerade?
 # vsctl update          -> alle Updates wie Einstellungen → Updates: Void-Pakete (inkl. Kernel),
-#                          Flatpak, AppImages, Proton-GE und VoidStation selbst; Protokoll laeuft mit
+#                          Flatpak, AppImages, Proton-GE und VoidStation selbst; zeigt die Schritte,
+#                          "vsctl update -v" das ganze Protokoll (steht auch in logs/update.log)
+# vsctl version         -> installierte VoidStation-Version, Build und Update-Kanal
+# vsctl channel [testing|stable] -> Update-Kanal zeigen bzw. wechseln. Testing (Entwicklerstand) gibt es
+#                          seit 2026.11 nur noch hier, mit Rueckfrage – nicht mehr im Installer/in den Einstellungen
+# vsctl / vsctl help    -> diese Uebersicht
+# Tab-Vervollstaendigung (Befehle, Kachel-IDs): /etc/bash/bashrc.d/voidstation.sh
 URL=http://127.0.0.1:8765/api
+TV="$(dirname "$(readlink -f "$0")")"
+
+usage() {
+  cat <<'EOF'
+vsctl – VoidStation von der Kommandozeile steuern
+
+  vsctl home           laufendes Programm schließen, zurück zur Startseite
+  vsctl launch <id>    Kachel starten (IDs: Tab-Taste nach "vsctl launch")
+  vsctl status         was läuft gerade?
+  vsctl update         alle Updates wie Einstellungen → Updates (-v: mit Protokoll)
+  vsctl version        installierte Version, Build und Update-Kanal
+  vsctl channel        Update-Kanal zeigen (testing | stable: wechseln)
+EOF
+}
+
+# Update-Kanal zeigen/wechseln. Testing = Entwicklerstand (Zweig main): neue Versionen sofort, ungeprueft.
+# Rueckweg "vsctl channel stable": Updates kommen dann erst wieder, wenn Stable neuer ist (kein Downgrade).
+# Meldungen deutsch oder englisch (Spracheinstellung), weil Tester auch aus dem Ausland kommen.
+channel() {
+  case "${LANGUAGE:-${LANG:-}}" in de*) de=1 ;; *) de= ;; esac
+  msg() { if [ -n "$de" ]; then printf '%s\n' "$1"; else printf '%s\n' "$2"; fi; }
+  cur="$(head -n1 /usr/local/share/voidstation/channel 2>/dev/null)"
+  [ "$cur" = main ] || cur=stable
+  case "$1" in
+    "")
+      if [ "$cur" = main ]; then msg "Update-Kanal: Testing (Entwicklerstand)" "Update channel: Testing (development builds)"
+      else msg "Update-Kanal: Stable" "Update channel: Stable"; fi
+      return 0 ;;
+    testing|main)
+      if [ -e /etc/voidstation-live ]; then msg "Im Live-System gibt es keine Updates." "The live system has no updates."; return 1; fi
+      if [ "$cur" = main ] && [ -e /usr/local/share/voidstation/testing-optin ]; then
+        msg "Update-Kanal ist schon Testing." "Update channel is already Testing."; return 0
+      fi
+      msg "Testing ist der Entwicklerstand von VoidStation:" "Testing is the development state of VoidStation:"
+      msg "  • neue Versionen kommen sofort und ungeprüft – sie können Fehler enthalten" \
+          "  • new versions arrive right away, untested – they may contain bugs"
+      msg "  • gedacht für Tester, die Fehler melden: github.com/Panther92/VoidStation/issues" \
+          "  • meant for testers who report bugs: github.com/Panther92/VoidStation/issues"
+      msg "  • zurück mit \"vsctl channel stable\" – Updates kommen dann erst wieder, wenn Stable neuer ist" \
+          "  • go back with \"vsctl channel stable\" – updates resume once Stable is newer"
+      if [ "$2" != --yes ]; then
+        if [ ! -t 0 ]; then
+          msg "Abgebrochen (ohne Terminal: vsctl channel testing --yes)." "Cancelled (without a terminal: vsctl channel testing --yes)."
+          return 1
+        fi
+        if [ -n "$de" ]; then printf 'Zum Bestätigen "testing" eintippen: '; else printf 'Type "testing" to confirm: '; fi
+        read -r answer
+        if [ "$answer" != testing ]; then msg "Abgebrochen – nichts geändert." "Cancelled – nothing changed."; return 1; fi
+      fi
+      sudo -n /usr/local/sbin/voidstation-pkg channel main >/dev/null || { msg "Wechsel fehlgeschlagen." "Switching failed."; return 1; }
+      msg "Update-Kanal: Testing. Neue Versionen erscheinen wie gewohnt unter Einstellungen → Updates." \
+          "Update channel: Testing. New versions show up as usual under Settings → Updates." ;;
+    stable)
+      sudo -n /usr/local/sbin/voidstation-pkg channel stable >/dev/null || { msg "Wechsel fehlgeschlagen." "Switching failed."; return 1; }
+      if [ "$cur" = main ]; then
+        msg "Update-Kanal: Stable. Das nächste Update kommt mit der nächsten Stable-Version, die neuer ist als dein Stand." \
+            "Update channel: Stable. The next update arrives with the next Stable release newer than yours."
+      else msg "Update-Kanal: Stable" "Update channel: Stable"; fi ;;
+    *)
+      msg "Benutzung: vsctl channel [testing|stable]" "Usage: vsctl channel [testing|stable]"; return 2 ;;
+  esac
+  curl -fsS -o /dev/null "$URL/updates?force=1" 2>/dev/null || true   # Hinweis auf der Startseite gleich anpassen
+}
+
+version() {
+  python3 - "$TV/version.json" /usr/local/share/voidstation/channel <<'PYEOF'
+import json, sys
+try:
+    v = json.load(open(sys.argv[1], encoding="utf-8"))
+except (OSError, ValueError):
+    v = {}
+try:
+    ch = open(sys.argv[2]).read().strip()
+except OSError:
+    ch = ""
+print(f"VoidStation {v.get('version') or '?'}" + (f" (Build {v['build']})" if v.get("build") else ""))
+print("Update-Kanal:", {"stable": "Stable", "main": "Testing"}.get(ch, ch or "?"))
+PYEOF
+}
 
 update() {
   if ! curl -fsS -o /dev/null "$URL/status" 2>/dev/null; then
@@ -13,26 +98,87 @@ update() {
     sudo -n /usr/local/sbin/voidstation-pkg update && sudo -n /usr/local/sbin/voidstation-pkg selfupdate
     return $?
   fi
-  curl -fsS -X POST -H 'X-TV: 1' "$URL/apps/update" >/dev/null || { echo "Es läuft schon ein Auftrag." >&2; return 1; }
-  python3 - "$URL" <<'PYEOF'
+  # Wie das Vollbild am Fernseher: nur die Schritte, das ganze Protokoll steht in logs/update.log.
+  # -v / --verbose: Protokoll wie frueher mitlaufen lassen.
+  python3 - "$URL" "$TV" "${1:-}" <<'PYEOF'
 import json, sys, time, urllib.request
-url, seen = sys.argv[1], 0
+from pathlib import Path
+url, tv, verbose = sys.argv[1], Path(sys.argv[2]), sys.argv[3] in ("-v", "--verbose")
+def get(path, data=None):
+    req = urllib.request.Request(url + path, data=data, headers={"X-TV": "1"} if data is not None else {},
+                                 method="POST" if data is not None else "GET")
+    with urllib.request.urlopen(req, timeout=10) as r:
+        return json.load(r)
+# Texte wie die Oberflaeche: Sprache -> Englisch -> Deutsch
+try:
+    lang = get("/settings").get("lang") or "de"
+except (OSError, ValueError):
+    lang = "de"
+texts = {}
+for l in ("de", "en", lang):
+    try:
+        texts.update(json.loads((tv / "web" / "i18n" / f"{l}.json").read_text(encoding="utf-8")))
+    except (OSError, ValueError):
+        pass
+def T(key, **kw):
+    s = texts.get(key, key)
+    for k, v in kw.items():
+        s = s.replace("{" + k + "}", str(v))
+    return s
+def label(st):
+    past = st["state"] == "done"
+    base = T({"apps": "upd.stepApps", "load": "upd.stepLoad"}.get(st["id"], "upd.stepSetup") + ("" if past else "Run"))
+    if st["id"] == "apps" and st.get("n"):
+        base += " (" + (T("upd.onePkg") if st["n"] == 1 else T("upd.nPkgs", n=st["n"])) + ")"
+    return base
+try:
+    get("/apps/update", b"")
+except OSError:
+    print(T("upd.cliBusy"), file=sys.stderr)
+    sys.exit(1)
+tty = sys.stdout.isatty()
+seen, head, shown, live = 0, False, {}, None    # live: Schritt, dessen Zeile gerade "laeuft" (nur im Terminal)
 while True:
     time.sleep(1)
     try:
-        with urllib.request.urlopen(url + "/apps/job", timeout=10) as r:
-            j = json.load(r)
-    except OSError:
+        j = get("/apps/job")
+    except (OSError, ValueError):
         continue
-    n, lines = j.get("n", 0), j.get("log", [])
-    for line in lines[max(0, len(lines) - (n - seen)):]:
-        print(line, flush=True)
-    seen = n
+    if verbose:
+        n, lines = j.get("n", 0), j.get("log", [])
+        for line in lines[max(0, len(lines) - (n - seen)):]:
+            print(line, flush=True)
+        seen = n
+    steps = j.get("steps") or []
+    if not verbose and not head and steps:
+        head = True
+        print(f"VoidStation {j.get('from') or '–'} → {j['to']}" if j.get("to") else T("job.update"), flush=True)
+    if not verbose:
+        for st in steps:
+            state = st["state"]
+            if shown.get(st["id"]) == state:
+                continue
+            if state in ("done", "fail"):
+                mark = "✓" if state == "done" else "✗"
+                print(("\r\033[K" if tty and live == st["id"] else "") + f"  {mark} {label(st)}", flush=True)
+                live = None
+            elif state == "run" and tty:
+                print(f"  ⋯ {label(st)}", end="", flush=True)
+                live = st["id"]
+            shown[st["id"]] = state
     if j.get("state") != "running":
-        print("\nFertig." if j.get("state") == "done" else "\nNicht alles hat geklappt (siehe oben).")
+        if live:
+            print()
+        ok = j.get("state") == "done"
+        if not steps and ok and not j.get("reboot"):
+            print(T("upd.upToDate"))
+            sys.exit(0)
+        print("\n" + (T("upd.cliDone") if ok else T("upd.failTitle") + "."))
         if j.get("reboot"):
-            print("Neustart nötig:  sudo reboot")
-        sys.exit(0 if j.get("state") == "done" else 1)
+            print(T("upd.cliReboot") + "  sudo reboot")
+        if not ok and not verbose:
+            print(T("upd.logFile", path="~/.local/share/voidstation/logs/update.log"))
+        sys.exit(0 if ok else 1)
 PYEOF
 }
 
@@ -40,7 +186,10 @@ case "$1" in
   home)   curl -fsS -X POST -H 'X-TV: 1' "$URL/home" ;;
   launch) curl -fsS -X POST -H 'X-TV: 1' "$URL/launch/$2" ;;
   status) curl -fsS "$URL/status" ;;
-  update) update; exit $? ;;
-  *) echo "Benutzung: vsctl home | launch <id> | status | update" >&2; exit 1 ;;
+  update) update "$2"; exit $? ;;
+  version|--version|-V) version; exit $? ;;
+  channel) shift; channel "$@"; exit $? ;;
+  ""|help|-h|--help) usage; exit 0 ;;
+  *) echo "vsctl: unbekannter Befehl \"$1\"" >&2; usage >&2; exit 1 ;;
 esac
 echo

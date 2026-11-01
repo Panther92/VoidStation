@@ -8,10 +8,14 @@ Aufruf:    python3 tools/qt-preview.py                         -> Fenster 1280×
            VS_LANG=en …                                        -> englische Oberflaeche
            python3 tools/qt-preview.py --player tv             -> Fernseh-Player (Teststream von mpv: Testbild)
            python3 tools/qt-preview.py --player media --home DIR   -> Videos & Musik, DIR wie ein Home (DIR/share/Videos …)
+           python3 tools/qt-preview.py --player yt [--yt-demo]     -> YouTube Light mit yt-dlp-Attrappe (tools/yt-dlp-mock.py),
+                                                                      RSS-Feeds, Vorschaubildern und Testvideo von hier
+           VS_ROM_COVERS=DIR …                                 -> Spieleliste mit Bildern: DIR/<Dateiname ohne Endung>.png
 """
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import threading
@@ -48,11 +52,46 @@ STATE = {"running": ["youtube"], "radio": S.RADIO_NOW, "tv": None, "favs": list(
 STATIONS = [{"name": f"Testsender {i}", "url": f"https://example.invalid/s{i}", "favicon": ""} for i in range(1, 15)]
 ROMS = [{"title": n, "name": n, "filename": n.lower().replace(" ", "-") + ".gba", "size": "8 MB"} for n in
         ("Advance Wars", "Golden Sun", "Metroid Fusion", "Pokémon Smaragd", "Mario Kart", "Zelda Minish Cap", "F-Zero")]
+ROM_COVERS = Path(os.environ["VS_ROM_COVERS"]) if os.environ.get("VS_ROM_COVERS") else None
+# Tastenbelegung: Beispiel-Controller (PS4) und mGBA-Belegung wie im Launcher (EMU_LAYOUTS, keymap_payload)
+# Layouts wie im Launcher (EMU_LAYOUTS, dort gepflegt – hier nur ausgelesen, damit die Vorschau nicht abweicht)
+_src = (REPO / "launcher" / "launcher.py").read_text(encoding="utf-8")
+_ns = {}
+exec(_src[_src.index("_DPAD = ["):_src.index("EMU_ACTIONS = {")], _ns)
+EMU_LAYOUTS = _ns["EMU_LAYOUTS"]
+PS_TEXT = {"south": "✕", "east": "○", "west": "□", "north": "△", "l1": "L1", "r1": "R1", "l2": "L2", "r2": "R2",
+           "select": "Share", "start": "Options", "l3": "L3", "r3": "R3", "up": "↑", "down": "↓", "left": "←", "right": "→",
+           "rs_up": "R↑", "rs_down": "R↓", "rs_left": "R←", "rs_right": "R→"}
+# BIOS-Hinweis der Spieleliste wie launcher.py bios_status (VS_BIOS_OK=1: alles da)
+BIOS_NEED = {"duckstation": ["bios"], "pcsx2": ["bios"], "xemu": ["mcpx", "flash", "hdd"]}
+CAPTURE_ROLES = ["south", "east", "west", "north", "l1", "r1", "l2", "r2", "start", "select", "up", "down", "left", "right",
+                 "l3", "r3"]
+KEYMAP = {"own": {}, "step": 0, "nopad": os.environ.get("VS_NO_PAD") == "1", "mute": False}
+
+
+def keymap_payload(emu="gba"):
+    lay = EMU_LAYOUTS.get(emu) or EMU_LAYOUTS["gba"]
+    own = KEYMAP["own"].setdefault(emu, {})
+    cur = {b: own.get(b, r) for b, r in lay["buttons"]}
+    pad = None if KEYMAP["nopad"] else {"path": "/dev/input/event21", "name": "Wireless Controller", "id": "054c:09cc", "src": "SDL"}
+    return {"emu": emu, "name": lay["name"], "sub": lay.get("sub", ""), "console": lay["console"], "notes": lay.get("notes", []),
+            "rstick": any(r.startswith("rs_") for _, r in lay["buttons"]),
+            "pads": [] if not pad else [{"path": pad["path"], "name": pad["name"]}], "pad": pad, "custom": bool(own),
+            "buttons": [{"id": b, "action": b in ("save", "load", "rewind", "ff"), "bind": {"role": cur[b]} if cur[b] else None,
+                         "role": cur[b] or "", "label": PS_TEXT.get(cur[b], ""), "custom": cur[b] != r} for b, r in lay["buttons"]]}
+
+
+for _r in ROMS:                                   # wie der Launcher: Adresse immer da, 404 wenn es kein Bild gibt
+    _r["cover"] = "/api/roms/cover?folder=gba&file=" + _r["filename"]
 
 
 TILES = json.loads(json.dumps(S.TILES))
 TILES["groups"].insert(1, {"name": "Spiele", "tiles": [
-    {"id": "gba", "label": "Game Boy Advance", "sub": "mGBA", "size": "wide", "color": "#2d3763", "icon": "handheld", "cmd": ["mgba-qt"]}]})
+    {"id": "gba", "label": "Game Boy Advance", "sub": "mGBA", "size": "wide", "color": "#2d3763", "icon": "handheld", "cmd": ["mgba-qt"]}]
+    + [{"id": t, "label": lay["sub"], "sub": lay["name"], "color": "#3a3157", "icon": "gamepad", "cmd": [t]}
+       for t, lay in EMU_LAYOUTS.items() if t != "gba"
+       and (not os.environ.get("VS_PREVIEW_EMUS") or t in os.environ["VS_PREVIEW_EMUS"].split(","))]})
+# VS_PREVIEW_EMUS=pcsx2,rmg …: nur diese Emulator-Kacheln (fuer Bildschirmfotos der Tastenbelegung)
 
 
 JOB = {}
@@ -74,6 +113,12 @@ def media():
         L.CoverFetcher.auto = staticmethod(lambda: PLAYER.get("covers_auto", True))
         L.CoverFetcher.embed = staticmethod(lambda: PLAYER.get("covers_embed", False))
         L.SETTINGS = tmp / "settings.json"                     # Einstellungen (Musik suchen) nicht ins Repo schreiben
+        if os.environ.get("VS_DVD"):                           # VS_DVD=<Ordner mit VIDEO_TS>: gilt als eingelegte DVD
+            dvd = str(Path(os.environ["VS_DVD"]).resolve())
+            L.DVD.devices = staticmethod(lambda: [dvd])
+            L.DVD._status = lambda d: L.DvdDrive.CDS_DISC_OK
+            L.DVD._size = staticmethod(lambda d: 1)
+            L.DVD.eject = lambda d: True
         PLAYER["L"] = L
         PLAYER["media"], PLAYER["tmp"] = L.MediaLib(), tmp
     return PLAYER["media"]
@@ -84,6 +129,84 @@ def media_list(q):
         return media().listdir(q.get("path", [""])[0])
     except (ValueError, OSError) as e:
         return {"error": str(e)}
+# YouTube Light (--player yt): echter Launcher-Code (YtLight), Daten im Wegwerf-Ordner; yt-dlp ist tools/yt-dlp-mock.py,
+# RSS-Feeds, Bilder und das Testvideo liefert dieser Server (/yt-rss, /yt-media/…). --yt-demo: Abos, Verlauf, Spaeter.
+YTP = {}
+
+
+def yt():
+    if "YT" not in YTP:
+        media()
+        L, tmp = PLAYER["L"], PLAYER["tmp"]
+        C = L.YtLight
+        C.SUBS, C.HIST, C.LATER = tmp / "yt-subs.json", tmp / "yt-history.json", tmp / "yt-later.json"
+        C.LOCAL, C.CACHE = tmp / "bin" / "yt-dlp", tmp / "ytcache"
+        C.RSS = f"http://127.0.0.1:{PORT}/yt-rss?"
+        C.img = lambda self, vid="", url="": yt_img(vid or url)
+        os.environ.setdefault("VS_YTDLP", str(REPO / "tools" / "yt-dlp-mock.py"))
+        os.environ.setdefault("VS_YT_MEDIA", f"http://127.0.0.1:{PORT}/yt-media/")
+        YTP["YT"] = C()
+        yt_media("v.mp4")                                     # Testvideo vorab erzeugen (sonst Wettlauf mit mpv)
+        if YTP.get("demo"):
+            sys.path.insert(0, str(REPO / "tools"))
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("ytmock", REPO / "tools" / "yt-dlp-mock.py")
+            M = importlib.util.module_from_spec(spec); spec.loader.exec_module(M)
+            Y = YTP["YT"]
+            Y._save(C.SUBS, [{"id": c, "title": n, "thumb": f"/api/yt/img?u=https://yt3.ggpht.com/{c}"} for c, n in M.CHANNELS])
+            hist = [dict(Y.video(M.video("Verlauf", i)), pos=60 + 90 * i, dur=600, t=int(time.time()) - i * 3600) for i in range(6) if i != 3]
+            Y._save(C.HIST, hist)
+            Y._save(C.LATER, [Y.video(M.video("Später", i)) for i in (0, 1, 4)])
+            s = L.settings_load(); s["yt"] = {"accepted": True, "quality": "auto"}; L.settings_save(s)
+    return YTP["YT"]
+
+
+def yt_img(key):
+    """Vorschaubild-Attrappe: Farbverlauf je Video/Kanal (ffmpeg), im Wegwerf-Ordner zwischengespeichert."""
+    import hashlib
+    h = hashlib.sha1(str(key).encode()).hexdigest()
+    f = PLAYER["tmp"] / "ytimg" / f"{h[:12]}.jpg"
+    if not f.exists():
+        f.parent.mkdir(parents=True, exist_ok=True)
+        size = "160x160" if "yt3." in str(key) else "320x180"
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i",
+                        f"gradients=s={size}:c0=0x{h[:6]}:c1=0x{h[6:12]}:seed={int(h[12:16], 16)}", "-frames:v", "1", "-y", str(f)])
+    return f.read_bytes() if f.exists() else None
+
+
+def yt_rss(q):
+    """Atom-Feed wie bei YouTube (Playlist-Feed UULF… bzw. Kanal-Feed) mit sechs Videos je Kanal."""
+    cid = q.get("channel_id", [""])[0] or "UC" + q.get("playlist_id", ["UULF"])[0][4:]
+    name = {"UCaaaaaaaaaaaaaaaaaaaaa1": "Retro Werkstatt", "UCbbbbbbbbbbbbbbbbbbbbb2": "Kochen mit Oma"}.get(cid, "Kanal " + cid[-4:])
+    import hashlib
+    ents = []
+    for i in range(6):
+        v = hashlib.sha1(f"{cid}{i}".encode()).hexdigest()[:10] + "f"
+        t = time.strftime("%Y-%m-%dT%H:%M:%S+00:00", time.gmtime(time.time() - (i * 30 + hash(cid) % 20) * 3600))
+        ents.append(f"""<entry><id>yt:video:{v}</id><yt:videoId>{v}</yt:videoId><yt:channelId>{cid}</yt:channelId>
+<title>{name}: Neues Video {i + 1}</title><link rel="alternate" href="https://www.youtube.com/watch?v={v}"/>
+<author><name>{name}</name></author><published>{t}</published><media:group><media:community>
+<media:statistics views="{(i + 1) * 4321}"/></media:community></media:group></entry>""")
+    return ('<?xml version="1.0" encoding="UTF-8"?><feed xmlns:yt="http://www.youtube.com/xml/schemas/2015" '
+            'xmlns:media="http://search.yahoo.com/mrss/" xmlns="http://www.w3.org/2005/Atom">'
+            f'<title>{name}</title>' + "".join(ents) + "</feed>").encode()
+
+
+def yt_media(name):
+    """Testvideo fuer die Wiedergabe: 30 s Testbild (H.264) und Ton (AAC) getrennt wie bei YouTube, dazu Untertitel."""
+    d = PLAYER["tmp"] / "ytmedia"
+    if not (d / "de.vtt").exists():                        # zuletzt geschrieben: alles da
+        d.mkdir(parents=True, exist_ok=True)
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25", "-t", "30",
+                        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-y", str(d / "v.mp4")])
+        subprocess.run(["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "sine=frequency=440", "-t", "30",
+                        "-c:a", "aac", "-movflags", "+faststart", "-y", str(d / "a.m4a")])
+        for lang, txt in (("en", "Hello from the subtitle track"), ("de", "Hallo aus der Untertitelspur")):
+            (d / f"{lang}.vtt").write_text(f"WEBVTT\n\n00:00:01.000 --> 00:00:29.000\n{txt}\n", encoding="utf-8")
+    f = d / name
+    return f.read_bytes() if f.is_file() and f.parent == d else None
+
+
 # VS_TVDATA=<Ordner mit channels.json, streams.json, logos.json von iptv-org>: echte Senderliste statt Beispieldaten
 TVREAL = {}
 
@@ -104,6 +227,41 @@ def tv_list(q):
 
 
 def job():
+    if JOB.get("action") == "update" and JOB.get("state") == "running":
+        # Updates wie launcher.py (Jobs._update_all): Schritte nacheinander, ~1,5 s je Schritt.
+        # VS_UPD_JOB=fail: das Einrichten scheitert · VS_UPD_JOB=slow: jeder Schritt 6 s (fuer Bildschirmfotos)
+        mode = os.environ.get("VS_UPD_JOB", "")
+        t = (time.time() - JOB["t0"]) / (4.0 if mode == "slow" else 1.0)
+        if t >= 1:
+            JOB.update(steps=[{"id": "apps", "state": "wait", "n": 12}, {"id": "load", "state": "wait"}, {"id": "setup", "state": "wait"}],
+                       **{"from": "0.12.1", "to": "0.13.0"})
+            for i, x in enumerate(JOB["steps"]):
+                x["state"] = "done" if t >= 2.5 + 1.5 * i else "run" if t >= 1 + 1.5 * i else "wait"
+        if t >= 5.5:
+            if mode == "fail":
+                JOB["steps"][-1]["state"] = "fail"
+            JOB.update(state="error" if mode == "fail" else "done", reboot=mode != "fail", result={"done": ["voidstation"], "kernel": False})
+        JOB["log"] = [f"Zeile {k}" for k in range(int(t * 10))][-60:]
+        JOB["n"] = len(JOB["log"])
+        return JOB
+    if JOB.get("state") == "running" and os.environ.get("VS_JOB_DL") and JOB.get("action") == "install":
+        # Download wie Jobs._appimage: "progress" statt Protokollzeilen. VS_JOB_DL=size (mit Groesse, 120 MB)
+        # oder nosize (Server ohne Groessenangabe, z. B. GitLab-Artefakte); dauert ~12 s
+        t = time.time() - JOB.setdefault("t0", time.time())
+        total = 0 if os.environ["VS_JOB_DL"] == "nosize" else 120 << 20
+        done = int(min(t / 10, 1) * (120 << 20))
+        JOB["log"] = ["$ sudo -n /usr/local/sbin/voidstation-pkg install libcups",
+                      "Lade https://github.com/example/releases/download/v1.0/Example-x86_64.AppImage"]
+        if t < 10:
+            JOB["progress"] = {"mb": round(done / 1048576, 1), "total_mb": round(total / 1048576, 1) if total else 0,
+                               "pct": done * 100 // total if total else None}
+        else:
+            JOB.pop("progress", None)
+            JOB["log"] += ["geladen: 120 MB", "Entpacke …"]
+        if t >= 12:
+            JOB["log"].append("installiert")
+            JOB["state"] = "done"
+        return JOB
     if JOB.get("state") == "running":
         JOB["n"] = JOB.get("n", 0) + 1
         JOB["log"].append(f"Schritt {JOB['n']} …")
@@ -141,6 +299,24 @@ PROBE = {"uefi": True, "secureboot": False, "arch": "x86_64", "ram": 3.7 * GiB, 
                          "role": "os", "os": "FreeBSD", "locked": True}],
               "free": [{"start": 777534528, "sectors": 199000000, "bytes": 101888000000}],
               "options": {"whole": True, "free": [{"start": 777534528, "sectors": 199000000, "bytes": 101888000000}]}}]}
+# Sprachen, Tastaturen und Vorgaben wie im Launcher (probe: langs, kbs, kb, lang)
+_li = {}
+exec(_src[_src.index("LANG_TABLE = ["):_src.index("LANGS = [")], _li)
+exec(_src[_src.index("_GRP = ["):_src.index("# ----", _src.index("_GRP = ["))], _li)
+PROBE["langs"] = [{"id": i, "label": n, "kb": _li["INSTALL_DEFAULTS"][i][0], "tz": _li["INSTALL_DEFAULTS"][i][1]}
+                  for i, n, _, _ in _li["LANG_TABLE"]]
+PROBE["kbs"] = list(_li["KEYMAPS"])
+# Land fuer Radio und Fernsehen wie im Launcher (LANG_REGIONS/TV_QUICK); VS_REGION=AT … ueberschreibt
+exec(_src[_src.index("LANG_REGIONS = {"):_src.index("def tz_current")], _li)
+
+
+def region_of(lang):
+    return os.environ.get("VS_REGION") or _li["LANG_REGIONS"].get(lang, ["DE"])[0]
+
+
+def region_quick(lang):
+    r = region_of(lang)
+    return [r] + [c for c in _li["TV_QUICK"].get(lang, []) if c != r][:2]
 INST = {"state": "idle"}
 LIVE = {"on": False, "fail": False}
 
@@ -174,6 +350,31 @@ def inst_status():
     return st
 
 
+# Einstellungen → Updates: ?force=1 stoesst wie auf dem Geraet eine Paketpruefung "im Hintergrund" an, die hier
+# VS_UPD_CHECK Sekunden dauert (Standard 4). VS_UPD=sys -> kein VoidStation-Update, Systemupdates erst nach der Pruefung
+# (die Oberflaeche wartet); VS_UPD=none -> nichts zu tun. VS_CHANNEL=main -> Geraet steht auf Testing.
+UPD = {"until": 0.0, "done": False, "channel": os.environ.get("VS_CHANNEL", "stable")}
+
+
+def updates(q):
+    now = time.time()
+    if q.get("force", [""])[0] == "1" and now >= UPD["until"]:
+        UPD["until"] = now + float(os.environ.get("VS_UPD_CHECK", "4"))
+    checking = now < UPD["until"]
+    if not checking and UPD["until"]:
+        UPD["done"] = True
+    mode = os.environ.get("VS_UPD", "")
+    vs = mode not in ("sys", "none")
+    pkgs = ["linux6.18", "mesa", "firefox", "mpv"] if UPD["done"] and mode != "none" else (["mesa"] if vs else [])
+    system = {"count": len(pkgs), "pkgs": pkgs, "kernel": "6.18.59_1" if "linux6.18" in pkgs else None, "flatpak": 0,
+              "appimage": [], "proton": None, "checked": True, "due": False, "due_at": 0, "checking": checking}
+    ch = UPD["channel"] if UPD["channel"] in ("stable", "main") else "stable"
+    return {"local": "0.12.1", "remote": "0.13.0", "available": vs, "any": bool(vs or pkgs), "channel": ch,
+            "channel_label": {"stable": "Stable", "main": "Testing"}[ch], "changes": [{"version": "0.13.0", "changes": ["Neue Qt-Startseite"],
+                                                     "changes_en": ["New Qt start page"]}] if vs else [],
+            "system": system, "reboot": {}}
+
+
 class H(S.H):
     def do_GET(self):
         u = urlparse(self.path)
@@ -189,7 +390,11 @@ class H(S.H):
             "/api/settings": settings,
             "/api/radio/favs": lambda: st["favs"],
             "/api/radio/search": lambda: STATIONS,
-            "/api/tv/status": lambda: {"state": "ready", "error": None, "count": 10432, "countries": S.COUNTRIES, "now": st["tv"]},
+            "/api/radio/popular": lambda: {"country": region_of(S.SETTINGS.get("lang") or "de"),
+                                           "stations": [dict(x, name=f"Beliebt {i}") for i, x in enumerate(STATIONS[:10], 1)]},
+            "/api/tv/status": lambda: {"state": "ready", "error": None, "count": 10432, "countries": S.COUNTRIES, "now": st["tv"],
+                                       "region": region_of(S.SETTINGS.get("lang") or "de"),
+                                       "quick": region_quick(S.SETTINGS.get("lang") or "de")},
             "/api/tv/favs": lambda: st["tvfavs"],
             "/api/tv/search": lambda: [c for c in S.TV if not q.get("cat", [""])[0] or q["cat"][0] in c["cats"]],
             "/api/tv/list": lambda: tv_list(q),
@@ -197,16 +402,19 @@ class H(S.H):
                                     "next": {"title": "Wetter"}},
             "/api/apps": S.apps,
             "/api/apps/job": job,
-            "/api/updates": lambda: {"local": "0.12.1", "remote": "0.13.0", "available": True, "any": True, "channel": "stable",
-                                     "channel_label": "Stable", "changes": [{"version": "0.13.0", "changes": ["Neue Qt-Startseite"],
-                                                                              "changes_en": ["New Qt start page"]}],
-                                     "system": {"count": 12, "pkgs": ["linux6.18", "mesa"], "kernel": "6.18.45_1", "flatpak": 0,
-                                                "appimage": [], "proton": None, "checked": True, "due": False, "due_at": 0},
-                                     "reboot": {}},
+            "/api/updates": lambda: updates(q),
             "/api/bluetooth/status": bt_status,
-            "/api/wifi/scan": lambda: [{"ssid": "FRITZ!Box 7530", "signal": 72, "secure": True, "active": True},
-                                       {"ssid": "Nachbar", "signal": 31, "secure": True, "active": False}],
-            "/api/roms": lambda: {"system": q.get("system", ["gba"])[0], "count": len(ROMS), "roms": ROMS},
+            "/api/wifi/scan": lambda: [{"ssid": "FRITZ!Box 7530", "signal": 72, "secure": True, "known": True,
+                                        "active": any(l["type"] == "wifi" and l["connected"] for l in S.SETTINGS["net"]["links"])},
+                                       {"ssid": "iPhone von Paul", "signal": 58, "secure": True, "known": True, "active": False},
+                                       {"ssid": "Nachbar", "signal": 31, "secure": True, "known": False, "active": False}],
+            "/api/keymap": lambda: keymap_payload(q.get("emu", ["gba"])[0]),
+            "/api/roms": lambda: {"system": q.get("system", ["gba"])[0], "count": len(ROMS), "roms": ROMS,
+                                  "keymap": q.get("system", ["gba"])[0] in EMU_LAYOUTS,
+                                  "mute": KEYMAP["mute"] if q.get("system", ["gba"])[0] == "gba" else None,
+                                  "bios": None if q.get("system", ["gba"])[0] not in BIOS_NEED else
+                                  {"ok": True, "missing": []} if os.environ.get("VS_BIOS_OK") == "1" else
+                                  {"ok": False, "missing": BIOS_NEED[q.get("system", ["gba"])[0]]}},
             "/api/install/probe": lambda: PROBE,
             "/api/install/status": lambda: dict(inst_status(), autostart=LIVE["on"] and INST.get("state") == "idle" and not INST.get("seen")),
             "/api/install/gparted": lambda: {"running": False},
@@ -216,9 +424,17 @@ class H(S.H):
             "/api/media/list": lambda: media_list(q),
             "/api/media/nextfolder": lambda: media().next_folder(q.get("path", [""])[0]) or {},
             "/api/media/covers": lambda: (media(), PLAYER["L"].COVERS.status())[1],
+            "/api/media/dvd": lambda: (media(), {"discs": PLAYER["L"].DVD.discs()})[1],
             "/api/dl/settings": lambda: (media(), PLAYER["L"].MUSICDL.payload())[1],
             "/api/dl/status": lambda: (media(), PLAYER["L"].MUSICDL.status())[1],
         }
+        if p.startswith("/api/yt/") or p in ("/yt-rss",) or p.startswith("/yt-media/"):
+            return self.yt_get(p, q)
+        if p == "/api/roms/cover":
+            f = ROM_COVERS / (Path(q.get("file", [""])[0]).stem + ".png") if ROM_COVERS else None
+            if f and f.is_file():
+                return self.raw(200, f.read_bytes(), "image/png")
+            return self.raw(404, b"", "text/plain")
         if p == "/api/media/thumb":
             art = q.get("art", [""])[0]
             r = media().art(art) if art else media().thumb(q.get("path", [""])[0])
@@ -236,11 +452,84 @@ class H(S.H):
             return self.j(routes[p]())
         return super().do_GET()
 
+    def raw(self, code, data, ctype):
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def yt_get(self, p, q):
+        g = lambda k: q.get(k, [""])[0]
+        Y = yt()
+        if p == "/yt-rss":
+            return self.raw(200, yt_rss(q), "application/atom+xml")
+        if p.startswith("/yt-media/"):                   # wie googlevideo: mit Range (mpv springt im Video)
+            data = yt_media(p.rsplit("/", 1)[1])
+            if not data:
+                return self.raw(404, b"", "text/plain")
+            m = re.match(r"bytes=(\d+)-(\d*)", self.headers.get("Range", ""))
+            if not m:
+                self.send_response(200)
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Content-Type", "video/mp4")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                return self.wfile.write(data)
+            a0 = int(m.group(1)); a1 = int(m.group(2)) if m.group(2) else len(data) - 1
+            part = data[a0:a1 + 1]
+            self.send_response(206)
+            self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Content-Type", "video/mp4")
+            self.send_header("Content-Range", f"bytes {a0}-{a0 + len(part) - 1}/{len(data)}")
+            self.send_header("Content-Length", str(len(part)))
+            self.end_headers()
+            return self.wfile.write(part)
+        what = p[len("/api/yt/"):]
+        try:
+            if what == "img":
+                data = Y.img(vid=g("v"), url=g("u"))
+                return self.raw(200, data, "image/jpeg") if data else self.raw(404, b"", "text/plain")
+            fn = {"state": Y.state, "home": Y.home, "history": Y.history, "later": Y.later, "subs": lambda: {"items": Y.subs()},
+                  "feed": lambda: Y.feed_get(300, force=g("force") == "1"), "search": lambda: Y.search(g("q"), g("kind") or "video"),
+                  "channel": lambda: Y.channel(g("id"), g("tab") or "videos"), "playlist": lambda: Y.playlist(g("id"))}[what]
+            return self.j(fn())
+        except PLAYER["L"].YtError as e:
+            return self.raw(502, json.dumps({"error": e.reason, "msg": str(e)}).encode(), "application/json")
+
     def do_POST(self):
         p = urlparse(self.path).path
         n = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(n) or b"{}") if n else {}
         st = STATE
+        if p == "/api/selfupdate/channel":         # wie launcher.py: nur noch zurueck zu Stable
+            if body.get("channel") == "stable":
+                UPD["channel"] = "stable"
+            return self.j(updates({}))
+        if p == "/api/keymap/capture":            # Vorschau: jede "Taste" nach 0,6 s, der Reihe nach
+            time.sleep(0.6)
+            role = CAPTURE_ROLES[KEYMAP["step"] % len(CAPTURE_ROLES)]
+            KEYMAP["step"] += 1
+            return self.j({"bind": {"role": role}, "label": role})
+        if p == "/api/keymap/set":
+            lay = dict(EMU_LAYOUTS[body.get("emu", "gba")]["buttons"])
+            own = KEYMAP["own"].setdefault(body.get("emu", "gba"), {})
+            role = (body.get("bind") or {}).get("role")
+            cur = {b: own.get(b, r) for b, r in lay.items()}
+            swapped = [o for o, r in cur.items() if role and o != body["button"] and r == role]
+            for o in swapped:
+                own[o] = cur[body["button"]]
+            own[body["button"]] = role
+            KEYMAP["own"][body.get("emu", "gba")] = {b: r for b, r in own.items() if r != lay[b]}
+            return self.j(dict(keymap_payload(body.get("emu", "gba")), swapped=swapped))
+        if p == "/api/keymap/reset":
+            KEYMAP["own"][body.get("emu", "gba")] = {}
+            return self.j(keymap_payload(body.get("emu", "gba")))
+        if p == "/api/roms/mute":
+            KEYMAP["mute"] = bool(body.get("on"))
+            return self.j({"mute": KEYMAP["mute"]})
+        if p == "/api/keymap/cancel":
+            return self.j({"ok": True})
         if p.startswith("/api/volume/"):
             a = p.rsplit("/", 1)[1]
             v = st["volume"]
@@ -271,6 +560,18 @@ class H(S.H):
             ch = next((c for c in S.TV if c["key"] == body.get("key")), None)
             st["tvfavs"] = [f for f in st["tvfavs"] if f["key"] != body.get("key")] + ([ch] if ch and p.endswith("/fav") else [])
             return self.j(st["tvfavs"])
+        if p.startswith("/api/yt/"):                 # YouTube Light: echter Launcher-Code mit yt-dlp-Attrappe
+            Y = yt()
+            act = p[len("/api/yt/"):]
+            fn = {"settings": lambda: Y.save_settings(body),
+                  "resolve": lambda: Y.resolve(str(body.get("id") or ""), str(body.get("quality") or ""), str(body.get("lang") or "de")),
+                  "progress": lambda: Y.progress(body), "later": lambda: Y.later_set(body), "sub": lambda: Y.sub_set(body),
+                  "import": Y.import_subs, "history/remove": lambda: Y.history_remove(str(body.get("id") or "") or "-"),
+                  "history/clear": lambda: Y.history_remove(""), "update": lambda: Y.update_ytdlp()}.get(act)
+            try:
+                return self.j(fn() if fn else {})
+            except PLAYER["L"].YtError as e:
+                return self.raw(502, json.dumps({"error": e.reason, "msg": str(e)}).encode(), "application/json")
         if p.startswith("/api/dl/"):                # Musik suchen: echter Launcher-Code (VS_IA_URL/VS_ITUNES_URL/VS_YTDLP: Testserver)
             media()
             D = PLAYER["L"].MUSICDL
@@ -310,7 +611,7 @@ class H(S.H):
         if p in ("/api/apps/install", "/api/apps/remove", "/api/apps/update"):
             JOB.clear()
             JOB.update({"state": "running", "action": p.rsplit("/", 1)[1], "name": body.get("id", ""), "app": body.get("id"),
-                        "log": ["xbps-install -Sy …"], "n": 0})
+                        "log": ["xbps-install -Sy …"], "n": 0, "t0": time.time(), "steps": [], "from": None, "to": None})
             return self.j(JOB)
         if p == "/api/install/start":
             INST.clear()
@@ -365,6 +666,25 @@ class H(S.H):
             elif p.endswith("/auto"):
                 a["auto"] = bool(body.get("on"))
             return self.j(settings())
+        if p == "/api/net/prefer":                 # Kabel/WLAN bevorzugen: Haken wandert mit
+            n = S.SETTINGS["net"]
+            n["prefer"] = body.get("mode") if body.get("mode") in ("wired", "wifi") else "wired"
+            ls = [l for l in n["links"] if l["connected"]]
+            for l in ls:
+                l["internet"] = l["type"] == n["prefer"] or len(ls) == 1
+            return self.j(settings())
+        if p in ("/api/net/disconnect", "/api/net/connect"):
+            n = S.SETTINGS["net"]
+            on = p.endswith("/connect")
+            for l in n["links"]:
+                if l["type"] == body.get("type"):
+                    l.update(connected=on, ready=not on, name=l["name"] if on else "", internet=on)
+            return self.j(settings())
+        if p == "/api/wifi/connect":                # verbunden: WLAN-Zeile unter Verbindung
+            n = S.SETTINGS["net"]
+            n["links"] = [l for l in n["links"] if l["type"] != "wifi"] + [
+                {"dev": "wlp2s0", "type": "wifi", "connected": True, "name": body.get("ssid", ""), "ip": "172.20.10.3",
+                 "internet": n["prefer"] == "wifi"}]
         if p.startswith("/api/settings/") or p == "/api/wifi/connect":
             if p.endswith("/theme"):
                 S.SETTINGS["theme"] = body.get("theme")
@@ -375,6 +695,15 @@ class H(S.H):
                 return self.j({"lang": body.get("lang")})
             if p.endswith("/padmouse"):
                 STATE["padmouse"] = bool(body.get("on"))
+            if p.endswith("/resolution"):
+                d = S.SETTINGS["displays"][0]
+                d["current"] = body.get("mode") or d["current"]
+                r = body.get("rate")
+                S.SETTINGS["rate"] = float(r) if r else None
+                d["rate"] = float(r) if r else max((x for x in d["rates"].get(d["current"], [60.0]) if abs(x - 60) < 0.5),
+                                                   default=max(d["rates"].get(d["current"], [60.0])))
+            if p.endswith("/matchrate"):
+                S.SETTINGS["match_rate"] = bool(body.get("on"))
             if p.endswith("/frontend"):
                 STATE["frontend"] = body.get("frontend")
             return self.j(settings())
@@ -392,13 +721,15 @@ def main():
     ap.add_argument("--bios", action="store_true", help="Geraet im BIOS-Modus")
     ap.add_argument("--clean", action="store_true", help="fuer Screenshots: kein Update-Hinweis, keine laufende App")
     ap.add_argument("--scale", type=float, help="Skalierung der Oberflaeche (Standard 1.25)")
-    ap.add_argument("--player", choices=["tv", "media"], help="Player statt Startseite: Fernsehen bzw. Videos & Musik")
+    ap.add_argument("--player", choices=["tv", "media", "yt"], help="Player statt Startseite: Fernsehen, Videos & Musik, YouTube Light")
+    ap.add_argument("--yt-demo", action="store_true", help="YouTube Light: Hinweis schon bestaetigt, Abos, Verlauf und Spaeter-Liste")
     ap.add_argument("--stream", help="Stream/Datei fuer den Fernseh-Player (Standard: Testbild von mpv)")
     ap.add_argument("--home", help="Ordner, der fuer die Mediathek als Home gilt (darin share/Videos, share/Musik)")
     ap.add_argument("--arg", default="", help="Startargument des Players (Sender bzw. Datei/Ordner)")
     a = ap.parse_args()
     if a.stream:
         PLAYER["stream"] = a.stream
+    YTP["demo"] = a.yt_demo
     if a.home:
         os.environ["HOME"] = str(Path(a.home).resolve())
     if a.clean:
@@ -417,6 +748,8 @@ def main():
     LIVE["fail"] = a.fail
     if a.bios:
         PROBE["uefi"] = False
+    PROBE["lang"] = S.SETTINGS.get("lang") or "de"           # wie der Launcher: Sprache der Oberflaeche
+    PROBE["kb"] = _li["INSTALL_DEFAULTS"].get(PROBE["lang"], ("de",))[0]
     srv = ThreadingHTTPServer(("127.0.0.1", PORT), H)
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     env = dict(os.environ, VS_API=f"http://127.0.0.1:{PORT}", VS_SIZE=a.size, VS_DEMO="1")
@@ -430,6 +763,8 @@ def main():
     if a.player:
         prog = [sys.executable, str(REPO / "launcher" / "qt" / "voidstation-player.py"), "--" + a.player]
         prog += [a.arg or (S.TV[0]["key"] if a.player == "tv" else "")]
+        if a.player == "yt":
+            yt()                                                  # Wegwerf-Ordner und Beispieldaten vor dem Start
         env["VS_BASE"] = str(PLAYER["tmp"] or Path("/tmp"))      # Steuer-Socket nicht im Repo
         if a.shot or a.keys:
             env.pop("QT_QPA_PLATFORM", None) if os.environ.get("DISPLAY") else None

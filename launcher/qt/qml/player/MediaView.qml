@@ -7,6 +7,8 @@
 // Titel wiederholen · Ordner, dann Stopp · Ordner wiederholen · weiter mit dem naechsten Ordner), X Zufaellig, Start Menue,
 // B Stopp. Cover fuer Ordner ohne Bild laedt der Launcher im Hintergrund (MusicBrainz), die Kacheln aktualisieren sich.
 // Guide/Win (oder Menue -> Zur Startseite): Startseite, Musik laeuft weiter, Videos halten an.
+// DVD: Kachel auf der Startseite, sobald eine Disc liegt; Titelliste (Serien: ein Titel je Folge), ab dem gewaehlten
+// Titel spielt alles der Reihe nach; X/Y naechster/voriger Titel, im Menue "Zeilensprung entfernen", Kachel Auswerfen.
 import QtQuick
 import VS
 
@@ -44,6 +46,10 @@ Item {
     readonly property var audioItems: items.filter(function (i) { return i.kind === "audio" })
     readonly property var fit: Ui.fitRows(browser.stage.height - 18 * Ui.f * 1.36 - 14 * Ui.f - 4, Ui.u * 0.86, Ui.gap, 3)
     readonly property real cell: Ui.u * 0.86 * fit.k
+    property bool deint: false                    // DVD: Zeilensprung entfernen (Kammmuster bei Serien-DVDs)
+    property string dvdSig: ""                    // eingelegte Discs (Startseite neu laden, wenn sich das aendert)
+    readonly property bool dvdPlaying: phase === "video" && playlist.length > 0 && !!playing && String(playing.path).indexOf("dvd://") === 0
+    readonly property var dvdItem: dvdPlaying && st.plpos >= 0 && playlist[st.plpos] ? playlist[st.plpos] : playing
 
     // ------------------------------------------------------------ Mediathek
     function start(arg) {
@@ -71,6 +77,17 @@ Item {
             if (it.kind === "videos") { o.title = Ui.t("player.media.videos") }
             if (it.kind === "music") { o.title = Ui.t("player.media.music") }
             if (it.kind === "drive" && !it.title) o.title = Ui.t("player.media.drive")
+            if (it.kind === "dvd") {
+                o.title = it.title || Ui.t("player.dvd")
+                o.sub = it.ready ? Ui.t("player.dvd.titles", { n: it.n }) : Ui.t("player.dvd.reading")
+            }
+            if (it.kind === "dvdtitle") {
+                o.title = Ui.t("player.dvd.title", { n: it.ix })
+                o.sub = [vs.fmtTime(it.dur, ""), it.chapters > 1 ? Ui.t("player.dvd.chapters", { n: it.chapters }) : "",
+                         it.aspect || ""].filter(function (x) { return x }).join(" · ")
+            }
+            if (it.kind === "dvdall") { o.title = Ui.t("player.dvd.playAll"); o.sub = Ui.t("player.dvd.titles", { n: it.n }) }
+            if (it.kind === "eject") { o.title = Ui.t("player.dvd.eject"); o.sub = Ui.t("player.dvd.ejectSub") }
             if (it.kind === "video" && it.resume && it.resume.pos > 0) o.sub = Ui.t("player.media.resumeAt", { time: vs.fmtTime(it.resume.pos, "") })
             return o
         })
@@ -92,7 +109,7 @@ Item {
             r = r || {}
             path = r.path || p
             parentPath = r.parent || ""
-            folderName = r.name || ""
+            folderName = r.name || (r.dvd ? Ui.t("player.dvd") : "")
             items = decorate((r.audio && r.audio > 1 ? [{ kind: "playall", title: Ui.t("player.media.playAll"), sub: Ui.t("player.media.tracks", { n: r.audio }) }] : []).concat(r.items || []))
             if (!r.items || !r.items.length) msg = Ui.t("player.media.folderEmpty")
             thumbs = ({})
@@ -143,7 +160,13 @@ Item {
     }
     function activate(it) {
         if (!it) return
-        if (it.kind === "dir" || it.kind === "videos" || it.kind === "music" || it.kind === "drive") return openPath(it.path)
+        if (it.kind === "dir" || it.kind === "videos" || it.kind === "music" || it.kind === "drive" || it.kind === "dvd") return openPath(it.path)
+        if (it.kind === "dvdtitle" || it.kind === "dvdall") return playDvd(it)
+        if (it.kind === "eject") {
+            Api.post("/api/media/eject", { dev: String(it.path).slice(4) }, function () { mv.dvdSig = ""; openPath("") },
+                     function () { app.toast(Ui.t("player.dvd.ejectFailed"), true) })
+            return
+        }
         if (it.kind === "dl") return dlView.show()
         if (it.kind === "playall") return playAudio(audioItems, 0, path, folderName)
         if (it.kind === "audio") {                    // nach Pfad suchen: die Kachel haelt eine Kopie des Eintrags
@@ -172,6 +195,41 @@ Item {
         Api.post("/api/radio/stop", null)
         showOsd()
     }
+    // DVD: alle Titel ab dem gewaehlten als Wiedergabeliste (Folge fuer Folge); "dvdall" = ab dem ersten
+    function playDvd(it) {
+        var titles = items.filter(function (x) { return x.kind === "dvdtitle" })
+        var at = 0
+        for (var i = 0; i < titles.length; i++) if (it.kind === "dvdtitle" && titles[i].path === it.path) at = i
+        if (!titles.length) return
+        playing = titles[at]
+        playlist = titles
+        phase = "video"
+        if (app.embedded) browser.hide()
+        player.setProp("loop-file", "no")
+        player.setProp("loop-playlist", "no")
+        player.setProp("deinterlace", deint ? "yes" : "no")
+        vs.setTitle(folderName || Ui.t("player.dvd"))
+        player.playList(titles.map(function (t) { return t.path }), at, {})
+        Api.post("/api/radio/stop", null)
+        showOsd()
+    }
+    function dvdStep(d) {
+        var n = (st.plpos || 0) + d
+        if (n < 0 || n >= (st.plcount || 0)) return
+        player.playlistGo(n)
+        player.osdText(Ui.t("player.dvd.title", { n: playlist[n].ix }), "2000")
+        showOsd()
+    }
+    // DVD-Laufwerk auf der Startseite beobachten: Disc rein/raus -> Kacheln neu laden
+    Timer {
+        interval: 3000; repeat: true; triggeredOnStart: true
+        running: mv.phase === "browse" && !mv.path && vsMode === "media"
+        onTriggered: Api.get("/api/media/dvd", function (r) {
+            var sig = ((r && r.discs) || []).map(function (d) { return d.dev + ":" + d.ready + ":" + d.n }).join(",")
+            if (sig !== mv.dvdSig) { var first = mv.dvdSig === "" && sig === ""; mv.dvdSig = sig; if (!first) mv.openPath("") }
+        })
+    }
+
     // Cover des laufenden Titels neu suchen lassen; das Bild ein paar Mal neu laden, bis das neue da ist
     property int coverNonce: 0
     function refreshCover() {
@@ -272,7 +330,7 @@ Item {
         }, function () { nextBusy = false; backToBrowser() })
     }
     function saveResume(finished) {
-        if (phase !== "video" || !playing || !playing.path) return
+        if (phase !== "video" || !playing || !playing.path || dvdPlaying) return
         var dur = st.duration || 0, pos = finished ? dur : (st.position || 0)
         if (dur <= 0) return
         Api.post("/api/media/resume", { path: playing.path, pos: pos, dur: dur })
@@ -309,10 +367,18 @@ Item {
             }
             if (reason === "quit") return mv.backToBrowser()          // mpv-Fenster geschlossen (Stufe 2)
             if (reason === "eof") {
+                if (mv.dvdPlaying) return dvdEnd.restart()           // naechster Titel laeuft an oder Liste zu Ende
                 if (mv.phase === "video") { mv.saveResume(true); return mv.backToBrowser() }
                 endCheck.restart()                                    // Musik: naechster Titel oder Ende der Liste?
             }
         }
+    }
+    Timer {
+        id: dvdEnd
+        property int left: 0
+        interval: 300; repeat: true
+        onRunningChanged: if (running) left = 8
+        onTriggered: { if (mv.phase !== "video") return stop(); if (mv.st.idle) { stop(); return mv.backToBrowser() } if (--left <= 0) stop() }
     }
     // Nach jedem Titelende kurz nachsehen, ob die Liste zu Ende ist (mpv meldet "idle" etwas spaeter als das Ende)
     Timer {
@@ -372,6 +438,8 @@ Item {
         if (k === "start") return menu.show()
         if (k === "home") return goHome()
         if (phase === "video") {
+            if (dvdPlaying && (k === "x" || k === "next")) return dvdStep(1)
+            if (dvdPlaying && (k === "y" || k === "prev")) return dvdStep(-1)
             if (k === "left") return seek(-10)
             if (k === "right") return seek(10)
             if (k === "lb" || k === "chdown") return seek(-60)
@@ -405,7 +473,9 @@ Item {
         track: trk
         anchors.fill: parent
         headRight: NowLine {
-            main: mv.path ? Ui.t("player.media.items", { n: Ui.num(mv.items.filter(function (i) { return i.kind !== "playall" }).length, 0) }) : ""
+            main: !mv.path ? "" : mv.path.indexOf("dvd:") === 0
+                  ? Ui.t("player.dvd.titles", { n: mv.items.filter(function (i) { return i.kind === "dvdtitle" }).length })
+                  : Ui.t("player.media.items", { n: Ui.num(mv.items.filter(function (i) { return i.kind !== "playall" }).length, 0) })
             sub: !mv.path && mv.coverState && mv.coverState.running
                  ? Ui.t("player.covers.progress", { done: mv.coverState.done, total: mv.coverState.total, found: mv.coverState.found }) : ""
         }
@@ -535,7 +605,11 @@ Item {
             width: parent.width - 2 * Ui.padX
             anchors.bottom: parent.bottom; anchors.bottomMargin: 22 * Ui.f
             spacing: 12 * Ui.f
-            Txt { width: parent.width; text: mv.playing ? (mv.playing.title || mv.playing.name || "") : ""; font.pixelSize: 26 * Ui.f; font.weight: Font.Light }
+            Txt { width: parent.width; font.pixelSize: 26 * Ui.f; font.weight: Font.Light
+                  text: mv.dvdPlaying ? [mv.folderName || Ui.t("player.dvd"), mv.dvdItem ? Ui.t("player.dvd.title", { n: mv.dvdItem.ix }) : "",
+                                         mv.st.plcount > 1 ? ((mv.st.plpos || 0) + 1) + "/" + mv.st.plcount : ""]
+                                        .filter(function (x) { return x }).join(" · ")
+                      : mv.playing ? (mv.playing.title || mv.playing.name || "") : "" }
             Row {
                 width: parent.width
                 spacing: 18 * Ui.f
@@ -552,8 +626,9 @@ Item {
             }
             Hints {
                 width: parent.width
-                list: [Ui.t("player.hint.pause"), Ui.t("player.hint.seek"), Ui.t("player.hint.seekBig"), Ui.t("player.hint.volumeUD"),
-                       Ui.t("player.hint.menu"), Ui.t("hint.homeShort"), Ui.t("player.hint.stop")]
+                list: [Ui.t("player.hint.pause"), Ui.t("player.hint.seek"), Ui.t("player.hint.seekBig")]
+                      .concat(mv.dvdPlaying && mv.st.plcount > 1 ? [Ui.t("player.hint.dvdTitles")] : [])
+                      .concat([Ui.t("player.hint.volumeUD"), Ui.t("player.hint.menu"), Ui.t("hint.homeShort"), Ui.t("player.hint.stop")])
             }
         }
     }
@@ -779,6 +854,14 @@ Item {
         onShuffleToggled: mv.setShuffle(!mv.shuffle)
         homeSub: mv.phase === "video" ? Ui.t("player.menu.homeVideo") : Ui.t("player.menu.homeMusic")
         onRepeatChosen: function (m) { mv.setRepeat(m) }
+        extraRows: mv.dvdPlaying ? [{ id: "deint", label: Ui.t("player.dvd.deint") + (mv.deint ? " ✓" : ""), sub: Ui.t("player.dvd.deintSub") }]
+                                    .concat(mv.st.plcount > 1 && (mv.st.plpos || 0) < mv.st.plcount - 1
+                                            ? [{ id: "next", label: Ui.t("player.dvd.next"), sub: Ui.t("player.dvd.title", { n: mv.playlist[(mv.st.plpos || 0) + 1].ix }) }] : [])
+                                  : []
+        onExtraChosen: function (id) {
+            if (id === "deint") { mv.deint = !mv.deint; mv.player.setProp("deinterlace", mv.deint ? "yes" : "no"); app.toast(Ui.t(mv.deint ? "player.dvd.deintOn" : "player.dvd.deintOff")) }
+            if (id === "next") mv.dvdStep(1)
+        }
         onHomeChosen: mv.goHome()
         onCoverRefresh: mv.refreshCover()
     }

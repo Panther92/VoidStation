@@ -351,6 +351,14 @@
   .romcard .romicon svg { width: 100%; height: 100%; }
   .romcard .romname { font-size: calc(16px * var(--f)); font-weight: 500; z-index: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .romcard .romsub { font-size: calc(12px * var(--f)); color: var(--text-dim); z-index: 1; margin-top: calc(2px * var(--f)); }
+  /* Mit Bild (Boxbild): Bild links, Titel rechts, dahinter dasselbe Bild gedimmt */
+  .romcard .rombg { position: absolute; inset: 0; background-size: cover; background-position: center; opacity: .28; filter: blur(6px); transform: scale(1.1); }
+  .romcard .romcover { position: absolute; left: calc(10px * var(--f)); top: calc(10px * var(--f)); bottom: calc(10px * var(--f));
+    width: calc(50% - 15px * var(--f)); object-fit: contain; object-position: center; z-index: 1; }
+  .romcard.hascover { background: #101114; }
+  .romcard.hascover .romicon { display: none; }
+  .romcard.hascover .romname, .romcard.hascover .romsub { margin-left: 50%; padding-left: calc(5px * var(--f)); }
+  .romcard.hascover .romname { white-space: normal; display: -webkit-box; -webkit-line-clamp: 4; -webkit-box-orient: vertical; }
   .btlist { display: flex; flex-direction: column; gap: calc(6px * var(--f)); margin-top: calc(8px * var(--f)); align-items: flex-start; }
   .btlist > .row { flex-wrap: nowrap; margin: 0; }
   /* Globales OSD-Keyboard */
@@ -1405,7 +1413,11 @@ function catSub(id) {
       const d = audioDev();
       return (d ? esc(devLabel(d)) + ' · ' : '') + '<span class="voltxt"></span>';
     }
-    case 'net': return esc(sett.net.addresses.length ? sett.net.addresses[0].ip : T('settings.offline'));
+    case 'net': {
+      const nl = (sett.net.links || []).find(x => x.internet);
+      if (nl) return esc((nl.type === 'wifi' ? (nl.name || T('settings.wifi')) : T('settings.netWired')) + (nl.ip ? ' · ' + nl.ip : ''));
+      return esc(sett.net.addresses.length ? sett.net.addresses[0].ip : T('settings.offline'));
+    }
     case 'bt': {
       if (!btState || !btState.available) return esc(T('settings.btNone'));
       if (!btState.service || !btState.powered) return esc(T('common.off'));
@@ -1475,13 +1487,39 @@ const SET_PAGES = {
       const b = pill(num(s) + '×', () => setScale(s), Math.abs(s - scale) < 0.01);
       b.dataset.key = 'scale' + s; rs.appendChild(b);
     }
+    const hz = r => num(Math.round(r * 100) / 100);
     for (const d of sett.displays || []) {
       const rr = row(col(tr, T('settings.resolution', { name: d.name })));
-      const modes = d.modes.filter(m => { const [w, h] = m.split('x').map(v => parseInt(v, 10)); return w >= 1024 && h >= 576; }).slice(0, 6);
+      // ab 1024x576, nur Modi mit mindestens ~50 Hz (dazu die aktuelle und die bevorzugte), hoechstens acht
+      const modes = d.modes.filter(m => {
+        const [w, h] = m.split('x').map(v => parseInt(v, 10));
+        return w >= 1024 && h >= 576 && (m === d.current || m === d.preferred || ((d.rates || {})[m] || []).some(r => r >= 49));
+      }).slice(0, 8);
       for (const m of modes) {
         const label = m.replace('x', '×').replace(/i$/, ' ' + T('settings.interlaced')) + (m === d.current && d.rate ? ` · ${Math.round(d.rate)} Hz` : '');
         const b = pill(label, () => setResolution(m), m === d.current); b.dataset.key = 'res' + m; rr.appendChild(b);
       }
+      const rates = [];
+      for (const r of (d.rates || {})[d.current] || []) if (r >= 23 && !rates.some(x => Math.abs(x - r) < 0.005)) rates.push(r);
+      rates.sort((a, b) => b - a);
+      if (rates.length > 1) {
+        const fr = row(col(tr, T('settings.rate', { name: d.name })));
+        const a0 = pill(esc(T('settings.rateAuto')) + (!sett.rate && d.rate ? ` · ${hz(d.rate)} Hz` : ''), () => setResolution(d.current), !sett.rate);
+        a0.dataset.key = 'rateauto' + d.name; fr.appendChild(a0);
+        for (const r of rates) {
+          const b = pill(hz(r) + ' Hz', () => setResolution(d.current, r), !!sett.rate && Math.abs(r - sett.rate) < 0.005);
+          b.dataset.key = 'rate' + d.name + r; fr.appendChild(b);
+        }
+      }
+    }
+    if (sett.match_rate !== undefined) {
+      const mc = col(tr, T('settings.matchRate'));
+      const mr = row(mc);
+      for (const on of [true, false]) {
+        const b = pill(T(on ? 'common.on' : 'common.off'), () => setMatchRate(on), !!sett.match_rate === on);
+        b.dataset.key = 'mr' + on; mr.appendChild(b);
+      }
+      const mi = document.createElement('div'); mi.className = 'info'; mi.textContent = T('settings.matchRateHint'); mc.appendChild(mi);
     }
   },
   design(tr) {
@@ -1541,24 +1579,49 @@ const SET_PAGES = {
   net(tr) {
     const n = col(tr, T('settings.connection'));
     const info = document.createElement('div'); info.className = 'info';
-    info.innerHTML = `${esc(T('settings.hostname'))}: <b>${esc(sett.net.hostname)}</b><br>` + (sett.net.addresses.length ? sett.net.addresses.map(x => `${esc(x.iface)}: <b>${esc(x.ip)}</b>`).join('<br>') : esc(T('settings.noConn')));
+    // Verbindungen mit Haken an der, ueber die das Internet laeuft
+    const ls = (sett.net.links || []).filter(x => x.connected);
+    info.innerHTML = `${esc(T('settings.hostname'))}: <b>${esc(sett.net.hostname)}</b><br>` + (ls.length
+      ? ls.map(x => `${x.internet ? '✓ ' : ''}<b>${esc(x.type === 'wifi' ? T('settings.netWifiLine', { ssid: x.name || x.dev }) : T('settings.netWired'))}</b>`
+          + (x.ip ? ` · ${esc(x.ip)}` : '') + (x.internet ? ` <span class="sig">· ${esc(T('settings.netViaThis'))}</span>` : '')).join('<br>')
+      : sett.net.addresses.length ? sett.net.addresses.map(x => `${esc(x.iface)}: <b>${esc(x.ip)}</b>`).join('<br>') : esc(T('settings.noConn')));
     n.appendChild(info);
+    if (sett.net.has_wired && sett.net.has_wifi) {               // Kabel oder WLAN fuers Internet bevorzugen
+      const rp = row(n, T('settings.netPrefer'));
+      for (const m of ['wired', 'wifi']) {
+        const b = pill(esc(T(m === 'wifi' ? 'settings.netWifiPick' : 'settings.netWiredPick')), () => netPrefer(m), sett.net.prefer === m);
+        b.dataset.key = 'np' + m; rp.appendChild(b);
+      }
+    }
+    const wl = (sett.net.links || []).find(x => x.type === 'wired' && (x.connected || x.ready));
+    if (wl) {                                                    // Kabel per Klick trennen und wieder verbinden
+      const b = pill(esc(T(wl.connected ? 'settings.netWiredOff' : 'settings.netWiredOn')), () => wiredToggle(!wl.connected));
+      b.dataset.key = 'wired'; row(n).appendChild(b);
+    }
     const wc = col(tr, T('settings.wifi'));
     const rw = row(wc);
     if (wifiPick) {
       const inp = document.createElement('input');
       inp.className = 'field snav'; inp.type = 'password'; inp.placeholder = T('settings.wifiPw', { ssid: wifiPick.ssid }); inp.id = 'wifiPw'; inp.dataset.key = 'pw';
       rw.appendChild(inp);
+      const show = pill(esc(T('settings.pwShow')), () => {        // Passwort im Klartext zeigen
+        const vis = inp.type === 'password'; inp.type = vis ? 'text' : 'password';
+        show.innerHTML = esc(T(vis ? 'settings.pwHide' : 'settings.pwShow')); show.classList.toggle('on', vis);
+      }); show.dataset.key = 'pwshow';
       const go = pill(esc(T('settings.connect')), () => wifiConnect(wifiPick.ssid, $('#wifiPw').value)); go.dataset.key = 'go';
       const cancel = pill(esc(T('common.cancel')), () => { wifiPick = null; renderSettings(); }); cancel.dataset.key = 'cancel';
-      rw.append(go, cancel);
+      rw.append(show, go, cancel);
     } else {
       const scan = pill(esc(wifiList ? T('settings.rescan') : T('settings.scan')), wifiScan); scan.dataset.key = 'scan'; rw.appendChild(scan);
+      const won = (sett.net.links || []).find(x => x.type === 'wifi' && x.connected);
+      if (won) {
+        const dis = pill(esc(T('settings.netDisconnect', { ssid: won.name || won.dev })), wifiDisconnect); dis.dataset.key = 'wdis'; rw.appendChild(dis);
+      }
       if (wifiList) {
         const rl = row(wc);
         rl.classList.add('wifi');
         for (const w of wifiList.slice(0, 8)) {
-          const b = pill(`${w.secure ? '🔒 ' : ''}${esc(w.ssid)} <span class="sig">${w.signal}%</span>`, () => w.secure && !w.active ? (wifiPick = w, renderSettings(), setFocus($('#wifiPw'))) : wifiConnect(w.ssid, ''), w.active);
+          const b = pill(`${w.secure ? '🔒 ' : ''}${esc(w.ssid)} <span class="sig">${w.signal}%</span>`, () => w.active ? wifiDisconnect() : w.secure && !w.known ? wifiAsk(w) : wifiConnect(w.ssid, ''), w.active);
           b.dataset.key = 'w' + w.ssid; rl.appendChild(b);
         }
       }
@@ -1658,14 +1721,15 @@ const SET_PAGES = {
     if (vsState?.reboot && (vsState.reboot.kernel || vsState.reboot.voidstation)) {
       const rb = pill(esc(T('upd.rebootNow')), () => power('reboot')); rb.dataset.key = 'updreboot'; rvs.appendChild(rb);
     }
-    const cch = col(tr, T('settings.channel'));
-    const rch = row(cch);
-    const cur = (vsState && vsState.channel) || 'stable';
-    for (const [id, lab] of [['stable', T('channel.stable')], ['main', T('channel.main')]]) {
-      const b = pill(lab, () => setChannel(id), cur === id); b.dataset.key = 'ch' + id; rch.appendChild(b);
+    // Kanal: keine Wahl mehr (seit 2026.11). Steht das Geraet auf Testing, steht das hier – mit Rueckweg zu Stable.
+    const testing = vsState?.channel === 'main';
+    const cch = col(tr, T(testing ? 'settings.channel' : 'settings.sysRemindTitle'));
+    if (testing) {
+      const ti = document.createElement('div'); ti.className = 'info'; ti.textContent = T('channel.testingInfo'); cch.appendChild(ti);
+      const b = pill(esc(T('channel.toStable')), toStable); b.dataset.key = 'chstable'; row(cch).appendChild(b);
     }
     // Reine Systemupdates erst nach dieser Frist melden (VoidStation-Updates immer sofort, Systemupdates fahren dann mit)
-    const cd = cch;                                         // gleiche Spalte wie der Kanal: passt auch bei 720p auf eine Seite
+    const cd = cch;                                         // gleiche Spalte wie der Kanalhinweis: passt auch bei 720p auf eine Seite
     const rd = row(cd, T('settings.sysRemind'));
     for (const d of sett.sysupd_choices || [30, 60, 90]) {
       const b = pill(esc(T('settings.days', { n: d })), () => setSysDays(d), (sett.sysupd_days || 90) === d); b.dataset.key = 'sd' + d; rd.appendChild(b);
@@ -1736,7 +1800,8 @@ function showVs() {
   let st = esc(T('upd.searching'));
   if (vsState) st = vsState.available ? `<b>${esc(T('upd.available', { version: vsState.remote }))}</b>`
     : esc(vsState.remote ? T('upd.current') : vsNoRemote(vsState));
-  const ch = vsState ? ` · ${esc(T('upd.channel', { channel: chLabel(vsState) }))}` : '';
+  // Kanal nur nennen, wenn er nicht Stable ist (Testing gibt es seit 2026.11 nur noch auf Wunsch)
+  const ch = vsState?.channel === 'main' ? ` · ${esc(T('upd.channel', { channel: chLabel(vsState) }))}` : '';
   el.innerHTML = `VoidStation ${esc(ver)}${ch}<br>${st}`;
   const si = $('#sysInfo'); if (!si || !vsState?.system) return;
   const y = vsState.system, sum = sysSummary(vsState);
@@ -1763,9 +1828,10 @@ async function setFrontend(fe) {
   catch (e) { return toast(T('common.failedMsg', { msg: e.message }), true); }
   renderSettings();
 }
-async function setChannel(ch) {
-  if (ch === 'main' && !(vsState && vsState.channel === 'main')) toast(T('channel.testWarn'));
-  try { vsState = await api('/api/selfupdate/channel', { channel: ch }); } catch (e) { return toast(T('common.failedMsg', { msg: e.message }), true); }
+// Nur noch der Rueckweg zu Stable; Testing waehlt man im Terminal (vsctl channel testing)
+async function toStable() {
+  try { vsState = await api('/api/selfupdate/channel', { channel: 'stable' }); } catch (e) { return toast(T('common.failedMsg', { msg: e.message }), true); }
+  toast(T('channel.toStableDone'));
   renderSettings();
 }
 async function setSysDays(d) {
@@ -1784,12 +1850,20 @@ async function runUpdates() {
   if (JOBS_BUSY()) return toast(T('common.busy'));
   toast(T('upd.checking'));
   await refreshVs(true);
+  // Die Paketpruefung laeuft im Hintergrund; nur warten, wenn es sonst noch nichts zu zeigen gibt (hoechstens 3 min)
+  const until = Date.now() + 180000;
+  while (vsState && !vsState.busy && vsState.system?.checking && !(vsState.available || vsState.system.count) && Date.now() < until) {
+    toast(T('upd.checking'));
+    await new Promise(r => setTimeout(r, 1500));
+    await refreshVs(false);
+  }
   $('#toast').classList.remove('show');
   if (!vsState) return toast(T('upd.unreachable'), true);
   if (vsState.busy) return toast(T('upd.xbpsBusy'), true);
   const rb = vsState.reboot || {};
   if (!vsState.any) {
     if (rb.kernel || rb.voidstation) return rebootPrompt(rb);
+    if (vsState.system?.checking || (vsState.system?.error && !vsState.available)) return toast(T('upd.sysError'), true);
     if (!vsState.remote) return toast(vsNoRemote(vsState), true);
     return toast(T('upd.upToDate'));
   }
@@ -1802,7 +1876,9 @@ async function runUpdates() {
   const y = vsState.system;
   if (y && y.count) {
     const names = y.pkgs.slice(0, 12).join(', ') + (y.pkgs.length > 12 ? ' ' + T('upd.more', { n: num(y.pkgs.length - 12) }) : '');
-    parts.push(T('upd.system') + ': ' + sysSummary(vsState) + (names ? '\n' + names : ''));
+    parts.push(T('upd.system') + ': ' + sysSummary(vsState) + (names ? '\n' + names : '') + (y.checking ? '\n' + T('upd.sysChecking') : ''));
+  } else if (y && y.checking) {
+    parts.push(T('upd.system') + ': ' + T('upd.sysChecking'));
   }
   const restart = vsState.available || y?.kernel || rb.kernel || rb.voidstation;
   parts.push(T(restart ? 'upd.keep' : 'upd.keepNoReboot'));
@@ -1847,9 +1923,19 @@ async function setCursor(c) {
   renderSettings();
   toast(T('settings.cursorToast'));
 }
-async function setResolution(m) {
-  try { sett = await api('/api/settings/resolution', { mode: m }); toast(T('settings.resToast', { mode: m.replace('x', '×') })); } catch (e) { return toast(T('common.failedMsg', { msg: e.message }), true); }
+async function setResolution(m, rate) {
+  const body = rate ? { mode: m, rate } : { mode: m };
+  try {
+    sett = await api('/api/settings/resolution', body);
+    toast(rate ? T('settings.rateToast', { hz: num(Math.round(rate * 100) / 100) }) : T('settings.resToast', { mode: m.replace('x', '×') }));
+  } catch (e) { return toast(T('common.failedMsg', { msg: e.message }), true); }
   setTimeout(() => { layout(); renderSettings(); }, 800);
+}
+async function setMatchRate(on) {
+  if (!!sett.match_rate === on) return;
+  try { sett = await api('/api/settings/matchrate', { on }); } catch (e) { return toast(T('common.failedMsg', { msg: e.message }), true); }
+  renderSettings();
+  toast(T(on ? 'settings.matchRateOnToast' : 'settings.matchRateOffToast'));
 }
 function audioDev() { return sett?.audio?.ok ? (sett.audio.devices || []).find(d => d.active) || null : null; }
 function devLabel(d) {
@@ -1873,13 +1959,39 @@ async function wifiScan() {
   catch (e) { return toast(T('wifi.scanFailed', { msg: e.message }), true); }
   renderSettings();
 }
+async function netPrefer(mode) {
+  if (sett?.net?.prefer === mode) return;
+  toast(T('settings.netSwitching'));
+  try { sett = await api('/api/net/prefer', { mode }); toast(T('settings.netPreferDone', { what: T(mode === 'wifi' ? 'settings.wifi' : 'settings.netWired') })); renderSettings(); }
+  catch (e) { toast(T('common.failedMsg', { msg: e.message }), true); }
+}
+function wifiAsk(w) { wifiPick = w; renderSettings(); setFocus($('#wifiPw')); }
+async function wifiDisconnect() {
+  const won = (sett?.net?.links || []).find(x => x.type === 'wifi' && x.connected);
+  try {
+    sett = await api('/api/net/disconnect', { type: 'wifi' });
+    if (wifiList) wifiList = wifiList.map(w => ({ ...w, active: false }));
+    toast(T('settings.netDisconnected', { ssid: won ? won.name || won.dev : '' })); renderSettings();
+  } catch (e) { toast(T('common.failedMsg', { msg: e.message }), true); }
+}
+async function wiredToggle(on) {
+  toast(T('settings.netSwitching'));
+  try { sett = await api(on ? '/api/net/connect' : '/api/net/disconnect', { type: 'wired' }); toast(T(on ? 'settings.netWiredOnDone' : 'settings.netWiredOffDone')); renderSettings(); }
+  catch (e) { toast(T('common.failedMsg', { msg: e.message }), true); }
+}
 async function wifiConnect(ssid, pw) {
   toast(T('wifi.connecting', { ssid }));
-  try { sett = await api('/api/wifi/connect', { ssid, password: pw }); wifiPick = null; toast(T('wifi.connected', { ssid })); renderSettings(); }
+  try {
+    sett = await api('/api/wifi/connect', { ssid, password: pw }); wifiPick = null;
+    if (wifiList) wifiList = wifiList.map(w => ({ ...w, active: w.ssid === ssid, known: w.known || w.ssid === ssid }));     // neues Netz ist jetzt das aktive
+    toast(T('wifi.connected', { ssid })); renderSettings();
+  }
   catch (e) {
     const m = String(e.message);                            // bekannte Fehler: Schluessel "wifi.err.*"
     toast(m.startsWith('wifi.err.') ? T(m, { ssid }) : T('wifi.failed', { msg: m }), true);
-    if (m === 'wifi.err.password' && wifiPick && $('#wifiPw')) { $('#wifiPw').value = ''; setFocus($('#wifiPw')); }
+    if (m === 'wifi.err.password') {                        // auch wenn das gespeicherte Passwort nicht mehr passt
+      if (wifiPick && $('#wifiPw')) { $('#wifiPw').value = ''; setFocus($('#wifiPw')); } else wifiAsk({ ssid });
+    }
   }
 }
 async function btTogglePower() {
@@ -2003,7 +2115,7 @@ async function btRemove(mac) {
 }
 
 /* ============================================================ Fernsehen */
-let tvQuery = '', tvCountry = 'DE', tvCat = '', tvFavs = [], tvResults = [], tvStatus = null, tvNow = null, tvMore = false;
+let tvQuery = '', tvCountry = '', tvCountryPicked = false, tvCat = '', tvFavs = [], tvResults = [], tvStatus = null, tvNow = null, tvMore = false;
 // Senderliste seitenweise (/api/tv/list): A–Z-Leiste, 200 je Seite, am Ende "Weitere Sender" bzw. naechster Buchstabe
 let tvLetter = '', tvLetters = [], tvOffset = 0, tvTotal = 0;
 const TV_PAGE = 200;
@@ -2013,6 +2125,7 @@ const TV_CATS = ['', 'news', 'general', 'entertainment', 'movies', 'series', 'do
 
 async function tvOpen() {
   try { tvStatus = await getJSON('/api/tv/status'); tvFavs = await getJSON('/api/tv/favs'); } catch { tvStatus = { state: 'error' }; }
+  if (!tvCountryPicked) tvCountry = tvStatus?.region || 'DE';   // Land der Installationssprache (Launcher)
   setTvNow(tvStatus?.now);
   if (tvStatus.state === 'loading' || tvStatus.state === 'idle') {
     renderTv(T('tv.loading'));
@@ -2090,10 +2203,11 @@ function renderTv(msg) {
   // Filter
   const f = document.createElement('div'); f.className = 'fchips';
   const rc = document.createElement('div'); rc.className = 'row';
-  const top = ['DE', 'AT', 'CH'];
+  const top = tvStatus?.quick?.length ? [...tvStatus.quick] : ['DE', 'AT', 'CH'];
+  if (tvCountry && tvCountry !== '*' && !top.includes(tvCountry)) top.push(tvCountry);
   const more = (tvStatus?.countries || []).map(c => c.code).filter(c => !top.includes(c)).slice(0, 16);
-  for (const c of [...top, ...(tvMore ? more : [])]) { const b = fpill(regionName(c), tvCountry === c, () => { tvCountry = c; tvSearch(); }); b.dataset.fk = 'c' + c; rc.appendChild(b); }
-  const all = fpill(T('tv.allCountries'), tvCountry === '*', () => { tvCountry = '*'; tvSearch(); }); all.dataset.fk = 'c*'; rc.appendChild(all);
+  for (const c of [...top, ...(tvMore ? more : [])]) { const b = fpill(regionName(c), tvCountry === c, () => { tvCountry = c; tvCountryPicked = true; tvSearch(); }); b.dataset.fk = 'c' + c; rc.appendChild(b); }
+  const all = fpill(T('tv.allCountries'), tvCountry === '*', () => { tvCountry = '*'; tvCountryPicked = true; tvSearch(); }); all.dataset.fk = 'c*'; rc.appendChild(all);
   const mb = fpill(tvMore ? T('tv.less') : T('tv.more'), false, () => { tvMore = !tvMore; renderTv(); }); mb.dataset.fk = 'more'; rc.appendChild(mb);
   const rt = document.createElement('div'); rt.className = 'row';
   for (const k of TV_CATS) { const b = fpill(T('tv.cat.' + (k || 'all')), tvCat === k, () => { tvCat = k; tvSearch(); }); b.dataset.fk = 't' + k; rt.appendChild(b); }
@@ -2394,7 +2508,9 @@ function watchJob() {
     const what = jobState.action === 'update' ? T('job.update') : ['install', 'remove'].includes(jobState.action) ? T('job.' + jobState.action, { name }) : name;
     $('#jobTitle').textContent = what + T(jobState.state === 'running' ? 'job.running' : jobState.state === 'done' ? 'job.done' : 'job.failed');
     $('#jobSpin').style.display = jobState.state === 'running' ? '' : 'none';
-    $('#jobLog').textContent = (jobState.log || []).slice(-6).join('\n');
+    const pr = jobState.state === 'running' && jobState.progress;   // Download: Stand statt Protokollzeilen
+    $('#jobLog').textContent = (jobState.log || []).slice(pr ? -4 : -6).join('\n') + (pr ? '\n' + (pr.total_mb
+      ? `${num(Math.round(pr.mb))} / ${num(Math.round(pr.total_mb))} MB · ${pr.pct} %` : `${num(Math.round(pr.mb))} MB`) : '');
     if (jobState.state !== 'running') {
       clearInterval(jobTimer);
       const upd = jobState.action === 'update', r = jobState.result;
@@ -2455,8 +2571,13 @@ const IICON = {
 ICONS.install = IICON.install;
 const GiB = 1024 ** 3, MIN_ROOT = 16 * GiB;
 const gb = b => { const v = b / 1e9; return (v < 10 ? v.toLocaleString(loc(), { maximumFractionDigits: 1 }) : num(Math.round(v))) + ' GB'; };
-const TZS = ['Europe/Berlin', 'Europe/Vienna', 'Europe/Zurich', 'Europe/Amsterdam', 'Europe/Paris', 'Europe/London', 'Europe/Warsaw',
-  'America/New_York', 'America/Chicago', 'America/Denver', 'America/Los_Angeles', 'Australia/Sydney', 'UTC'];
+const TZS = ['America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York', 'America/Sao_Paulo',
+  'Europe/London', 'Europe/Lisbon', 'Europe/Madrid', 'Europe/Paris', 'Europe/Brussels', 'Europe/Amsterdam', 'Europe/Berlin',
+  'Europe/Zurich', 'Europe/Vienna', 'Europe/Rome', 'Europe/Prague', 'Europe/Bratislava', 'Europe/Warsaw', 'Europe/Budapest',
+  'Europe/Riga', 'Europe/Athens', 'Europe/Kyiv', 'Europe/Moscow', 'Australia/Sydney', 'UTC'];
+// Sprachen mit Vorgaben fuer Tastatur und Zeitzone kommen vom Launcher (probe.langs, Reihenfolge der Einstellungen)
+const instLangs = () => I?.probe?.langs || [{ id: 'de', label: 'Deutsch', kb: 'de', tz: 'Europe/Berlin' }, { id: 'en', label: 'English', kb: 'us', tz: 'America/New_York' }];
+const instLang = id => instLangs().find(l => l.id === id) || instLangs()[0];
 const OSK = {
   de: ['1234567890ß', 'qwertzuiopü', 'asdfghjklöä', 'yxcvbnm,.-'],
   us: ['1234567890-', 'qwertyuiop@', "asdfghjkl;'", 'zxcvbnm,./'],
@@ -2467,11 +2588,11 @@ let I = null, instPoll = null, gpPoll = null, instTipN = 0;
 function instOpen() { return $('#inst').classList.contains('open'); }
 
 function instFresh(probe) {
-  const lang = probe?.lang || LANG;
+  const ld = (probe?.langs || []).find(l => l.id === (probe?.lang || LANG)) || { id: probe?.lang || LANG, kb: LANG === 'en' ? 'us' : 'de', tz: 'Europe/Berlin' };
   I = { step: 'welcome', probe, disk: null, mode: null, opt: null, newSize: 0, region: null, roles: {},
         name: '', pw: '', pw2: '', host: 'tv', field: 0, shift: false, sym: false, hostEdit: null,
-        keymap: lang === 'en' ? 'us' : 'de', lang, tz: lang === 'en' ? 'America/New_York' : 'Europe/Berlin', channel: 'stable',
-        wifi: !!(probe?.wifi_saved || []).length, share: true, favs: !!(probe && (probe.favs.radio + probe.favs.tv)), rtc: false,
+        keymap: probe?.kb || ld.kb, lang: ld.id, tz: ld.tz,
+        wifi: !!(probe?.wifi_saved || []).length, share: true, rtc: false,
         status: null, t0: 0 };
 }
 const loginOf = n => {
@@ -2587,9 +2708,9 @@ function instBack() {
 /* ---- B1 Willkommen / was fehlt */
 function instBlockers(p) {
   const b = [];
-  if (p.arch !== 'x86_64') b.push('arch');
+  if (p.arch !== 'x86_64' && p.arch !== 'i686') b.push('arch');   // i686: 32-Bit-ISO (experimentell)
   if (p.uefi && p.secureboot) b.push('fw');                     // BIOS-Modus geht auch (dann nur ganze SSD)
-  if (p.ram && p.ram < 3.5 * GiB) b.push('ram');
+  if (p.ram && p.ram < (p.min_ram || 3.5 * GiB)) b.push('ram');
   if (!p.disks.some(d => d.size >= MIN_ROOT + 1.5 * GiB)) b.push('disk');
   return b;
 }
@@ -2602,14 +2723,14 @@ function rWelcome() {
   const tiles = [
     infoTile('cpu', T('inst.cpu'), p.cpu),
     infoTile('gpu', T('inst.gpu'), (p.gpu || [])[0]),
-    bl.includes('ram') ? infoTile('ram', T('inst.ram'), `${ramTxt} · ${T('inst.ramLow')}`, 'bad')
+    bl.includes('ram') ? infoTile('ram', T('inst.ram'), `${ramTxt} · ${T('inst.ramLow', { gb: p.min_ram_gb || 4 })}`, 'bad')
       : infoTile('ram', T('inst.ram'), p.ram < 7.8 * GiB ? T('inst.ramSwap', { ram: ramTxt }) : ramTxt),
     !p.uefi ? infoTile(null, T('inst.bootMode'), T('inst.biosMode'), 'ok', 'BIOS')
       : p.secureboot ? infoTile(null, T('inst.bootMode'), T('inst.sbOn'), 'bad', 'UEFI')
       : infoTile(null, T('inst.bootMode'), T('inst.sbOff'), 'ok', 'UEFI'),
     bl.length ? infoTile(null, T('inst.ssd'), T('inst.ssdMin'), bl.includes('disk') ? 'bad' : 'ok', maxDisk ? gb(maxDisk) : '–')
       : infoTile(p.net === 'wifi' ? 'wifi' : 'lan', T('inst.network'), T({ lan: 'inst.netLan', wifi: 'inst.netWifi' }[p.net] || 'inst.netNone'), p.net !== 'none' ? 'ok' : null),
-    bl.length ? infoTile(null, T('inst.arch'), '64 Bit', bl.includes('arch') ? 'bad' : 'ok', p.arch)
+    bl.length ? infoTile(null, T('inst.arch'), p.arch === 'i686' ? '32 Bit' : '64 Bit', bl.includes('arch') ? 'bad' : 'ok', p.arch)
       : infoTile(null, T('inst.screen'), screen, null, p.screen ? p.screen.mode.split('x')[1] + 'p' : '–')
   ];
   section(tr, T('inst.thisDevice'), grid('', tiles));
@@ -2623,7 +2744,7 @@ function rWelcome() {
   if (bl.length) {
     const rows = [];
     if (bl.includes('fw')) rows.push(`<ol>${['inst.fw1', 'inst.fw2', 'inst.fw3'].map((k, i) => `<li><span class="n">${i + 1}</span><span>${T(k)}</span></li>`).join('')}</ol><div class="foot">${esc(T('inst.fwStick'))}</div>`);
-    for (const k of ['ram', 'disk', 'arch']) if (bl.includes(k)) rows.push({ v: T({ ram: 'inst.needRam', disk: 'inst.needDisk', arch: 'inst.needArch' }[k]) });
+    for (const k of ['ram', 'disk', 'arch']) if (bl.includes(k)) rows.push({ v: T({ ram: 'inst.needRam', disk: 'inst.needDisk', arch: 'inst.needArch' }[k], { gb: p.min_ram_gb || 4 }) });
     section(tr, T('inst.howTo'), panel(rows));
   } else {
     section(tr, T('inst.onSsd'), panel([{ k: T('inst.whatUi'), v: T('inst.whatUiText') }, { k: T('inst.whatShare'), v: T('inst.whatShareText') },
@@ -2890,7 +3011,7 @@ function oskFieldsDraw() {
 function oskKeys() {
   const k = $('#iOsk'); if (!k) return;
   const keep = focusEl?.dataset?.key;
-  const rows = I.sym ? OSK.sym : OSK[I.keymap] || OSK.de;
+  const rows = I.sym ? OSK.sym : OSK[I.keymap] || OSK.us;
   k.innerHTML = '';
   const add = (label, fn, cls, key) => { const b = document.createElement('button'); b.className = 'key inav ' + (cls || ''); b.textContent = label; b._set = () => { I.phys = false; fn(); }; b.dataset.key = key; k.appendChild(b); };
   rows.forEach((r, ri) => {
@@ -2926,9 +3047,19 @@ function oskStep(title, sub) {
   section(tr, I.step === 'host' ? T('inst.editHost') : T('inst.account'), left);
   const right = document.createElement('div');
   const kb = document.createElement('div'); kb.className = 'kbrow';
-  for (const km of ['de', 'us', 'gb']) {
+  // Tastaturen: eigene der Oberflaechensprache, Deutsch, US, UK als Knoepfe, die uebrigen ueber "Weitere"
+  const kbs = I.probe?.kbs || ['de', 'us', 'gb'];
+  const fixed = [...new Set([instLang(LANG).kb, 'de', 'us', 'gb'])].filter(k => kbs.includes(k));
+  const rest = kbs.filter(k => !fixed.includes(k));
+  const setKm = async km => { I.keymap = km; try { if (!offline) await api('/api/install/keymap', { keymap: km }); } catch {} rAccountOrHost(); };
+  for (const km of fixed.includes(I.keymap) ? fixed : [...fixed, I.keymap]) {
     const b = document.createElement('button'); b.className = 'pill inav' + (I.keymap === km ? ' on' : ''); b.textContent = T('inst.kb.' + km); b.dataset.key = 'km' + km;
-    b._set = async () => { I.keymap = km; try { if (!offline) await api('/api/install/keymap', { keymap: km }); } catch {} rAccountOrHost(); };
+    b._set = () => setKm(km);
+    kb.appendChild(b);
+  }
+  if (rest.length) {
+    const b = document.createElement('button'); b.className = 'pill inav'; b.textContent = T('inst.kbMore'); b.dataset.key = 'kmMore';
+    b._set = () => setKm(rest[(rest.indexOf(I.keymap) + 1) % rest.length]);
     kb.appendChild(b);
   }
   const osk = document.createElement('div'); osk.className = 'osk'; osk.id = 'iOsk';
@@ -2969,15 +3100,16 @@ function rDevice() {
   const tr = instShell(T('inst.device'), T('inst.deviceSub'), 3);
   const cyc = (list, cur) => list[(list.indexOf(cur) + 1) % list.length];
   const ws = p.wifi_saved || [];
-  const favN = (p.favs?.radio || 0) + (p.favs?.tv || 0);
   const tiles = [
     stile(T('inst.hostname'), I.host, T('inst.hostSub', { host: I.host }), () => { I.hostEdit = null; instGo('host'); }, 'host'),
-    stile(T('inst.channel'), T('channel.' + (I.channel === 'main' ? 'main' : 'stable')), T(I.channel === 'main' ? 'inst.chTestSub' : 'inst.chStableSub'), () => { I.channel = I.channel === 'main' ? 'stable' : 'main'; rDevice(); }, 'ch'),
     ws.length ? stile(T('inst.wifiTake'), I.wifi ? ws[0] : T('common.off'), I.wifi ? T('inst.wifiSub') : T('inst.wifiOffSub'), () => { I.wifi = !I.wifi; rDevice(); }, 'wifi') : null,
     stile(T('inst.share'), T(I.share ? 'common.on' : 'common.off'), T('inst.shareSub'), () => { I.share = !I.share; rDevice(); }, 'share'),
-    stile(T('inst.language'), I.lang === 'en' ? 'English' : 'Deutsch', T('inst.langSub'), () => { I.lang = I.lang === 'en' ? 'de' : 'en'; rDevice(); }, 'lang'),
+    stile(T('inst.language'), instLang(I.lang).label, T('inst.langSub'), () => {
+      const nx = cyc(instLangs().map(l => l.id), I.lang);
+      if (I.tz === instLang(I.lang).tz) I.tz = instLang(nx).tz;
+      I.lang = nx; rDevice();
+    }, 'lang'),
     stile(T('inst.timezone'), tzLabel(I.tz), T('inst.tzSub'), () => { I.tz = cyc(TZS, I.tz); rDevice(); }, 'tz'),
-    favN ? stile(T('inst.favs'), I.favs ? T('inst.favCount', { n: favN }) : T('common.off'), T('inst.favSub'), () => { I.favs = !I.favs; rDevice(); }, 'favs') : null,
     p.windows ? stile(T('inst.rtc'), T(I.rtc ? 'inst.rtcLocal' : 'inst.rtcUtc'), T(I.rtc ? 'inst.rtcSub' : 'inst.rtcUtcSub'), () => { I.rtc = !I.rtc; rDevice(); }, 'rtc') : null,
     p.screen ? stile(T('inst.screen'), p.screen.mode.replace('x', '×'), T('inst.screenSub')) : null,
     itile({ size: 'wide', color: '#2f6d4f', icon: 'install', label: T('inst.continue'), key: 'next', fn: () => instGo('confirm') })
@@ -2996,13 +3128,12 @@ function instSummary() {
   else if (I.mode === 'beside') eff = T('inst.sumBeside', { os: I.opt.os, old: gb(I.opt.size - I.newSize), size: gb(I.newSize) });
   else if (I.mode === 'free') eff = T('inst.sumFree', { size: gb(I.region.bytes) });
   else eff = T('inst.sumManual', { root: I.manual.root, esp: I.manual.esp });
-  const extras = [(I.probe.wifi_saved || []).length && I.wifi ? T('inst.wifi') : null, I.share ? T('inst.whatShare') : null,
-    I.favs && (I.probe.favs.radio + I.probe.favs.tv) ? T('inst.favCount', { n: I.probe.favs.radio + I.probe.favs.tv }) : null].filter(Boolean);
+  const extras = [(I.probe.wifi_saved || []).length && I.wifi ? T('inst.wifi') : null, I.share ? T('inst.whatShare') : null].filter(Boolean);
   return [
     { k: T('inst.sumDisk'), html: `<b>${esc(diskName(d))} · ${esc(gb(d.size))}</b><br>${esc(eff)}` },
     { k: T('inst.sumAccount'), html: `<b>${esc(I.name)}</b> · ${esc(T('inst.sumLogin', { login: loginOf(I.name) }))}` },
-    { k: T('inst.sumDevice'), html: `<b>${esc(I.host)}</b> · ${esc(I.lang === 'en' ? 'English' : 'Deutsch')} · ${esc(tzLabel(I.tz).split(' · ')[0])}` + (I.probe.screen ? ` · ${esc(I.probe.screen.mode.replace('x', '×'))}` : '') },
-    { k: T('inst.sumUpdates'), v: T('inst.sumChannel', { channel: T('channel.' + (I.channel === 'main' ? 'main' : 'stable')) }) },
+    { k: T('inst.sumDevice'), html: `<b>${esc(I.host)}</b> · ${esc(instLang(I.lang).label)} · ${esc(tzLabel(I.tz).split(' · ')[0])}` + (I.probe.screen ? ` · ${esc(I.probe.screen.mode.replace('x', '×'))}` : '') },
+    { k: T('inst.sumUpdates'), v: T('inst.sumChannel') },
     { k: T('inst.sumExtras'), v: extras.join(', ') || T('inst.sumNone') },
     I.probe.bitlocker && I.mode !== 'whole' ? { k: 'BitLocker', v: T('inst.bitlocker') } : null
   ].filter(Boolean);
@@ -3036,8 +3167,8 @@ function holdTick() {
 }
 function instConfig() {
   const c = { mode: I.mode, disk: I.disk.path, user: { name: I.name, login: loginOf(I.name), password: I.pw }, hostname: I.host,
-    lang: I.lang, keymap: I.keymap, timezone: I.tz, channel: I.channel, wifi: I.wifi && !!(I.probe.wifi_saved || []).length,
-    share: I.share, favorites: I.favs, rtc_local: I.rtc && !!I.probe.windows };
+    lang: I.lang, keymap: I.keymap, timezone: I.tz, wifi: I.wifi && !!(I.probe.wifi_saved || []).length,
+    share: I.share, rtc_local: I.rtc && !!I.probe.windows };
   if (I.mode === 'beside') Object.assign(c, { part: I.opt.part, new_size: I.newSize });
   if (I.mode === 'free') c.region = { start: I.region.start, sectors: I.region.sectors };
   if (I.mode === 'manual') c.manual = I.manual;
@@ -3173,7 +3304,7 @@ function rDone() {
   section(tr, T('inst.afterReboot'), panel([
     { k: T('inst.loginAuto'), v: T('inst.loginAutoText', { name: r.user || I.name }) },
     I.share !== false ? { k: T('inst.whatShare'), v: T('inst.shareText', { host, login }) } : null,
-    { k: T('inst.sumUpdates'), v: T('inst.updText', { channel: T('channel.' + (I.channel === 'main' ? 'main' : 'stable')) }) },
+    { k: T('inst.sumUpdates'), v: T('inst.updText') },
     secs ? { k: T('inst.duration'), v: T('inst.durationText', { min: Math.floor(secs / 60), sec: secs % 60 }) } : null,
     { k: T('inst.tip'), v: T('inst.tipText') }], 'wide'));
   instFocus('#iTrack [data-key="reboot"]');
@@ -3238,6 +3369,20 @@ async function renderRoms() {
       card.innerHTML = `<div class="romicon">${ICONS[curRomTile.icon] || ICONS.gamepad}</div>` +
         `<div class="romname">${esc(r.title || r.name)}</div>` +
         `<div class="romsub">${esc(r.size || (r.bytes ? gb(r.bytes) : ''))}</div>`;
+      if (r.cover) {                               // Bild erst zeigen, wenn es geladen ist (sonst bleibt das Symbol)
+        const img = new Image();
+        img.className = 'romcover';
+        img.alt = '';
+        img.onload = () => {
+          const bg = document.createElement('div');
+          bg.className = 'rombg';
+          bg.style.backgroundImage = `url("${img.src}")`;
+          card.prepend(bg);
+          card.appendChild(img);
+          card.classList.add('hascover');
+        };
+        img.src = r.cover;
+      }
       g.appendChild(card);
     });
     section(tr, T('roms.count', { count: roms.length }), g);

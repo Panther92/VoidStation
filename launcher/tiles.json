@@ -2,14 +2,6 @@
   "title": "Start",
   "user": "Paul",
   "background": "",
-  "radio_suggestions": [
-    "MDR Sachsen-Anhalt",
-    "MDR Jump",
-    "Radio Brocken",
-    "Deutschlandfunk",
-    "radioeins",
-    "Klassik Radio"
-  ],
   "groups": [
     {
       "name": "Unterhaltung",
@@ -106,15 +98,7 @@
           "color": "#2f3238",
           "icon": "terminal",
           "cmd": [
-            "xterm",
-            "-fa",
-            "Monospace",
-            "-fs",
-            "14",
-            "-bg",
-            "#111316",
-            "-fg",
-            "#dcdcdc"
+            "xterm"
           ]
         }
       ]

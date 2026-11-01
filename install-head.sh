@@ -51,13 +51,30 @@ for d in /sys/bus/pci/devices/*; do
     0x10de) echo "GPU: NVIDIA (nouveau)"; GPU_PKGS="$GPU_PKGS mesa-nouveau-dri" ;;
   esac
 done
+# 32-Bit-Rechner (experimentell): eigener 2D-Treiber fuer die alte Grafik. Aktuelles Mesa hat fuer Radeon 7500/9000
+# und Intel bis i915 keinen 3D-Treiber mehr; X liefe dann mit modesetting, das Xv (Video-Skalierung durch die
+# Grafikkarte) nur ueber OpenGL kann. Der Player gibt auf 32 Bit ueber Xv aus.
+if [ "$(xbps-uhelper arch 2>/dev/null)" = i686 ]; then
+  for d in /sys/bus/pci/devices/*; do
+    case "$(cat "$d/class" 2>/dev/null)" in 0x03*) ;; *) continue ;; esac
+    case "$(cat "$d/vendor" 2>/dev/null)" in
+      0x1002) GPU_PKGS="$GPU_PKGS xlibre-xf86-video-ati" ;;
+      0x8086) GPU_PKGS="$GPU_PKGS xlibre-xf86-video-intel" ;;
+      0x10de) GPU_PKGS="$GPU_PKGS xlibre-xf86-video-nouveau" ;;
+      0x1106) GPU_PKGS="$GPU_PKGS xlibre-xf86-video-openchrome" ;;
+    esac
+  done
+fi
 PKGS="xinit xauth xset xrandr xprop setxkbmap $GPU_PKGS \
-  openbox dbus elogind xrdb pulseaudio-utils curl python3 python3-evdev wmctrl unclutter-xfixes \
-  firefox mpv python3-mpv ffmpegthumbnailer ffmpeg yt-dlp nodejs samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 pcmanfm gvfs xterm \
+  openbox dbus elogind xrdb pulseaudio-utils curl python3 python3-evdev wmctrl xdotool unclutter-xfixes \
+  firefox mpv python3-mpv ffmpegthumbnailer ffmpeg yt-dlp nodejs lsdvd samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 pcmanfm gvfs xterm \
   python3-pyside6-declarative qt6-svg qt6-imageformats qt6-plugin-tls-openssl \
   pipewire wireplumber alsa-utils bluez libspa-bluetooth \
   noto-fonts-ttf noto-fonts-emoji noto-fonts-cjk dejavu-fonts-ttf \
-  NetworkManager wireless-regdb chrony htop nano fastfetch mousepad"
+  NetworkManager wireless-regdb chrony htop nano fastfetch mousepad bash-completion"
+# Startbild beim Hochfahren (VoidStation-Logo statt Textmeldungen, s. voidstation-splash) – nur 64 Bit,
+# die 32-Bit-Variante laesst es weg (Startzeit und RAM auf alten Rechnern)
+[ "$(xbps-uhelper arch 2>/dev/null)" = x86_64 ] && PKGS="$PKGS plymouth"
 MISSING=""
 for p in $PKGS; do
   xbps-query "$p" >/dev/null 2>&1 && continue
@@ -81,15 +98,17 @@ if grep -q GenuineIntel /proc/cpuinfo 2>/dev/null && ! xbps-query intel-ucode >/
   fi
 fi
 
-# Sprachen der Oberflaeche: deutsches und englisches Locale erzeugen (Dateimanager & Co. folgen der UI-Sprache)
+# Sprachen der Oberflaeche: Locales aller Sprachen erzeugen (Dateimanager & Co. folgen der UI-Sprache).
+# Die Live-ISO entsteht mit diesem Skript – so kennt der Stick jede Sprache aus dem Startmenue
+# (locale.LANG) und der Installer kann jede davon fuer das neue System einstellen (LANG_TABLE in launcher.py).
 if [ -f /etc/default/libc-locales ]; then
   LCH=0
-  for l in de_DE en_US; do
+  for l in de_DE en_US cs_CZ es_ES fr_FR it_IT lv_LV hu_HU nl_NL pl_PL pt_BR sk_SK el_GR ru_RU uk_UA; do
     if ! grep -q "^$l.UTF-8 UTF-8" /etc/default/libc-locales && grep -q "^#[[:space:]]*$l.UTF-8 UTF-8" /etc/default/libc-locales; then
       sed -i "s/^#[[:space:]]*\($l.UTF-8 UTF-8\)/\1/" /etc/default/libc-locales; LCH=1
     fi
   done
-  if [ "$LCH" = 1 ]; then xbps-reconfigure -f glibc-locales >/dev/null 2>&1 && echo "Locales de_DE und en_US erzeugt" || warn "Locales konnten nicht erzeugt werden"; fi
+  if [ "$LCH" = 1 ]; then xbps-reconfigure -f glibc-locales >/dev/null 2>&1 && echo "Locales fuer alle Sprachen erzeugt" || warn "Locales konnten nicht erzeugt werden"; fi
 fi
 
 # ---------------------------------------------------------------------
@@ -108,13 +127,21 @@ else
   # Neue Installation: Anzeigename oben rechts (VSNAME, sonst voller Name, sonst Benutzername)
   NAME="${VSNAME:-$(getent passwd "$VSUSER" | cut -d: -f5 | cut -d, -f1)}"
   [ -n "$NAME" ] || NAME="${VSUSER^}"
-  python3 - "$TV/tiles.json" "$NAME" <<'PYEOF'
+  python3 - "$TV/tiles.json" "$NAME" "$(xbps-uhelper arch 2>/dev/null)" <<'PYEOF'
 import json, sys
-p, n = sys.argv[1], sys.argv[2]
+p, n, arch = sys.argv[1], sys.argv[2], sys.argv[3]
 d = json.load(open(p, encoding="utf-8")); d["user"] = n
+if arch == "i686":
+    # 32 Bit (experimentell): YouTube Light statt YouTube im Firefox-Kiosk (YouTube-Seite + VP9/AV1 in Software
+    # waeren auf alten Rechnern zu schwer); YouTube im Browser bleibt im AppCenter nicht verfuegbar
+    yt = {"id": "ytlight", "label": "YouTube Light", "sub": "Videos & Abos", "size": "wide", "color": "#6e2b2b",
+          "icon": "play", "cmd": ["~/.local/share/voidstation/qt/voidstation-player.py", "--yt"], "app": True}
+    for g in d.get("groups", []):
+        g["tiles"] = [yt if t.get("id") == "youtube" else t for t in g.get("tiles", [])]
 json.dump(d, open(p, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 PYEOF
   echo "Anzeigename: $NAME"
+  if [ "$(xbps-uhelper arch 2>/dev/null)" = i686 ]; then echo "32 Bit: Kachel YouTube Light statt YouTube (Firefox)"; fi
 fi
 
 # ---------------------------------------------------------------------
@@ -148,8 +175,25 @@ BAUD_RATE=38400
 TERM_NAME=linux
 EOF
 
-# Gruppen: Gamepad/Eingabe, Ton, Grafik
-for g in input audio video render bluetooth; do
+# Terminal: die Void-Vorgabe PS1='[\u@\h \W]\$ ' aus ~/.bashrc nehmen – sie ueberdeckt sonst die
+# Eingabeaufforderung von VoidStation (/etc/bash/bashrc.d/voidstation.sh, s. sysfix.sh). Nur die unveraenderte Zeile;
+# ein eigenes PS1 bleibt und geht vor.
+python3 - "$HOMEDIR/.bashrc" <<'PYEOF'
+import sys
+p = sys.argv[1]
+try:
+    lines = open(p, encoding="utf-8").read().split("\n")
+except OSError:
+    sys.exit(0)
+old = r"PS1='[\u@\h \W]\$ '"
+if old in lines:
+    lines[lines.index(old)] = "# PS1: kommt von VoidStation (/etc/bash/bashrc.d/voidstation.sh) – ein eigenes PS1 hier geht vor"
+    open(p, "w", encoding="utf-8").write("\n".join(lines))
+    print("Eingabeaufforderung: VoidStation-Vorgabe")
+PYEOF
+
+# Gruppen: Gamepad/Eingabe, Ton, Grafik, DVD-Laufwerk (optical bzw. cdrom, je nach udev-Regeln)
+for g in input audio video render bluetooth optical cdrom; do
   getent group "$g" >/dev/null && usermod -aG "$g" "$VSUSER" || true
 done
 
@@ -303,12 +347,16 @@ install -d -o root -g root -m 755 /usr/local/share/voidstation
 # Kernel-Start: EFISTUB-Helfer und Initramfs-Vorgabe (nutzt der Installer des Live-Sticks)
 install -o root -g root -m 755 "$TV/voidstation-efistub" /usr/local/sbin/voidstation-efistub
 install -o root -g root -m 644 "$TV/dracut-voidstation.conf" /usr/local/share/voidstation/dracut-voidstation.conf
-python3 - "$TV/catalog.json" > /usr/local/share/voidstation/allowed-packages <<'PYEOF'
+install -o root -g root -m 755 "$TV/voidstation-splash" /usr/local/sbin/voidstation-splash
+python3 - "$TV/catalog.json" "$(xbps-uhelper arch 2>/dev/null)" > /usr/local/share/voidstation/allowed-packages <<'PYEOF'
 import json, sys
 c = json.load(open(sys.argv[1], encoding="utf-8"))
+arch = sys.argv[2] if len(sys.argv) > 2 else ""
 pk = {"flatpak"}
 for a in c["apps"]:
     s = a["source"]
+    if arch and isinstance(a.get("arch"), list) and arch not in a["arch"]:
+        continue                                  # z. B. Steam (multilib) nicht auf 32 Bit
     if s["type"] == "xbps":
         pk.add(s["pkg"])
     for k in ("repos", "deps", "optional", "host_pkgs"):
@@ -334,6 +382,20 @@ if [ -n "$SIGNERS" ]; then
 fi
 
 # ---------------------------------------------------------------------
+# Startbild (Plymouth): Theme, Kernel-Befehlszeile ("splash"), Initramfs. Im chroot des Installers baut der
+# Installer das Initramfs danach selbst (Rueckgabe 2), beim ISO-Bau richtet build-iso.sh das Live-Startbild ein.
+if [ "$LIVE" != 1 ]; then
+  say "Extra: Startbild beim Hochfahren"
+  SPL=0
+  VOIDSTATION_CHROOT="$CHROOT" /usr/local/sbin/voidstation-splash setup --theme "$TV/plymouth" || SPL=$?
+  case "$SPL" in
+    0) ;;
+    2) echo "Startbild eingerichtet, Initramfs folgt" ;;
+    *) warn "Startbild nicht vollstaendig eingerichtet (sudo voidstation-splash status)" ;;
+  esac
+fi
+
+# ---------------------------------------------------------------------
 say "Grafik-Server: XLibre"
 if ! sh /usr/local/sbin/voidstation-pkg xserver ensure; then
   warn "XLibre konnte nicht installiert werden – ohne Grafik-Server startet die Oberflaeche nicht."
@@ -342,14 +404,15 @@ fi
 
 say "Extra: Freigabe-Ordner $SHARE"
 for d in ROMs/gba ROMs/gbc ROMs/nes ROMs/snes ROMs/psx ROMs/psp ROMs/nds ROMs/gamecube ROMs/dreamcast \
-         ROMs/dos ROMs/c64 ROMs/atari2600 ROMs/scummvm BIOS Musik Videos Bilder; do
+         ROMs/dos ROMs/c64 ROMs/atari2600 ROMs/scummvm ROMs/ps2 ROMs/n64 ROMs/xbox ROMs/3ds ROMs/wiiu ROMs/mame \
+         Musik Videos Bilder; do
   mkdir -p "$SHARE/$d"
 done
 [ -f "$SHARE/LIESMICH.txt" ] || cat > "$SHARE/LIESMICH.txt" <<'EOF'
 VoidStation Freigabe
 =================
 ROMs/<system>   Spiele fuer die Emulatoren (gba, gbc, nes, snes, psx, psp, nds …)
-BIOS            BIOS-Dateien (z. B. PlayStation fuer DuckStation)
+ROMs/<system>/bios  BIOS-Dateien aus der eigenen Konsole – was hineingehoert, steht im Hinweis im Ordner
 Musik, Videos   eigene Medien (Kachel "Videos & Musik")
 Bilder          fuer den Bildbetrachter
 EOF
@@ -443,6 +506,11 @@ done
 
 NEED_NM=0
 [ -e "$SVDIR/NetworkManager" ] || NEED_NM=1
+
+# Alles auf die Platte schreiben, bevor "Fertig" erscheint: ext4 haelt frisch geschriebene Dateien sonst noch
+# Sekunden im Speicher – geht der Rechner dann hart aus (Netzschalter, VM-Fenster zu), bleiben sie leer
+# (gesehen am 22.10.2026: xstart, Autostart, Web-Oberflaeche mit 0 Byte, Startseite kam nicht mehr).
+sync
 
 cat <<EOF
 

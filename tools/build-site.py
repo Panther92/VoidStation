@@ -407,6 +407,8 @@ class Site:
                 return self.address(lang, full=False)
             if name == "support":
                 return self.support(lang)
+            if name == "iso32":
+                return self.iso32(lang)
             if name == "latest":
                 return (f'<p class="dim">{esc(self.t(lang, "latest.line", v=self.latest["version"], d=self.fmt_date(self.latest["date"], lang)))} '
                         f'<a href="{self.url("news", lang)}v{esc(self.latest["version"])}/">{esc(self.t(lang, "latest.more"))}</a></p>')
@@ -457,6 +459,27 @@ class Site:
     <h2 id="iso">{esc(self.t(lang, 'iso.soon.title'))}</h2>
     <p>{esc(self.t(lang, 'iso.soon.text'))}{sf_link}</p>
   </div>
+</div>"""
+
+    def iso32(self, lang):
+        """Experimentelle 32-Bit-ISO (i686) unter der regulaeren Download-Kachel. Erscheint nur mit "iso32" in
+        site/config.json: "folder" (SourceForge-Ordner), optional "url", "version", "date", "size_mb", "sha256"."""
+        c = self.cfg.get("iso32") or {}
+        folder = c.get("folder", "")
+        if not (c.get("url") or folder):
+            return ""
+        meta = [self.t(lang, "iso32.arch")]
+        if c.get("size_mb"):
+            meta.append(self.t(lang, "iso.size", mb=c["size_mb"]))
+        if c.get("date"):
+            meta.append(self.fmt_date(c["date"], lang))
+        sha = (f'<p class="sha"><span>SHA-256</span> <code>{esc(c["sha256"])}</code></p>' if c.get("sha256") else "")
+        more = (f' · <a href="{esc(folder)}" rel="noopener">{esc(self.t(lang, "iso32.all"))}</a>' if folder and c.get("url") else "")
+        return f"""<div class="iso32">
+  <p><a class="btn" href="{esc(c.get('url') or folder)}" rel="noopener">{ICONS['download']}<span>{esc(self.t(lang, 'iso32.button'))}</span></a>
+     <span class="dim">{esc(" · ".join(meta))}</span></p>
+  <p>{esc(self.t(lang, 'iso32.text'))}{more}</p>
+  {sha}
 </div>"""
 
     def support(self, lang):

@@ -11,7 +11,7 @@ Aufgaben dieses Programms (alles andere steht in qml/):
   * Verbindung zum Launcher (http://127.0.0.1:8765, dieselbe API wie die Web-Oberflaeche)
   * Texte aus web/i18n/*.json und Farben aus web/themes/*.css – eine Quelle fuer beide Oberflaechen
   * Gamepad ueber evdev (python3-evdev), Symbole als SVG
-  * Controller als Maus in Programmen (uinput): rechter Stick Zeiger, R2/L2 Klicks, linker Stick scrollt, R3 umschalten
+  * Controller als Maus in Programmen (uinput): rechter Stick Zeiger, A/B (✕/○) Klicks, linker Stick scrollt, R3 umschalten
 
 Darstellung: Qt Quick zeichnet mit OpenGL direkt auf der Grafikkarte (auch mit dem NVIDIA-Treiber).
 Ohne Render-Schnittstelle (/dev/dri/renderD*) oder mit VS_QT_SOFTWARE=1 zeichnet Qt per Software.
@@ -68,8 +68,9 @@ log = vscommon.log
 # ---------------------------------------------------------------------------
 class PadMouse:
     """Controller als Maus, solange ein Programm vorn ist (nicht die Startseite): rechter Stick bewegt den Zeiger
-    (je weiter, desto schneller), R2 = Linksklick (halten zieht), L2 = Rechtsklick, linker Stick hoch/runter
-    scrollt, R3 schaltet fuer das Programm um. Von selbst an oder aus je nach Kachel (/api/front: "mouse"; Spiele
+    (je weiter, desto schneller), untere Taste (Xbox A, PlayStation ✕) = Linksklick (halten zieht), rechte Taste
+    (Xbox B, PlayStation ○) = Rechtsklick, linker Stick hoch/runter scrollt, R3 schaltet fuer das Programm um.
+    Die Startseite bekommt die Tasten in dieser Zeit nicht (PadPump nur, wenn sie vorn ist). Von selbst an oder aus je nach Kachel (/api/front: "mouse"; Spiele
     und Emulatoren aus), ganz aus mit Einstellungen -> System ("padmouse"). Virtuelle Maus ueber /dev/uinput
     (Gruppe input, sysfix.sh) – kein eigenes Programm, kein Dienst. Laeuft in einem eigenen Thread mit 100 Hz,
     fragt Fenstermanager und Launcher aber nur, waehrend am Controller etwas passiert."""
@@ -89,6 +90,9 @@ class PadMouse:
         self.r3_prev = False
         self.last_on = True
         self.btn = {"left": False, "right": False}
+        # Tasten, die schon gedrueckt waren, bevor die Maus zustaendig wurde (z. B. A zum Starten der Kachel):
+        # zaehlen erst nach dem Loslassen, sonst klickte der Start gleich ins Programm
+        self.held_off = set()
         self.acc = [0.0, 0.0, 0.0]               # Reste fuer x, y, Rad (ganze Schritte gehen raus)
         try:
             import evdev  # noqa: F401
@@ -161,13 +165,16 @@ class PadMouse:
         """Ein Takt: Zustand der Sticks/Tasten -> Mausereignisse. Rueckgabe: ob etwas geschrieben wurde."""
         from evdev import ecodes as E
         busy = (abs(st["rx"]) > self.DEAD or abs(st["ry"]) > self.DEAD or abs(st["ly"]) > self.SCROLL_DEAD
-                or st["r3"] or st["lt"] or st["rt"] or any(self.btn.values()))
+                or st["r3"] or st["a"] or st["b"] or any(self.btn.values()))
+        held = {k for k in ("a", "b") if st[k]}
+        self.held_off &= held                         # losgelassen: zaehlt beim naechsten Druck wieder
         if not busy:
             self.r3_prev = False
             self.act_t = 0.0                          # nach einer Pause zuerst nachsehen, was vorn ist
             return False
         d = self.decide(now)
         if d is None:
+            self.held_off |= held
             self.release()
             self.r3_prev = st["r3"]
             return False
@@ -179,6 +186,7 @@ class PadMouse:
             self.notify(on)
         self.r3_prev = st["r3"]
         if not on or not self._device():
+            self.held_off |= held
             self.release()
             return False
         vmax = self.screen_w * 1.1                    # Pixel je Sekunde bei vollem Ausschlag
@@ -206,7 +214,7 @@ class PadMouse:
                 wrote = True
         else:
             self.acc[2] = 0.0
-        wrote = self._buttons(st["rt"], st["lt"]) or wrote
+        wrote = self._buttons("a" in held - self.held_off, "b" in held - self.held_off) or wrote
         if wrote:
             self.ui.syn()
         return wrote
@@ -240,7 +248,7 @@ class Vs(VsBase):
             t = datetime.now(ZoneInfo(tz))
         except Exception:  # noqa: BLE001
             return ""
-        if self._lang == "de":
+        if str(self._strings.get("fmt.clock", "24")) != "12":     # 24 h ausser in Sprachen mit fmt.clock 12 (en)
             return t.strftime("%H:%M")
         return t.strftime("%I:%M %p").lstrip("0")
 
@@ -267,15 +275,37 @@ class Vs(VsBase):
 
     @Slot(result="QVariantList")
     def cornerHit(self):
-        """Heisse Ecke: Steht der Mauszeiger ganz unten rechts auf einem Bildschirm? Dann [rechte Kante, untere
+        """Heisse Ecke: Steht der Mauszeiger unten rechts auf einem Bildschirm? Dann [rechte Kante, untere
         Kante] dieses Bildschirms, sonst []. Fragt die Position beim X-Server ab, geht also auch, wenn ein
-        anderes Programm vorn ist."""
+        anderes Programm vorn ist.
+
+        Getroffen ist die Ecke, wenn der Zeiger
+          - am unteren Rand liegt und nicht weiter als `reach` von der rechten Kante weg ist, oder
+          - am rechten Rand liegt und nicht weiter als `reach` von der unteren Kante weg ist, oder
+          - in einem kleinen Quadrat (`core`) direkt in der Ecke steht.
+        Am Rand bleibt der Zeiger von selbst haengen – man muss also nur grob nach unten rechts schieben, nicht
+        genau das letzte Pixel treffen. Die Streifen liegen nur auf der aeussersten Pixelreihe (`edge`), dort
+        liegen keine Player-Knoepfe (Vollbild & Co. sitzen ein Stueck vom Rand weg); das Quadrat bleibt
+        deshalb klein. Alle Masse haengen an der kurzen Bildschirmseite (720p, 1080p und 4K gleich gross
+        empfunden). VS_CORNER=<Prozent> aendert `reach` (Standard 12 % der kurzen Seite, 0 = nur das Quadrat)."""
         pos = QCursor.pos()
         scr = QGuiApplication.screenAt(pos)
         if scr is None:
             return []
         g = scr.geometry()
-        if pos.x() >= g.right() - 1 and pos.y() >= g.bottom() - 1:
+        short = max(1, min(g.width(), g.height()))
+        try:
+            pct = float(os.environ.get("VS_CORNER", "12"))
+        except ValueError:
+            pct = 12.0
+        reach = short * max(0.0, min(pct, 50.0)) / 100      # 720p: 86 px · 1080p: 130 px · 2160p: 259 px
+        edge = max(2, round(short * 0.004))                  # 720p: 3 px · 1080p: 4 px · 2160p: 9 px
+        core = max(edge, round(short * 0.015))               # 720p: 11 px · 1080p: 16 px · 2160p: 32 px
+        dx = g.right() - pos.x()                             # Abstand zur rechten Kante (0 = letztes Pixel)
+        dy = g.bottom() - pos.y()                            # Abstand zur unteren Kante
+        if dx < 0 or dy < 0:
+            return []
+        if (dx < core and dy < core) or (dy < edge and dx <= reach) or (dx < edge and dy <= reach):
             return [g.right(), g.bottom()]
         return []
 
@@ -308,8 +338,7 @@ def main():
     vs = Vs()
     vs.pad = Gamepad()
     pump = PadPump(vs.pad)
-    pump.key.connect(vs.padKey)
-    pump.connected.connect(vs.padConnected)
+    vs.attach_pump(pump)
     vs.mouse = PadMouse(vs.pad, vs.padMouse.emit)
 
     def mouse_info():                            # Fenster der Startseite + Bildschirmbreite fuer die Controller-Maus

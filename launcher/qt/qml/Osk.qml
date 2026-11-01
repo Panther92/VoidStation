@@ -94,7 +94,7 @@ Rectangle {
                 width: parent.width
                 spacing: 16 * Ui.f
                 Rectangle {
-                    width: parent.width - closeBtn.width - 16 * Ui.f
+                    width: parent.width - closeBtn.width - 16 * Ui.f - (showBtn.visible ? showBtn.width + 16 * Ui.f : 0)
                     height: Math.max(valTxt.implicitHeight, lab.implicitHeight) + 16 * Ui.f + 4
                     color: Ui.c.surfaceCard
                     border.width: 2
@@ -120,6 +120,15 @@ Rectangle {
                             }
                         }
                     }
+                }
+                // Passwortfelder mit revealable: Klartext ein/aus direkt beim Tippen (Feld darunter folgt mit)
+                Pill {
+                    id: showBtn
+                    visible: !!o.target && !!o.target.revealable
+                    text: Ui.t(o.target && o.target.password ? "settings.pwShow" : "settings.pwHide")
+                    on: !!o.target && !o.target.password
+                    anchors.verticalCenter: parent.verticalCenter
+                    onTriggered: if (o.target) o.target.password = !o.target.password
                 }
                 RoundBtn { id: closeBtn; iconName: "close"; anchors.verticalCenter: parent.verticalCenter; onTriggered: o.close() }
             }
