@@ -1413,7 +1413,11 @@ function catSub(id) {
       const d = audioDev();
       return (d ? esc(devLabel(d)) + ' · ' : '') + '<span class="voltxt"></span>';
     }
-    case 'net': return esc(sett.net.addresses.length ? sett.net.addresses[0].ip : T('settings.offline'));
+    case 'net': {
+      const nl = (sett.net.links || []).find(x => x.internet);
+      if (nl) return esc((nl.type === 'wifi' ? (nl.name || T('settings.wifi')) : T('settings.netWired')) + (nl.ip ? ' · ' + nl.ip : ''));
+      return esc(sett.net.addresses.length ? sett.net.addresses[0].ip : T('settings.offline'));
+    }
     case 'bt': {
       if (!btState || !btState.available) return esc(T('settings.btNone'));
       if (!btState.service || !btState.powered) return esc(T('common.off'));
@@ -1575,17 +1579,34 @@ const SET_PAGES = {
   net(tr) {
     const n = col(tr, T('settings.connection'));
     const info = document.createElement('div'); info.className = 'info';
-    info.innerHTML = `${esc(T('settings.hostname'))}: <b>${esc(sett.net.hostname)}</b><br>` + (sett.net.addresses.length ? sett.net.addresses.map(x => `${esc(x.iface)}: <b>${esc(x.ip)}</b>`).join('<br>') : esc(T('settings.noConn')));
+    // Verbindungen mit Haken an der, ueber die das Internet laeuft
+    const ls = (sett.net.links || []).filter(x => x.connected);
+    info.innerHTML = `${esc(T('settings.hostname'))}: <b>${esc(sett.net.hostname)}</b><br>` + (ls.length
+      ? ls.map(x => `${x.internet ? '✓ ' : ''}<b>${esc(x.type === 'wifi' ? T('settings.netWifiLine', { ssid: x.name || x.dev }) : T('settings.netWired'))}</b>`
+          + (x.ip ? ` · ${esc(x.ip)}` : '') + (x.internet ? ` <span class="sig">· ${esc(T('settings.netViaThis'))}</span>` : '')).join('<br>')
+      : sett.net.addresses.length ? sett.net.addresses.map(x => `${esc(x.iface)}: <b>${esc(x.ip)}</b>`).join('<br>') : esc(T('settings.noConn')));
     n.appendChild(info);
+    if (sett.net.has_wired && sett.net.has_wifi) {               // Kabel oder WLAN fuers Internet bevorzugen
+      const rp = row(n, T('settings.netPrefer'));
+      for (const m of ['wired', 'wifi']) {
+        const b = pill(esc(T(m === 'wifi' ? 'settings.netWifiPick' : 'settings.netWiredPick')), () => netPrefer(m), sett.net.prefer === m);
+        b.dataset.key = 'np' + m; rp.appendChild(b);
+      }
+      const h = document.createElement('div'); h.className = 'info'; h.textContent = T('settings.netPreferHint'); n.appendChild(h);
+    }
     const wc = col(tr, T('settings.wifi'));
     const rw = row(wc);
     if (wifiPick) {
       const inp = document.createElement('input');
       inp.className = 'field snav'; inp.type = 'password'; inp.placeholder = T('settings.wifiPw', { ssid: wifiPick.ssid }); inp.id = 'wifiPw'; inp.dataset.key = 'pw';
       rw.appendChild(inp);
+      const show = pill(esc(T('settings.pwShow')), () => {        // Passwort im Klartext zeigen
+        const vis = inp.type === 'password'; inp.type = vis ? 'text' : 'password';
+        show.innerHTML = esc(T(vis ? 'settings.pwHide' : 'settings.pwShow')); show.classList.toggle('on', vis);
+      }); show.dataset.key = 'pwshow';
       const go = pill(esc(T('settings.connect')), () => wifiConnect(wifiPick.ssid, $('#wifiPw').value)); go.dataset.key = 'go';
       const cancel = pill(esc(T('common.cancel')), () => { wifiPick = null; renderSettings(); }); cancel.dataset.key = 'cancel';
-      rw.append(go, cancel);
+      rw.append(show, go, cancel);
     } else {
       const scan = pill(esc(wifiList ? T('settings.rescan') : T('settings.scan')), wifiScan); scan.dataset.key = 'scan'; rw.appendChild(scan);
       if (wifiList) {
@@ -1930,9 +1951,19 @@ async function wifiScan() {
   catch (e) { return toast(T('wifi.scanFailed', { msg: e.message }), true); }
   renderSettings();
 }
+async function netPrefer(mode) {
+  if (sett?.net?.prefer === mode) return;
+  toast(T('settings.netSwitching'));
+  try { sett = await api('/api/net/prefer', { mode }); toast(T('settings.netPreferDone', { what: T(mode === 'wifi' ? 'settings.wifi' : 'settings.netWired') })); renderSettings(); }
+  catch (e) { toast(T('common.failedMsg', { msg: e.message }), true); }
+}
 async function wifiConnect(ssid, pw) {
   toast(T('wifi.connecting', { ssid }));
-  try { sett = await api('/api/wifi/connect', { ssid, password: pw }); wifiPick = null; toast(T('wifi.connected', { ssid })); renderSettings(); }
+  try {
+    sett = await api('/api/wifi/connect', { ssid, password: pw }); wifiPick = null;
+    if (wifiList) wifiList = wifiList.map(w => ({ ...w, active: w.ssid === ssid }));     // neues Netz ist jetzt das aktive
+    toast(T('wifi.connected', { ssid })); renderSettings();
+  }
   catch (e) {
     const m = String(e.message);                            // bekannte Fehler: Schluessel "wifi.err.*"
     toast(m.startsWith('wifi.err.') ? T(m, { ssid }) : T('wifi.failed', { msg: m }), true);

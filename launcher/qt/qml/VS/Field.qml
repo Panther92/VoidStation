@@ -7,6 +7,7 @@ Focusable {
     property string value: ""
     property string placeholder: ""
     property bool password: false
+    property bool revealable: false            // Passwort: Bildschirmtastatur bietet "Passwort anzeigen"
     signal submitted(string text)
     implicitWidth: Math.min(280 * Ui.f, Ui.screenW * 0.4)
     implicitHeight: 40 * Ui.f

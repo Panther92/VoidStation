@@ -646,6 +646,18 @@ class H(S.H):
             elif p.endswith("/auto"):
                 a["auto"] = bool(body.get("on"))
             return self.j(settings())
+        if p == "/api/net/prefer":                 # Kabel/WLAN bevorzugen: Haken wandert mit
+            n = S.SETTINGS["net"]
+            n["prefer"] = body.get("mode") if body.get("mode") in ("wired", "wifi") else "wired"
+            ls = [l for l in n["links"] if l["connected"]]
+            for l in ls:
+                l["internet"] = l["type"] == n["prefer"] or len(ls) == 1
+            return self.j(settings())
+        if p == "/api/wifi/connect":                # verbunden: WLAN-Zeile unter Verbindung
+            n = S.SETTINGS["net"]
+            n["links"] = [l for l in n["links"] if l["type"] != "wifi"] + [
+                {"dev": "wlp2s0", "type": "wifi", "connected": True, "name": body.get("ssid", ""), "ip": "172.20.10.3",
+                 "internet": n["prefer"] == "wifi"}]
         if p.startswith("/api/settings/") or p == "/api/wifi/connect":
             if p.endswith("/theme"):
                 S.SETTINGS["theme"] = body.get("theme")

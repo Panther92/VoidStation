@@ -1986,7 +1986,97 @@ def net_info():
             p = line.split()
             if len(p) >= 4:
                 addrs.append({"iface": p[1], "ip": p[3].split("/")[0]})
-    return {"hostname": socket.gethostname(), "addresses": addrs}
+    links = net_links(addrs)
+    return {"hostname": socket.gethostname(), "addresses": addrs, "links": links,
+            "has_wired": any(l["type"] == "wired" for l in links), "has_wifi": any(l["type"] == "wifi" for l in links),
+            "prefer": net_prefer_get()}
+
+
+# ---------------------------------------------------------------------------
+#  Kabel oder WLAN bevorzugen: sind beide verbunden, nimmt Linux fuer das Internet die Standardroute mit der
+#  kleinsten Metrik (NetworkManager: Kabel 100, WLAN 600). "WLAN bevorzugen" gibt allen WLAN-Profilen Metrik 50
+#  (IPv4 und IPv6), "Kabel" stellt die Vorgabe wieder her. Lokale Ziele (Freigabe, SSH) bleiben ueber beide erreichbar.
+#  Anlass: Kabelanschluss, der nur noch IPv6 durchlaesst – GitHub braucht IPv4, der Handy-Hotspot hat es.
+# ---------------------------------------------------------------------------
+NM_TYPES = {"ethernet": "wired", "802-3-ethernet": "wired", "wifi": "wifi", "802-11-wireless": "wifi"}
+WIFI_METRIC = 50
+
+
+def net_default_dev(fam):
+    """Schnittstelle der Standardroute mit der kleinsten Metrik (fam "-4"/"-6"), sonst ''."""
+    r = run(["ip", fam, "route", "show", "default"])
+    best = None
+    for line in (r.stdout.splitlines() if r and r.returncode == 0 else []):
+        m = re.search(r"\bdev (\S+)", line)
+        if not m:
+            continue
+        mm = re.search(r"\bmetric (\d+)", line)
+        metric = int(mm.group(1)) if mm else 0
+        if best is None or metric < best[0]:
+            best = (metric, m.group(1))
+    return best[1] if best else ""
+
+
+def net_links(addrs=None):
+    """Kabel- und WLAN-Schnittstellen laut NetworkManager: Typ, Zustand, Profil (bei WLAN der Netzname),
+    IPv4-Adresse und ob das Internet (Standardroute) gerade darueber laeuft."""
+    r = run(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device"], timeout=10)
+    ip4 = {a["iface"]: a["ip"] for a in (addrs or [])}
+    d4, d6 = net_default_dev("-4"), net_default_dev("-6")
+    out = []
+    for line in (r.stdout.splitlines() if r and r.returncode == 0 else []):
+        dev, typ, state, conn = (nm_split(line) + ["", "", "", ""])[:4]
+        kind = NM_TYPES.get(typ)
+        if not kind:
+            continue
+        up = state.split(" ")[0] in ("connected", "verbunden")
+        # "internet": darueber laeuft das Internet – die IPv4-Standardroute, ohne IPv4 die von IPv6
+        out.append({"dev": dev, "type": kind, "connected": up, "name": conn if up else "", "ip": ip4.get(dev, ""),
+                    "internet": up and dev == (d4 or d6)})
+    out.sort(key=lambda l: (not l["connected"], l["type"] != "wired", l["dev"]))
+    return out
+
+
+def net_prefer_get(s=None):
+    p = (s or settings_load()).get("net_prefer")
+    return p if p in ("wired", "wifi") else "wired"
+
+
+def nm_profiles(kind):
+    """UUIDs der gespeicherten NetworkManager-Profile eines Typs ("wired"/"wifi")."""
+    r = run(["sudo", "-n", "nmcli", "-t", "-f", "UUID,TYPE", "connection", "show"], timeout=10)
+    out = []
+    for line in (r.stdout.splitlines() if r and r.returncode == 0 else []):
+        uuid, typ = (nm_split(line) + ["", ""])[:2]
+        if uuid and NM_TYPES.get(typ) == kind:
+            out.append(uuid)
+    return out
+
+
+def net_prefer_apply(mode):
+    """Metrik aller WLAN-Profile setzen und auf die laufende WLAN-Verbindung anwenden (reapply, sonst neu verbinden)."""
+    metric = str(WIFI_METRIC) if mode == "wifi" else "-1"
+    changed = 0
+    for u in nm_profiles("wifi"):
+        r = run(["sudo", "-n", "nmcli", "connection", "modify", "uuid", u,
+                 "ipv4.route-metric", metric, "ipv6.route-metric", metric], timeout=15)
+        changed += bool(r and r.returncode == 0)
+    for l in net_links():
+        if l["type"] == "wifi" and l["connected"]:
+            r = run(["sudo", "-n", "nmcli", "device", "reapply", l["dev"]], timeout=30)
+            if not r or r.returncode != 0:
+                run(["sudo", "-n", "nmcli", "--wait", "30", "device", "connect", l["dev"]], timeout=40)
+    log("Netzwerk: bevorzugt", mode, f"({changed} WLAN-Profile)")
+    return changed
+
+
+def net_prefer_set(mode):
+    if mode not in ("wired", "wifi"):
+        raise ValueError("unbekannte Verbindungsart")
+    s = settings_load()
+    s["net_prefer"] = mode
+    settings_save(s)
+    net_prefer_apply(mode)
 
 
 def nm_split(line):
@@ -2026,8 +2116,13 @@ def wifi_scan():
             continue
         n = {"ssid": ssid, "signal": int(sig or 0), "secure": bool(sec and sec != "--"),
              "active": use.strip() == "*"}
-        if ssid not in nets or n["signal"] > nets[ssid]["signal"]:
-            nets[ssid] = n
+        o = nets.get(ssid)                       # gleiches Netz mehrfach (Frequenzen, Zellen): staerkstes zeigen,
+        if o:                                   # "aktiv" aber behalten (iPhone-Hotspot meldet sich oft doppelt)
+            n["active"] = n["active"] or o["active"]
+            if o["signal"] >= n["signal"]:
+                o["active"] = n["active"]
+                continue
+        nets[ssid] = n
     return sorted(nets.values(), key=lambda n: (-n["active"], -n["signal"]))
 
 
@@ -2098,6 +2193,8 @@ def wifi_connect(ssid, password):
         wifi_forget([u for u in wifi_profiles(ssid) if u not in before])
         log("WLAN:", ssid, "->", err)
         raise RuntimeError(err)
+    if net_prefer_get() == "wifi":
+        net_prefer_apply("wifi")                 # neues Profil: WLAN-Vorrang gleich mitgeben
 
 
 def share_info():
@@ -11552,6 +11649,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, settings_payload())
             if parts == ["api", "audio", "auto"]:
                 s = settings_load(); s["audio_auto"] = bool(self._body().get("on")); settings_save(s)
+                return self._json(200, settings_payload())
+            if parts == ["api", "net", "prefer"]:
+                try:
+                    net_prefer_set(str(self._body().get("mode", "")))
+                except ValueError as e:
+                    return self._json(400, {"error": str(e)})
+                time.sleep(2)                     # Routen stehen nach reapply erst nach einem Moment
                 return self._json(200, settings_payload())
             if parts == ["api", "wifi", "connect"]:
                 b = self._body()

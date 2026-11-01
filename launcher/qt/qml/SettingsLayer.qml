@@ -100,7 +100,10 @@ Layer {
             return (d && d.current ? d.current.replace("x", "\u00d7") + " · " : "") + Ui.num(Ui.scale) + "\u00d7"
         case "design": return Ui.t("theme." + vs.themeName, null, vs.themeName)
         case "audio": return (audioDev ? devLabel(audioDev) + " · " : "") + app.volText
-        case "net": return sett.net.addresses.length ? sett.net.addresses[0].ip : Ui.t("settings.offline")
+        case "net":
+            var nl = (sett.net.links || []).filter(function (x) { return x.internet })[0]
+            if (nl) return (nl.type === "wifi" ? (nl.name || Ui.t("settings.wifi")) : Ui.t("settings.netWired")) + (nl.ip ? " · " + nl.ip : "")
+            return sett.net.addresses.length ? sett.net.addresses[0].ip : Ui.t("settings.offline")
         case "bt":
             if (!bt || !bt.available) return Ui.t("settings.btNone")
             if (!bt.service || !bt.powered) return Ui.t("common.off")
@@ -341,11 +344,36 @@ Layer {
         Api.get("/api/wifi/scan", function (j) { toastBox.hide(); update(function () { wifiList = j || [] }) },
                 function (e) { app.toast(Ui.t("wifi.scanFailed", { msg: e }), true) })
     }
+    // Kabel oder WLAN fuers Internet bevorzugen (beide verbunden: Standardroute ueber die gewaehlte)
+    function netPrefer(mode) {
+        if (sett && sett.net && sett.net.prefer === mode) return
+        app.toast(Ui.t("settings.netSwitching"))
+        Api.post("/api/net/prefer", { mode: mode }, function (j) {
+            update(function () { sett = j })
+            app.toast(Ui.t("settings.netPreferDone", { what: Ui.t(mode === "wifi" ? "settings.wifi" : "settings.netWired") }))
+        }, function (e) { app.toast(Ui.t("common.failedMsg", { msg: e }), true) })
+    }
+    function netLines() {
+        var n = sett.net, out = [Ui.esc(Ui.t("settings.hostname")) + ": <b>" + Ui.esc(n.hostname) + "</b>"]
+        var ls = (n.links || []).filter(function (x) { return x.connected })
+        if (!ls.length && n.addresses.length) return out.concat(n.addresses.map(function (x) { return Ui.esc(x.iface) + ": <b>" + Ui.esc(x.ip) + "</b>" })).join("<br>")
+        if (!ls.length) return out.concat([Ui.esc(Ui.t("settings.noConn"))]).join("<br>")
+        ls.forEach(function (x) {
+            var what = x.type === "wifi" ? Ui.t("settings.netWifiLine", { ssid: x.name || x.dev }) : Ui.t("settings.netWired")
+            out.push((x.internet ? "\u2713 " : "") + "<b>" + Ui.esc(what) + "</b>" + (x.ip ? " · " + Ui.esc(x.ip) : "")
+                     + (x.internet ? " <font color='" + Ui.c.textFaint + "'>· " + Ui.esc(Ui.t("settings.netViaThis")) + "</font>" : ""))
+        })
+        return out.join("<br>")
+    }
     function wifiConnect(ssid, pw) {
         app.toast(Ui.t("wifi.connecting", { ssid: ssid }))
         Api.post("/api/wifi/connect", { ssid: ssid, password: pw }, function (j) {
             wifiPick = null
-            update(function () { sett = j })
+            update(function () {
+                sett = j
+                // Liste gleich mitziehen: das neue Netz ist jetzt das aktive
+                if (wifiList) wifiList = wifiList.map(function (w) { return Object.assign({}, w, { active: w.ssid === ssid }) })
+            })
             app.toast(Ui.t("wifi.connected", { ssid: ssid }))
             Qt.callLater(function () { refocus("scan") })
         }, function (e) {
@@ -651,11 +679,18 @@ Layer {
         // Netzwerk
         SetGroup {
             visible: s.cat === "net"; availH: s.colH; title: Ui.t("settings.connection")
-            Info {
-                html: !s.sett ? "" : Ui.esc(Ui.t("settings.hostname")) + ": <b>" + Ui.esc(s.sett.net.hostname) + "</b><br>" +
-                      (s.sett.net.addresses.length ? s.sett.net.addresses.map(function (x) { return Ui.esc(x.iface) + ": <b>" + Ui.esc(x.ip) + "</b>" }).join("<br>")
-                                                   : Ui.esc(Ui.t("settings.noConn")))
+            Info { html: !s.sett ? "" : s.netLines() }
+            // Nur mit Kabel- UND WLAN-Anschluss: welche Verbindung das Internet nimmt, wenn beide verbunden sind
+            SetRow {
+                visible: !!s.sett && !!s.sett.net.has_wired && !!s.sett.net.has_wifi
+                label: Ui.t("settings.netPrefer")
+                Repeater {
+                    model: ["wired", "wifi"]
+                    Pill { property string key: "np" + modelData; text: Ui.t(modelData === "wifi" ? "settings.netWifiPick" : "settings.netWiredPick")
+                           on: !!s.sett && s.sett.net.prefer === modelData; onTriggered: s.netPrefer(modelData) }
+                }
             }
+            Info { visible: !!s.sett && !!s.sett.net.has_wired && !!s.sett.net.has_wifi; html: Ui.esc(Ui.t("settings.netPreferHint")) }
         }
         SetGroup {
             visible: s.cat === "net"; availH: s.colH; title: Ui.t("settings.wifi")
@@ -665,9 +700,13 @@ Layer {
                     id: wifiPw
                     property string key: "pw"
                     password: true
+                    revealable: true
                     placeholder: s.wifiPick ? Ui.t("settings.wifiPw", { ssid: s.wifiPick.ssid }) : ""
                     onSubmitted: function (t) { if (s.wifiPick) s.wifiConnect(s.wifiPick.ssid, t) }
                 }
+                // Passwort im Klartext zeigen (Feld und Bildschirmtastatur), beim naechsten Netz wieder verdeckt
+                Pill { property string key: "pwshow"; text: Ui.t(wifiPw.password ? "settings.pwShow" : "settings.pwHide"); on: !wifiPw.password
+                       onTriggered: wifiPw.password = !wifiPw.password }
                 Pill { property string key: "go"; text: Ui.t("settings.connect"); onTriggered: s.wifiConnect(s.wifiPick.ssid, wifiPw.value) }
                 Pill { property string key: "cancel"; text: Ui.t("common.cancel"); onTriggered: { s.wifiPick = null; Qt.callLater(function () { s.refocus("scan") }) } }
             }
@@ -688,6 +727,7 @@ Layer {
                         onTriggered: {
                             if (modelData.secure && !modelData.active) {
                                 wifiPw.value = ""
+                                wifiPw.password = true
                                 s.wifiPick = modelData
                                 Qt.callLater(function () { app.setFocus(wifiPw, true); app.openOsk(wifiPw) })
                             } else s.wifiConnect(modelData.ssid, "")
