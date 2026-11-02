@@ -173,11 +173,24 @@ fi
 EOF
 fi
 
+# agetty-tty2 bis -tty6 nutzen per Symlink dieselbe conf: Autologin nur fuer tty1, sonst meldet sich jede Konsole
+# ohne Passwort an. Der Live-Stick (kein Passwort, void-mklive) behaelt die einfache Fassung.
+if [ "${VOIDSTATION_LIVE:-0}" = 1 ]; then
 cat > /etc/sv/agetty-tty1/conf <<EOF
 GETTY_ARGS="--autologin $VSUSER --noclear"
 BAUD_RATE=38400
 TERM_NAME=linux
 EOF
+else
+cat > /etc/sv/agetty-tty1/conf <<EOF
+# VoidStation: gilt per Symlink auch fuer tty2 bis tty6; Autologin nur auf tty1
+if [ "\$tty" = tty1 ]; then
+  GETTY_ARGS="--autologin $VSUSER --noclear"
+fi
+BAUD_RATE=38400
+TERM_NAME=linux
+EOF
+fi
 
 # Terminal: die Void-Vorgabe PS1='[\u@\h \W]\$ ' aus ~/.bashrc nehmen – sie ueberdeckt sonst die
 # Eingabeaufforderung von VoidStation (/etc/bash/bashrc.d/voidstation.sh, s. sysfix.sh). Nur die unveraenderte Zeile;

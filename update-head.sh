@@ -319,6 +319,23 @@ for g in optical cdrom; do getent group "$g" >/dev/null && usermod -aG "$g" "$VS
 say "Systemkorrekturen (elogind, WLAN, GRUB, Bluetooth, Controller)"
 sh "$TV/sysfix.sh" || warn "Systemkorrekturen unvollstaendig"
 
+# Konsolen: agetty-tty2 bis -tty6 nutzen per Symlink die conf von tty1 – das Autologin galt damit fuer alle sechs.
+# Wirkt beim naechsten Start, damit keine offene Sitzung (auch nicht dieses Update) abbricht.
+# Fassung ohne Autologin oder schon auf tty1 begrenzt: bleibt.
+GETTY_CONF=/etc/sv/agetty-tty1/conf
+if [ -f "$GETTY_CONF" ] && grep -q -- '--autologin' "$GETTY_CONF" && ! grep -q '"\$tty" = tty1' "$GETTY_CONF"; then
+  GETTY_USER="$(sed -n 's/.*--autologin \([^ "]*\).*/\1/p' "$GETTY_CONF" | head -n1)"
+  cat > "$GETTY_CONF" <<EOF
+# VoidStation: gilt per Symlink auch fuer tty2 bis tty6; Autologin nur auf tty1
+if [ "\$tty" = tty1 ]; then
+  GETTY_ARGS="--autologin ${GETTY_USER:-$VSUSER} --noclear"
+fi
+BAUD_RATE=38400
+TERM_NAME=linux
+EOF
+  echo "Konsolen: Autologin nur noch auf tty1 (ab dem naechsten Start)"
+fi
+
 say "3/8  AppCenter-Helfer (installiert nur freigegebene Pakete)"
 install -o root -g root -m 755 "$TV/voidstation-pkg" /usr/local/sbin/voidstation-pkg
 ln -sfn "$TV/vsctl" /usr/local/bin/vsctl          # "vsctl update" im Terminal = Einstellungen → Updates

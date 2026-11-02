@@ -20,6 +20,8 @@
 #      Unter Openbox ist XDG_CURRENT_DESKTOP leer, darum legt portals.conf das GTK-Backend fest.
 #   7. Systemname: /etc/os-release meldet "VoidStation <Version>" (ID_LIKE=void), xbps laesst sie stehen.
 #   8. Terminal: bash-Komfort (/etc/bash/bashrc.d), fastfetch mit VoidStation-Logo, nano mit Syntaxfarben.
+#   9. Konsolen: tty3 bis tty6 aus (tty1 Oberflaeche, tty2 Anmeldung als Rettungsweg). Beim naechsten Start per
+#      core-service, damit keine offene Sitzung abbricht. Der Live-Stick behaelt alle.
 # =====================================================================
 CHROOT="${VOIDSTATION_CHROOT:-0}"
 say() { printf '%s\n' "$*"; }
@@ -54,6 +56,21 @@ fi
 EOF
 chmod 644 /etc/runit/core-services/91-voidstation-elogind.sh
 say "elogind: voidstation-elogind (aktiv ab dem naechsten Start)"
+
+# ---------------------------------------------------------------------
+# 9. Konsolen
+cat > /etc/runit/core-services/92-voidstation-tty.sh <<'EOF'
+# SPDX-License-Identifier: GPL-3.0-or-later
+# VoidStation (runit core-service): nur tty1 (Oberflaeche) und tty2 (Anmeldung) brauchen eine Konsole.
+# Laeuft vor allen Diensten. Der Live-Stick behaelt alle.
+if [ ! -e /etc/voidstation-live ] && [ -d /etc/runit/runsvdir/default ]; then
+  for t in 3 4 5 6; do
+    rm -f "/etc/runit/runsvdir/default/agetty-tty$t"
+  done
+fi
+EOF
+chmod 644 /etc/runit/core-services/92-voidstation-tty.sh
+say "Konsolen: tty3 bis tty6 aus (ab dem naechsten Start)"
 
 # ---------------------------------------------------------------------
 # 2. WLAN

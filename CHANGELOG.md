@@ -8,7 +8,8 @@ Hotfixes dazu `## 2026.11.1 – …`. Neues kommt zuerst unter `## Testing – <
 ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freigeben (siehe `RELEASING.md`).
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
-## Testing – 2026-11-01
+## Testing – 2026-11-03
+- **Sicherheit: Konsolen fragen nach dem Passwort.** Der automatische Login galt versehentlich für alle sechs Textkonsolen: Mit angeschlossener Tastatur öffnete Strg+Alt+F2 ohne Passwort eine Sitzung. Jetzt meldet sich nur noch tty1 für die Oberfläche selbst an, tty2 fragt nach Benutzer und Passwort, tty3 bis tty6 sind aus (spart etwas Speicher). Wirkt nach dem nächsten Neustart
 - Launcher startet schneller und braucht weniger Speicher: Python nutzt jetzt fertigen Bytecode, statt `launcher.py` bei jedem Start neu zu übersetzen. Updates legen den Bytecode mit Prüfsumme neu an, damit nie ein alter Stand läuft
 - Einstellungen: Spalten scrollen beim Zurückgehen wieder ganz nach oben – Texte über dem ersten Knopf blieben sonst abgeschnitten, ohne dass man sie erreichen konnte. Netzwerk: Der Erklärtext zu „Internet bevorzugt über“ steht jetzt in der Hilfe
 - **WLAN: trennen, wechseln, Passwort merken**: Einstellungen → Netzwerk → WLAN hat jetzt den Knopf „… trennen“ (auch ein Klick auf das verbundene Netz in der Liste trennt); das Gerät bleibt dann getrennt, bis man wieder ein Netz wählt oder neu startet. Ein Klick auf ein anderes Netz wechselt direkt. Bekannte Netze fragen nicht mehr nach dem Passwort: Es war zwar gespeichert, die Oberfläche fragte aber bei jedem verschlüsselten Netz erneut – und die Neueingabe löschte das gespeicherte Profil. Passt das gespeicherte Passwort nicht mehr (z. B. am Handy geändert), kommt die Abfrage von selbst. Für den Kabelanschluss gibt es unter „Verbindung“ „Kabel trennen“ und „Kabel verbinden“. Texte in allen 15 Sprachen

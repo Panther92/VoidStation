@@ -8,7 +8,8 @@ hotfixes to it `## 2026.11.1 – …`. New changes go first under `## Testing �
 at the top; `vspub --release` or `vspub --hotfix` assigns the number when releasing (see `RELEASING.md`).
 Older versions (up to 0.15.0) still use the old numbering.
 
-## Testing – 2026-11-01
+## Testing – 2026-11-03
+- **Security: consoles ask for a password.** The automatic login accidentally applied to all six text consoles: with a keyboard attached, Ctrl+Alt+F2 opened a session without a password. Now only tty1 logs in by itself for the interface, tty2 asks for user and password, tty3 to tty6 are off (saves a little memory). Takes effect after the next restart
 - Launcher starts faster and uses less memory: Python now uses ready-made bytecode instead of recompiling `launcher.py` on every start. Updates rebuild the bytecode with a checksum so an old version can never run
 - Settings: columns scroll all the way back to the top when moving up – text above the first button otherwise stayed cut off and out of reach. Network: the explanation of “Prefer for internet” now lives in the help
 - **Wi-Fi: disconnect, switch, remember the password**: Settings → Network → Wi-Fi now has a “Disconnect …” button (clicking the connected network in the list also disconnects); the device then stays disconnected until you pick a network or restart. Clicking another network switches right away. Known networks no longer ask for the password: it was saved, but the interface asked again for every encrypted network, and re-entering it deleted the saved profile. If the saved password no longer fits (e.g. changed on the phone), the prompt appears by itself. For the wired port, “Connection” offers “Disconnect cable” and “Connect cable”. Texts in all 15 languages
