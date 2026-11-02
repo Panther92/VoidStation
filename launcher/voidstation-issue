@@ -26,7 +26,7 @@ case "$lang" in
 esac
 
 esc="$(printf '\033')"
-v="$esc[1;37m"; st="$esc[1;36m"; n="$esc[0m"      # "Void" weiss, "Station" tuerkis
+v="${esc}[1;37m"; st="${esc}[1;36m"; n="${esc}[0m"      # "Void" weiss, "Station" tuerkis
 {
   printf '\n'
   printf '  %s%s%s%s%s\n' "$v" '▄▄▄      ▄█▀        ▄▄      ▄▄ ' "$st" '  ▄▄▄▄▄                  ▄▄' "$n"
