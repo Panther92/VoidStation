@@ -272,8 +272,13 @@ else
   say "Systemname: /etc/os-release nicht geschrieben (bleibt Void)"
 fi
 # Begruessung der Textkonsole (Strg+Alt+F2 …, /etc/issue): ersetzt nur Voids Vorgabe und fruehere VoidStation-Zeilen
-# (auch "VoidStation – Void Linux" vom Installer); eigene Texte und die des Live-Sticks bleiben
-case "$(head -n1 /etc/issue 2>/dev/null)" in
+# (auch "VoidStation – Void Linux" vom Installer); eigene Texte bleiben. Der Text des Live-Sticks ("root:voidlinux …")
+# bleibt nur auf dem Stick: Aeltere Installer liessen ihn stehen, auf installierten Geraeten stimmt er nicht.
+ISSUE_1="$(head -n1 /etc/issue 2>/dev/null)"
+if [ ! -e /etc/voidstation-live ] && [ "${VOIDSTATION_LIVE:-0}" != 1 ] && grep -q 'root:voidlinux' /etc/issue 2>/dev/null; then
+  ISSUE_1=VoidStation
+fi
+case "$ISSUE_1" in
   'Void \r (\n) (\l)'|VoidStation*)
     printf '%s \\r (\\n) (\\l)\n\n' "$(sed -n 's/^PRETTY_NAME="\(.*\)"/\1/p' /etc/os-release 2>/dev/null | grep . || echo VoidStation)" \
       > /etc/issue ;;
