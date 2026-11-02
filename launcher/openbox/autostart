@@ -12,7 +12,7 @@ xset s off -dpms                      # Fernseher nicht abdunkeln
 unclutter --timeout 3 --jitter 10 --ignore-scrolling &
 
 # Startseite und Launcher zuerst: die Shell zeigt sofort Logo + Lade-Punkte und wartet selbst auf den Launcher
-python3 "$TV/launcher.py" >"$TV/launcher.log" 2>&1 &
+python3 "$TV/launcher-start.py" >"$TV/launcher.log" 2>&1 &
 "$TV/home.sh" &
 
 # Ton: PipeWire + WirePlumber + Pulse-Ersatz, von jedem genau einer.

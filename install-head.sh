@@ -116,7 +116,11 @@ say "3/8  Dateien entpacken nach $TV"
 mkdir -p "$TV"
 [ -f "$TV/tiles.json" ] && cp "$TV/tiles.json" /tmp/tiles.json.keep
 sed -n '/^__PAYLOAD_BELOW__$/,$p' "$0" | tail -n +2 | base64 -d | tar -xz -C "$TV"
-chmod +x "$TV/launcher.py" "$TV/home.sh" "$TV/vsctl" "$TV/voidstation-shell.py" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/qt/voidstation-player.py" "$TV/sysfix.sh"
+chmod +x "$TV/launcher.py" "$TV/launcher-start.py" "$TV/home.sh" "$TV/vsctl" "$TV/voidstation-shell.py" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/qt/voidstation-player.py" "$TV/sysfix.sh"
+# Python-Bytecode mit Pruefsumme statt Dateizeit: build.sh setzt feste Dateizeiten, ein gleich grosser neuer Stand
+# saehe fuer Python sonst unveraendert aus. Scheitert es, uebersetzt Python beim naechsten Start selbst.
+rm -rf "$TV/__pycache__" "$TV/qt/__pycache__"
+python3 -m compileall -q --invalidation-mode checked-hash "$TV/launcher.py" "$TV/qt" || warn "Bytecode nicht vorbereitet"
 echo "__VS_VERSION__" > "$TV/VERSION"
 echo '__VS_VERSION_B64__' | base64 -d > "$TV/version.json" 2>/dev/null || true
 
