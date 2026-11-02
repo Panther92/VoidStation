@@ -676,10 +676,6 @@ fi
 
 say "Veroeffentlichen (Kanal Testing)"
 git push -q origin HEAD:main
-if ! git ls-remote --exit-code --heads origin stable >/dev/null 2>&1; then
-  git push -q origin HEAD:stable
-  echo "Zweig 'stable' angelegt (erste Veroeffentlichung)."
-fi
 mirror_push HEAD:main
 
 ver="$(python3 -c 'import json;print(json.load(open("dist/version.json"))["version"])')"
