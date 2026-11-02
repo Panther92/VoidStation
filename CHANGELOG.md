@@ -9,7 +9,7 @@ ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freig
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
 ## Testing – 2026-11-03
-- Textkonsole: Geräte, die mit einer älteren ISO installiert wurden, zeigten vor der Anmeldung noch den Willkommenstext des Live-Sticks mit Beispiel-Zugangsdaten. Jetzt steht dort wie vorgesehen „VoidStation <Version>“
+- Textkonsole: eigene Begrüßung mit dem Schriftzug VoidStation, Version und dem Weg zurück zur Oberfläche, auch auf dem Live-Stick. Geräte, die mit einer älteren ISO installiert wurden, zeigten vor der Anmeldung noch den Willkommenstext des Live-Sticks mit Beispiel-Zugangsdaten; der ist damit weg
 - **Sicherheit: Konsolen fragen nach dem Passwort.** Der automatische Login galt versehentlich für alle sechs Textkonsolen: Mit angeschlossener Tastatur öffnete Strg+Alt+F2 ohne Passwort eine Sitzung. Jetzt meldet sich nur noch tty1 für die Oberfläche selbst an, tty2 fragt nach Benutzer und Passwort, tty3 bis tty6 sind aus (spart etwas Speicher). Wirkt nach dem nächsten Neustart
 - Launcher startet schneller und braucht weniger Speicher: Python nutzt jetzt fertigen Bytecode, statt `launcher.py` bei jedem Start neu zu übersetzen. Updates legen den Bytecode mit Prüfsumme neu an, damit nie ein alter Stand läuft
 - Einstellungen: Spalten scrollen beim Zurückgehen wieder ganz nach oben – Texte über dem ersten Knopf blieben sonst abgeschnitten, ohne dass man sie erreichen konnte. Netzwerk: Der Erklärtext zu „Internet bevorzugt über“ steht jetzt in der Hilfe

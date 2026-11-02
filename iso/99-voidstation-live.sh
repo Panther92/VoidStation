@@ -25,6 +25,8 @@ _d=/etc/runit/runsvdir/default
 rm -f "$_d/dhcpcd" "$_d"/dhcpcd-* "$_d/wpa_supplicant"
 [ -e "$_d/NetworkManager" ] || ln -s /etc/sv/NetworkManager "$_d/"
 echo voidstation-live > /etc/hostname
+# Begruessung der Textkonsole statt des Void-Textes (void-mklive legt ihn beim Bau ab), in der Sprache des Startmenues
+[ -x /usr/local/sbin/voidstation-issue ] && /usr/local/sbin/voidstation-issue --live
 # Startbild (Plymouth) beenden, bevor X startet – sonst haelt es den Bildschirm fest.
 # --retain-splash: das Logo bleibt stehen, bis die Oberflaeche uebernimmt.
 if command -v plymouth >/dev/null 2>&1 && plymouth --ping 2>/dev/null; then

@@ -9,7 +9,7 @@ at the top; `vspub --release` or `vspub --hotfix` assigns the number when releas
 Older versions (up to 0.15.0) still use the old numbering.
 
 ## Testing – 2026-11-03
-- Text console: devices installed from an older ISO still showed the live stick's welcome text with sample credentials before login. It now shows "VoidStation <version>" as intended
+- Text console: its own greeting with the VoidStation wordmark, the version and the way back to the interface, on the live stick too. Devices installed from an older ISO still showed the live stick's welcome text with sample credentials before login; that is gone now
 - **Security: consoles ask for a password.** The automatic login accidentally applied to all six text consoles: with a keyboard attached, Ctrl+Alt+F2 opened a session without a password. Now only tty1 logs in by itself for the interface, tty2 asks for user and password, tty3 to tty6 are off (saves a little memory). Takes effect after the next restart
 - Launcher starts faster and uses less memory: Python now uses ready-made bytecode instead of recompiling `launcher.py` on every start. Updates rebuild the bytecode with a checksum so an old version can never run
 - Settings: columns scroll all the way back to the top when moving up – text above the first button otherwise stayed cut off and out of reach. Network: the explanation of “Prefer for internet” now lives in the help

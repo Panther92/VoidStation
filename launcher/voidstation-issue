@@ -1,0 +1,44 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# =====================================================================
+#  Begruessung der Textkonsole (/etc/issue): Schriftzug VoidStation, darunter Version und Weg zurueck.
+#    voidstation-issue          installiertes Geraet (aufgerufen von sysfix.sh)
+#    voidstation-issue --live   Live-Stick (aufgerufen von 99-voidstation-live.sh), mit den Zugangsdaten des Sticks
+#  Nur Deutsch und sonst Englisch, Texte nur ASCII: Die Konsolenschrift kennt nicht alle Zeichen der uebrigen Sprachen.
+#  Der Schriftzug ist site/assets/logo.svg in Halbbloecken (▀▄█, im Standard-Zeichensatz der Linux-Konsole), 74 Spalten.
+#  sysfix.sh erkennt diesen Text an "Alt+F1" und schreibt ihn bei jedem Update neu.
+#  \n und \l setzt agetty ein (Rechnername, Konsole). VS_ROOT: nur fuer Tests.
+# =====================================================================
+R="${VS_ROOT:-}"
+LIVE=0; [ "$1" = --live ] && LIVE=1
+
+name="$(sed -n 's/^PRETTY_NAME="\(.*\)"/\1/p' "$R/etc/os-release" 2>/dev/null | head -n1)"
+[ -n "$name" ] || name=VoidStation
+
+if [ "$LIVE" = 1 ]; then
+  lang="$(sed -n 's/.*locale\.LANG=\([^ ]*\).*/\1/p' "${VS_CMDLINE:-/proc/cmdline}" 2>/dev/null)"
+else
+  lang="$(sed -n 's/^LANG=//p' "$R/etc/locale.conf" 2>/dev/null | head -n1)"
+fi
+case "$lang" in
+  de*) back='Zur Oberflaeche: Strg+Alt+F1'; live='Live-System'; cred='Anmelden als tv, Passwort voidlinux' ;;
+  *)   back='Back to the interface: Ctrl+Alt+F1'; live='Live system'; cred='Log in as tv, password voidlinux' ;;
+esac
+
+esc="$(printf '\033')"
+v="$esc[1;37m"; st="$esc[1;36m"; n="$esc[0m"      # "Void" weiss, "Station" tuerkis
+{
+  printf '\n'
+  printf '  %s%s%s%s%s\n' "$v" '▄▄▄      ▄█▀        ▄▄      ▄▄ ' "$st" '  ▄▄▄▄▄                  ▄▄' "$n"
+  printf '  %s%s%s%s%s\n' "$v" ' ██     ██▀  ▄▄▄    ▀▀      ██ ' "$st" '▄█▀▀▀▀▀  ██          ██  ▀▀' "$n"
+  printf '  %s%s%s%s%s\n' "$v" ' ▀██   ▄██▄██▀▀▀█▄▄ ██ ▄██████ ' "$st" '███▄▄   ████  ████▄ ████ ██ ▄█████▄ █████▄' "$n"
+  printf '  %s%s%s%s%s\n' "$v" '  ▀██ ▄██ ██     ██ ██ ██   ██ ' "$st" '  ▀▀███▄ ██   ▄▄▄██  ██  ██ ██   ██ ██  ██' "$n"
+  printf '  %s%s%s%s%s\n' "$v" '   ██▄██  ██▄   ▄██ ██ ██   ██ ' "$st" '     ▄██ ██  ██  ██  ██  ██ ██   ██ ██  ██' "$n"
+  printf '  %s%s%s%s%s\n' "$v" '    ▀██    ▀█████▀  ██  ▀███▀█ ' "$st" '█████▀▀  ▀██ ▀███▀█  ▀██ ██  ▀███▀  ██  ██' "$n"
+  printf '\n'
+  printf '  %s - %s\n' "$name" '\n - \l'
+  [ "$LIVE" = 1 ] && printf '  %s\n' "$live"
+  printf '  %s\n' "$back"
+  [ "$LIVE" = 1 ] && printf '  %s\n' "$cred"
+  printf '\n'
+} > "$R/etc/issue"

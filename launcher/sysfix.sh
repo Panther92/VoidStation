@@ -271,18 +271,18 @@ else
   rm -f /etc/os-release.vs-tmp
   say "Systemname: /etc/os-release nicht geschrieben (bleibt Void)"
 fi
-# Begruessung der Textkonsole (Strg+Alt+F2 …, /etc/issue): ersetzt nur Voids Vorgabe und fruehere VoidStation-Zeilen
-# (auch "VoidStation – Void Linux" vom Installer); eigene Texte bleiben. Der Text des Live-Sticks ("root:voidlinux …")
-# bleibt nur auf dem Stick: Aeltere Installer liessen ihn stehen, auf installierten Geraeten stimmt er nicht.
-ISSUE_1="$(head -n1 /etc/issue 2>/dev/null)"
-if [ ! -e /etc/voidstation-live ] && [ "${VOIDSTATION_LIVE:-0}" != 1 ] && grep -q 'root:voidlinux' /etc/issue 2>/dev/null; then
-  ISSUE_1=VoidStation
+# Begruessung der Textkonsole (/etc/issue, s. voidstation-issue): ersetzt Voids Vorgabe, fruehere VoidStation-Texte
+# und den Text des Live-Sticks ("root:voidlinux …", aeltere Installer liessen ihn stehen); eigene Texte bleiben.
+# Auf dem Stick schreibt 99-voidstation-live.sh den Text beim Start selbst.
+install -D -m 755 "$VSDIR/voidstation-issue" /usr/local/sbin/voidstation-issue
+if [ ! -e /etc/voidstation-live ] && [ "${VOIDSTATION_LIVE:-0}" != 1 ]; then
+  case "$(head -n1 /etc/issue 2>/dev/null)" in
+    'Void \r (\n) (\l)'|VoidStation*) /usr/local/sbin/voidstation-issue ;;
+    *) if grep -qE 'root:voidlinux|Alt\+F1' /etc/issue 2>/dev/null || [ ! -s /etc/issue ]; then
+         /usr/local/sbin/voidstation-issue
+       fi ;;
+  esac
 fi
-case "$ISSUE_1" in
-  'Void \r (\n) (\l)'|VoidStation*)
-    printf '%s \\r (\\n) (\\l)\n\n' "$(sed -n 's/^PRETTY_NAME="\(.*\)"/\1/p' /etc/os-release 2>/dev/null | grep . || echo VoidStation)" \
-      > /etc/issue ;;
-esac
 
 # ---------------------------------------------------------------------
 # 8. Terminal: Shell-Komfort (Verlauf, Vervollstaendigung, Eingabeaufforderung, Aliase – fuer alle Benutzer,
