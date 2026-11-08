@@ -43,6 +43,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import tvindex
+import vsx11
 from tvindex import TV_LETTERS, TV_PAGE, tv_fold, tv_letter  # noqa: F401
 
 HOST = "127.0.0.1"
@@ -100,18 +101,11 @@ def run(args, timeout=5, **kw):
 
 
 # ---------------------------------------------------------------------------
-#  Fenster (wmctrl)
+#  Fenster (vsx11: libX11, Rueckfall wmctrl/xprop)
 # ---------------------------------------------------------------------------
 def windows():
     """Liste (id, pid, titel) aller Fenster."""
-    r = run(["wmctrl", "-lp"])
-    out = []
-    if r and r.returncode == 0:
-        for row in r.stdout.splitlines():
-            parts = row.split(None, 4)
-            if len(parts) >= 3 and parts[2].isdigit():
-                out.append((parts[0], int(parts[2]), parts[4] if len(parts) > 4 else ""))
-    return out
+    return vsx11.windows()
 
 
 def session_pids(sid):
@@ -127,10 +121,7 @@ def session_pids(sid):
 
 def active_window():
     """Kennung des aktiven Fensters (_NET_ACTIVE_WINDOW) oder None."""
-    r = run(["xprop", "-root", "-notype", "_NET_ACTIVE_WINDOW"])
-    m = re.search(r"0x[0-9a-fA-F]+", r.stdout) if r and r.returncode == 0 else None
-    wid = int(m.group(0), 16) if m else 0
-    return wid or None
+    return vsx11.active_window() or None
 
 
 def media_notify(cmd):
@@ -152,7 +143,7 @@ def raise_home():
         pass
     for wid, _pid, title in windows():
         if HOME_TITLE in title:
-            run(["wmctrl", "-i", "-a", wid])
+            vsx11.activate(wid)
             return True
     return False
 
@@ -313,7 +304,7 @@ class AppManager:
         self.pause_background(keep=tile_id)
         wins = self._windows_of(tile_id, p)
         for wid, _, _ in wins:
-            run(["wmctrl", "-i", "-a", wid])
+            vsx11.activate(wid)
         if not wins:
             log("kein Fenster gefunden fuer", tile_id)
         return bool(wins)
@@ -389,9 +380,9 @@ class AppManager:
                 log(tid, f"Fenster nach {time.monotonic() - t0:.1f} s")
                 time.sleep(0.4)
                 for wid, _, _ in wins:
-                    run(["wmctrl", "-i", "-a", wid])
+                    vsx11.activate(wid)
                 if fullscreen:                           # Emulator ohne eigene Vollbild-Option (EMU_WM_FULLSCREEN)
-                    run(["wmctrl", "-i", "-r", wins[0][0], "-b", "add,fullscreen"])
+                    vsx11.wm_state(wins[0][0], "add", "fullscreen")
                 elif app_maximize(tid):
                     # Openbox maximiert neue Fenster per Regel (rc.xml) – GTK4-Programme (Mission Center & Co.)
                     # setzen danach aber ihre gespeicherte Groesse und heben das wieder auf: nachsehen, nachziehen
@@ -419,7 +410,7 @@ class AppManager:
             self.claimed.pop(tile_id, None)
         log("schliesse", tile_id, sorted(session_pids(sid)))
         for wid, _, _ in wins:                 # hoeflich, wie Alt+F4 -> Spielstaende werden gespeichert
-            run(["wmctrl", "-i", "-c", wid])
+            vsx11.close(wid)
         if wins:
             for _ in range(40):
                 if proc.poll() is not None:
@@ -4758,16 +4749,13 @@ def app_maximize(tile_id):
 def wm_maximize(wid):
     """Normales Fenster maximieren, wenn es weder maximiert noch im Vollbild ist (Dialoge und Spiele im Vollbild
     bleiben, wie sie sind)."""
-    r = run(["xprop", "-id", wid, "_NET_WM_STATE", "_NET_WM_WINDOW_TYPE"], timeout=3)
-    if r and r.returncode == 0:
-        out = r.stdout
-        if "_NET_WM_WINDOW_TYPE_NORMAL" not in out and "_NET_WM_WINDOW_TYPE" in out and "not found" not in out:
-            return                                     # Dialog, Werkzeugleiste, Startbild …
-        if "_NET_WM_STATE_FULLSCREEN" in out or ("MAXIMIZED_VERT" in out and "MAXIMIZED_HORZ" in out):
-            return
-    elif r is None:
-        return                                         # Fenster schon weg
-    run(["wmctrl", "-i", "-r", wid, "-b", "add,maximized_vert,maximized_horz"])
+    types = vsx11.atoms(wid, "_NET_WM_WINDOW_TYPE")
+    if types and "_NET_WM_WINDOW_TYPE_NORMAL" not in types:
+        return                                         # Dialog, Werkzeugleiste, Startbild …
+    state = vsx11.atoms(wid, "_NET_WM_STATE")
+    if "_NET_WM_STATE_FULLSCREEN" in state or ("_NET_WM_STATE_MAXIMIZED_VERT" in state and "_NET_WM_STATE_MAXIMIZED_HORZ" in state):
+        return
+    vsx11.wm_state(wid, "add", "maximized_vert", "maximized_horz")
 
 
 def app_suspendable(tile_id):
@@ -9573,7 +9561,7 @@ def emu_toggle_fullscreen():
     if key and shutil.which("xdotool"):
         run(["xdotool", "key", "--clearmodifiers", key])
     else:
-        run(["wmctrl", "-i", "-r", hex(act), "-b", "toggle,fullscreen"])
+        vsx11.wm_state(act, "toggle", "fullscreen")
     log("Vollbild umgeschaltet:", tid)
 
 

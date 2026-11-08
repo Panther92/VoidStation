@@ -9,6 +9,7 @@ ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freig
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
 ## Testing – 2026-11-08
+- Fenster nach vorn holen, schließen und das aktive Fenster abfragen laufen jetzt direkt über X11 statt über externe Hilfsprogramme, das entlastet vor allem die Controller-Maus.
 - Für Rechner mit wenig RAM: `sudo voidstation-zram on` schaltet komprimierten Auslagerungsspeicher im RAM ein (vorerst zum Ausprobieren, standardmäßig aus).
 - Fernsehen, Radio, AppCenter: Die Startseite baut die Kacheln beim Schließen ab und gibt den Speicher zurück, statt ihn bis zum Neustart zu behalten.
 - Fernsehen: Die Senderliste liegt jetzt in einer kleinen Datenbank statt im Arbeitsspeicher, das spart gut 100 MB und sie steht nach einem Neustart sofort bereit.

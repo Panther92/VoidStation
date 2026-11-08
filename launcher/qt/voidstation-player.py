@@ -105,6 +105,8 @@ elif (not glob.glob("/dev/dri/renderD*") and os.environ.get("VS_PLAYER_FORCE") !
     os.environ.setdefault("QT_QUICK_BACKEND", "software")
 
 sys.path.insert(0, str(HERE))
+sys.path.append(str(HERE.parent))               # vsx11
+import vsx11  # noqa: E402
 import vscommon  # noqa: E402
 from vscommon import WEB, Gamepad, PadPump, VsBase, drop_stale_qml_cache, log  # noqa: E402
 
@@ -642,21 +644,9 @@ class IpcEngine(Engine):
         des Players nach vorn (das Qt-Fenster); mpv erscheint erst mit dem ersten Sender und landete sonst
         dahinter – Ton lief, das Bild kam erst nach erneutem Waehlen der Kachel."""
         def find():
-            try:
-                r = subprocess.run(["wmctrl", "-lp"], capture_output=True, text=True, timeout=1)
-            except (OSError, subprocess.SubprocessError):
-                return None
-            for line in r.stdout.splitlines():
-                p = line.split(None, 3)
-                if len(p) >= 3 and p[2] == str(proc.pid):
-                    return p[0]
-            return None
+            return next((w[0] for w in vsx11.windows() if w[1] == proc.pid), None)
 
-        def activate(wid):
-            try:
-                subprocess.run(["wmctrl", "-i", "-a", wid], capture_output=True, timeout=2)
-            except (OSError, subprocess.SubprocessError):
-                pass
+        activate = vsx11.activate
 
         wid = None
         for _ in range(150):                             # hoechstens 15 s auf das Fenster warten
@@ -790,18 +780,8 @@ class IpcEngine(Engine):
         if now - self._front_t < 0.5:
             return self._front
         self._front_t = now
-        try:
-            r = subprocess.run(["xprop", "-root", "-notype", "_NET_ACTIVE_WINDOW"], capture_output=True, text=True, timeout=1)
-            m = re.search(r"0x[0-9a-fA-F]+", r.stdout)
-            wid = m.group(0) if m else ""
-            pid = 0
-            if wid and int(wid, 16):
-                r = subprocess.run(["xprop", "-id", wid, "-notype", "_NET_WM_PID"], capture_output=True, text=True, timeout=1)
-                m = re.search(r"(\d+)\s*$", r.stdout.strip())
-                pid = int(m.group(1)) if m else 0
-            self._front = pid == self.proc.pid
-        except (OSError, subprocess.SubprocessError, ValueError):
-            self._front = False
+        wid = vsx11.active_window()
+        self._front = bool(wid) and vsx11.window_pid(wid) == self.proc.pid
         return self._front
 
     def shutdown(self):

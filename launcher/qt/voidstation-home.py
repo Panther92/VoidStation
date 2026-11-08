@@ -20,8 +20,6 @@ Test ohne Geraet: VS_API=http://127.0.0.1:8766 python3 voidstation-home.py  (z. 
 import glob
 import json
 import os
-import re
-import subprocess
 import sys
 import threading
 import time
@@ -50,6 +48,8 @@ import shutil  # noqa: E402
 sys.dont_write_bytecode = True
 shutil.rmtree(HERE / "__pycache__", ignore_errors=True)
 sys.path.insert(0, str(HERE))
+sys.path.append(str(HERE.parent))               # vsx11
+import vsx11  # noqa: E402
 import vscommon  # noqa: E402
 from vscommon import Gamepad, PadPump, VsBase, drop_stale_qml_cache, limit_arenas, PADMOUSE_NAME  # noqa: E402,F401
 
@@ -102,13 +102,7 @@ class PadMouse:
 
     @staticmethod
     def active_window():
-        try:
-            r = subprocess.run(["xprop", "-root", "-notype", "_NET_ACTIVE_WINDOW"],
-                               capture_output=True, text=True, timeout=2)
-            m = re.search(r"0x[0-9a-fA-F]+", r.stdout)
-            return int(m.group(0), 16) if m else 0
-        except (OSError, subprocess.SubprocessError):
-            return 0
+        return vsx11.active_window()
 
     @staticmethod
     def fetch_front():
@@ -262,15 +256,9 @@ class Vs(VsBase):
         """Steht laut Fenstermanager (_NET_ACTIVE_WINDOW) ein Fenster der Startseite vorn? Qt haelt sich auf manchen
         Geraeten weiter fuer aktiv, obwohl ein Programm vorn ist (NiPoGi, FreeTube als Flatpak: Fokus ueber
         WM_TAKE_FOCUS) – die heisse Ecke fragt darum im Zweifel den X-Server. Nur bei Zeiger in der Ecke."""
-        try:
-            r = subprocess.run(["xprop", "-root", "-notype", "_NET_ACTIVE_WINDOW"],
-                               capture_output=True, text=True, timeout=2)
-            m = re.search(r"0x[0-9a-fA-F]+", r.stdout)
-            act = int(m.group(0), 16) if m else 0
-        except (OSError, subprocess.SubprocessError):
-            return True                                  # unklar: lieber kein Feld ueber der Startseite
+        act = vsx11.active_window()
         if not act:
-            return True
+            return True                                  # unklar: lieber kein Feld ueber der Startseite
         return act in {int(w.winId()) for w in QGuiApplication.topLevelWindows()}
 
     @Slot(result="QVariantList")
