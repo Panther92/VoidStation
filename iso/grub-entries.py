@@ -300,7 +300,7 @@ def bios_text(text, fallback):
 def build_isolinux(cfg):
     kernel, base = isolinux_boot_lines(cfg)
     # 640x480, Schrift 8x16 -> 80 Spalten, 30 Zeilen; das Logo steht im Hintergrundbild (Zeilen 6–10).
-    # Alle *ROW-Angaben verschieben sich um VSHIFT: Eintraege ab Zeile 13 (13 Zeilen: alle "Other Languages"
+    # Alle *ROW-Angaben verschieben sich um VSHIFT: Eintraege ab Zeile 13 (14 Zeilen: alle "Other Languages"
     # ohne Blaettern), Countdown Zeile 27
     out = [f"""# VoidStation Live – Startmenue (BIOS), erzeugt von grub-entries.py
 UI vesamenu.c32
@@ -312,7 +312,7 @@ MENU TABMSG
 MENU AUTOBOOT Start in # s
 MENU WIDTH 80
 MENU MARGIN 15
-MENU ROWS 13
+MENU ROWS 14
 MENU VSHIFT 10
 MENU TIMEOUTROW 17
 MENU CMDLINEROW 18
