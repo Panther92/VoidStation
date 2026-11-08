@@ -89,6 +89,8 @@ LANGUAGES = [
     ("uk", "Українська", "uk_UA", "ua", "us", "Ukrainska (Ukrainian)", "Назад",
      "Запустити VoidStation Live",
      "Запустити VoidStation Live (лише NVIDIA)"),
+    ("ja", "日本語", "ja_JP", "jp", "jp106", "Nihongo (Japanese)", "戻る",
+     "VoidStation Liveを起動", "VoidStation Liveを起動(NVIDIAのみ)"),
 ]
 TOP = ("de", "en", "fr")                                    # 1. Seite, der Rest unter "Other Languages"
 OTHER = ("vs-other", "Other Languages", "Back")
@@ -228,15 +230,19 @@ set timeout_style=menu
                 f'{ind}    set vs_back="{to}"\n{ind}    export vs_back\n'
                 f'{ind}    configfile "(${{voidlive}}){cfg_path}"\n{ind}}}')
 
+    en = next(lang for lang in LANGS if lang[0] == "en")
+    eng = {eid: title for eid, title, _ in en[4]}
+
     def lang_menu(lang, ind, back_to):
-        lid, lname, lextra, back, entries = lang[:5]
-        sub = [f'{ind}submenu "{lname}" --id "vs-{lid}" {{']
+        lid, lname, lextra, back, entries, translit = lang
+        sub = [f'{ind}submenu "{grub_text(lname, translit)}" --id "vs-{lid}" {{']
         for eid, title, extra in entries:
+            title = grub_text(title, eng.get(eid, title))
             sub.append(f'{ind}    menuentry "{title}" --id "vs-{lid}-{eid}" {{\n'
                        f'{ind}        set gfxpayload="keep"\n'
                        f'{ind}        linux {kernel} {merge_args(base, extra + " " + lextra)}\n'
                        f'{ind}        initrd {initrd}\n{ind}    }}')
-        sub.append(back_entry(f"vs-{lid}-back", back, back_to, ind + "    "))
+        sub.append(back_entry(f"vs-{lid}-back", grub_text(back, en[3]), back_to, ind + "    "))
         sub.append(f"{ind}}}")
         return "\n".join(sub)
 
@@ -265,6 +271,18 @@ def isolinux_boot_lines(cfg):
         if k and a:
             return k.group(1), " ".join(a.group(1).split())
     sys.exit("isolinux: Eintrag mit vmlinuz nicht gefunden")
+
+
+# Zeichen der GRUB-Schriften (grub-mkfont -r in build-iso.sh): Latein mit Akzenten, Griechisch, Kyrillisch, Striche, Pfeile
+GRUB_RANGES = ((0x20, 0x7E), (0xA0, 0x17F), (0x370, 0x3FF), (0x400, 0x4FF), (0x2010, 0x2027), (0x2190, 0x2193))
+
+
+def grub_text(text, fallback):
+    """Text fuer das UEFI-Menue: unveraendert, wenn die Schrift alle Zeichen hat, sonst der Ersatztext
+    (Japanisch: Umschrift bzw. Englisch – die Schriften haben keine japanischen Zeichen)."""
+    if all(any(a <= ord(c) <= b for a, b in GRUB_RANGES) for c in text):
+        return text
+    return fallback or text
 
 
 def bios_text(text, fallback):

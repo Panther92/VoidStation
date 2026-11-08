@@ -12,8 +12,8 @@ Auch der Installer im Live-System ist Qt. Die bisherige Web-Oberfläche (WebKitG
 (umschalten im Bild, Senderliste, Programminfo), **Videos & Musik** (Mediathek für Freigabe und USB-Laufwerke mit Covern,
 Weiterschauen, Wiederholen/Zufall, „Musik suchen“ mit Download samt Tags und Cover), Emulatoren, AppCenter für optionale Apps (Void-Pakete, entpackte Programme der Hersteller, Web), Einstellungen (Sprache, Skalierung, Auflösung,
 Tonausgang, WLAN, Bluetooth, Mauszeiger), Samba-Freigabe `\\<rechner>\share`, mehrere Apps parallel mit Umschalten.
-Oberfläche auf **Deutsch oder Englisch**, dazu dreizehn maschinell übersetzte Sprachen: Čeština, Español, Français, Italiano, Latviešu, Magyar,
-Nederlands, Polski, Português (Brasil), Slovenčina, Ελληνικά, Русский, Українська (Einstellungen → Sprache). Installer und Startmenü des Sticks sprechen ab der Live-ISO 2026.11 ebenfalls alle Sprachen.
+Oberfläche auf **Deutsch oder Englisch**, dazu vierzehn maschinell übersetzte Sprachen: Čeština, Español, Français, Italiano, Latviešu, Magyar,
+Nederlands, Polski, Português (Brasil), Slovenčina, Ελληνικά, Русский, Українська, 日本語 (Einstellungen → Sprache). Installer und Startmenü des Sticks sprechen ab der Live-ISO 2026.11 ebenfalls alle Sprachen.
 Grafik-Server ist [XLibre](https://github.com/X11Libre/xserver) (Pakete von [xlibre-void](https://github.com/xlibre-void/xlibre));
 X.Org wird nicht verwendet. Startet die Oberfläche zweimal nicht, installiert VoidStation XLibre einmal neu;
 danach folgt eine Rettungskonsole. Von Hand: `sudo /usr/local/sbin/voidstation-pkg xserver ensure|repair|status`.
