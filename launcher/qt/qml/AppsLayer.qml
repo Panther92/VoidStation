@@ -38,6 +38,7 @@ Layer {
     function desc(a) { return a.type === "local" ? (a.desc || Ui.t("apps.localDesc")) : Ui.t("app." + a.id + ".desc", null, a.desc) }
 
     onOpened: { fresh = true; load() }
+    onClosed: data_ = null                      // Karten abbauen, beim Oeffnen kommt der Katalog ohnehin neu
     function load() {
         Api.get("/api/apps", function (j) {
             var keepId = Nav.current && Nav.current.appInfo ? Nav.current.appInfo.id : null

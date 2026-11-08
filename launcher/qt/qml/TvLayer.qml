@@ -16,6 +16,7 @@ Layer {
     property bool more: false
     property var favs: []
     property var results: []
+    property bool listed: false                // Antwort da: erst dann heisst eine leere Liste „keine Sender“
     property string letter: ""                 // "" = alle, sonst "#" oder "A"–"Z"
     property var letters: []                   // [{l, n}] fuer Land + Thema
     property int offset: 0
@@ -58,6 +59,8 @@ Layer {
         return out
     }
     onOpened: { app.refreshVolume(); load() }
+    // Bis zu 200 Kacheln samt Logos kosten rund 60 MB: beim Schliessen abbauen, beim Oeffnen kommt die Liste ohnehin neu
+    onClosed: { results = []; total = 0; listed = false }
     function firstFocus() { var it = Nav.collect(favGroup).concat(Nav.collect(chanGroup)); return it.length ? it[0] : null }
     function load() {
         Api.get("/api/tv/status", function (s) {
@@ -89,6 +92,7 @@ Layer {
             j = j || {}
             if (letter && !query && !j.total) { letter = ""; offset = 0; return search(keepFocus, toList) }   // Buchstabe gibt es hier nicht
             results = j.items || []
+            listed = true
             total = j.total || 0
             offset = j.offset || 0
             letters = j.letters || []
@@ -264,7 +268,7 @@ Layer {
                 return tvl.total > tvl.results.length ? t + " · " + tvl.range() : t
             }
             Txt {
-                visible: tvl.msg !== "" || tvl.results.length === 0
+                visible: tvl.msg !== "" || (tvl.listed && tvl.results.length === 0)
                 text: tvl.msg || Ui.t("tv.none")
                 width: Math.min(implicitWidth, Ui.screenW * 0.34)
                 wrapMode: Text.Wrap; elide: Text.ElideNone

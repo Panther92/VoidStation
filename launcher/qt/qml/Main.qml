@@ -392,6 +392,9 @@ Window {
             unlaunch.restart()
         }
         Timer { id: unlaunch; interval: 600; onTriggered: app.launching = false }
+        // Nach dem Schliessen einer Unterseite: abgebaute Kacheln und freigegebenen Speicher wirklich loswerden
+        function trimSoon() { trimLater.restart() }
+        Timer { id: trimLater; interval: 800; onTriggered: { gc(); vs.trimMemory() } }
         function closeApp(t) {
             Api.post("/api/close/" + encodeURIComponent(t.id), null, function (r) {
                 running = r.running || []

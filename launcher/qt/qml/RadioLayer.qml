@@ -21,6 +21,7 @@ Layer {
 
     function favIndex(url) { for (var i = 0; i < app.favs.length; i++) if (app.favs[i].url === url) return i; return -1 }
     onOpened: { app.refreshVolume(); loadPopular() }
+    onClosed: { results = null; popular = []; search.value = "" }   // Kacheln samt Logos abbauen, der Launcher merkt sich die Liste
     function loadPopular() {
         if (popular.length) return
         Api.get("/api/radio/popular", function (j) { popCountry = j.country || ""; popular = j.stations || [] }, function () {})

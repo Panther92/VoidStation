@@ -7,6 +7,7 @@ Gemeinsame Teile der Qt-Programme (Startseite voidstation-home.py und Player voi
   * QML-Zwischenspeicher nach Updates verwerfen
 """
 import base64
+import ctypes
 import hashlib
 import json
 import os
@@ -666,6 +667,16 @@ class VsBase(QObject):
             self._icons[key] = "data:image/svg+xml;base64," + base64.b64encode(svg.encode()).decode()
         return self._icons[key]
 
+    @Slot()
+    def trimMemory(self):
+        """Nach dem Schliessen einer Unterseite: Freigegebenes wirklich ans System zurueckgeben. Ohne malloc_trim
+        behaelt glibc den Speicher, auch wenn Qt die Kacheln laengst abgebaut hat."""
+        engine = getattr(self, "engine", None)
+        if engine is not None:
+            engine.collectGarbage()
+            engine.trimComponentCache()
+        malloc_trim()
+
     @Slot(result=float)
     def uptime(self):
         return time.monotonic() - T0
@@ -673,6 +684,13 @@ class VsBase(QObject):
     @Slot(str)
     def log(self, msg):
         log(msg)
+
+
+def malloc_trim():
+    try:
+        ctypes.CDLL(None).malloc_trim(0)
+    except (OSError, AttributeError):
+        pass
 
 
 def drop_stale_qml_cache(here=HERE):

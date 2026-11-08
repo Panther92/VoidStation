@@ -351,6 +351,7 @@ def main():
     mouse_timer.start(1000)
 
     engine = QQmlApplicationEngine()
+    vs.engine = engine
     engine.addImportPath(str(HERE / "qml"))
     engine.rootContext().setContextProperty("vs", vs)
     engine.rootContext().setContextProperty("vsTitle", TITLE)
