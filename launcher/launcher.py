@@ -760,6 +760,7 @@ LANG_TABLE = [  # (id, Name, Locale, Firefox-Sprache)
     ("el", "Ελληνικά", "el_GR", "el"),
     ("ru", "Русский", "ru_RU", "ru"),
     ("uk", "Українська", "uk_UA", "uk"),
+    ("ja", "日本語", "ja_JP", "ja"),
 ]
 LANGS = [{"id": i, "label": n} for i, n, _, _ in LANG_TABLE]
 CURSOR_SIZES = [32, 48, 64, 80, 96]
@@ -821,13 +822,14 @@ LANG_REGIONS = {
     "cs": ["CZ"], "sk": ["SK"], "fr": ["FR", "BE", "CH", "LU", "CA", "MC"],
     "es": ["ES", "MX", "AR", "CO", "CL", "PE", "VE", "UY"], "it": ["IT", "CH", "SM"], "lv": ["LV"], "hu": ["HU"],
     "nl": ["NL", "BE"], "pl": ["PL"], "pt-BR": ["BR", "PT"], "el": ["GR", "CY"], "ru": ["RU", "BY", "KZ"], "uk": ["UA"],
+    "ja": ["JP"],
 }
 # Schnellwahl der Laender im Fernsehen je Sprache (das eigene Land kommt immer zuerst), der Rest unter "Weitere Laender"
 TV_QUICK = {
     "de": ["DE", "AT", "CH"], "en": ["US", "GB", "CA"], "cs": ["CZ", "SK", "AT"], "sk": ["SK", "CZ", "HU"],
     "fr": ["FR", "BE", "CH"], "es": ["ES", "MX", "AR"], "it": ["IT", "CH", "SM"], "lv": ["LV", "LT", "EE"],
     "hu": ["HU", "AT", "SK"], "nl": ["NL", "BE", "DE"], "pl": ["PL", "DE", "CZ"], "pt-BR": ["BR", "PT"],
-    "el": ["GR", "CY"], "ru": ["RU", "BY", "KZ"], "uk": ["UA", "PL"],
+    "el": ["GR", "CY"], "ru": ["RU", "BY", "KZ"], "uk": ["UA", "PL"], "ja": ["JP", "KR", "TW"],
 }
 
 
@@ -6764,13 +6766,15 @@ KEYMAPS = {"de": ["-layout", "de", "-option", ""], "us": ["-layout", "us", "-opt
            "fr": ["-layout", "fr", "-option", ""], "es": ["-layout", "es", "-option", ""], "it": ["-layout", "it", "-option", ""],
            "lv": ["-layout", "lv", "-option", ""], "hu": ["-layout", "hu", "-option", ""], "pl": ["-layout", "pl", "-option", ""],
            "br": ["-layout", "br", "-option", ""], "cz": ["-layout", "cz", "-option", ""], "sk": ["-layout", "sk", "-option", ""],
-           "gr": ["-layout", "us,gr"] + _GRP, "ru": ["-layout", "us,ru"] + _GRP, "ua": ["-layout", "us,ua"] + _GRP}
+           "gr": ["-layout", "us,gr"] + _GRP, "ru": ["-layout", "us,ru"] + _GRP, "ua": ["-layout", "us,ua"] + _GRP,
+           "jp": ["-layout", "jp", "-option", ""]}
 # Vorgaben im Installer je Sprache: Tastatur und Zeitzone (aenderbar)
 INSTALL_DEFAULTS = {"de": ("de", "Europe/Berlin"), "en": ("us", "America/New_York"), "cs": ("cz", "Europe/Prague"),
                     "es": ("es", "Europe/Madrid"), "fr": ("fr", "Europe/Paris"), "it": ("it", "Europe/Rome"),
                     "lv": ("lv", "Europe/Riga"), "hu": ("hu", "Europe/Budapest"), "nl": ("us", "Europe/Amsterdam"),
                     "pl": ("pl", "Europe/Warsaw"), "pt-BR": ("br", "America/Sao_Paulo"), "sk": ("sk", "Europe/Bratislava"),
-                    "el": ("gr", "Europe/Athens"), "ru": ("ru", "Europe/Moscow"), "uk": ("ua", "Europe/Kyiv")}
+                    "el": ("gr", "Europe/Athens"), "ru": ("ru", "Europe/Moscow"), "uk": ("ua", "Europe/Kyiv"),
+                    "ja": ("jp", "Asia/Tokyo")}
 
 
 # ---------------------------------------------------------------------------

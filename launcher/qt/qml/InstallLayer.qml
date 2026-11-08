@@ -50,7 +50,7 @@ Layer {
                                 "Europe/London", "Europe/Lisbon", "Europe/Madrid", "Europe/Paris", "Europe/Brussels", "Europe/Amsterdam",
                                 "Europe/Berlin", "Europe/Zurich", "Europe/Vienna", "Europe/Rome", "Europe/Prague", "Europe/Bratislava",
                                 "Europe/Warsaw", "Europe/Budapest", "Europe/Riga", "Europe/Athens", "Europe/Kyiv", "Europe/Moscow",
-                                "Australia/Sydney", "UTC"]
+                                "Asia/Tokyo", "Australia/Sydney", "UTC"]
     readonly property var stepNo: ({ disk: 1, beside: 1, free: 1, manual: 1, account: 2, host: 3, lang: 3, device: 3, confirm: 4, progress: 5, error: 5 })
     // Der Installer ist dichter als die anderen Seiten: drei Reihen muessen zwischen Kopf und Hinweiszeile passen
     readonly property real iu: Math.max(70, Math.min(170 * Ui.screenH / 768, (stage.height - 46 * Ui.f - 20 * Ui.f) / 3))

@@ -20,7 +20,7 @@ import urllib.request
 from pathlib import Path
 
 from PySide6.QtCore import Property, QEvent, QObject, QTimer, Signal, Slot
-from PySide6.QtGui import QGuiApplication
+from PySide6.QtGui import QFont, QFontDatabase, QGuiApplication
 
 T0 = time.monotonic()
 HERE = Path(__file__).resolve().parent
@@ -223,6 +223,21 @@ def pad_glyph_svg(role, style, h):
 # ---------------------------------------------------------------------------
 #  Gamepad (evdev): Zustand im Lese-Thread, Tastendruecke + Wiederholung im Qt-Thread
 # ---------------------------------------------------------------------------
+
+# Japanisch: Kanji aus Noto Sans CJK JP. Noto Sans hat keine CJK-Zeichen; die Ersatzschrift der Systemauswahl
+# ist sonst oft die chinesische Variante (andere Schriftformen derselben Zeichen).
+CJK_JP = "Noto Sans CJK JP"
+
+
+def cjk_font(lang):
+    if QGuiApplication.instance() is None:
+        return
+    for fam in ("Noto Sans", "DejaVu Sans"):
+        QFont.removeSubstitutions(fam)
+        if lang == "ja" and CJK_JP in QFontDatabase.families():
+            QFont.insertSubstitution(fam, CJK_JP)
+
+
 class Gamepad:
     REPEAT = {"left", "right", "up", "down", "lb", "rb", "lt", "rt"}
     # Controller mit Kernel-Treiber (Xbox, PlayStation, Switch, 8BitDo, Steam …): einheitliche Tasten
@@ -591,6 +606,7 @@ class VsBase(QObject):
     def _set_lang(self, lang):
         ok = bool(lang) and all(c.isalnum() or c == "-" for c in lang) and (WEB / "i18n" / f"{lang}.json").exists()
         self._lang = lang if ok else "de"
+        cjk_font(self._lang)
         # Rueckfall wie im Web: Sprache -> Englisch -> Deutsch (Deutsch selbst faellt nicht auf Englisch zurueck,
         # sonst kaemen z. B. die englischen App-Beschreibungen statt der deutschen aus catalog.json)
         s = dict(self._de)
