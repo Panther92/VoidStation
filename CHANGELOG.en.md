@@ -9,6 +9,7 @@ at the top; `vspub --release` or `vspub --hotfix` assigns the number when releas
 Older versions (up to 0.15.0) still use the old numbering.
 
 ## Testing – 2026-11-08
+- For low-memory PCs: `sudo voidstation-zram on` enables compressed swap in RAM (for testing for now, off by default).
 - TV, radio, AppCenter: The start page now removes the tiles when you close them and frees the memory instead of keeping it until the next restart.
 - TV: The channel list now lives in a small database instead of in memory, which saves over 100 MB and makes it available right after a restart.
 - Updates: The final check now has its own line on the update screen and in `vsctl update`; before, it looked as if the update had hung.

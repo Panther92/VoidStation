@@ -365,6 +365,7 @@ install -d -o root -g root -m 755 /usr/local/share/voidstation
 install -o root -g root -m 755 "$TV/voidstation-efistub" /usr/local/sbin/voidstation-efistub
 install -o root -g root -m 644 "$TV/dracut-voidstation.conf" /usr/local/share/voidstation/dracut-voidstation.conf
 install -o root -g root -m 755 "$TV/voidstation-splash" /usr/local/sbin/voidstation-splash
+install -o root -g root -m 755 "$TV/voidstation-zram" /usr/local/sbin/voidstation-zram
 python3 - "$TV/catalog.json" "$(xbps-uhelper arch 2>/dev/null)" > /usr/local/share/voidstation/allowed-packages <<'PYEOF'
 import json, sys
 c = json.load(open(sys.argv[1], encoding="utf-8"))

@@ -389,6 +389,7 @@ fi
 # ~240 MB Initramfs je Kernel auf der 512-MB-EFI-Partition.
 install -o root -g root -m 755 "$TV/voidstation-efistub" /usr/local/sbin/voidstation-efistub
 install -o root -g root -m 755 "$TV/voidstation-splash" /usr/local/sbin/voidstation-splash
+install -o root -g root -m 755 "$TV/voidstation-zram" /usr/local/sbin/voidstation-zram
 install -o root -g root -m 644 "$TV/dracut-voidstation.conf" /usr/local/share/voidstation/dracut-voidstation.conf
 KCHANGED=0
 # Initramfs-Vorgabe von VoidStation (vom Installer bzw. aus 0.14.2) auf den neuen Stand bringen:

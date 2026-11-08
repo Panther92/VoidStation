@@ -9,6 +9,7 @@ ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freig
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
 ## Testing – 2026-11-08
+- Für Rechner mit wenig RAM: `sudo voidstation-zram on` schaltet komprimierten Auslagerungsspeicher im RAM ein (vorerst zum Ausprobieren, standardmäßig aus).
 - Fernsehen, Radio, AppCenter: Die Startseite baut die Kacheln beim Schließen ab und gibt den Speicher zurück, statt ihn bis zum Neustart zu behalten.
 - Fernsehen: Die Senderliste liegt jetzt in einer kleinen Datenbank statt im Arbeitsspeicher, das spart gut 100 MB und sie steht nach einem Neustart sofort bereit.
 - Updates: Die abschließende Prüfung hat jetzt eine eigene Zeile auf dem Update-Bildschirm und in `vsctl update`, sie sah vorher wie ein Hänger aus.

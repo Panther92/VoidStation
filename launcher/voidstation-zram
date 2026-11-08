@@ -1,0 +1,82 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# VoidStation: komprimierter Auslagerungsspeicher im RAM (zram), vorerst nur zum Ausprobieren.
+#   sudo voidstation-zram on      einschalten, gilt auch nach dem Neustart
+#   sudo voidstation-zram off     ausschalten
+#   voidstation-zram status       Zustand und belegter Speicher
+# Das Swapfile bleibt: zram bekommt die hoehere Prioritaet, das Swapfile faengt auf, was nicht mehr hineinpasst.
+MARK="${VS_ZRAM_MARK:-/usr/local/share/voidstation/zram-on}"
+SYS="${VS_ZRAM_SYS:-/sys/block/zram0}"
+SWAPS="${VS_ZRAM_SWAPS:-/proc/swaps}"
+MEMINFO="${VS_ZRAM_MEMINFO:-/proc/meminfo}"
+CLUSTER="${VS_ZRAM_CLUSTER:-/proc/sys/vm/page-cluster}"
+DEV="${VS_ZRAM_DEV:-/dev/zram0}"
+MAXBYTES=$((4 * 1024 * 1024 * 1024))
+
+active() { grep -q "^$DEV " "$SWAPS" 2>/dev/null; }
+
+need_root() {
+  [ "$(id -u)" -eq 0 ] || [ -n "${VS_ZRAM_SYS:-}" ] || { echo "Bitte mit sudo starten." >&2; exit 1; }
+}
+
+start() {
+  active && return 0
+  [ -e "$SYS" ] || modprobe zram num_devices=1 2>/dev/null
+  [ -e "$SYS" ] || { echo "zram gibt es auf diesem Kernel nicht." >&2; return 1; }
+  # Halbe RAM-Groesse, hoechstens 4 GB. lz4 kostet am wenigsten Rechenzeit, das zaehlt auf alten Rechnern
+  mem=$(awk '/^MemTotal:/{print $2 * 1024}' "$MEMINFO")
+  size=$((mem / 2))
+  [ "$size" -gt "$MAXBYTES" ] && size=$MAXBYTES
+  for a in lz4 lzo-rle; do
+    if grep -qw "$a" "$SYS/comp_algorithm" 2>/dev/null; then
+      echo "$a" > "$SYS/comp_algorithm"
+      break
+    fi
+  done
+  echo "$size" > "$SYS/disksize" || return 1
+  mkswap -q "$DEV" || return 1
+  swapon -p 100 "$DEV" || return 1
+  echo 0 > "$CLUSTER" 2>/dev/null                # einzelne Seiten statt Bloecke: bei RAM kostet Lesen nichts
+  return 0
+}
+
+stop() {
+  if active; then
+    swapoff "$DEV" || return 1
+  fi
+  [ -e "$SYS/reset" ] && echo 1 > "$SYS/reset"
+  echo 3 > "$CLUSTER" 2>/dev/null
+  return 0
+}
+
+status() {
+  if active; then
+    echo "zram: an"
+    read -r orig compr used _ < "$SYS/mm_stat"
+    echo "ausgelagert: $((orig / 1048576)) MB, komprimiert: $((compr / 1048576)) MB, im RAM belegt: $((used / 1048576)) MB"
+  else
+    echo "zram: aus"
+  fi
+  [ -e "$MARK" ] && echo "beim Start: an" || echo "beim Start: aus"
+}
+
+case "${1:-status}" in
+  on)
+    need_root
+    start || exit 1
+    touch "$MARK"
+    status
+    ;;
+  off)
+    need_root
+    rm -f "$MARK"
+    stop || exit 1
+    status
+    ;;
+  boot)                                          # core-service
+    [ -e "$MARK" ] && [ ! -e /etc/voidstation-live ] && start
+    exit 0
+    ;;
+  status) status ;;
+  *) echo "voidstation-zram: on | off | status" >&2; exit 2 ;;
+esac

@@ -73,6 +73,15 @@ chmod 644 /etc/runit/core-services/92-voidstation-tty.sh
 say "Konsolen: tty3 bis tty6 aus (ab dem naechsten Start)"
 
 # ---------------------------------------------------------------------
+# zram (nur wenn eingeschaltet: sudo voidstation-zram on)
+cat > /etc/runit/core-services/93-voidstation-zram.sh <<'EOF'
+# SPDX-License-Identifier: GPL-3.0-or-later
+# VoidStation (runit core-service): zram einrichten, falls eingeschaltet (voidstation-zram on).
+[ -x /usr/local/sbin/voidstation-zram ] && /usr/local/sbin/voidstation-zram boot
+EOF
+chmod 644 /etc/runit/core-services/93-voidstation-zram.sh
+
+# ---------------------------------------------------------------------
 # 2. WLAN
 mkdir -p /etc/NetworkManager/conf.d /etc/modprobe.d
 cat > /etc/NetworkManager/conf.d/90-voidstation-wifi.conf <<'EOF'
