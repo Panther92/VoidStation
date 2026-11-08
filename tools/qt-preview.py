@@ -215,15 +215,16 @@ def tv_list(q):
     d = os.environ.get("VS_TVDATA")
     if not d:
         return S.tv_list(q)
-    if "index" not in TVREAL:
+    if "db" not in TVREAL:
         sys.path.insert(0, str(REPO / "launcher"))
-        import launcher as L  # noqa: E402
+        import tempfile
+        import tvindex as T  # noqa: E402
         rd = lambda n: json.loads((Path(d) / n).read_text(encoding="utf-8")) if (Path(d) / n).exists() else []
-        TVREAL["L"] = L
-        TVREAL["index"] = L.IPTV.build_index(rd("channels.json"), rd("streams.json"), rd("logos.json"))[0]
+        TVREAL["T"], TVREAL["db"] = T, Path(tempfile.mkdtemp()) / T.DB_NAME
+        T.write_db(T.build_index(rd("channels.json"), rd("streams.json"), rd("logos.json")), TVREAL["db"])
     g = lambda k: q.get(k, [""])[0]
     num = lambda k, dflt: int(g(k)) if g(k).isdigit() else dflt
-    return TVREAL["L"].IPTV.page_of(TVREAL["index"], g("q"), g("country"), g("cat"), g("letter").upper(), num("offset", 0), num("limit", 200))
+    return TVREAL["T"].page(TVREAL["db"], g("q"), g("country"), g("cat"), g("letter").upper(), num("offset", 0), num("limit", 200))
 
 
 def job():
@@ -233,13 +234,14 @@ def job():
         mode = os.environ.get("VS_UPD_JOB", "")
         t = (time.time() - JOB["t0"]) / (4.0 if mode == "slow" else 1.0)
         if t >= 1:
-            JOB.update(steps=[{"id": "apps", "state": "wait", "n": 12}, {"id": "load", "state": "wait"}, {"id": "setup", "state": "wait"}],
+            JOB.update(steps=[{"id": "apps", "state": "wait", "n": 12}, {"id": "load", "state": "wait"}, {"id": "setup", "state": "wait"},
+                              {"id": "check", "state": "wait"}],
                        **{"from": "0.12.1", "to": "0.13.0"})
             for i, x in enumerate(JOB["steps"]):
                 x["state"] = "done" if t >= 2.5 + 1.5 * i else "run" if t >= 1 + 1.5 * i else "wait"
-        if t >= 5.5:
+        if t >= 7:
             if mode == "fail":
-                JOB["steps"][-1]["state"] = "fail"
+                JOB["steps"][2]["state"] = "fail"
             JOB.update(state="error" if mode == "fail" else "done", reboot=mode != "fail", result={"done": ["voidstation"], "kernel": False})
         JOB["log"] = [f"Zeile {k}" for k in range(int(t * 10))][-60:]
         JOB["n"] = len(JOB["log"])

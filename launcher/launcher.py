@@ -42,6 +42,9 @@ from html import escape as html_escape, unescape as html_unescape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import tvindex
+from tvindex import TV_LETTERS, TV_PAGE, tv_fold, tv_letter  # noqa: F401
+
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("VOIDSTATION_PORT", "8765"))
 BASE = Path(__file__).resolve().parent
@@ -2266,55 +2269,27 @@ def share_info():
 # ---------------------------------------------------------------------------
 #  TV: Sender aus aller Welt (Verzeichnis von iptv-org, frei empfangbare Streams)
 # ---------------------------------------------------------------------------
-IPTV_API = "https://iptv-org.github.io/api/"
+IPTV_API = tvindex.IPTV_API
 CACHE = BASE / "cache"
+TV_DB = CACHE / tvindex.DB_NAME              # Senderverzeichnis, gebaut von tvindex.py (eigener, kurzlebiger Prozess)
 TVFAVS = BASE / "tvfavs.json"
 TVRECENT = BASE / "tvrecent.json"           # zuletzt gesehene Sender (Player: Reiter „Zuletzt“)
-UA = {"User-Agent": "VoidStation/4.0"}
-TV_PAGE = 200                                # Sender je Seite der Liste (mehr Kacheln auf einmal bremsen schwache Geraete)
-TV_LETTERS = ["#"] + [chr(c) for c in range(ord("A"), ord("Z") + 1)]
-
-
-def tv_fold(name):
-    """Name ohne Akzente und in Kleinbuchstaben: „Österreich“ sortiert und sucht wie „osterreich“."""
-    s = unicodedata.normalize("NFKD", name or "")
-    return "".join(c for c in s if not unicodedata.combining(c)).casefold()
-
-
-def tv_letter(name):
-    """Anfangsbuchstabe fuer die A–Z-Leiste: erstes Zeichen ohne Akzent, A–Z, sonst „#“ (Ziffern, andere Schriften)."""
-    for c in tv_fold(name):
-        if c.isalnum():
-            u = c.upper()
-            return u if "A" <= u <= "Z" else "#"
-    return "#"
+UA = tvindex.UA
 
 
 def fetch(url, dest, max_age):
     """Datei herunterladen, wenn sie fehlt oder aelter als max_age Sekunden ist."""
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    if dest.exists() and time.time() - dest.stat().st_mtime < max_age:
-        return dest
-    try:
-        req = urllib.request.Request(url, headers=UA)
-        with urllib.request.urlopen(req, timeout=60) as r:
-            data = r.read()
-        tmp = dest.with_suffix(".part")
-        tmp.write_bytes(data)
-        tmp.replace(dest)
-    except Exception as e:  # noqa: BLE001
-        if not dest.exists():
-            raise
-        log("Verzeichnis veraltet, nutze Cache:", e)
-    return dest
+    return tvindex.fetch(url, dest, max_age, log)
 
 
 class IPTV:
     def __init__(self):
         self.lock = threading.Lock()
         self.state, self.error = "idle", None
-        self.index, self.by_key, self.countries = [], {}, []
+        self.count, self.countries = 0, []
         self.loaded_at = 0.0
+        self.tried_at = 0.0         # letzter Versuch, das Verzeichnis neu zu bauen
+        self.building = False
         self.now = None
         self.zap_keys = []          # Liste, in der der Player mit ▲▼ umschaltet (aus der heraus gestartet wurde)
         self.recent = tvrecent_load()
@@ -2322,106 +2297,66 @@ class IPTV:
         self.failed = None          # Rueckfall (nacktes mpv): zuletzt gescheiterter Sender, fuer die Meldung
         self.raw = False            # "tv" laeuft gerade als nacktes mpv (Stufe 3)
 
+    def _take(self, got):
+        self.count, self.countries, self.loaded_at = got
+        self.state, self.error = "ready", None
+
     def ensure(self):
+        """Vorhandene Datei sofort nutzen; ist sie aelter als ein Tag, im Hintergrund erneuern."""
+        now = time.time()
         with self.lock:
-            fresh = self.index and time.time() - self.loaded_at < 86400
-            if fresh or self.state == "loading":
+            if not self.count:
+                got = tvindex.info(TV_DB)
+                if got:
+                    self._take(got)
+            fresh = self.count and now - self.loaded_at < 86400
+            if fresh or self.building or (self.count and now - self.tried_at < 600):
                 return
-            self.state = "loading"
+            self.building, self.tried_at = True, now
+            if not self.count:
+                self.state = "loading"
         threading.Thread(target=self._load, daemon=True).start()
 
     def _load(self):
+        err = None
         try:
-            day = 86400
-            ch = json.loads(fetch(IPTV_API + "channels.json", CACHE / "channels.json", day).read_text())
-            st = json.loads(fetch(IPTV_API + "streams.json", CACHE / "streams.json", day).read_text())
-            try:
-                lg = json.loads(fetch(IPTV_API + "logos.json", CACHE / "logos.json", 7 * day).read_text())
-            except Exception:  # noqa: BLE001
-                lg = []
-            index, counts = self.build_index(ch, st, lg)
-            with self.lock:
-                self.index = index
-                self.by_key = {e["key"]: e for e in index}
-                self.countries = sorted(counts.items(), key=lambda x: -x[1])
-                self.loaded_at = time.time()
-                self.state, self.error = "ready", None
-            log(f"TV-Verzeichnis: {len(index)} Sender")
+            r = subprocess.run(["nice", "-n", "10", sys.executable, str(BASE / "tvindex.py"), str(CACHE)],
+                               capture_output=True, text=True, timeout=900)
+            if r.returncode != 0:
+                err = (r.stderr.strip().splitlines() or ["tvindex"])[-1]
         except Exception as e:  # noqa: BLE001
-            log("TV-Verzeichnis nicht ladbar:", e)
-            with self.lock:
-                self.state, self.error = ("ready" if self.index else "error"), str(e)
+            err = str(e)
+        got = None if err else tvindex.info(TV_DB)
+        with self.lock:
+            self.building = False
+            if got:
+                self._take(got)
+            else:
+                self.state, self.error = ("ready" if self.count else "error"), err or "tv.sqlite"
+        if got:
+            log(f"TV-Verzeichnis: {got[0]} Sender")
+        else:
+            log("TV-Verzeichnis nicht ladbar:", err)
 
-    @staticmethod
-    def build_index(ch, st, lg):
-        """Senderliste aus channels/streams/logos.json: ein Eintrag je Sender und Feed, sortiert wie die A–Z-Leiste."""
-        chans = {c["id"]: c for c in ch if not c.get("is_nsfw") and not c.get("closed")}
-        logos = {}
-        for l in lg:
-            if l.get("channel") and l.get("url") and not l.get("feed"):
-                logos.setdefault(l["channel"], l["url"])
-        index, seen, counts = [], set(), {}
-        for s in st:
-            c = chans.get(s.get("channel"))
-            url = s.get("url") or ""
-            if not c or not url.startswith(("http://", "https://")):
-                continue
-            dedup = (c["id"], s.get("feed"))
-            if dedup in seen:
-                continue
-            seen.add(dedup)
-            key = hashlib.sha1(url.encode()).hexdigest()[:12]
-            e = {"key": key, "cid": c["id"], "name": c["name"], "alt": c.get("alt_names") or [],
-                 "country": c.get("country") or "", "cats": c.get("categories") or [],
-                 "quality": s.get("quality") or "", "logo": logos.get(c["id"], ""),
-                 "url": url, "ref": s.get("referrer") or "", "ua": s.get("user_agent") or ""}
-            if s.get("feed") and s.get("title") and s.get("title") != c["name"]:
-                e["name"] = s["title"]
-            e["fold"] = tv_fold(e["name"])
-            e["folds"] = [e["fold"]] + [tv_fold(a) for a in e["alt"]]
-            e["letter"] = tv_letter(e["name"])
-            index.append(e)
-            counts[e["country"]] = counts.get(e["country"], 0) + 1
-        # „#“ (Ziffern, andere Schriften) zuerst, dann A–Z – dieselbe Reihenfolge wie die Leiste
-        index.sort(key=lambda e: (e["letter"] != "#", e["fold"]))
-        return index, counts
+    def _db(self, fn, fallback):
+        """Abfrage der Datei; fehlt sie (geloescht, Platte voll), wird sie beim naechsten ensure() neu gebaut."""
+        if not self.count:
+            return fallback
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            log("TV-Verzeichnis:", e)
+            with self.lock:
+                self.count, self.tried_at = 0, 0.0
+            return fallback
 
     @staticmethod
     def public(e):
         return {k: e[k] for k in ("key", "cid", "name", "country", "cats", "quality", "logo") if k in e}
 
-    @staticmethod
-    def page_of(index, q="", country="", cat="", letter="", offset=0, limit=TV_PAGE):
-        """Eine Seite der Senderliste. Ohne Suche alphabetisch, wahlweise nur ein Anfangsbuchstabe;
-        mit Suche Treffer am Namensanfang zuerst. „letters“ zaehlt je Buchstabe (Land + Thema, ohne Suche)."""
-        q = tv_fold((q or "").strip())
-        letter = letter if letter in TV_LETTERS else ""
-        letters, hits = {}, []
-        for e in index:
-            if country and e["country"] != country:
-                continue
-            if cat and cat not in e["cats"]:
-                continue
-            L = e.get("letter") or tv_letter(e["name"])
-            letters[L] = letters.get(L, 0) + 1
-            if q:
-                folds = e.get("folds") or [tv_fold(n) for n in [e["name"]] + list(e.get("alt") or [])]
-                if any(q in n for n in folds):
-                    hits.append((0 if any(n.startswith(q) for n in folds) else 1, e))
-            elif not letter or L == letter:
-                hits.append((0, e))
-        hits.sort(key=lambda x: x[0])            # stabil: innerhalb des Rangs bleibt die A–Z-Reihenfolge
-        total = len(hits)
-        limit = max(1, min(int(limit or TV_PAGE), 1000))
-        offset = max(0, min(int(offset or 0), max(0, total - 1)))
-        offset -= offset % limit
-        return {"items": [IPTV.public(e) for _, e in hits[offset:offset + limit]], "total": total,
-                "offset": offset, "limit": limit, "letter": "" if q else letter,
-                "letters": [{"l": L, "n": letters.get(L, 0)} for L in TV_LETTERS]}
-
     def page(self, q="", country="", cat="", letter="", offset=0, limit=TV_PAGE):
         self.ensure()
-        res = self.page_of(self.index, q, country, cat, letter, offset, limit)
+        res = self._db(lambda: tvindex.page(TV_DB, q, country, cat, letter, offset, limit), None) or tvindex.empty_page()
         res["items"] = [self.mark(i) for i in res["items"]]
         return res
 
@@ -2434,19 +2369,7 @@ class IPTV:
 
     def filtered_keys(self, q="", country="", cat=""):
         """Alle Sender zu Land/Thema/Suche (ohne Buchstabe, ohne Seiten) – Reihenfolge wie die Liste."""
-        q = tv_fold((q or "").strip())
-        out = []
-        for e in self.index:
-            if country and e["country"] != country:
-                continue
-            if cat and cat not in e["cats"]:
-                continue
-            if q:
-                folds = e.get("folds") or [tv_fold(n) for n in [e["name"]] + list(e.get("alt") or [])]
-                if not any(q in n for n in folds):
-                    continue
-            out.append(e["key"])
-        return out
+        return self._db(lambda: tvindex.keys(TV_DB, q, country, cat), [])
 
     def search(self, q, country, cat, limit=80):
         """Alte Schnittstelle (/api/tv/search, z. B. fuer Forks): nur die ersten Treffer als Liste."""
@@ -2456,18 +2379,21 @@ class IPTV:
         now = None
         if self.now and "tv" in APPS.running():
             now = self.now
-        return {"state": self.state, "error": self.error, "count": len(self.index),
+        return {"state": self.state, "error": self.error, "count": self.count,
                 "countries": [{"code": c, "n": n} for c, n in self.countries[:40]], "now": now, "failed": self.failed,
                 "region": region(), "quick": region_quick()}
 
     def entry(self, key):
-        e = self.by_key.get(key)
-        if e:
-            return e
-        for f in tvfavs_load() + list(self.recent):
-            if f.get("key") == key:
-                return f
-        return None
+        return self.entries([key]).get(key)
+
+    def entries(self, keys):
+        """{Sender: Eintrag} aus dem Verzeichnis; was dort fehlt, kommt aus Favoriten und Verlauf."""
+        out = self._db(lambda: tvindex.entries(TV_DB, keys), {})
+        if len(out) < len(set(keys)):
+            for f in reversed(tvfavs_load() + list(self.recent)):
+                if f.get("key") in keys and f.get("key") not in out:
+                    out[f["key"]] = f
+        return out
 
     def set_zap(self, key, ctx):
         """Zapp-Liste fuer den Player: Favoriten oder die Liste mit Land/Thema/Suche, aus der gestartet wurde
@@ -2476,7 +2402,7 @@ class IPTV:
         if isinstance(ctx, dict):
             if ctx.get("favs"):
                 keys = [f.get("key") for f in tvfavs_load() if f.get("key")]
-            elif self.index:
+            elif self.count:
                 country = str(ctx.get("country") or "")
                 keys = self.filtered_keys(str(ctx.get("q") or ""), "" if country == "*" else country, str(ctx.get("cat") or ""))
         if key not in keys:
@@ -2491,7 +2417,8 @@ class IPTV:
         self.zap_keys = keys
 
     def zap(self):
-        items = [self.mark(self.public(e)) for e in (self.entry(k) for k in self.zap_keys) if e]
+        found = self.entries(self.zap_keys)
+        items = [self.mark(self.public(found[k])) for k in self.zap_keys if k in found]
         return {"items": items, "favs": [self.mark(self.public(f)) for f in tvfavs_load()],
                 "recent": [self.mark(self.public(f)) for f in self.recent], "key": (self.now or {}).get("key")}
 
@@ -5194,6 +5121,8 @@ class Jobs:
                   "n": len(s["pkgs"]) + (len(s["flatpak"]) if flat else 0) + len(imgs) + (1 if s["proton"] else 0)}] if apps else []
         if vs["available"]:
             steps += [{"id": "load", "state": "wait"}, {"id": "setup", "state": "wait"}]
+        if steps:                                       # Paketlisten und App-Versionen neu abfragen: dauert, soll sichtbar sein
+            steps.append({"id": "check", "state": "wait"})
         with self.lock:
             self.job.update(steps=steps, **({"from": vs["local"], "to": vs["remote"]} if vs["available"] else {}))
         if apps:
@@ -5232,9 +5161,12 @@ class Jobs:
                 ok = False
         else:
             self._log("VoidStation: aktuell")
-        self._log("Prüfe Stand …")
-        _sys_check(sync=True)
-        vs_update_status(force=True)
+        if steps:                                       # sonst wurde gerade erst geprueft und nichts geaendert
+            self._log("Prüfe Stand …")
+            self._step("check", "run")
+            _sys_check(sync=True)
+            vs_update_status(force=True)
+            self._step("check", "done")
         rb = reboot_needed()
         return ok, {"done": done, "kernel": rb["kernel"]}, rb["kernel"] or rb["voidstation"] or "voidstation" in done
 
