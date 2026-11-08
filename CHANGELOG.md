@@ -8,6 +8,9 @@ Hotfixes dazu `## 2026.11.1 – …`. Neues kommt zuerst unter `## Testing – <
 ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freigeben (siehe `RELEASING.md`).
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
+## Testing – 2026-11-08
+- Neue Sprache: Japanisch (日本語), maschinell übersetzt. Eine japanische Texteingabe gibt es noch nicht, die Bildschirmtastatur bleibt beim US-Layout. Installer und Startmenü des Sticks folgen mit der nächsten Live-ISO. Beitrag von siratamalkuhj
+
 ## 2026.11 – 2026-11-06
 - Textkonsole: eigene Begrüßung mit dem Schriftzug VoidStation, Version und dem Weg zurück zur Oberfläche, auch auf dem Live-Stick. Geräte, die mit einer älteren ISO installiert wurden, zeigten vor der Anmeldung noch den Willkommenstext des Live-Sticks mit Beispiel-Zugangsdaten; der ist damit weg
 - **Sicherheit: Konsolen fragen nach dem Passwort.** Der automatische Login galt versehentlich für alle sechs Textkonsolen: Mit angeschlossener Tastatur öffnete Strg+Alt+F2 ohne Passwort eine Sitzung. Jetzt meldet sich nur noch tty1 für die Oberfläche selbst an, tty2 fragt nach Benutzer und Passwort, tty3 bis tty6 sind aus (spart etwas Speicher). Wirkt nach dem nächsten Neustart

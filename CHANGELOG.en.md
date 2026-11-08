@@ -8,6 +8,9 @@ hotfixes to it `## 2026.11.1 – …`. New changes go first under `## Testing �
 at the top; `vspub --release` or `vspub --hotfix` assigns the number when releasing (see `RELEASING.md`).
 Older versions (up to 0.15.0) still use the old numbering.
 
+## Testing – 2026-11-08
+- New language: Japanese (日本語), machine-translated. There is no Japanese text input yet, the on-screen keyboard stays on the US layout. The installer and the stick's boot menu follow with the next live ISO. Contributed by siratamalkuhj
+
 ## 2026.11 – 2026-11-06
 - Text console: its own greeting with the VoidStation wordmark, the version and the way back to the interface, on the live stick too. Devices installed from an older ISO still showed the live stick's welcome text with sample credentials before login; that is gone now
 - **Security: consoles ask for a password.** The automatic login accidentally applied to all six text consoles: with a keyboard attached, Ctrl+Alt+F2 opened a session without a password. Now only tty1 logs in by itself for the interface, tty2 asks for user and password, tty3 to tty6 are off (saves a little memory). Takes effect after the next restart

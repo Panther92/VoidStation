@@ -28,7 +28,7 @@ terminal-height: "70%"
     left = 50%-400
     top = 10%+170
     width = 800
-    height = 82%-200
+    height = 86%-200
     item_font = "VoidStation Regular 24"
     selected_item_font = "VoidStation Regular 24"
     item_color = "#c9c8c4"
