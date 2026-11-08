@@ -686,6 +686,15 @@ class VsBase(QObject):
         log(msg)
 
 
+def limit_arenas():
+    """Weniger malloc-Arenen (M_ARENA_MAX, rund 10 MB auf der Startseite). Als Aufruf statt MALLOC_ARENA_MAX,
+    weil die Umgebungsvariable auch fuer alle gestarteten Programme gelten wuerde; Spiele sollen sie nicht erben."""
+    try:
+        ctypes.CDLL(None).mallopt(-8, 2)
+    except (OSError, AttributeError):
+        pass
+
+
 def malloc_trim():
     try:
         ctypes.CDLL(None).malloc_trim(0)

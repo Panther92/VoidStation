@@ -51,7 +51,7 @@ sys.dont_write_bytecode = True
 shutil.rmtree(HERE / "__pycache__", ignore_errors=True)
 sys.path.insert(0, str(HERE))
 import vscommon  # noqa: E402
-from vscommon import Gamepad, PadPump, VsBase, drop_stale_qml_cache, PADMOUSE_NAME  # noqa: E402,F401
+from vscommon import Gamepad, PadPump, VsBase, drop_stale_qml_cache, limit_arenas, PADMOUSE_NAME  # noqa: E402,F401
 
 from PySide6.QtCore import (QTimer, QUrl, Signal, Slot)  # noqa: E402
 from PySide6.QtGui import QCursor, QFontDatabase, QGuiApplication  # noqa: E402
@@ -323,6 +323,7 @@ class Vs(VsBase):
 
 
 def main():
+    limit_arenas()
     QGuiApplication.setApplicationName("voidstation")
     QGuiApplication.setApplicationDisplayName(TITLE)
     QGuiApplication.setDesktopFileName("voidstation")
