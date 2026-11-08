@@ -101,6 +101,8 @@
   "upd.stepLoad": "Nowa wersja pobrana i sprawdzona",
   "upd.stepSetupRun": "Konfiguracja",
   "upd.stepSetup": "Skonfigurowano",
+  "upd.stepCheckRun": "Końcowe sprawdzanie",
+  "upd.stepCheck": "Końcowe sprawdzanie zakończone",
   "upd.nPkgs": "Pakiety: {n}",
   "upd.onePkg": "1 pakiet",
   "upd.dontTurnOff": "Nie wyłączaj – to może potrwać kilka minut.",

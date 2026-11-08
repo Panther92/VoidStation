@@ -101,6 +101,8 @@
   "upd.stepLoad": "Nová verzia stiahnutá a overená",
   "upd.stepSetupRun": "Nastavujem",
   "upd.stepSetup": "Nastavené",
+  "upd.stepCheckRun": "Záverečná kontrola",
+  "upd.stepCheck": "Záverečná kontrola dokončená",
   "upd.nPkgs": "Balíky: {n}",
   "upd.onePkg": "1 balík",
   "upd.dontTurnOff": "Prosím, nevypínajte – môže to trvať niekoľko minút.",

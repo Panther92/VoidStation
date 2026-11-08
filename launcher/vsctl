@@ -127,7 +127,7 @@ def T(key, **kw):
     return s
 def label(st):
     past = st["state"] == "done"
-    base = T({"apps": "upd.stepApps", "load": "upd.stepLoad"}.get(st["id"], "upd.stepSetup") + ("" if past else "Run"))
+    base = T({"apps": "upd.stepApps", "load": "upd.stepLoad", "check": "upd.stepCheck"}.get(st["id"], "upd.stepSetup") + ("" if past else "Run"))
     if st["id"] == "apps" and st.get("n"):
         base += " (" + (T("upd.onePkg") if st["n"] == 1 else T("upd.nPkgs", n=st["n"])) + ")"
     return base

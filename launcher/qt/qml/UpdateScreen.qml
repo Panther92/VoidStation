@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Updates im Vollbild (wie der Startbildschirm der Kacheln): statt des Protokolls nur die Schritte
 //   "VoidStation 2026.10.1 → 2026.11" · ✓ Programme aktualisiert (12 Pakete) · ✓ Neue Version geladen und
-//   geprueft · ✓ Eingerichtet
+//   geprueft · ✓ Eingerichtet · ✓ Auf neue Updates geprueft
 // Der Stand kommt aus /api/apps/job (JobBand fragt ab und setzt app.jobState). Esc / B: im Hintergrund weiter,
 // dann zeigt das Band unten den aktuellen Schritt. Das ganze Protokoll steht in logs/update.log.
 import QtQuick
@@ -42,6 +42,7 @@ Rectangle {
         var past = st.state === "done"
         var base = st.id === "apps" ? Ui.t(past ? "upd.stepApps" : "upd.stepAppsRun")
                  : st.id === "load" ? Ui.t(past ? "upd.stepLoad" : "upd.stepLoadRun")
+                 : st.id === "check" ? Ui.t(past ? "upd.stepCheck" : "upd.stepCheckRun")
                  : Ui.t(past ? "upd.stepSetup" : "upd.stepSetupRun")
         return st.id === "apps" && st.n ? base + " (" + pkgs(st.n) + ")" : base
     }

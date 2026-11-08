@@ -101,6 +101,8 @@
   "upd.stepLoad": "Nieuwe versie gedownload en gecontroleerd",
   "upd.stepSetupRun": "Instellen",
   "upd.stepSetup": "Ingesteld",
+  "upd.stepCheckRun": "Laatste controle",
+  "upd.stepCheck": "Laatste controle voltooid",
   "upd.nPkgs": "{n} pakketten",
   "upd.onePkg": "1 pakket",
   "upd.dontTurnOff": "Niet uitschakelen – dit kan een paar minuten duren.",

@@ -9,6 +9,7 @@ at the top; `vspub --release` or `vspub --hotfix` assigns the number when releas
 Older versions (up to 0.15.0) still use the old numbering.
 
 ## Testing – 2026-11-08
+- Updates: The final check now has its own line on the update screen and in `vsctl update`; before, it looked as if the update had hung.
 - New language: Japanese (日本語), machine-translated. There is no Japanese text input yet, the on-screen keyboard stays on the US layout. The installer and the stick's boot menu follow with the next live ISO. Contributed by siratamalkuhj
 
 ## 2026.11 – 2026-11-06

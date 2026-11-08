@@ -101,6 +101,8 @@
   "upd.stepLoad": "Jaunā versija lejupielādēta un pārbaudīta",
   "upd.stepSetupRun": "Iestata",
   "upd.stepSetup": "Iestatīts",
+  "upd.stepCheckRun": "Noslēguma pārbaude",
+  "upd.stepCheck": "Noslēguma pārbaude pabeigta",
   "upd.nPkgs": "{n} pakotnes",
   "upd.onePkg": "1 pakotne",
   "upd.dontTurnOff": "Lūdzu, neizslēdziet – tas var aizņemt dažas minūtes.",

@@ -101,6 +101,8 @@
   "upd.stepLoad": "New version downloaded and verified",
   "upd.stepSetupRun": "Setting up",
   "upd.stepSetup": "Set up",
+  "upd.stepCheckRun": "Running final check",
+  "upd.stepCheck": "Final check done",
   "upd.nPkgs": "{n} packages",
   "upd.onePkg": "1 package",
   "upd.dontTurnOff": "Please don't switch off – this can take a few minutes.",

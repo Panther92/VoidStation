@@ -101,6 +101,8 @@
   "upd.stepLoad": "新しいバージョンをダウンロードして検証しました",
   "upd.stepSetupRun": "セットアップ中",
   "upd.stepSetup": "セットアップしました",
+  "upd.stepCheckRun": "最終確認中",
+  "upd.stepCheck": "最終確認が完了しました",
   "upd.nPkgs": "{n} 個のパッケージ",
   "upd.onePkg": "1 個のパッケージ",
   "upd.dontTurnOff": "電源を切らないでください – 数分かかることがあります。",

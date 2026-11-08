@@ -101,6 +101,8 @@
   "upd.stepLoad": "Новая версия загружена и проверена",
   "upd.stepSetupRun": "Настройка",
   "upd.stepSetup": "Настроено",
+  "upd.stepCheckRun": "Финальная проверка",
+  "upd.stepCheck": "Финальная проверка завершена",
   "upd.nPkgs": "Пакетов: {n}",
   "upd.onePkg": "1 пакет",
   "upd.dontTurnOff": "Не выключайте – это может занять несколько минут.",

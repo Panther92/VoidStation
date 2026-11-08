@@ -9,6 +9,7 @@ ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freig
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
 ## Testing – 2026-11-08
+- Updates: Die abschließende Prüfung hat jetzt eine eigene Zeile auf dem Update-Bildschirm und in `vsctl update`, sie sah vorher wie ein Hänger aus.
 - Neue Sprache: Japanisch (日本語), maschinell übersetzt. Eine japanische Texteingabe gibt es noch nicht, die Bildschirmtastatur bleibt beim US-Layout. Installer und Startmenü des Sticks folgen mit der nächsten Live-ISO. Beitrag von siratamalkuhj
 
 ## 2026.11 – 2026-11-06

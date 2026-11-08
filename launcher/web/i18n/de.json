@@ -101,6 +101,8 @@
   "upd.stepLoad": "Neue Version geladen und geprüft",
   "upd.stepSetupRun": "Wird eingerichtet",
   "upd.stepSetup": "Eingerichtet",
+  "upd.stepCheckRun": "Wird abschließend geprüft",
+  "upd.stepCheck": "Abschließend geprüft",
   "upd.nPkgs": "{n} Pakete",
   "upd.onePkg": "1 Paket",
   "upd.dontTurnOff": "Bitte nicht ausschalten – das kann ein paar Minuten dauern.",
