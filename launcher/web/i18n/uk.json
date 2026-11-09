@@ -1344,5 +1344,7 @@
   "emuopt.v.medium": "Середня",
   "emuopt.v.large": "Велика",
   "emuopt.v.inherit": "Як скрізь",
-  "hint.romOpts": "<b>Del / Y</b> параметри"
+  "hint.romOpts": "<b>Del / Y</b> параметри",
+  "roms.discSub": "У приводі",
+  "player.dvd.game": "Ігровий диск ({system}), запускається зі списку ігор"
 }

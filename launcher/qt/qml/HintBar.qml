@@ -22,7 +22,7 @@ Item {
         if (l === "home") h = [T("hint.open"), T("hint.close"), T("hint.home")]
         else if (l === "radio") h = [T("hint.play"), T("hint.fav"), T("hint.volume"), T("hint.back")]
         else if (l === "settings") h = [settings.cat ? T("hint.select") : T("hint.open"), T("hint.back")]
-        else if (l === "roms") h = roms.gameOpts && Nav.current && Nav.current.rom ? [T("hint.romLaunch"), T("hint.romOpts"), T("hint.back")] : [T("hint.romLaunch"), T("hint.back")]
+        else if (l === "roms") h = roms.gameOpts && Nav.current && Nav.current.rom && !Nav.current.rom.noOpts ? [T("hint.romLaunch"), T("hint.romOpts"), T("hint.back")] : [T("hint.romLaunch"), T("hint.back")]
         else if (l === "emuopts") h = [T("hint.select"), T("hint.back")]
         else if (l === "keymap") h = keymap.mode ? [T("hint.keymapGrab")] : [T("hint.select"), T("hint.back")]
         else if (l === "tv") h = [T("hint.tvOn"), T("hint.fav"), T("hint.homeShort"), T("hint.back")]

@@ -1343,5 +1343,7 @@
   "emuopt.v.medium": "Vidēja",
   "emuopt.v.large": "Liela",
   "emuopt.v.inherit": "Kā visur",
-  "hint.romOpts": "<b>Del / Y</b> opcijas"
+  "hint.romOpts": "<b>Del / Y</b> opcijas",
+  "roms.discSub": "Diskdzinī",
+  "player.dvd.game": "Spēles disks ({system}), palaid to no spēļu saraksta"
 }

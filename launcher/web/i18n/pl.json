@@ -1342,5 +1342,7 @@
   "emuopt.v.medium": "Średni",
   "emuopt.v.large": "Duży",
   "emuopt.v.inherit": "Jak wszędzie",
-  "hint.romOpts": "<b>Del / Y</b> opcje"
+  "hint.romOpts": "<b>Del / Y</b> opcje",
+  "roms.discSub": "W napędzie",
+  "player.dvd.game": "Płyta z grą ({system}), uruchom ją z listy gier"
 }

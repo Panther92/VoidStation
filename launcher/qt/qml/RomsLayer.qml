@@ -9,7 +9,10 @@ Layer {
     track: trk
     property var tile: null
     property var romData: null
-    readonly property var roms: romData ? (Array.isArray(romData) ? romData : (romData.roms || [])) : []
+    readonly property var files: romData ? (Array.isArray(romData) ? romData : (romData.roms || [])) : []
+    readonly property var disc: romData && romData.disc ? romData.disc : null    // PlayStation-Disc im Laufwerk (launcher.py DvdDrive)
+    readonly property var roms: disc ? [{ disc: true, dev: disc.dev, filename: disc.name, title: disc.label || sysName,
+                                          size: [Ui.t("roms.discSub"), disc.serial].filter(Boolean).join(" · "), noOpts: !disc.opts }].concat(files) : files
     readonly property string sysName: tile ? (Ui.l(tile.label) || tile.id) : ""
     readonly property bool gameOpts: !!romData && romData.gameOpts === true
     readonly property var fit: Ui.fitRows(stage.height - 18 * Ui.f * 1.36 - 14 * Ui.f - 4, Ui.u, Ui.gap, 3)
@@ -33,7 +36,7 @@ Layer {
         return t.replace(/\\/g, "\u2060\\\u2060")         // Pfad \\host\share\ROMs\psx\bios nicht umbrechen
     }
     // Y auf einem Spiel: Optionen nur fuer dieses Spiel (Bildformat, bei DOS Tempo und Soundkarte)
-    function secondary() { if (gameOpts && Nav.current && Nav.current.rom) emuopts.openFor(tile, Nav.current.rom) }
+    function secondary() { if (gameOpts && Nav.current && Nav.current.rom && !Nav.current.rom.noOpts) emuopts.openFor(tile, Nav.current.rom) }
     function focusFirst() { Qt.callLater(function () { var it = Nav.collect(trk); app.setFocus(it.length ? it[0] : startEmu, true) }) }
     function firstFocus() { var it = Nav.collect(trk); return it.length ? it[0] : startEmu }
     // Spiel starten: Liste zu (zurueck auf der Startseite steht die Kachel als laufend da), Startbild wie bei
@@ -42,12 +45,26 @@ Layer {
         var t = tile
         app.closeLayer(rl)
         app.showSplash(t)
-        Api.post("/api/roms/launch", { system: t.id, file: r.filename, folder: r.folder || r.system || "" },
+        Api.post("/api/roms/launch", r.disc ? { system: t.id, disc: r.dev } : { system: t.id, file: r.filename, folder: r.folder || r.system || "" },
                  function (res) { if (res && res.running) app.running = res.running },
                  function () { app.hideSplash(); app.toast(Ui.t("home.launchFailed", { name: r.title || r.name }), true) })
     }
 
-    headRight: NowLine { main: rl.sysName; sub: Ui.t("roms.count", { count: rl.roms.length }) }
+    // Laufwerk beobachten, solange die Liste offen ist (fragt nur den Zustand ab, die Disc laeuft dabei nicht an)
+    Timer {
+        interval: 3000; repeat: true
+        running: rl.open && !!rl.romData && rl.romData.discDrive === true
+        onTriggered: {
+            var t = rl.tile
+            Api.get("/api/roms/disc?system=" + encodeURIComponent(t.id), function (j) {
+                if (rl.tile !== t || !rl.romData || !rl.open) return
+                if (JSON.stringify(j.disc || null) === JSON.stringify(rl.romData.disc || null)) return
+                var d = Object.assign({}, rl.romData); d.disc = j.disc; rl.romData = d
+                Qt.callLater(function () { if (rl.open && !keymap.open && !emuopts.open && !Nav.alive(Nav.current, rl)) rl.focusFirst() })
+            }, function () {})
+        }
+    }
+    headRight: NowLine { main: rl.sysName; sub: Ui.t("roms.count", { count: rl.files.length }) }
     bar: [
         Pill { id: startEmu; text: Ui.t("roms.startEmu"); onTriggered: { var t = rl.tile; app.closeLayer(rl); app.launch(t) } },
         // Tastenbelegung des Emulators (KeymapLayer) – nur fuer Emulatoren, die VoidStation belegen kann
@@ -70,7 +87,7 @@ Layer {
         }
         Group {
             visible: rl.roms.length > 0
-            title: Ui.t("roms.count", { count: rl.roms.length })
+            title: Ui.t("roms.count", { count: rl.files.length })
             TileGrid {
                 items: rl.roms
                 rows: rl.fit.n
@@ -109,7 +126,7 @@ Layer {
                         }
                         Glyph {
                             visible: !card.hasCover
-                            name: rl.tile ? (rl.tile.icon || "gamepad") : "gamepad"
+                            name: modelData.disc ? "disc" : (rl.tile ? (rl.tile.icon || "gamepad") : "gamepad")
                             color: Ui.c.textPrimary
                             opacity: 0.22
                             width: parent.width * 0.44; height: parent.height * 0.44
@@ -118,7 +135,7 @@ Layer {
                         // Maus: Optionen des Spiels (Controller/Tastatur: Y bzw. F)
                         Focusable {
                             navigable: false
-                            visible: rl.gameOpts && card.focused
+                            visible: rl.gameOpts && card.focused && !modelData.noOpts
                             width: Math.min(34 * Ui.f, card.height * 0.42); height: width
                             anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 6 * Ui.f
                             onTriggered: emuopts.openFor(rl.tile, card.rom)

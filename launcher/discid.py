@@ -5,6 +5,7 @@ Damit findet VoidStation die Spiel-Einstellungen von DuckStation und PCSX2. Beid
   PCSX2 (CDVD/CDVD.cpp):          BOOT2 aus SYSTEM.CNF ->  dieselbe Umformung, dazu die CRC der ELF-Datei
                                   (Elfheader.cpp: XOR ueber alle 32-Bit-Woerter)
 Komprimierte Abbilder (.chd, .cso, .gz, .pbp) gehen hier nicht: None, der Launcher nimmt dann seinen Rueckfall.
+Geht auch fuer ein Laufwerk (/dev/sr0): identify() sagt, ob eine PlayStation-Disc darin liegt.
 Wird nur bei Bedarf geladen, das spart dem Launcher Speicher."""
 import re
 import struct
@@ -38,12 +39,16 @@ def _image_of(path):
 class Disc:
     def __init__(self, path):
         self.f = open(_image_of(path), "rb")
-        self.size, self.off = next((s for s in LAYOUTS if self._probe(*s)), (0, 0))
-        if not self.size:
+        try:                                             # Audio-CD im Laufwerk: Lesefehler (OSError)
+            self.size, self.off = next((s for s in LAYOUTS if self._probe(*s)), (0, 0))
+            if not self.size:
+                raise ValueError("kein ISO9660")
+            pvd = self.read(16, SECTOR)
+        except (OSError, ValueError):
             self.close()
-            raise ValueError("kein ISO9660")
-        pvd = self.read(16, SECTOR)
+            raise
         self.root = struct.unpack_from("<I", pvd, 158)[0], struct.unpack_from("<I", pvd, 166)[0]
+        self.label = pvd[40:72].decode("latin-1").strip()
 
     def _probe(self, size, off):
         self.f.seek(16 * size + off)
@@ -117,6 +122,41 @@ def _serial(boot):
     return serial if re.fullmatch(r"[A-Z0-9-]+", serial) else None
 
 
+def _ps2_crc(disc, boot):
+    m = re.match(r"cdrom0?:[\\/]*(.+)", boot)
+    if not m:
+        return None
+    elf = disc.file(re.split(r"[\\/]+", m.group(1).split(";")[0]))
+    crc = 0
+    for (word,) in struct.iter_unpack("<I", elf[:len(elf) & ~3]):
+        crc ^= word
+    return crc or None
+
+
+def identify(path):
+    """Was liegt im Laufwerk bzw. Abbild? -> {"kind": "ps1"|"ps2", "serial", "crc", "label"} oder None (kein PlayStation-Spiel)."""
+    try:
+        d = Disc(path)
+    except (OSError, ValueError, struct.error, IndexError):
+        return None
+    try:
+        cnf = _cnf(d)
+        boot2 = cnf.get("BOOT2", "")
+        if boot2:
+            serial = _serial(boot2)
+            try:
+                crc = _ps2_crc(d, boot2) if serial else None
+            except (OSError, ValueError, struct.error, IndexError):
+                crc = None
+            return {"kind": "ps2", "serial": serial, "crc": crc, "label": d.label}
+        boot = next((v for k, v in cnf.items() if k.lower() == "boot"), "")
+        return {"kind": "ps1", "serial": _serial(boot), "crc": None, "label": d.label} if boot else None
+    except (OSError, ValueError, struct.error, IndexError):
+        return None
+    finally:
+        d.close()
+
+
 def psx_serial(path):
     """Seriennummer fuer DuckStation oder None."""
     try:
@@ -141,13 +181,7 @@ def ps2_id(path):
     try:
         boot = _cnf(d).get("BOOT2", "")
         serial = _serial(boot) if boot else None
-        m = re.match(r"cdrom0?:[\\/]*(.+)", boot)
-        if not serial or not m:
-            return None
-        elf = d.file(re.split(r"[\\/]+", m.group(1).split(";")[0]))
-        crc = 0
-        for (word,) in struct.iter_unpack("<I", elf[:len(elf) & ~3]):
-            crc ^= word
+        crc = _ps2_crc(d, boot) if serial else None
         return (serial, crc) if crc else None
     except (OSError, ValueError, struct.error, IndexError):
         return None

@@ -1343,5 +1343,7 @@
   "emuopt.v.medium": "Medio",
   "emuopt.v.large": "Grande",
   "emuopt.v.inherit": "Come ovunque",
-  "hint.romOpts": "<b>Canc / Y</b> opzioni"
+  "hint.romOpts": "<b>Canc / Y</b> opzioni",
+  "roms.discSub": "Nell’unità",
+  "player.dvd.game": "Disco di gioco ({system}), si avvia dall’elenco dei giochi"
 }

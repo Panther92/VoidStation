@@ -1342,5 +1342,7 @@
   "emuopt.v.medium": "Moyenne",
   "emuopt.v.large": "Grande",
   "emuopt.v.inherit": "Comme partout",
-  "hint.romOpts": "<b>Suppr / Y</b> options"
+  "hint.romOpts": "<b>Suppr / Y</b> options",
+  "roms.discSub": "Dans le lecteur",
+  "player.dvd.game": "Disque de jeu ({system}), à lancer depuis la liste des jeux"
 }

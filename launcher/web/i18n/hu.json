@@ -1344,5 +1344,7 @@
   "emuopt.v.medium": "Közepes",
   "emuopt.v.large": "Nagy",
   "emuopt.v.inherit": "Mint mindenhol",
-  "hint.romOpts": "<b>Del / Y</b> beállítások"
+  "hint.romOpts": "<b>Del / Y</b> beállítások",
+  "roms.discSub": "A meghajtóban",
+  "player.dvd.game": "Játéklemez ({system}), a játéklistából indítható"
 }

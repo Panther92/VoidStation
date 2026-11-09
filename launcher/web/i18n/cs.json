@@ -1342,5 +1342,7 @@
   "emuopt.v.medium": "Střední",
   "emuopt.v.large": "Velký",
   "emuopt.v.inherit": "Jako všude",
-  "hint.romOpts": "<b>Del / Y</b> možnosti"
+  "hint.romOpts": "<b>Del / Y</b> možnosti",
+  "roms.discSub": "V mechanice",
+  "player.dvd.game": "Herní disk ({system}), spustíš ho ze seznamu her"
 }

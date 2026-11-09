@@ -1344,5 +1344,7 @@
   "emuopt.v.medium": "Μεσαία",
   "emuopt.v.large": "Μεγάλη",
   "emuopt.v.inherit": "Όπως παντού",
-  "hint.romOpts": "<b>Del / Y</b> επιλογές"
+  "hint.romOpts": "<b>Del / Y</b> επιλογές",
+  "roms.discSub": "Στη μονάδα",
+  "player.dvd.game": "Δίσκος παιχνιδιού ({system}), ξεκινά από τη λίστα παιχνιδιών"
 }

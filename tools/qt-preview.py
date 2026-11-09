@@ -71,6 +71,9 @@ KEYMAP = {"own": {}, "step": 0, "nopad": os.environ.get("VS_NO_PAD") == "1"}
 # Optionen der Spieleliste (Attrappe; die echten stehen in launcher.py EMU_OPTS)
 EMUOPTS = {"res": "2", "aspect": "Auto", "widescreen": "false", "renderer": "auto", "speed": "std"}
 EMUOPTS_GAME = {}
+# VS_GAME_DISC=1: Spieleliste mit eingelegter PlayStation-Disc
+PREVIEW_DISC = {"dev": "/dev/sr0", "name": "sr0", "label": "Beispielspiel", "serial": "SLUS-20946", "opts": True} \
+    if os.environ.get("VS_GAME_DISC") == "1" else None
 EMUOPT_TF = [{"v": "true", "k": "common.on"}, {"v": "false", "k": "common.off"}]
 EMUOPT_LIST = [("picture", [
     ("res", False, [{"v": "1", "k": "emuopt.v.original"}, {"v": "2", "t": "2\u00d7"}, {"v": "3", "t": "3\u00d7"}, {"v": "4", "t": "4\u00d7"}]),
@@ -455,11 +458,12 @@ class H(S.H):
                                         "active": any(l["type"] == "wifi" and l["connected"] for l in S.SETTINGS["net"]["links"])},
                                        {"ssid": "iPhone von Paul", "signal": 58, "secure": True, "known": True, "active": False},
                                        {"ssid": "Nachbar", "signal": 31, "secure": True, "known": False, "active": False}],
+            "/api/roms/disc": lambda: {"disc": PREVIEW_DISC},
             "/api/keymap": lambda: keymap_payload(q.get("emu", ["gba"])[0]),
             "/api/emuopts": lambda: emuopts_payload(q.get("emu", ["gba"])[0], q.get("game", [""])[0]),
             "/api/roms": lambda: {"system": q.get("system", ["gba"])[0], "count": len(ROMS), "roms": ROMS,
                                   "keymap": q.get("system", ["gba"])[0] in EMU_LAYOUTS,
-                                  "opts": True, "gameOpts": True,
+                                  "opts": True, "gameOpts": True, "discDrive": True, "disc": PREVIEW_DISC,
                                   "bios": None if q.get("system", ["gba"])[0] not in BIOS_NEED else
                                   {"ok": True, "missing": []} if os.environ.get("VS_BIOS_OK") == "1" else
                                   {"ok": False, "missing": BIOS_NEED[q.get("system", ["gba"])[0]]}},

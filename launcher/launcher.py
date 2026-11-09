@@ -2845,11 +2845,22 @@ class DvdDrive:
         self.cache = {}                                  # geraet -> {"key": (status, groesse), "info": ..., "busy": bool}
 
     @staticmethod
-    def devices():
-        return sorted(str(p) for p in Path("/dev").glob("sr[0-9]*"))
+    def _test_disc():
+        """Zum Ausprobieren ohne Spiele-Disc: Steht in <BASE>/test-disc der Pfad eines Abbilds, gilt es als eingelegt."""
+        try:
+            p = (BASE / "test-disc").read_text(encoding="utf-8").strip()
+            return p if p and Path(p).is_file() else ""
+        except OSError:
+            return ""
+
+    @classmethod
+    def devices(cls):
+        return ([p] if (p := cls._test_disc()) else []) + sorted(str(p) for p in Path("/dev").glob("sr[0-9]*"))
 
     def _status(self, dev):
         import fcntl
+        if not dev.startswith("/dev/"):
+            return self.CDS_DISC_OK
         try:
             fd = os.open(dev, os.O_RDONLY | os.O_NONBLOCK)
         except OSError:
@@ -2864,6 +2875,8 @@ class DvdDrive:
     @staticmethod
     def _size(dev):
         try:
+            if not dev.startswith("/dev/"):
+                return Path(dev).stat().st_size
             return int(Path(f"/sys/block/{Path(dev).name}/size").read_text().strip() or 0)
         except (OSError, ValueError):
             return 0
@@ -2893,7 +2906,12 @@ class DvdDrive:
     def _scan(self, dev, key):
         info = None
         exe = shutil.which("lsdvd")
-        if exe:
+        import discid                                    # nur bei Bedarf, spart dem Launcher Speicher
+        game = discid.identify(dev)                      # PlayStation-Spiel statt Film?
+        if game:
+            log(f"Laufwerk {dev}: {game['kind']}, {game['serial']}")
+            info = {"label": game["label"], "titles": [], "longest": 0, "game": game}
+        elif exe:
             r = run([exe, "-Ox", "-v", "-a", "-c", "-s", dev], timeout=90)
             if r and r.stdout.strip():
                 info = self.parse(r.stdout)
@@ -2923,9 +2941,31 @@ class DvdDrive:
                     c = self.cache[dev] = {"key": key, "info": None, "busy": True}
                     threading.Thread(target=self._scan, args=(dev, key), daemon=True).start()
                 info = c["info"]
+            game = (info or {}).get("game")
             out.append({"dev": dev, "label": (info or {}).get("label", ""), "ready": info is not None,
-                        "n": len(self.shown(info)) if info else 0})
+                        "n": len(self.shown(info)) if info else 0, "game": game["kind"] if game else ""})
         return out
+
+    def game(self, dev):
+        """Eingelesene PlayStation-Disc in diesem Laufwerk -> {"kind", "serial", "crc", "label"} oder None."""
+        self.discs()
+        with self.lock:
+            c = self.cache.get(dev)
+            return (c["info"] or {}).get("game") if c else None
+
+    def game_for(self, tile):
+        """Disc, die zu dieser Kachel passt (fuer die Spieleliste) -> {"dev", "name", "label", "serial", "opts"} oder None."""
+        kind = {"duckstation": "ps1", "pcsx2": "ps2"}.get(tile)
+        for d in self.discs() if kind else []:
+            if d["game"] != kind:
+                continue
+            g = self.game(d["dev"]) or {}
+            label = g.get("label", "")
+            if re.match(r"[A-Z]{4}[_-]?\d", label):       # Volumename ist nur die Seriennummer
+                label = ""
+            return {"dev": d["dev"], "name": os.path.basename(d["dev"]), "label": label.replace("_", " ").strip(),
+                    "serial": g.get("serial") or "", "opts": bool(g.get("serial") and (kind == "ps1" or g.get("crc")))}
+        return None
 
     def shown(self, info):
         t = [x for x in (info or {}).get("titles", []) if x["length"] >= self.MIN_TITLE]
@@ -2963,6 +3003,9 @@ class DvdDrive:
             raise ValueError("kein Laufwerk")
         with self.lock:
             self.cache.pop(dev, None)
+        if not dev.startswith("/dev/"):                  # Testdatei (s. _test_disc): "auswerfen" = Eintrag weg
+            (BASE / "test-disc").unlink(missing_ok=True)
+            return True
         r = run(["eject", dev], timeout=20)
         return bool(r and r.returncode == 0)
 
@@ -3508,7 +3551,7 @@ class MediaLib:
             out.append({"kind": "drive", "path": d, "title": os.path.basename(d), "thumb": ""})
         for d in DVD.discs():                          # eingelegte DVD (Titel liest der Launcher im Hintergrund)
             out.append({"kind": "dvd", "path": "dvd:" + d["dev"], "title": d["label"], "ready": d["ready"], "n": d["n"],
-                        "thumb": ""})
+                        "game": d["game"], "thumb": ""})
         res = self.resume_load()
         cont = []
         for path, r in sorted(res.items(), key=lambda kv: -kv[1].get("t", 0)):
@@ -7030,6 +7073,22 @@ class ROMManager:
         if not cmd:
             raise ValueError(f"Kein Emulator fuer {canon} konfiguriert")
 
+        return self._start(system, tid, cmd)
+
+    def launch_disc(self, system, dev):
+        """PlayStation-Disc aus dem Laufwerk starten. PCSX2 will -disc, DuckStation nimmt das Geraet wie eine Datei."""
+        disc = DVD.game_for(system)
+        if not disc or disc["dev"] != dev:
+            raise ValueError("Keine passende Disc im Laufwerk")
+        canon = self.canonical_system(system)
+        tid = self.SYSTEM_TO_TILE.get(canon, canon)
+        extra = ["-disc", dev] if canon == "ps2" and dev.startswith("/dev/") else [dev]
+        for src in (find_tile(system), find_tile(tid), catalog_app(system), catalog_app(tid)):
+            if src and isinstance(src.get("cmd"), list):
+                return self._start(system, tid, expand(src["cmd"]) + extra)
+        raise ValueError(f"Kein Emulator fuer {canon} konfiguriert")
+
+    def _start(self, system, tid, cmd):
         # Unter der Kennung der Kachel starten (frueher "rom_<system>"): Nur so kennt die Startseite das Spiel als
         # laufend – Kachel holt es zurueck, Y bzw. die heisse Ecke beenden es –, und ein zweites Spiel startet
         # keine weitere, dann nicht mehr erreichbare Instanz.
@@ -9658,6 +9717,7 @@ def emu_games_save(d):
 
 
 _DISC_LOCK = threading.Lock()
+_DISC_NAME = re.compile(r"sr\d+")
 PCSX2_WS_PATCH = "Widescreen 16:9"               # Patch.cpp WS_PATCH_NAME
 
 
@@ -9705,6 +9765,11 @@ def emu_game_ini(tile, game):
     """Die Spiel-Einstellungen des Emulators selbst fuer dieses Spiel (Pfad, muss noch nicht da sein) oder None."""
     if tile not in ("pcsx2", "duckstation"):
         return None
+    if _DISC_NAME.fullmatch(os.path.basename(str(game))):     # Disc im Laufwerk (nie aus dem Merkzettel: anderes Geraet, andere Disc)
+        g = DVD.game("/dev/" + os.path.basename(str(game))) or {}
+        if tile == "pcsx2":
+            return _game_ini_path(tile, [g["serial"], g["crc"]]) if g.get("kind") == "ps2" and g.get("serial") and g.get("crc") else None
+        return _game_ini_path(tile, g["serial"]) if g.get("kind") == "ps1" and g.get("serial") else None
     path = Path(game)
     if not path.is_absolute():
         path = emu_rom_path(tile, game)
@@ -9714,8 +9779,10 @@ def emu_game_ini(tile, game):
     if tile == "duckstation" and re.search(r"(disc|disk|cd)\s*[2-9]", path.name, re.I):
         return None
     got = _disc_id(tile, path)
-    if not got:
-        return None
+    return _game_ini_path(tile, got) if got else None
+
+
+def _game_ini_path(tile, got):
     if tile == "pcsx2":
         return _game_settings_dir(PCSX2_INI, PCSX2_INI.parent.parent) / f"{got[0]}_{got[1]:08X}.ini"
     return _game_settings_dir(DUCK_INI, DUCK_INI.parent) / f"{got}.ini"
@@ -9934,6 +10001,8 @@ def emu_opts_set(tile, oid, value, game=None):
                 _game_sync(tile, name, native)
                 _game_ini_write(tile, opt, native, value)
             return emu_opts_payload(tile, name)
+        if _DISC_NAME.fullmatch(name):
+            raise ValueError("Diese Disc hat keine Seriennummer")
         with EMU_LOCK:
             d = emu_games_load()
             own = d.setdefault(tile, {}).setdefault(name, {})
@@ -10188,7 +10257,8 @@ def emu_prepare(tid, args):
         if share not in args:
             args = ["flatpak", "run", share] + list(args[2:])
     # Nur mit Spiel (aus der Spieleliste): "Emulator ohne Spiel starten" bleibt im Fenster, dort will man die Menues
-    game = len(args) > 1 and Path(str(args[-1])).suffix.lower() in {e for x in ROMS.EXTENSIONS.values() for e in x}
+    game = len(args) > 1 and (Path(str(args[-1])).suffix.lower() in {e for x in ROMS.EXTENSIONS.values() for e in x}
+                              or str(args[-1]).startswith("/dev/sr"))
     if game and emu_fullscreen_wanted(tid):
         spec = EMU_FULLSCREEN_TILE.get(tid) if (flat or kind == tid) else None
         spec = spec or EMU_FULLSCREEN.get(kind)
@@ -12350,7 +12420,11 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, {"system": ROMS.canonical_system(system), "folders": ROMS.folders(system),
                                     "count": len(roms), "roms": roms, "keymap": system in EMU_LAYOUTS,
                                     "bios": bios_status(system),
-                                    "opts": system in EMU_OPTS, "gameOpts": emu_opts_has_game(system)})
+                                    "opts": system in EMU_OPTS, "gameOpts": emu_opts_has_game(system),
+                                    "disc": DVD.game_for(system),
+                                    "discDrive": system in ("duckstation", "pcsx2") and bool(DVD.devices())})
+        if path == "/api/roms/disc":               # Spieleliste: Disc eingelegt/entnommen?
+            return self._json(200, {"disc": DVD.game_for(urllib.parse.parse_qs(url.query).get("system", [""])[0])})
         if path == "/api/emuopts":                 # Optionen eines Emulators bzw. eines Spiels (&game=<datei>)
             qs = urllib.parse.parse_qs(url.query)
             try:
@@ -12710,7 +12784,7 @@ class Handler(BaseHTTPRequestHandler):
                 filename = str(b.get("file") or b.get("filename") or b.get("path") or "")
                 folder = str(b.get("folder") or "") or None
                 try:
-                    res = ROMS.launch(sys_id, filename, folder)
+                    res = ROMS.launch_disc(sys_id, str(b["disc"])) if b.get("disc") else ROMS.launch(sys_id, filename, folder)
                     return self._json(200, {"result": res, "running": APPS.running()})
                 except OSError as e:          # Emulator nicht installiert
                     return self._json(400, {"error": f"Emulator nicht gefunden: {e.filename or e}"})

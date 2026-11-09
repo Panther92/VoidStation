@@ -1155,5 +1155,7 @@
   "emuopt.v.medium": "Mittel",
   "emuopt.v.large": "Groß",
   "emuopt.v.inherit": "Wie überall",
-  "hint.romOpts": "<b>Entf / Y</b> Optionen"
+  "hint.romOpts": "<b>Entf / Y</b> Optionen",
+  "roms.discSub": "Im Laufwerk",
+  "player.dvd.game": "Spiele-Disc ({system}), startet über die Spieleliste"
 }

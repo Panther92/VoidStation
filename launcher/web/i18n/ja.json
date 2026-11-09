@@ -1344,5 +1344,7 @@
   "emuopt.v.medium": "中",
   "emuopt.v.large": "大",
   "emuopt.v.inherit": "全体と同じ",
-  "hint.romOpts": "<b>Del / Y</b> オプション"
+  "hint.romOpts": "<b>Del / Y</b> オプション",
+  "roms.discSub": "ドライブ内",
+  "player.dvd.game": "ゲームディスク（{system}）: ゲーム一覧から起動します"
 }

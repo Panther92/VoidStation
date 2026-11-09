@@ -93,7 +93,8 @@ Item {
             if (it.kind === "drive" && !it.title) o.title = Ui.t("player.media.drive")
             if (it.kind === "dvd") {
                 o.title = it.title || Ui.t("player.dvd")
-                o.sub = it.ready ? Ui.t("player.dvd.titles", { n: it.n }) : Ui.t("player.dvd.reading")
+                o.sub = it.game ? Ui.t("player.dvd.game", { system: it.game === "ps2" ? "PlayStation 2" : "PlayStation" })
+                                : it.ready ? Ui.t("player.dvd.titles", { n: it.n }) : Ui.t("player.dvd.reading")
             }
             if (it.kind === "dvdtitle") {
                 o.title = Ui.t("player.dvd.title", { n: it.ix })
