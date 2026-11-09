@@ -114,6 +114,8 @@ Rectangle {
                                      rowFits ? (height * 0.7 - topH - labelH - foot.height) / 1.3
                                              : height * 0.78 - topH - foot.height))
     readonly property real smallSize: heroSize * 0.3
+    readonly property real cellW: Math.max(smallSize * 1.5, 100 * Ui.f)     // Breite je Programm samt Name
+    readonly property real cellInset: (cellW - smallSize) / 2                // erste kleine Kachel steht buendig am Rand
     // Schrift neben der Kachel waechst nicht ueber deren Hoehe hinaus (grosse Skalierung auf kleinem Bildschirm)
     readonly property real textK: Math.min(1, heroSize / (125 * Ui.f))
 
@@ -225,9 +227,9 @@ Rectangle {
     // ------------------------------------------------------------ Alle Programme der Reihe nach
     ListView {
         id: row
-        x: us.margin
+        x: us.margin - us.cellInset
         y: hero.y + hero.height + us.height * 0.05
-        width: Math.min(contentWidth, us.width - 2 * us.margin)
+        width: Math.min(contentWidth, us.width - 2 * us.margin + 2 * us.cellInset)
         height: us.smallSize + us.labelH
         orientation: ListView.Horizontal
         interactive: false
@@ -242,12 +244,13 @@ Rectangle {
         delegate: Column {
             required property var modelData
             required property int index
-            width: Math.max(us.smallSize * 1.5, 100 * Ui.f)
+            width: us.cellW
             spacing: 6 * Ui.f
             readonly property bool waiting: modelData.state === "wait"
             Rectangle {
                 width: us.smallSize
                 height: width
+                anchors.horizontalCenter: parent.horizontalCenter
                 color: waiting ? "transparent" : modelData.state === "fail" ? "#7a2f2f" : modelData.color
                 border.width: modelData.state === "run" ? Math.max(2, Math.round(2 * Ui.f)) : waiting ? 1 : 0
                 border.color: modelData.state === "run" ? Ui.c.tileText : Qt.rgba(1, 1, 1, 0.28)
@@ -262,6 +265,7 @@ Rectangle {
             }
             Txt {
                 width: parent.width
+                horizontalAlignment: Text.AlignHCenter
                 text: us.itemName(modelData)
                 font.pixelSize: 12 * Ui.f
                 color: waiting ? Ui.c.tileSub : Ui.c.tileText
