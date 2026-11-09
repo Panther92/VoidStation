@@ -240,9 +240,23 @@ def job():
                        **{"from": "0.12.1", "to": "0.13.0"})
             for i, x in enumerate(JOB["steps"]):
                 x["state"] = "done" if t >= 2.5 + 1.5 * i else "run" if t >= 1 + 1.5 * i else "wait"
+            items = [{"id": "system", "icon": "cube", "color": "#2f5578", "n": 12}, {"id": "app:spotify", "name": "Spotify", "icon": "music", "color": "#1e4a2e"},
+                     {"id": "app:heroic", "name": "Heroic Games Launcher", "icon": "gamepad", "color": "#3b2d5c"},
+                     {"id": "vs", "name": "VoidStation", "icon": "update", "color": "#1f6470"}, {"id": "check", "icon": "search", "color": "#50575f"}]
+            spans = [(1, 2), (2, 4.5), (4.5, 5.5), (5.5, 6.5), (6.5, 7)]
+            JOB["items"] = [dict(it, state="done" if t >= b else "run" if t >= a else "wait") for it, (a, b) in zip(items, spans)]
+            JOB.pop("progress", None)
+            JOB.pop("detail", None)
+            if 2 <= t < 4.0:
+                f = (t - 2) / 2
+                JOB["progress"] = {"mb": round(151 * f, 1), "total_mb": 151.0, "pct": int(f * 100), "speed": 212000,
+                                   "eta": int((1 - f) * 720) + 3}
+            elif 4.0 <= t < 4.5:
+                JOB["detail"] = "unpack"
         if t >= 7:
             if mode == "fail":
                 JOB["steps"][2]["state"] = "fail"
+                JOB["items"][3]["state"] = "fail"
             JOB.update(state="error" if mode == "fail" else "done", reboot=mode != "fail", result={"done": ["voidstation"], "kernel": False})
         JOB["log"] = [f"Zeile {k}" for k in range(int(t * 10))][-60:]
         JOB["n"] = len(JOB["log"])

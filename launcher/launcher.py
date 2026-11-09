@@ -5010,6 +5010,7 @@ class Jobs:
     def __init__(self):
         self.lock = threading.Lock()
         self.job = None
+        self._rate = None
         self._logf = None
 
     def current(self):
@@ -5018,6 +5019,7 @@ class Jobs:
                 return None
             j = dict(self.job)
             j["steps"] = [dict(x) for x in self.job.get("steps") or []]
+            j["items"] = [dict(x) for x in self.job.get("items") or []]
             return j
 
     def _log(self, line):
@@ -5054,16 +5056,40 @@ class Jobs:
             return next((x["state"] for x in self.job.get("steps") or [] if x["id"] == sid), None)
 
     def _progress(self, done=None, total=0):
-        """Download-Fortschritt fuer das Band der Oberflaeche: {"mb", "total_mb", "pct"} – statt Protokollzeilen
-        "… 10 %" je Zehntel. None = fertig (der Wert verschwindet)."""
+        """Download-Fortschritt fuer die Oberflaeche: {"mb", "total_mb", "pct", "speed" (Byte/s), "eta" (s)} – statt
+        Protokollzeilen "… 10 %" je Zehntel. None = fertig (der Wert verschwindet)."""
+        now = time.monotonic()
         with self.lock:
             if not self.job:
                 return
             if done is None:
                 self.job.pop("progress", None)
-            else:
-                self.job["progress"] = {"mb": round(done / 1048576, 1), "total_mb": round(total / 1048576, 1) if total else 0,
-                                        "pct": min(100, done * 100 // total) if total else None}
+                self._rate = None
+                return
+            r = self._rate
+            if r is None or done < r["done"]:
+                r = self._rate = {"t": now, "done": done, "speed": 0.0}
+            elif now - r["t"] >= 0.3:                   # geglaettet: Mobilfunk liefert in Schueben
+                inst = (done - r["done"]) / (now - r["t"])
+                r.update(t=now, done=done, speed=inst if not r["speed"] else 0.85 * r["speed"] + 0.15 * inst)
+            speed = r["speed"]
+            self.job["progress"] = {"mb": round(done / 1048576, 1), "total_mb": round(total / 1048576, 1) if total else 0,
+                                    "pct": min(100, done * 100 // total) if total else None, "speed": int(speed),
+                                    "eta": int((total - done) / speed) if total and speed > 1024 else None}
+
+    def _item(self, iid, state):
+        """Zustand einer Kachel des Update-Bildschirms (wait/run/done/fail)."""
+        with self.lock:
+            for x in self.job.get("items") or []:
+                if x["id"] == iid:
+                    x["state"] = state
+            self.job.pop("detail", None)
+
+    def _detail(self, what):
+        """Was das laufende Programm gerade tut, wenn es kein Download ist ("unpack")."""
+        with self.lock:
+            if self.job:
+                self.job["detail"] = what
 
     def _marker(self, m):
         if m == "verified" and self._step_state("load") == "run":
@@ -5174,28 +5200,56 @@ class Jobs:
             steps += [{"id": "load", "state": "wait"}, {"id": "setup", "state": "wait"}]
         if steps:                                       # Paketlisten und App-Versionen neu abfragen: dauert, soll sichtbar sein
             steps.append({"id": "check", "state": "wait"})
+        # Eine Kachel je Programm fuer den Update-Bildschirm, in der Farbe seiner Kachel auf der Startseite
+        items = []
+        if s["pkgs"] or s["error"]:
+            items.append({"id": "system", "icon": "cube", "color": "#2f5578", "n": len(s["pkgs"]), "state": "wait"})
+        if flat:
+            items.append({"id": "flatpak", "icon": "store", "color": "#4a4580", "n": len(s["flatpak"]), "state": "wait"})
+        for app in imgs:
+            tile = app.get("tile") or {}
+            items.append({"id": "app:" + app["id"], "name": app["name"], "icon": tile.get("icon") or "store",
+                          "color": tile.get("color") or "#47505a", "state": "wait"})
+        if s["proton"]:
+            items.append({"id": "proton", "name": "Proton-GE", "icon": "gamepad", "color": "#3b2d5c", "state": "wait"})
+        if vs["available"]:
+            items.append({"id": "vs", "name": "VoidStation", "icon": "update", "color": "#1f6470", "state": "wait"})
+        if steps:
+            items.append({"id": "check", "icon": "search", "color": "#50575f", "state": "wait"})
         with self.lock:
-            self.job.update(steps=steps, **({"from": vs["local"], "to": vs["remote"]} if vs["available"] else {}))
+            self.job.update(steps=steps, items=items, **({"from": vs["local"], "to": vs["remote"]} if vs["available"] else {}))
         if apps:
             self._step("apps", "run")
             ok_apps = True
             if s["pkgs"] or s["error"]:
                 self._log(f"== Void-Pakete: {len(s['pkgs'])} ==")
+                self._item("system", "run")
                 if self._run(["sudo", "-n", PKG_HELPER, "update"]) == 0:
                     done.append("system")
+                    self._item("system", "done")
                 else:
                     ok_apps = False
+                    self._item("system", "fail")
             else:
                 self._log("Void-Pakete: aktuell")
             if flat:
                 self._log(f"== Flatpak: {len(s['flatpak'])} ==")
-                ok_apps = self._run(["flatpak", "update", "--user", "-y", "--noninteractive"]) == 0 and ok_apps
+                self._item("flatpak", "run")
+                res = self._run(["flatpak", "update", "--user", "-y", "--noninteractive"]) == 0
+                self._item("flatpak", "done" if res else "fail")
+                ok_apps = res and ok_apps
             for app in imgs:
                 self._log(f"== {app['name']} ({'Wechsel vom Flatpak' if legacy_flatpak(app) else 'Download'}) ==")
-                ok_apps = self._appimage(app) and ok_apps
+                self._item("app:" + app["id"], "run")
+                res = self._appimage(app)
+                self._item("app:" + app["id"], "done" if res else "fail")
+                ok_apps = res and ok_apps
             if s["proton"]:
                 self._log(f"== Proton-GE {s['proton']} ==")
-                ok_apps = self._proton_ge() and ok_apps
+                self._item("proton", "run")
+                res = self._proton_ge()
+                self._item("proton", "done" if res else "fail")
+                ok_apps = res and ok_apps
             self._step("apps", "done" if ok_apps else "fail")
             ok = ok_apps
         else:
@@ -5203,21 +5257,26 @@ class Jobs:
         if vs["available"]:
             self._log(f"== VoidStation {vs['remote']} ==")
             self._step("load", "run")
+            self._item("vs", "run")
             if self._selfupdate():
                 self._step("load", "done")           # falls die Steuerzeile fehlte
                 self._step("setup", "done")
+                self._item("vs", "done")
                 done.append("voidstation")
             else:
                 self._step("load" if self._step_state("load") == "run" else "setup", "fail")
+                self._item("vs", "fail")
                 ok = False
         else:
             self._log("VoidStation: aktuell")
         if steps:                                       # sonst wurde gerade erst geprueft und nichts geaendert
             self._log("Prüfe Stand …")
             self._step("check", "run")
+            self._item("check", "run")
             _sys_check(sync=True)
             vs_update_status(force=True)
             self._step("check", "done")
+            self._item("check", "done")
         rb = reboot_needed()
         return ok, {"done": done, "kernel": rb["kernel"]}, rb["kernel"] or rb["voidstation"] or "voidstation" in done
 
@@ -5328,22 +5387,28 @@ class Jobs:
             req = urllib.request.Request(assets[tar_name], headers=UA)
             with urllib.request.urlopen(req, timeout=60) as r, open(tmp, "wb") as f:
                 total = int(r.headers.get("Content-Length") or 0)
-                done, last = 0, 0
+                done, last, shown = 0, 0, 0.0
+                self._progress(0, total)
                 while True:
-                    chunk = r.read(1 << 20)
+                    chunk = r.read(1 << 18)
                     if not chunk:
                         break
                     f.write(chunk)
                     h.update(chunk)
                     done += len(chunk)
+                    if time.monotonic() - shown >= 0.5:
+                        shown = time.monotonic()
+                        self._progress(done, total)
                     if total and done * 10 // total > last:
                         last = done * 10 // total
                         self._log(f"… {last * 10} %")
+            self._progress(None)
             if h.hexdigest() != want:
                 tmp.unlink(missing_ok=True)
                 self._log("Proton-GE: Pruefsumme stimmt nicht – verworfen")
                 return False
             self._log("Pruefsumme ok, entpacke …")
+            self._detail("unpack")
             with tarfile.open(tmp) as t:
                 tops = sorted({m.name.split("/", 1)[0] for m in t.getmembers() if m.name and not m.name.startswith("/")})
                 kw = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
@@ -5448,6 +5513,7 @@ class Jobs:
         shutil.rmtree(work, ignore_errors=True)
         work.mkdir()
         self._log("Entpacke …")
+        self._detail("unpack")
         try:
             root = extract_app(dl, fmt, work, int(s.get("strip", 0)))
             if fmt != "appimage":
