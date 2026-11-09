@@ -295,6 +295,7 @@ class Gamepad:
         return None
 
     def __init__(self):
+        self.devs = {}             # pfad -> (geraet, achsen-info, tastenbelegung)
         self.state = {}            # (geraet, taste) -> gedrueckt
         self.lock = threading.Lock()
         self.names = []            # neu erkannte Controller (fuer die Meldung)
@@ -310,6 +311,17 @@ class Gamepad:
             log("python3-evdev fehlt – Gamepad aus")
             return
         threading.Thread(target=self._run, daemon=True).start()
+
+    def grab(self, on):
+        """Controller exklusiv nehmen (heisse Ecke offen): Das Spiel bekommt die Eingaben solange nicht."""
+        for dev, *_ in list(self.devs.values()):
+            try:
+                if on:
+                    dev.grab()
+                else:
+                    dev.ungrab()
+            except OSError:
+                pass
 
     def pressed(self):
         with self.lock:
@@ -353,7 +365,7 @@ class Gamepad:
         import evdev
         from evdev import ecodes as E
         sel = selectors.DefaultSelector()
-        known = {}                 # pfad -> (geraet, achsen-info)
+        known = self.devs
         last = 0.0
         while True:
             if time.monotonic() - last > 3:

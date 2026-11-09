@@ -8,7 +8,8 @@ hotfixes to it `## 2026.11.1 – …`. New changes go first under `## Testing �
 at the top; `vspub --release` or `vspub --hotfix` assigns the number when releasing (see `RELEASING.md`).
 Older versions (up to 0.15.0) still use the old numbering.
 
-## Testing – 2026-11-08
+## Testing – 2026-11-09
+- Background music: While music or radio plays and a game or app is in front, a new hot corner at the top left offers previous, track info (click to pause) and next; the mouse wheel only changes the music volume. Both hot corners can now also be used with the D-pad and arrow keys.
 - Raising and closing windows and checking the active window now go directly through X11 instead of external helper programs, which mainly lightens the load of the controller mouse.
 - For low-memory PCs: `sudo voidstation-zram on` enables compressed swap in RAM (for testing for now, off by default).
 - TV, radio, AppCenter: The start page now removes the tiles when you close them and frees the memory instead of keeping it until the next restart.

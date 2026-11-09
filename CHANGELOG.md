@@ -8,7 +8,8 @@ Hotfixes dazu `## 2026.11.1 – …`. Neues kommt zuerst unter `## Testing – <
 ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freigeben (siehe `RELEASING.md`).
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
-## Testing – 2026-11-08
+## Testing – 2026-11-09
+- Musik im Hintergrund: Läuft Musik oder Radio und ist ein Spiel oder Programm vorn, gibt es oben links eine Heiße Ecke mit Titel zurück, Titelanzeige (Klick = Pause) und Titel vor, das Mausrad regelt nur die Musik. Beide Heißen Ecken lassen sich jetzt auch mit Steuerkreuz und Pfeiltasten bedienen.
 - Fenster nach vorn holen, schließen und das aktive Fenster abfragen laufen jetzt direkt über X11 statt über externe Hilfsprogramme, das entlastet vor allem die Controller-Maus.
 - Für Rechner mit wenig RAM: `sudo voidstation-zram on` schaltet komprimierten Auslagerungsspeicher im RAM ein (vorerst zum Ausprobieren, standardmäßig aus).
 - Fernsehen, Radio, AppCenter: Die Startseite baut die Kacheln beim Schließen ab und gibt den Speicher zurück, statt ihn bis zum Neustart zu behalten.

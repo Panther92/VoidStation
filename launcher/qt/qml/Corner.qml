@@ -33,6 +33,22 @@ Window {
     signal goHome()
     signal closeFront(var t)
 
+    property int sel: -1                      // mit Steuerkreuz/Pfeiltasten gewaehlter Knopf (-1: noch keiner)
+    readonly property var buttons: front ? ["home", "close"] : ["home"]
+    function act(name) {
+        // erst ausloesen, dann zu: Schliessen baut sonst diesen Knopf ab, solange der Klick noch laeuft
+        if (name === "home") goHome()
+        else closeFront(front)
+        close(name === "home" ? "Startseite gewaehlt" : "App schliessen gewaehlt")
+    }
+    function navKey(k) {
+        awayMs = 0
+        if (k === "left") sel = 0
+        else if (k === "right") sel = buttons.length - 1
+        else if (k === "a") act(buttons[Math.max(0, sel)])
+        else if (k === "b") close("Taste B")
+    }
+
     // right / bottom: rechte und untere Kante (letztes Pixel) des Bildschirms, auf dem der Zeiger steht
     function openAt(right, bottom) {
         if (asking && Date.now() - askT0 < 3000) return    // Antwort steht noch aus (nach 3 s neu fragen)
@@ -46,6 +62,7 @@ Window {
     function place(right, bottom, t) {
         asking = false
         front = t
+        sel = -1
         rightX = right
         bottomY = bottom
         cw.x = right - gap - cw.width + 1
@@ -76,7 +93,7 @@ Window {
         x: cw.pad
         y: cw.pad
         Repeater {
-            model: cw.front ? ["home", "close"] : ["home"]  // Startseite zuerst, daneben (an der Ecke) App schliessen
+            model: cw.buttons                               // Startseite zuerst, daneben (an der Ecke) App schliessen
             Item {
                 width: btn.width + (index > 0 ? sep.width : 0)
                 height: btn.height
@@ -94,7 +111,7 @@ Window {
                     x: index > 0 ? sep.width : 0
                     width: content.width + 2 * 16 * Ui.f
                     height: 48 * Ui.f
-                    color: ma.containsMouse ? Qt.rgba(1, 1, 1, ma.pressed ? 0.24 : 0.14) : "transparent"
+                    color: ma.containsMouse || cw.sel === index ? Qt.rgba(1, 1, 1, ma.pressed ? 0.24 : 0.14) : "transparent"
                     Row {
                         id: content
                         anchors.centerIn: parent
@@ -119,12 +136,7 @@ Window {
                         anchors.fill: parent
                         hoverEnabled: true
                         cursorShape: Qt.PointingHandCursor
-                        // erst ausloesen, dann zu: Schliessen baut sonst diesen Knopf ab, solange der Klick noch laeuft
-                        onClicked: {
-                            if (modelData === "home") cw.goHome()
-                            else cw.closeFront(cw.front)
-                            cw.close(modelData === "home" ? "Startseite gewaehlt" : "App schliessen gewaehlt")
-                        }
+                        onClicked: cw.act(modelData)
                     }
                 }
             }

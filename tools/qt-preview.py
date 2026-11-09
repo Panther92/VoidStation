@@ -47,6 +47,7 @@ def bt_devices():
 def bt_status():
     return {"available": True, "service": True, "powered": STATE["bt_powered"], "scanning": False,
             "pairing": BT["pairing"], "prompt": BT["prompt"], "blocked": False, "devices": bt_devices()}
+NOWP = {"kind": "music", "title": "Beispieltitel", "sub": "Beispielband", "paused": False, "volume": 80, "skip": True}
 STATE = {"running": ["youtube"], "radio": S.RADIO_NOW, "tv": None, "favs": list(S.RADIO_FAVS), "tvfavs": list(S.TV_FAVS),
          "volume": dict(S.SETTINGS["volume"]), "bt_powered": True, "update": {"available": True, "version": "0.13.0"}}
 STATIONS = [{"name": f"Testsender {i}", "url": f"https://example.invalid/s{i}", "favicon": ""} for i in range(1, 15)]
@@ -389,6 +390,7 @@ class H(S.H):
             "/api/front": lambda: {"id": st["running"][0] if st["running"] else None, "mouse": True,
                                    "padmouse": STATE.get("padmouse", True)},
             "/api/volume": lambda: st["volume"],
+            "/api/nowplaying": lambda: NOWP,
             "/api/settings": settings,
             "/api/radio/favs": lambda: st["favs"],
             "/api/radio/search": lambda: STATIONS,
@@ -504,6 +506,16 @@ class H(S.H):
         n = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(n) or b"{}") if n else {}
         st = STATE
+        if p == "/api/nowplaying/control":          # heisse Ecke oben links
+            a = body.get("action")
+            print("[vorschau] Musik:", a, flush=True)
+            if a == "toggle":
+                NOWP["paused"] = not NOWP["paused"]
+            elif a in ("up", "down"):
+                NOWP["volume"] = max(0, min(100, NOWP["volume"] + (5 if a == "up" else -5)))
+            elif a in ("prev", "next"):
+                NOWP["title"] = "Titel nach " + a
+            return self.j(NOWP)
         if p == "/api/selfupdate/channel":         # wie launcher.py: nur noch zurueck zu Stable
             if body.get("channel") == "stable":
                 UPD["channel"] = "stable"

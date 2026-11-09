@@ -90,6 +90,7 @@ class PadMouse:
         self.r3_prev = False
         self.last_on = True
         self.btn = {"left": False, "right": False}
+        self.paused = False        # heisse Ecke offen: Controller bedient die Ecke, nicht die Maus
         # Tasten, die schon gedrueckt waren, bevor die Maus zustaendig wurde (z. B. A zum Starten der Kachel):
         # zaehlen erst nach dem Loslassen, sonst klickte der Start gleich ins Programm
         self.held_off = set()
@@ -158,6 +159,9 @@ class PadMouse:
     def step(self, st, now, dt):
         """Ein Takt: Zustand der Sticks/Tasten -> Mausereignisse. Rueckgabe: ob etwas geschrieben wurde."""
         from evdev import ecodes as E
+        if self.paused:
+            self.release()
+            return False
         busy = (abs(st["rx"]) > self.DEAD or abs(st["ry"]) > self.DEAD or abs(st["ly"]) > self.SCROLL_DEAD
                 or st["r3"] or st["a"] or st["b"] or any(self.btn.values()))
         held = {k for k in ("a", "b") if st[k]}
@@ -232,6 +236,8 @@ class PadMouse:
 class Vs(VsBase):
     """Bruecke der Startseite: dazu Controller-Maus-Hinweis, heisse Ecke, Zeitzonen (Installer), Neustart."""
     padMouse = Signal(bool)                     # Controller-Maus per R3 an/aus (Hinweis ueber dem Programm)
+    corner_on = False                           # heisse Ecke offen
+    key_timer = None
 
     @Slot(str, result=str)
     def tzTime(self, tz):
@@ -261,17 +267,15 @@ class Vs(VsBase):
             return True                                  # unklar: lieber kein Feld ueber der Startseite
         return act in {int(w.winId()) for w in QGuiApplication.topLevelWindows()}
 
-    @Slot(result="QVariantList")
-    def cornerHit(self):
-        """Heisse Ecke: Steht der Mauszeiger unten rechts auf einem Bildschirm? Dann [rechte Kante, untere
-        Kante] dieses Bildschirms, sonst []. Fragt die Position beim X-Server ab, geht also auch, wenn ein
-        anderes Programm vorn ist.
+    @staticmethod
+    def _corner(top_left):
+        """Steht der Mauszeiger in der Ecke eines Bildschirms? Dann [g, True], sonst [g, False] bzw. None.
 
         Getroffen ist die Ecke, wenn der Zeiger
-          - am unteren Rand liegt und nicht weiter als `reach` von der rechten Kante weg ist, oder
-          - am rechten Rand liegt und nicht weiter als `reach` von der unteren Kante weg ist, oder
+          - am waagerechten Rand liegt und nicht weiter als `reach` von der senkrechten Kante weg ist, oder
+          - am senkrechten Rand liegt und nicht weiter als `reach` von der waagerechten Kante weg ist, oder
           - in einem kleinen Quadrat (`core`) direkt in der Ecke steht.
-        Am Rand bleibt der Zeiger von selbst haengen – man muss also nur grob nach unten rechts schieben, nicht
+        Am Rand bleibt der Zeiger von selbst haengen – man muss also nur grob in die Ecke schieben, nicht
         genau das letzte Pixel treffen. Die Streifen liegen nur auf der aeussersten Pixelreihe (`edge`), dort
         liegen keine Player-Knoepfe (Vollbild & Co. sitzen ein Stueck vom Rand weg); das Quadrat bleibt
         deshalb klein. Alle Masse haengen an der kurzen Bildschirmseite (720p, 1080p und 4K gleich gross
@@ -279,7 +283,7 @@ class Vs(VsBase):
         pos = QCursor.pos()
         scr = QGuiApplication.screenAt(pos)
         if scr is None:
-            return []
+            return None
         g = scr.geometry()
         short = max(1, min(g.width(), g.height()))
         try:
@@ -289,13 +293,47 @@ class Vs(VsBase):
         reach = short * max(0.0, min(pct, 50.0)) / 100      # 720p: 86 px · 1080p: 130 px · 2160p: 259 px
         edge = max(2, round(short * 0.004))                  # 720p: 3 px · 1080p: 4 px · 2160p: 9 px
         core = max(edge, round(short * 0.015))               # 720p: 11 px · 1080p: 16 px · 2160p: 32 px
-        dx = g.right() - pos.x()                             # Abstand zur rechten Kante (0 = letztes Pixel)
-        dy = g.bottom() - pos.y()                            # Abstand zur unteren Kante
+        dx = pos.x() - g.left() if top_left else g.right() - pos.x()
+        dy = pos.y() - g.top() if top_left else g.bottom() - pos.y()
         if dx < 0 or dy < 0:
-            return []
-        if (dx < core and dy < core) or (dy < edge and dx <= reach) or (dx < edge and dy <= reach):
-            return [g.right(), g.bottom()]
-        return []
+            return [g, False]
+        return [g, bool((dx < core and dy < core) or (dy < edge and dx <= reach) or (dx < edge and dy <= reach))]
+
+    @Slot(result="QVariantList")
+    def cornerHit(self):
+        """Heisse Ecke unten rechts: [rechte Kante, untere Kante] des Bildschirms oder [] (Anfrage beim X-Server,
+        geht also auch, wenn ein anderes Programm vorn ist)."""
+        c = self._corner(False)
+        return [c[0].right(), c[0].bottom()] if c and c[1] else []
+
+    @Slot(result="QVariantList")
+    def musicHit(self):
+        """Heisse Ecke oben links (Musik): [linke Kante, obere Kante] des Bildschirms oder []."""
+        c = self._corner(True)
+        return [c[0].left(), c[0].top()] if c and c[1] else []
+
+    @Slot(bool)
+    def cornerInput(self, on):
+        """Eine heisse Ecke ist auf bzw. zu: Solange sie offen ist, bedienen Steuerkreuz und Pfeiltasten die Ecke.
+        Weil sie keinen Fokus nimmt, kommen die Eingaben direkt vom Geraet bzw. X-Server."""
+        if on == self.corner_on:
+            return
+        self.corner_on = on
+        self.pad.grab(on)
+        self.mouse.paused = on
+        vsx11.grab_keys(on)
+        if self.key_timer is None:
+            self.key_timer = QTimer(self)
+            self.key_timer.setInterval(30)
+            self.key_timer.timeout.connect(self._corner_keys)
+        if on:
+            self.key_timer.start()
+        else:
+            self.key_timer.stop()
+
+    def _corner_keys(self):
+        for k in vsx11.poll_keys():
+            self.padKey.emit(k)
 
     @Slot(result="QVariantList")
     def cursorScreen(self):
@@ -326,7 +364,7 @@ def main():
             break
     vs = Vs()
     vs.pad = Gamepad()
-    pump = PadPump(vs.pad)
+    pump = PadPump(vs.pad, active=lambda: QGuiApplication.focusWindow() is not None or vs.corner_on)
     vs.attach_pump(pump)
     vs.mouse = PadMouse(vs.pad, vs.padMouse.emit)
 

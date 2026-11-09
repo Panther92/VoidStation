@@ -11,7 +11,7 @@ import ctypes
 import re
 import subprocess
 import threading
-from ctypes import POINTER, Structure, Union, byref, c_char_p, c_int, c_long, c_ubyte, c_ulong, c_void_p
+from ctypes import POINTER, Structure, Union, byref, c_char_p, c_int, c_long, c_ubyte, c_uint, c_ulong, c_void_p
 
 _lock = threading.RLock()
 _x = None
@@ -27,8 +27,14 @@ class _ClientMessage(Structure):
                 ("message_type", c_ulong), ("format", c_int), ("l", c_long * 5)]
 
 
+class _KeyEvent(Structure):
+    _fields_ = [("type", c_int), ("serial", c_ulong), ("send_event", c_int), ("display", c_void_p), ("window", c_ulong), ("root", c_ulong),
+                ("subwindow", c_ulong), ("time", c_ulong), ("x", c_int), ("y", c_int), ("x_root", c_int), ("y_root", c_int),
+                ("state", c_uint), ("keycode", c_uint), ("same_screen", c_int)]
+
+
 class _XEvent(Union):
-    _fields_ = [("xclient", _ClientMessage), ("pad", c_long * 24)]
+    _fields_ = [("xclient", _ClientMessage), ("xkey", _KeyEvent), ("pad", c_long * 24)]
 
 
 # Ohne eigenen Handler beendet Xlib den ganzen Prozess, sobald ein Fenster zwischendurch verschwunden ist (BadWindow)
@@ -56,6 +62,11 @@ def _open():
         x.XMapRaised.restype, x.XMapRaised.argtypes = c_int, [c_void_p, c_ulong]
         x.XSync.restype, x.XSync.argtypes = c_int, [c_void_p, c_int]
         x.XSetErrorHandler.restype, x.XSetErrorHandler.argtypes = c_void_p, [c_void_p]
+        x.XKeysymToKeycode.restype, x.XKeysymToKeycode.argtypes = c_ubyte, [c_void_p, c_ulong]
+        x.XGrabKey.restype, x.XGrabKey.argtypes = c_int, [c_void_p, c_int, c_uint, c_ulong, c_int, c_int, c_int]
+        x.XUngrabKey.restype, x.XUngrabKey.argtypes = c_int, [c_void_p, c_int, c_uint, c_ulong]
+        x.XPending.restype, x.XPending.argtypes = c_int, [c_void_p]
+        x.XNextEvent.restype, x.XNextEvent.argtypes = c_int, [c_void_p, POINTER(_XEvent)]
         dpy = x.XOpenDisplay(None)
     except (OSError, AttributeError):
         return False
@@ -234,3 +245,42 @@ def wm_state(win, action, *props):
             _send(w, "_NET_WM_STATE", {"remove": 0, "add": 1, "toggle": 2}[action], atom[0], atom[1])
             return
     _tool("wmctrl", "-i", "-r", hex(w), "-b", ",".join((action,) + props))
+
+
+# Pfeiltasten, Enter und Esc fuer die heissen Ecken. Die Ecken duerfen keinen Fokus nehmen (Vollbild-Spiele minimieren sich
+# sonst), deshalb holt sich die Startseite die Tasten direkt vom X-Server, solange eine Ecke offen ist.
+_KEYSYMS = {0xff51: "left", 0xff52: "up", 0xff53: "right", 0xff54: "down", 0xff0d: "a", 0xff8d: "a", 0xff1b: "b"}
+_MODS = (0, 0x02, 0x10, 0x12)                    # auch mit Feststelltaste und NumLock
+_grabbed = {}
+
+
+def grab_keys(on):
+    """Tasten der Ecken vom X-Server holen (das Programm vorn bekommt sie solange nicht) bzw. wieder freigeben."""
+    with _Session() as ok:
+        if not ok:
+            return
+        if on and not _grabbed:
+            for sym, name in _KEYSYMS.items():
+                code = _x.XKeysymToKeycode(_dpy, sym)
+                if code:
+                    _grabbed[code] = name
+                    for m in _MODS:
+                        _x.XGrabKey(_dpy, code, m, _root, 0, 1, 1)
+        elif not on and _grabbed:
+            for code in _grabbed:
+                for m in _MODS:
+                    _x.XUngrabKey(_dpy, code, m, _root)
+            _grabbed.clear()
+
+
+def poll_keys():
+    """Seit dem letzten Aufruf gedrueckte Tasten als Namen wie am Controller: left, right, up, down, a, b."""
+    out = []
+    with _Session() as ok:
+        if ok:
+            while _x.XPending(_dpy) > 0:
+                ev = _XEvent()
+                _x.XNextEvent(_dpy, byref(ev))
+                if ev.xkey.type == 2 and ev.xkey.keycode in _grabbed:      # KeyPress
+                    out.append(_grabbed[ev.xkey.keycode])
+    return out

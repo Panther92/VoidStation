@@ -553,6 +553,60 @@ MEDIA_NOW = {}                                         # was "Videos & Musik" ge
 # ---------------------------------------------------------------------------
 #  Radio (mpv im Hintergrund)
 # ---------------------------------------------------------------------------
+def music_volume():
+    """Eigener Regler fuer Musik und Radio (0–100), der Spielton und die Systemlautstaerke bleiben, wie sie sind."""
+    try:
+        return max(0, min(100, int(settings_load().get("music_volume", 100))))
+    except (TypeError, ValueError):
+        return 100
+
+
+def now_playing():
+    """Was laeuft gerade im Hintergrund (heisse Ecke oben links)? kind: "radio", "music" oder leer."""
+    vol = music_volume()
+    r = RADIO.status()
+    st = r.get("station")
+    if st:
+        t = r.get("title")
+        favs = [f.get("url") for f in favs_load()]
+        return {"kind": "radio", "title": t or st.get("name", ""), "sub": st.get("name", "") if t else "", "paused": RADIO.paused(),
+                "volume": vol, "skip": len(favs) > (1 if st.get("url") in favs else 0)}
+    if "media" in APPS.running() and MEDIA_NOW.get("kind") == "audio" and MEDIA_NOW.get("title"):
+        return {"kind": "music", "title": MEDIA_NOW["title"], "sub": MEDIA_NOW.get("sub", ""), "paused": bool(MEDIA_NOW.get("paused")),
+                "volume": vol, "skip": True}
+    return {"kind": ""}
+
+
+def now_control(action):
+    """Bedienung aus der heissen Ecke: prev, next, toggle, up, down (Lautstaerke der Musik, in 5er-Schritten)."""
+    cur = now_playing()
+    kind = cur.get("kind")
+    if not kind:
+        return cur
+    if action in ("up", "down"):
+        vol = max(0, min(100, cur["volume"] + (5 if action == "up" else -5)))
+        s = settings_load()
+        s["music_volume"] = vol
+        settings_save(s)
+        if kind == "radio":
+            RADIO.set_volume(vol)
+        else:
+            PLAYERS.send("media", {"cmd": "control", "action": "volume", "value": vol})
+    elif kind == "music" and action in ("prev", "next", "toggle"):
+        PLAYERS.send("media", {"cmd": "control", "action": action})
+        time.sleep(0.15)                            # der Player meldet den neuen Stand selbst
+    elif action == "toggle":
+        RADIO.toggle()
+    elif action in ("prev", "next"):                # Radio: durch die Favoriten
+        favs = favs_load()
+        url = (RADIO.status().get("station") or {}).get("url")
+        i = next((n for n, f in enumerate(favs) if f.get("url") == url), None)
+        if favs:
+            step = 1 if action == "next" else -1
+            RADIO.play(favs[(0 if step > 0 else -1) if i is None else (i + step) % len(favs)])
+    return now_playing()
+
+
 class Radio:
     def __init__(self):
         self.lock = threading.Lock()
@@ -587,7 +641,7 @@ class Radio:
         self.stop()
         log("Radio:", station.get("name"), url)
         proc = subprocess.Popen(
-            ["mpv", "--no-video", "--no-terminal", "--idle=no", "--cache=yes",
+            ["mpv", "--no-video", "--no-terminal", "--idle=no", "--cache=yes", f"--volume={music_volume()}",
              f"--input-ipc-server={MPV_SOCK}", url],
             stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
             start_new_session=True)
@@ -606,6 +660,15 @@ class Radio:
                     os.killpg(proc.pid, signal.SIGKILL)
                 except ProcessLookupError:
                     pass
+
+    def paused(self):
+        return self._ipc(["get_property", "pause"]) is True
+
+    def toggle(self):
+        self._ipc(["cycle", "pause"])
+
+    def set_volume(self, vol):
+        self._ipc(["set_property", "volume", vol])
 
     def status(self):
         with self.lock:
@@ -6508,7 +6571,7 @@ def settings_payload():
                        "themes": [{"id": t, "label": CURSOR_NAMES[t]} for t in cursor_themes()],
                        "sizes": CURSOR_SIZES}, "displays": xrandr_info(),
             "audio": audio_info(), "volume": volume_get(), "net": net_info(), "share": share_info(),
-            "sysupd_days": sysupd_days(s), "sysupd_choices": SYSUPD_DAYS,
+            "sysupd_days": sysupd_days(s), "sysupd_choices": SYSUPD_DAYS, "music_volume": music_volume(),
             "frontend": frontend(), "frontends": frontends(), "padmouse": bool(s.get("padmouse", True)),
             "rate": s.get("rate"), "match_rate": bool(s.get("match_rate")), "region": region(s)}
 
@@ -11560,6 +11623,8 @@ class Handler(BaseHTTPRequestHandler):
             tid = APPS.front()
             return self._json(200, {"id": tid, "mouse": pad_mouse_default(tid),
                                     "padmouse": bool(settings_load().get("padmouse", True))})
+        if path == "/api/nowplaying":              # heisse Ecke oben links
+            return self._json(200, now_playing())
         if path == "/api/status":
             running = APPS.running()
             return self._json(200, {"running": running, "starting": APPS.starting(), "radio": RADIO.status(),
@@ -11745,6 +11810,8 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "home"]:
                 raise_home()
                 return self._json(200, {"running": APPS.running()})
+            if parts == ["api", "nowplaying", "control"]:
+                return self._json(200, now_control(str(self._body().get("action", ""))))
             if parts == ["api", "radio", "play"]:
                 RADIO.play(self._body())
                 return self._json(200, RADIO.status())
@@ -11819,6 +11886,7 @@ class Handler(BaseHTTPRequestHandler):
                 MEDIA_NOW.clear()
                 if b.get("title"):
                     MEDIA_NOW.update({k: str(b.get(k) or "")[:120] for k in ("title", "sub", "kind")})
+                    MEDIA_NOW["paused"] = bool(b.get("paused"))
                 return self._json(200, {"ok": True})
             if parts == ["api", "media", "resume"]:
                 b = self._body()

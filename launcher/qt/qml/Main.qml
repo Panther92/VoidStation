@@ -16,7 +16,7 @@ Window {
     flags: Qt.Window | Qt.FramelessWindowHint
     color: Ui.c.bgMain
     onActiveChanged: {
-        if (active) { corner.close(); app.forceActiveFocus(); app.poll() }
+        if (active) { corner.close(); music.close(); app.forceActiveFocus(); app.poll() }
         else if (app.splashTile) hideSplashLater.restart()     // Programm hat ein Fenster: Startbildschirm weg
     }
     Timer { id: hideSplashLater; interval: 400; onTriggered: if (!win.active) app.hideSplash() }
@@ -263,6 +263,8 @@ Window {
         Connections {
             target: vs
             function onPadKey(k) {
+                if (music.visible) return music.navKey(k)
+                if (corner.visible) return corner.navKey(k)
                 if (updScreen.shown) { if (k === "b") updScreen.toBackground(); return }
                 if (app.layerName === "osk") return osk.pad(k)
                 if (app.layerRoot.padFilter && app.layerRoot.padFilter(k)) return
@@ -418,6 +420,13 @@ Window {
         // als Flatpak). Haelt Qt sich fuer aktiv, fragt vs.homeInFront() den X-Server – nur bei Zeiger in der
         // Ecke, und steht dort wirklich die Startseite, erst nach 2 s wieder.
         // Entscheidungen stehen als „Ecke: …“ in logs/home.log.
+        // Nach dem Schliessen (B, Esc, Auswahl) erst wieder oeffnen, wenn der Zeiger die Ecke einmal verlassen hat
+        property bool cornerArmed: true
+        property bool musicArmed: true
+        property int musicHits: 0
+        property real musicQuietUntil: 0
+        readonly property bool cornerOpen: corner.visible || music.visible
+        onCornerOpenChanged: vs.cornerInput(cornerOpen)
         property int cornerHits: 0
         property real cornerQuietUntil: 0
         Timer {
@@ -428,8 +437,8 @@ Window {
             onRunningChanged: app.cornerHits = 0
             onTriggered: {
                 var p = vs.cornerHit()
-                if (!p.length) { app.cornerHits = 0; return }
-                if (++app.cornerHits < 2 || Date.now() < app.cornerQuietUntil) return
+                if (!p.length) { app.cornerHits = 0; app.cornerArmed = true; return }
+                if (!app.cornerArmed || ++app.cornerHits < 2 || Date.now() < app.cornerQuietUntil) return
                 app.cornerHits = 0
                 if (win.active && vs.homeInFront()) {
                     app.cornerQuietUntil = Date.now() + 2000
@@ -437,6 +446,25 @@ Window {
                 }
                 if (win.active) vs.log("Ecke: Qt meldet die Startseite als aktiv, vorn ist aber ein anderes Fenster")
                 corner.openAt(p[0], p[1])
+            }
+        }
+        // Oben links dasselbe fuer die Musik: Karte nur, wenn Musik oder Radio laeuft (fragt MusicCorner den Launcher)
+        Timer {
+            interval: 150
+            repeat: true
+            running: app.started && !music.visible
+            onRunningChanged: app.musicHits = 0
+            onTriggered: {
+                var p = vs.musicHit()
+                if (!p.length) { app.musicHits = 0; app.musicArmed = true; return }
+                if (!app.musicArmed || ++app.musicHits < 2 || Date.now() < app.musicQuietUntil) return
+                app.musicHits = 0
+                if (win.active && vs.homeInFront()) {
+                    app.musicQuietUntil = Date.now() + 2000
+                    return
+                }
+                app.musicQuietUntil = Date.now() + 1000        // laeuft nichts: nicht bei jedem Takt fragen
+                music.openAt(p[0], p[1])
             }
         }
         function showSplash(t) {
@@ -623,6 +651,11 @@ Window {
             id: corner
             onGoHome: Api.post("/api/home", null, function (r) { app.running = r.running || [] })
             onCloseFront: function (t) { app.closeApp(t) }
+            onVisibleChanged: if (!visible) app.cornerArmed = false
+        }
+        MusicCorner {
+            id: music
+            onVisibleChanged: if (!visible) app.musicArmed = false
         }
         MouseHint { id: mouseHint }
         Osk { id: osk; anchors.fill: parent }

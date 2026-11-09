@@ -56,9 +56,23 @@ Item {
         browser.show()
         if (arg) openArg(arg); else openPath("")
     }
+    // Eigener Regler fuer die Musik (heisse Ecke oben links): gilt nur fuer Musik, Videos bleiben bei 100
+    property int musicVolume: 100
+    function applyVolume() { player.setProp("volume", phase === "audio" ? musicVolume : 100) }
+    onPhaseChanged: applyVolume()
+    Component.onCompleted: Api.get("/api/settings", function (s) {
+        if (s && s.music_volume !== undefined) { musicVolume = s.music_volume; applyVolume() }
+    })
     function remote(m) {
         if (m.cmd === "open" && m.path) return openArg(m.path)
         if (m.cmd === "pause" && phase !== "browse") return player.setPause(true)          // Radio startet
+        if (m.cmd === "control" && phase === "audio") {                                     // heisse Ecke oben links
+            if (m.action === "prev") prevTrack()
+            else if (m.action === "next") nextTrack()
+            else if (m.action === "toggle") player.togglePause()
+            else if (m.action === "volume") { musicVolume = m.value; applyVolume() }
+            return
+        }
         if (m.cmd === "background" && phase === "video" && !st.paused) {                    // Startseite / anderes Programm
             player.setPause(true)
             osdOn = true
@@ -401,9 +415,9 @@ Item {
         var it = curTrackItem, meta = st.meta || {}
         var title = phase === "audio" ? (meta.title || (it ? (it.title || it.name) : "")) : (playing ? (playing.title || playing.name) : "")
         var sub = phase === "audio" ? (meta.artist || meta.album_artist || playFolderName || "") : (st.paused ? Ui.t("player.paused") : "")
-        Api.post("/api/media/now", { title: title, sub: sub, kind: phase })
+        Api.post("/api/media/now", { title: title, sub: sub, kind: phase, paused: !!st.paused })
     }
-    property string nowKey: phase + "|" + (curTrackItem ? curTrackItem.path : "") + "|" + ((st.meta || {}).title || "") + "|" + (phase === "video" ? !!st.paused : "")
+    property string nowKey: phase + "|" + (curTrackItem ? curTrackItem.path : "") + "|" + ((st.meta || {}).title || "") + "|" + !!st.paused
     onNowKeyChanged: nowT.restart()
     Timer { id: nowT; interval: 300; onTriggered: mv.reportNow() }
 
