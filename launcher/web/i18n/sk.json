@@ -1355,5 +1355,7 @@
   "settings.oskMode.always": "Vždy",
   "settings.oskMode.keyboard": "Nie s klávesnicou",
   "settings.oskInfo": "Automaticky: Ak je pripojená klávesnica a píšeš na nej, klávesy zmiznú a zostane len vstupné pole. Keď použiješ ovládač, vrátia sa. „Nie s klávesnicou“ ich skryje, len čo je klávesnica rozpoznaná – prijímače myší sa niekedy hlásia aj ako klávesnica.",
-  "settings.oskFound": "Práve je pripojená klávesnica."
+  "settings.oskFound": "Práve je pripojená klávesnica.",
+  "inst.kb.nl": "Nederlands",
+  "inst.kb.jp": "日本語"
 }

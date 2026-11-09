@@ -1355,5 +1355,7 @@
   "settings.oskMode.always": "Zawsze",
   "settings.oskMode.keyboard": "Nie z klawiaturą",
   "settings.oskInfo": "Automatycznie: jeśli podłączona jest klawiatura i na niej piszesz, klawisze znikają i zostaje tylko pole tekstowe. Gdy użyjesz kontrolera, wracają. „Nie z klawiaturą” ukrywa je, gdy tylko wykryta zostanie klawiatura – odbiorniki myszy czasem też zgłaszają się jako klawiatura.",
-  "settings.oskFound": "Teraz podłączona jest klawiatura."
+  "settings.oskFound": "Teraz podłączona jest klawiatura.",
+  "inst.kb.nl": "Nederlands",
+  "inst.kb.jp": "日本語"
 }

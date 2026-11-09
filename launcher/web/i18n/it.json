@@ -1356,5 +1356,7 @@
   "settings.oskMode.always": "Sempre",
   "settings.oskMode.keyboard": "Non con tastiera",
   "settings.oskInfo": "Automatico: se è collegata una tastiera e ci scrivi, i tasti scompaiono e resta solo il campo di testo. Appena usi il controller, tornano. «Non con tastiera» li nasconde appena viene rilevata una tastiera: i ricevitori dei mouse a volte si presentano anche come tastiera.",
-  "settings.oskFound": "In questo momento è collegata una tastiera."
+  "settings.oskFound": "In questo momento è collegata una tastiera.",
+  "inst.kb.nl": "Nederlands",
+  "inst.kb.jp": "日本語"
 }
