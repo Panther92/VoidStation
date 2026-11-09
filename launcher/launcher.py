@@ -9472,9 +9472,10 @@ def emu_mute_apply(tile):
 # (Void-Paket; glshader gilt in 0.83 weiter, aber als veraltet).
 #
 # "game": auch je Spiel waehlbar. DOSBox: kommt in die Datei, die VoidStation vor jedem Start schreibt. PCSX2/DuckStation:
-# deren eigene Spiel-Einstellungen brauchen Serie und CRC des Spiels, die VoidStation nicht kennt – deshalb gilt der Wert
-# fuer diesen Start in der Haupteinstellung, der alte Wert kommt vor dem naechsten Start bzw. Oeffnen der Optionen zurueck
-# (emu_opts_restore; nur, wo der Nutzer in der Zwischenzeit nichts anderes eingestellt hat).
+# in deren eigene Spiel-Einstellungen (gamesettings/<Seriennummer>…ini, s. emu_game_ini; Seriennummer aus dem Abbild, discid.py).
+# Rueckfall, wo sich das Abbild nicht lesen laesst (.chd, .cso, zweite CD bei DuckStation …): Der Wert gilt fuer diesen Start
+# in der Haupteinstellung, der alte kommt vor dem naechsten Start bzw. Oeffnen der Optionen zurueck (emu_opts_restore; nur, wo
+# der Nutzer in der Zwischenzeit nichts anderes eingestellt hat).
 EMU_GAME_OPTS = Path.home() / ".config/voidstation/emu-games.json"       # {Kachel: {Spieldatei: {Option: Wert}}}
 _OPT_TF = [{"v": "true", "k": "common.on"}, {"v": "false", "k": "common.off"}]
 _OPT_10 = [{"v": "1", "k": "common.on"}, {"v": "0", "k": "common.off"}]
@@ -9656,6 +9657,117 @@ def emu_games_save(d):
     tmp.replace(EMU_GAME_OPTS)
 
 
+_DISC_LOCK = threading.Lock()
+PCSX2_WS_PATCH = "Widescreen 16:9"               # Patch.cpp WS_PATCH_NAME
+
+
+def _game_settings_dir(main_ini, root):
+    """Ordner der Spiel-Einstellungen: [Folders] GameSettings, relativ zum Datenordner (EmuFolders)."""
+    return root / (ini_read(main_ini).get("Folders", {}).get("GameSettings") or "gamesettings")
+
+
+def _disc_id(tile, path):
+    """Seriennummer bzw. (Seriennummer, CRC) eines Abbilds; gemerkt je Datei, Groesse und Zeit. None = nicht lesbar."""
+    cache = Path.home() / ".cache/voidstation/disc-ids.json"
+    try:
+        st = path.stat()
+    except OSError:
+        return None
+    key = f"{tile}|{path}|{st.st_size}|{st.st_mtime_ns}"
+    with _DISC_LOCK:
+        try:
+            known = json.loads(cache.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            known = {}
+        if key in known:
+            return known[key]
+        import discid                                    # nur bei Bedarf, spart dem Launcher Speicher
+        got = discid.ps2_id(path) if tile == "pcsx2" else discid.psx_serial(path)
+        known = {k: v for k, v in known.items() if not k.startswith(f"{tile}|{path}|")}
+        known[key] = got
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cache.with_suffix(".tmp")
+            tmp.write_text(json.dumps(known, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(cache)
+        except OSError as e:
+            log("disc-ids.json:", e)
+    return list(got) if isinstance(got, tuple) else got
+
+
+def emu_rom_path(tile, name):
+    """Spieldatei einer Kachel aus ihrem Namen -> Pfad oder None."""
+    safe = os.path.basename(name)
+    return next((ROMS.rom_dir / f / safe for f in ROMS.folders(tile) if (ROMS.rom_dir / f / safe).is_file()), None)
+
+
+def emu_game_ini(tile, game):
+    """Die Spiel-Einstellungen des Emulators selbst fuer dieses Spiel (Pfad, muss noch nicht da sein) oder None."""
+    if tile not in ("pcsx2", "duckstation"):
+        return None
+    path = Path(game)
+    if not path.is_absolute():
+        path = emu_rom_path(tile, game)
+        if not path:
+            return None
+    # Mehrere CDs: DuckStation nimmt die Datei der ersten CD (System::GetGameSettingsPath), die kennt nur seine Datenbank
+    if tile == "duckstation" and re.search(r"(disc|disk|cd)\s*[2-9]", path.name, re.I):
+        return None
+    got = _disc_id(tile, path)
+    if not got:
+        return None
+    if tile == "pcsx2":
+        return _game_settings_dir(PCSX2_INI, PCSX2_INI.parent.parent) / f"{got[0]}_{got[1]:08X}.ini"
+    return _game_settings_dir(DUCK_INI, DUCK_INI.parent) / f"{got}.ini"
+
+
+def _is_ws_patch(value):
+    return value == PCSX2_WS_PATCH
+
+
+def _game_ini_read(tile, opt, ini):
+    if tile == "pcsx2" and opt["id"] == "widescreen":    # PCSX2 verwirft den Schalter in Spiel-Dateien (ClearInvalidPerGameConfiguration)
+        have = ini_multi_get(ini, "Patches", ["Enable", "Disable"], _is_ws_patch)
+        return "true" if have["Enable"] else "false" if have["Disable"] else None
+    sec = ini_read(ini).get(opt["section"], {})
+    if not any(k in sec for k in opt["keys"]):
+        return None
+    for c in opt["choices"]:
+        if all(_opt_norm(sec.get(k, v)) == _opt_norm(v) for k, v in _opt_writes(opt, c).items()):
+            return c["v"]
+    return None
+
+
+def _game_ini_write(tile, opt, ini, value):
+    """Option in die Spiel-Datei schreiben; None nimmt sie heraus. Andere Eintraege der Datei bleiben, wie sie sind."""
+    if tile == "pcsx2" and opt["id"] == "widescreen":
+        ini_multi_set(ini, "Patches", {"Enable": PCSX2_WS_PATCH if value == "true" else None,
+                                       "Disable": PCSX2_WS_PATCH if value == "false" else None}, _is_ws_patch)
+    elif value is None:
+        ini_update(ini, opt["section"], {}, remove=opt["keys"])
+    else:
+        ini_update(ini, opt["section"], _opt_writes(opt, _opt_choice(opt, value)))
+    try:
+        if not any("=" in line for line in ini.read_text(encoding="utf-8", errors="replace").splitlines()):
+            ini.unlink()                                 # nichts mehr drin: keine leere Datei liegen lassen
+    except OSError:
+        pass
+
+
+def _game_sync(tile, name, ini):
+    """Frueher in VoidStation gemerkte Werte in die Spiel-Datei des Emulators uebernehmen."""
+    d = emu_games_load()
+    own = d.get(tile, {}).pop(name, None)
+    if not own:
+        return
+    idx = _OPT_INDEX[tile]
+    for oid, v in own.items():
+        if oid in idx and idx[oid]["game"] and _opt_choice(idx[oid], v):
+            _game_ini_write(tile, idx[oid], ini, v)
+    emu_games_save(d)
+    log(f"{tile}: Optionen fuer {name} in {ini.name} uebernommen")
+
+
 def emu_opts_game(tile, game):
     """Fuer ein Spiel gewaehlte Optionen {Option: Wert}, nur was es (noch) gibt."""
     idx = _OPT_INDEX.get(tile, {})
@@ -9738,6 +9850,10 @@ def emu_opts_prepare(tid, args):
         emu_mute_apply(tid)
     if not emu_ready(tid):
         return
+    game = str(args[-1]) if len(args) > 1 else ""
+    if tid == "dosbox" or Path(game).suffix.lower() not in {e for x in ROMS.EXTENSIONS.values() for e in x}:
+        game = ""
+    native = emu_game_ini(tid, game) if game else None   # Abbild lesen dauert: nicht unter der Sperre
     with EMU_LOCK:
         st = emu_state_load()
         emu_opts_restore(tid, st)
@@ -9746,8 +9862,9 @@ def emu_opts_prepare(tid, args):
             if opt and _opt_choice(opt, v):
                 _opt_write(tid, opt, v)
         _opts_apply_defaults(tid, st)
-        game = str(args[-1]) if len(args) > 1 else ""
-        if tid != "dosbox" and Path(game).suffix.lower() in {e for x in ROMS.EXTENSIONS.values() for e in x}:
+        if native:
+            _game_sync(tid, os.path.basename(game), native)
+        elif game:
             _opts_apply_game(tid, game, st)
         emu_state_save(st)
 
@@ -9766,6 +9883,7 @@ def emu_opts_payload(tile, game=None):
         raise ValueError("Dieser Emulator hat keine Optionen")
     game = os.path.basename(game) if game else None
     running = bool(APPS._get(tile))
+    native = emu_game_ini(tile, game) if game else None
     with EMU_LOCK:
         st = emu_state_load()
         if not running and emu_ready(tile) and st.get("opt_game", {}).get(tile):
@@ -9773,13 +9891,18 @@ def emu_opts_payload(tile, game=None):
             emu_state_save(st)
         pending = st.get("opt_pending", {}).get(tile, {})
         values, groups = {}, []
-        own = emu_opts_game(tile, game) if game else {}
+        if native:
+            _game_sync(tile, game, native)
+        own = emu_opts_game(tile, game) if game and not native else {}
         for gid, opts in spec["groups"]:
             shown = [o for o in opts if o["game"]] if game else opts
             if not shown:
                 continue
             for o in shown:
-                values[o["id"]] = own.get(o["id"]) if game else pending.get(o["id"], _opt_value(tile, o))
+                if native:
+                    values[o["id"]] = _game_ini_read(tile, o, native)
+                else:
+                    values[o["id"]] = own.get(o["id"]) if game else pending.get(o["id"], _opt_value(tile, o))
             groups.append({"id": gid, "opts": [{"id": o["id"], "choices": [
                 {x: c[x] for x in ("v", "k", "t") if x in c} for c in o["choices"]]} for o in shown]})
         if not game and tile in EMU_MUTE and groups:      # "Spiel stumm": eigener Weg, s. emu_set_mute
@@ -9805,6 +9928,12 @@ def emu_opts_set(tile, oid, value, game=None):
         if not opt["game"]:
             raise ValueError("Diese Option gilt nicht je Spiel")
         name = os.path.basename(game)
+        native = emu_game_ini(tile, name)
+        if native:
+            with EMU_LOCK:
+                _game_sync(tile, name, native)
+                _game_ini_write(tile, opt, native, value)
+            return emu_opts_payload(tile, name)
         with EMU_LOCK:
             d = emu_games_load()
             own = d.setdefault(tile, {}).setdefault(name, {})
