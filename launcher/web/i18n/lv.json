@@ -1345,5 +1345,16 @@
   "emuopt.v.inherit": "Kā visur",
   "hint.romOpts": "<b>Del / Y</b> opcijas",
   "roms.discSub": "Diskdzinī",
-  "player.dvd.game": "Spēles disks ({system}), palaid to no spēļu saraksta"
+  "player.dvd.game": "Spēles disks ({system}), palaid to no spēļu saraksta",
+  "osk.showKeys": "Rādīt taustiņus",
+  "osk.typeHint": "Raksti uz tastatūras · Enter apstiprina, Esc atceļ",
+  "settings.osk": "Ekrāna tastatūra",
+  "settings.oskLayout": "Izkārtojums",
+  "settings.oskAuto": "Kā valoda ({name})",
+  "settings.oskMode": "Rādīt taustiņus",
+  "settings.oskMode.auto": "Automātiski",
+  "settings.oskMode.always": "Vienmēr",
+  "settings.oskMode.keyboard": "Ne ar tastatūru",
+  "settings.oskInfo": "Automātiski: ja pievienota tastatūra un tu raksti uz tās, taustiņi pazūd un paliek tikai ievades lauks. Tiklīdz izmanto kontrolieri, tie atgriežas. “Ne ar tastatūru” tos paslēpj, tiklīdz tiek atpazīta tastatūra – peļu uztvērēji dažreiz arī piesakās kā tastatūra.",
+  "settings.oskFound": "Pašlaik ir pievienota tastatūra."
 }

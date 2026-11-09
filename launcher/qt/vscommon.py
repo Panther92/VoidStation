@@ -13,6 +13,7 @@ import json
 import os
 import re
 import shutil
+import struct
 import sys
 import threading
 import time
@@ -20,7 +21,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-from PySide6.QtCore import Property, QEvent, QObject, QTimer, Signal, Slot
+from PySide6.QtCore import Property, QEvent, QObject, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QFont, QFontDatabase, QGuiApplication
 
 T0 = time.monotonic()
@@ -498,6 +499,45 @@ class PadPump(QObject):
 # ---------------------------------------------------------------------------
 #  Verbindung zur Oberflaeche
 # ---------------------------------------------------------------------------
+# Echte Tastatur? Aus /proc/bus/input/devices (kein Geraet wird geoeffnet): Handler "kbd" und alle Buchstaben,
+# Ziffern-Reihe und Leertaste. Fernbedienungen, Lautstaerke-/Power-Tasten und Controller haben die nicht.
+# Funkempfaenger von Maeusen melden sich oft trotzdem als Tastatur – deshalb blendet die Bildschirmtastatur ihre Tasten
+# in der Einstellung "Automatisch" erst aus, wenn auch wirklich getippt wurde (VsBase.kbdTyping).
+_KBD_KEYS = list(range(2, 12)) + list(range(16, 26)) + list(range(30, 39)) + list(range(44, 51)) + [57]
+_NOT_KEYBOARDS = ("consumer control", "system control", "power button", "sleep button", "video bus", "voidstation")
+
+
+def real_keyboards(text=None):
+    """Namen der angeschlossenen Tastaturen mit Buchstaben."""
+    if text is None:
+        try:
+            text = Path("/proc/bus/input/devices").read_text(errors="replace")
+        except OSError:
+            return []
+    bits = struct.calcsize("l") * 8              # Breite der Woerter in B: KEY= (long des Kernels)
+    out = []
+    for block in text.split("\n\n"):
+        name, handlers, words = "", [], []
+        for line in block.splitlines():
+            if line.startswith("N: Name="):
+                name = line[8:].strip().strip('"')
+            elif line.startswith("H: Handlers="):
+                handlers = line[12:].split()
+            elif line.startswith("B: KEY="):
+                words = line[7:].split()
+        if "kbd" not in handlers or not words or any(w in name.lower() for w in _NOT_KEYBOARDS):
+            continue
+        val = 0
+        try:
+            for w in words:
+                val = (val << bits) | int(w, 16)
+        except ValueError:
+            continue
+        if all(val >> k & 1 for k in _KBD_KEYS):
+            out.append(name)
+    return out
+
+
 class VsBase(QObject):
     """Bruecke zur QML-Oberflaeche (Startseite und Player): Launcher-Aufrufe, Texte, Farben, Symbole."""
     replied = Signal(int, bool, int, str)       # id, ok, HTTP-Status, Antwort (JSON-Text)
@@ -506,6 +546,7 @@ class VsBase(QObject):
     padKey = Signal(str)
     padConnected = Signal(str)
     padStyleChanged = Signal()
+    kbdChanged = Signal()
 
     def __init__(self):
         super().__init__()
@@ -523,6 +564,13 @@ class VsBase(QObject):
         if self._force_style in PAD_STYLES:
             self._pad_style = self._force_style
         self._kbd = False            # zuletzt die Tastatur benutzt: Hinweise wie bisher (Tastatur + Controller)
+        self._kbd_present = False    # echte Tastatur angeschlossen (real_keyboards)
+        self._kbd_typing = False     # zuletzt darauf getippt (Buchstaben, Ziffern …), nicht nur Pfeile/Enter
+        self._kbd_force = os.environ.get("VS_KBD", "")     # Tests: 1 = so tun, als steckte eine Tastatur, 0 = keine
+        self._kbd_timer = QTimer(self)
+        self._kbd_timer.timeout.connect(self._scan_keyboards)
+        self._kbd_timer.start(4000)
+        QTimer.singleShot(0, self._scan_keyboards)
         self._watched = set()
         self._watch = QTimer(self)
         self._watch.timeout.connect(self._watch_windows)
@@ -551,6 +599,9 @@ class VsBase(QObject):
             self.padStyleChanged.emit()
 
     def _pad_used(self, _key):
+        if self._kbd_typing:
+            self._kbd_typing = False
+            self.kbdChanged.emit()
         if self._kbd:
             self._kbd = False
             if self._pad_style:
@@ -564,7 +615,31 @@ class VsBase(QObject):
                 self._watched.add(id(w))
                 w.installEventFilter(self)
 
+    def _scan_keyboards(self):
+        if self._kbd_force in ("0", "1"):
+            found = self._kbd_force == "1"
+        else:
+            found = bool(real_keyboards())
+        if found != self._kbd_present:
+            self._kbd_present = found
+            log("Tastatur", "erkannt" if found else "nicht mehr da")
+            self.kbdChanged.emit()
+
+    def _get_kbd_present(self):
+        return self._kbd_present
+
+    def _get_kbd_typing(self):
+        return self._kbd_typing
+
+    kbdPresent = Property(bool, _get_kbd_present, notify=kbdChanged)
+    kbdTyping = Property(bool, _get_kbd_typing, notify=kbdChanged)
+
     def eventFilter(self, obj, ev):  # noqa: N802 (Qt-Name)
+        if ev.type() == QEvent.KeyPress and not self._kbd_typing and not ev.isAutoRepeat():
+            t = ev.text()
+            if len(t) == 1 and t.isprintable() and not (ev.modifiers() & Qt.ControlModifier):
+                self._kbd_typing = True
+                self.kbdChanged.emit()
         if ev.type() == QEvent.KeyPress and not self._kbd:
             if not ev.isAutoRepeat():
                 self._kbd = True

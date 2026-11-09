@@ -1345,5 +1345,16 @@
   "emuopt.v.inherit": "Como em todos",
   "hint.romOpts": "<b>Del / Y</b> opções",
   "roms.discSub": "Na unidade",
-  "player.dvd.game": "Disco de jogo ({system}), inicie pela lista de jogos"
+  "player.dvd.game": "Disco de jogo ({system}), inicie pela lista de jogos",
+  "osk.showKeys": "Mostrar teclas",
+  "osk.typeHint": "Digite no teclado · Enter confirma, Esc cancela",
+  "settings.osk": "Teclado na tela",
+  "settings.oskLayout": "Layout",
+  "settings.oskAuto": "Conforme o idioma ({name})",
+  "settings.oskMode": "Mostrar teclas",
+  "settings.oskMode.auto": "Automático",
+  "settings.oskMode.always": "Sempre",
+  "settings.oskMode.keyboard": "Não com teclado",
+  "settings.oskInfo": "Automático: se houver um teclado conectado e você digitar nele, as teclas somem e fica só o campo de texto. Assim que você usar o controle, elas voltam. “Não com teclado” as oculta assim que um teclado é detectado – receptores de mouse às vezes também se apresentam como teclado.",
+  "settings.oskFound": "Há um teclado conectado agora."
 }

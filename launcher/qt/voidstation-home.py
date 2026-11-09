@@ -406,6 +406,18 @@ def main():
         from PySide6.QtGui import QKeyEvent
 
         def press(name):                                  # k:Return, k:Escape, k:Left …, t:Text, c:x:y (Mausklick)
+            if name == "osk":                             # Bildschirmtastatur fuer das erste Eingabefeld oeffnen
+                from PySide6.QtCore import Q_ARG, QMetaObject
+                items, todo = [], [win.contentItem()]
+                while todo:
+                    it = todo.pop()
+                    items.append(it)
+                    todo.extend(it.childItems())
+                fld = next((i for i in items if i.metaObject().className().startswith("Field_QMLTYPE")), None)
+                host = next((i for i in items if i.metaObject().indexOfMethod("openOsk(QVariant)") >= 0), None)
+                if fld is not None and host is not None:
+                    QMetaObject.invokeMethod(host, "openOsk", Q_ARG("QVariant", fld))
+                return
             if name.startswith("m:"):                     # m:x:y – Maus nur bewegen
                 from PySide6.QtCore import QPointF
                 from PySide6.QtGui import QMouseEvent
@@ -433,7 +445,7 @@ def main():
             for typ in (QEvent.KeyPress, QEvent.KeyRelease):
                 QGuiApplication.sendEvent(win, QKeyEvent(typ, key, Qt.NoModifier))
         for k in steps:
-            if k.startswith(("k:", "t:", "c:", "m:", "kd:", "ku:")):
+            if k.startswith(("k:", "t:", "c:", "m:", "kd:", "ku:")) or k == "osk":
                 QTimer.singleShot(t, lambda k=k: press(k))
             elif k.startswith("shot:"):
                 QTimer.singleShot(t, lambda f=k[5:]: win.grabWindow().save(f))

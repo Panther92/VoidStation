@@ -3,6 +3,7 @@
 // Neuer Bereich: Eintrag in cats + SetGroup(s) mit visible: s.cat === "<id>" + Zustand in catSub().
 import QtQuick
 import VS
+import "VS/OskLayouts.js" as OskLayouts
 
 Layer {
     id: s
@@ -257,6 +258,10 @@ Layer {
     }
 
     // ---- Sprache, Anzeige, Design, Ton
+    readonly property var oskConf: sett && sett.osk ? sett.osk : ({ choice: "auto", mode: "auto" })
+    function setOsk(b) {
+        Api.post("/api/settings/osk", b, function (j) { update(function () { sett = j; app.sett = j }) }, fail)
+    }
     function setLang(l) {
         if (l === Ui.lang) return
         Api.post("/api/settings/lang", { lang: l }, function () {
@@ -563,6 +568,32 @@ Layer {
                 }
             }
             Info { html: Ui.esc(Ui.t("settings.langApps")) }
+        }
+        SetGroup {
+            visible: s.cat === "lang"; availH: s.colH; title: Ui.t("settings.osk")
+            SetRow {
+                label: Ui.t("settings.oskMode")
+                Repeater {
+                    model: ["auto", "always", "keyboard"]
+                    Pill { property string key: "oskm" + modelData; text: Ui.t("settings.oskMode." + modelData); on: (s.oskConf.mode || "auto") === modelData
+                           maxWidth: Ui.screenW * 0.4; onTriggered: s.setOsk({ mode: modelData }) }
+                }
+            }
+            Info { html: Ui.esc(Ui.t("settings.oskInfo")) + (vs.kbdPresent ? "<br><br>" + Ui.esc(Ui.t("settings.oskFound")) : "") }
+            SetRow {
+                label: Ui.t("settings.oskLayout")
+                Pill {
+                    property string key: "oskauto"
+                    text: Ui.t("settings.oskAuto", { name: Ui.t("inst.kb." + OskLayouts.forLang(Ui.lang), null, OskLayouts.forLang(Ui.lang)) })
+                    on: s.oskConf.choice === "auto"; maxWidth: Ui.screenW * 0.4
+                    onTriggered: s.setOsk({ layout: "auto" })
+                }
+                Repeater {
+                    model: OskLayouts.LIST
+                    Pill { property string key: "osk" + modelData; text: Ui.t("inst.kb." + modelData, null, modelData); on: s.oskConf.choice === modelData
+                           maxWidth: Ui.screenW * 0.4; onTriggered: s.setOsk({ layout: modelData }) }
+                }
+            }
         }
         // Anzeige
         SetGroup {

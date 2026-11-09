@@ -1346,5 +1346,16 @@
   "emuopt.v.inherit": "全体と同じ",
   "hint.romOpts": "<b>Del / Y</b> オプション",
   "roms.discSub": "ドライブ内",
-  "player.dvd.game": "ゲームディスク（{system}）: ゲーム一覧から起動します"
+  "player.dvd.game": "ゲームディスク（{system}）: ゲーム一覧から起動します",
+  "osk.showKeys": "キーを表示",
+  "osk.typeHint": "キーボードで入力 · Enter で確定、Esc で取消",
+  "settings.osk": "画面キーボード",
+  "settings.oskLayout": "配列",
+  "settings.oskAuto": "言語に合わせる（{name}）",
+  "settings.oskMode": "キーを表示",
+  "settings.oskMode.auto": "自動",
+  "settings.oskMode.always": "常に",
+  "settings.oskMode.keyboard": "キーボード接続時は表示しない",
+  "settings.oskInfo": "自動: キーボードが接続されていてそれで入力すると、キーが消えて入力欄だけが残ります。コントローラーを使うとすぐに戻ります。「キーボード接続時は表示しない」はキーボードを検出した時点で隠します。マウスの受信機がキーボードとして認識されることもあります。",
+  "settings.oskFound": "現在キーボードが接続されています。"
 }

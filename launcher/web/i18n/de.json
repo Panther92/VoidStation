@@ -1157,5 +1157,17 @@
   "emuopt.v.inherit": "Wie überall",
   "hint.romOpts": "<b>Entf / Y</b> Optionen",
   "roms.discSub": "Im Laufwerk",
-  "player.dvd.game": "Spiele-Disc ({system}), startet über die Spieleliste"
+  "player.dvd.game": "Spiele-Disc ({system}), startet über die Spieleliste",
+  "osk.showKeys": "Tasten zeigen",
+  "osk.typeHint": "Tippe auf der Tastatur · Enter übernimmt, Esc bricht ab",
+  "settings.osk": "Bildschirmtastatur",
+  "settings.oskLayout": "Belegung",
+  "settings.oskAuto": "Wie die Sprache ({name})",
+  "settings.oskMode": "Tasten zeigen",
+  "settings.oskMode.auto": "Automatisch",
+  "settings.oskMode.always": "Immer",
+  "settings.oskMode.keyboard": "Nicht mit Tastatur",
+  "settings.oskInfo": "Automatisch: Ist eine Tastatur angeschlossen und tippst du darauf, verschwinden die Tasten, nur das Eingabefeld bleibt. Sobald du den Controller benutzt, sind sie wieder da. „Nicht mit Tastatur“ blendet sie aus, sobald eine Tastatur erkannt wird – Funkempfänger von Mäusen melden sich manchmal auch als Tastatur.",
+  "settings.oskFound": "Gerade ist eine Tastatur angeschlossen.",
+  "inst.kb.nl": "Nederlands"
 }

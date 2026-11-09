@@ -1344,5 +1344,16 @@
   "emuopt.v.inherit": "Como en todos",
   "hint.romOpts": "<b>Supr / Y</b> opciones",
   "roms.discSub": "En la unidad",
-  "player.dvd.game": "Disco de juego ({system}), se inicia desde la lista de juegos"
+  "player.dvd.game": "Disco de juego ({system}), se inicia desde la lista de juegos",
+  "osk.showKeys": "Mostrar teclas",
+  "osk.typeHint": "Escribe en el teclado · Intro confirma, Esc cancela",
+  "settings.osk": "Teclado en pantalla",
+  "settings.oskLayout": "Distribución",
+  "settings.oskAuto": "Según el idioma ({name})",
+  "settings.oskMode": "Mostrar teclas",
+  "settings.oskMode.auto": "Automático",
+  "settings.oskMode.always": "Siempre",
+  "settings.oskMode.keyboard": "No con teclado",
+  "settings.oskInfo": "Automático: si hay un teclado conectado y escribes en él, las teclas desaparecen y solo queda el campo de texto. En cuanto usas el mando, vuelven. «No con teclado» las oculta en cuanto se detecta un teclado; los receptores de ratón a veces también se presentan como teclado.",
+  "settings.oskFound": "Ahora mismo hay un teclado conectado."
 }

@@ -1346,5 +1346,16 @@
   "emuopt.v.inherit": "Mint mindenhol",
   "hint.romOpts": "<b>Del / Y</b> beállítások",
   "roms.discSub": "A meghajtóban",
-  "player.dvd.game": "Játéklemez ({system}), a játéklistából indítható"
+  "player.dvd.game": "Játéklemez ({system}), a játéklistából indítható",
+  "osk.showKeys": "Billentyűk mutatása",
+  "osk.typeHint": "Gépelj a billentyűzeten · Enter jóváhagy, Esc megszakít",
+  "settings.osk": "Képernyő-billentyűzet",
+  "settings.oskLayout": "Kiosztás",
+  "settings.oskAuto": "A nyelv szerint ({name})",
+  "settings.oskMode": "Billentyűk mutatása",
+  "settings.oskMode.auto": "Automatikus",
+  "settings.oskMode.always": "Mindig",
+  "settings.oskMode.keyboard": "Billentyűzettel nem",
+  "settings.oskInfo": "Automatikus: ha billentyűzet csatlakozik és gépelsz rajta, a billentyűk eltűnnek, csak a beviteli mező marad. Amint a kontrollert használod, visszajönnek. A „Billentyűzettel nem” elrejti őket, amint billentyűzetet észlel – az egerek vevői néha billentyűzetként is jelentkeznek.",
+  "settings.oskFound": "Jelenleg billentyűzet csatlakozik."
 }

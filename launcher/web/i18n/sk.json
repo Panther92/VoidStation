@@ -1344,5 +1344,16 @@
   "emuopt.v.inherit": "Ako všade",
   "hint.romOpts": "<b>Del / Y</b> možnosti",
   "roms.discSub": "V mechanike",
-  "player.dvd.game": "Herný disk ({system}), spustíš ho zo zoznamu hier"
+  "player.dvd.game": "Herný disk ({system}), spustíš ho zo zoznamu hier",
+  "osk.showKeys": "Zobraziť klávesy",
+  "osk.typeHint": "Píš na klávesnici · Enter potvrdí, Esc zruší",
+  "settings.osk": "Klávesnica na obrazovke",
+  "settings.oskLayout": "Rozloženie",
+  "settings.oskAuto": "Podľa jazyka ({name})",
+  "settings.oskMode": "Zobraziť klávesy",
+  "settings.oskMode.auto": "Automaticky",
+  "settings.oskMode.always": "Vždy",
+  "settings.oskMode.keyboard": "Nie s klávesnicou",
+  "settings.oskInfo": "Automaticky: Ak je pripojená klávesnica a píšeš na nej, klávesy zmiznú a zostane len vstupné pole. Keď použiješ ovládač, vrátia sa. „Nie s klávesnicou“ ich skryje, len čo je klávesnica rozpoznaná – prijímače myší sa niekedy hlásia aj ako klávesnica.",
+  "settings.oskFound": "Práve je pripojená klávesnica."
 }

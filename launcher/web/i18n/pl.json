@@ -1344,5 +1344,16 @@
   "emuopt.v.inherit": "Jak wszędzie",
   "hint.romOpts": "<b>Del / Y</b> opcje",
   "roms.discSub": "W napędzie",
-  "player.dvd.game": "Płyta z grą ({system}), uruchom ją z listy gier"
+  "player.dvd.game": "Płyta z grą ({system}), uruchom ją z listy gier",
+  "osk.showKeys": "Pokaż klawisze",
+  "osk.typeHint": "Pisz na klawiaturze · Enter zatwierdza, Esc anuluje",
+  "settings.osk": "Klawiatura ekranowa",
+  "settings.oskLayout": "Układ",
+  "settings.oskAuto": "Jak język ({name})",
+  "settings.oskMode": "Pokaż klawisze",
+  "settings.oskMode.auto": "Automatycznie",
+  "settings.oskMode.always": "Zawsze",
+  "settings.oskMode.keyboard": "Nie z klawiaturą",
+  "settings.oskInfo": "Automatycznie: jeśli podłączona jest klawiatura i na niej piszesz, klawisze znikają i zostaje tylko pole tekstowe. Gdy użyjesz kontrolera, wracają. „Nie z klawiaturą” ukrywa je, gdy tylko wykryta zostanie klawiatura – odbiorniki myszy czasem też zgłaszają się jako klawiatura.",
+  "settings.oskFound": "Teraz podłączona jest klawiatura."
 }

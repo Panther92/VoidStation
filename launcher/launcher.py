@@ -795,7 +795,10 @@ SETTINGS = BASE / "settings.json"
 DEFAULTS = {"scale": 1.75, "resolution": None, "cursor_theme": "Bibata-Modern-Ice", "cursor_size": 48, "lang": None, "theme": "default-dark",
             "sysupd_days": 90, "padmouse": True, "covers_auto": True, "covers_embed": False, "audio_auto": True,
             "emu_fullscreen": True, "save_backup": True, "rom_covers": True,
-            "rate": None, "match_rate": False}
+            "rate": None, "match_rate": False, "osk_layout": None, "osk_mode": "auto"}
+# Bildschirmtastatur: Belegungen (Qt: VS/OskLayouts.js, gleiche Kennungen) und wann die Tasten zu sehen sind
+OSK_LAYOUTS = ("de", "us", "gb", "fr", "es", "it", "br", "nl", "lv", "hu", "pl", "cz", "sk", "gr", "ru", "ua")
+OSK_MODES = ("auto", "always", "keyboard")      # automatisch / immer / nicht mit angeschlossener Tastatur
 SYSUPD_DAYS = (30, 60, 90)                  # Erinnerung an Systemupdates (ohne VoidStation-Update) nach … Tagen
 # Sprachen der Oberflaeche: Texte in web/i18n/<id>.json, fehlende Texte kommen aus en.json, dann aus de.json.
 # Anzeige immer in der eigenen Sprache. Je Sprache auch das Locale fuer gestartete Programme (LANG/LANGUAGE) und
@@ -6700,7 +6703,9 @@ def settings_payload():
             "audio": audio_info(), "volume": volume_get(), "net": net_info(), "share": share_info(),
             "sysupd_days": sysupd_days(s), "sysupd_choices": SYSUPD_DAYS, "music_volume": music_volume(),
             "frontend": frontend(), "frontends": frontends(), "padmouse": bool(s.get("padmouse", True)),
-            "rate": s.get("rate"), "match_rate": bool(s.get("match_rate")), "region": region(s)}
+            "rate": s.get("rate"), "match_rate": bool(s.get("match_rate")), "region": region(s),
+            "osk": {"choice": s.get("osk_layout") if s.get("osk_layout") in OSK_LAYOUTS else "auto",
+                    "mode": s.get("osk_mode") if s.get("osk_mode") in OSK_MODES else "auto"}}
 
 
 # ---------------------------------------------------------------------------
@@ -12678,6 +12683,22 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(400, {"error": "unbekanntes Theme"})
                 s = settings_load(); s["theme"] = th; settings_save(s)
                 apply_appearance(s)                    # Programme folgen hell/dunkel
+                return self._json(200, settings_payload())
+            if parts == ["api", "settings", "osk"]:      # Bildschirmtastatur: {layout: "auto" | Kennung, mode}
+                b = self._body()
+                s = settings_load()
+                if "layout" in b:
+                    lay = str(b.get("layout") or "auto")
+                    if lay != "auto" and lay not in OSK_LAYOUTS:
+                        return self._json(400, {"error": "unbekannte Belegung"})
+                    s["osk_layout"] = None if lay == "auto" else lay
+                if "mode" in b:
+                    mode = str(b.get("mode"))
+                    if mode not in OSK_MODES:
+                        return self._json(400, {"error": "unbekannte Einstellung"})
+                    s["osk_mode"] = mode
+                settings_save(s)
+                log("Bildschirmtastatur:", s.get("osk_layout") or "nach Sprache", s.get("osk_mode"))
                 return self._json(200, settings_payload())
             if parts == ["api", "settings", "padmouse"]:
                 on = bool(self._body().get("on"))

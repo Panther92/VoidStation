@@ -937,64 +937,15 @@ Layer {
                         }
                         Pill { property string key: "kmMore"; visible: il.kbList().length > il.kbFixed().length; text: Ui.t("inst.kbMore"); onTriggered: il.kbMore() }
                     }
-                    Column {
-                        id: kbd
-                        spacing: 5 * Ui.f
-                        readonly property real kc: il.iu * 0.3
-                        readonly property real kg: 5 * Ui.f
-                        readonly property var layouts: ({ de: ["1234567890ß", "qwertzuiopü", "asdfghjklöä", "yxcvbnm,.-"],
-                                                          us: ["1234567890-", "qwertyuiop@", "asdfghjkl;'", "zxcvbnm,./"],
-                                                          sym: ["!\"§$%&/()=?", "€@{}[]\\~*+#", ":;_<>|^°'`´", "²³µ«»¿¡¬¦"] })
-                        readonly property var rows: il.sym ? layouts.sym : (layouts[il.keymap] || layouts.us)
-                        // Tasten je Reihe: [Beschriftung, Aktion, Breite in Tasten, Schluessel, Zeichen]
-                        readonly property var keyRows: {
-                            var out = []
-                            for (var r = 0; r < rows.length; r++) {
-                                var row = []
-                                if (r === 3) row.push(["\u21e7", "shift", 1, "kshift"])
-                                for (var c = 0; c < rows[r].length; c++) row.push([rows[r][c], "char", 1, "k" + r + "-" + c, rows[r][c]])
-                                if (r === 0) row.push(["\u232b", "del", 1, "kdel"])
-                                else if (r === 3) row.push(["\u232b", "del", 1, "kdel2"])
-                                else row.push([r === 1 ? "+" : "#", "char", 1, "kx" + r, r === 1 ? "+" : "#"])
-                                out.push(row)
-                            }
-                            out.push([[il.sym ? "abc" : "&123", "sym", 2, "ksym"], [Ui.t("inst.space"), "char", 5, "kspace", " "], ["@", "char", 1, "kat", "@"],
-                                      [Ui.t("inst.continue"), "go", 4, "kgo"]])
-                            return out
-                        }
-                        Repeater {
-                            model: kbd.keyRows
-                            Row {
-                                spacing: kbd.kg
-                                Repeater {
-                                    model: modelData
-                                    Focusable {
-                                        id: kk
-                                        property string key: modelData[3]
-                                        property bool pressFlash: true
-                                        readonly property string label: modelData[1] === "char" && il.shift && modelData[4] !== " " ? modelData[0].toUpperCase() : modelData[0]
-                                        width: modelData[2] * kbd.kc + (modelData[2] - 1) * kbd.kg
-                                        height: kbd.kc
-                                        onTriggered: {
-                                            il.phys = false
-                                            var a = modelData[1]
-                                            if (a === "char") il.type(il.shift ? modelData[4].toUpperCase() : modelData[4])
-                                            else if (a === "del") il.del()
-                                            else if (a === "shift") il.shift = !il.shift
-                                            else if (a === "sym") il.rerender(function () { il.sym = !il.sym })
-                                            else if (a === "go") il.oskDone()
-                                        }
-                                        Rectangle {
-                                            anchors.fill: parent
-                                            color: modelData[1] === "go" ? Ui.c.statusOkBg : (modelData[1] === "shift" && il.shift) ? Ui.c.surfaceActive
-                                                 : kk.focused ? Ui.c.surfaceCardHover : Ui.c.surfaceCard
-                                            border.width: 2; border.color: kk.focused ? Ui.c.borderFocus : "transparent"
-                                            Txt { anchors.centerIn: parent; text: kk.label; font.pixelSize: 17 * Ui.f; elide: Text.ElideNone }
-                                        }
-                                    }
-                                }
-                            }
-                        }
+                    // Tastenfeld wie die Bildschirmtastatur der Startseite (VS/KeyPad.qml, Belegungen VS/OskLayouts.js)
+                    KeyPad {
+                        layoutId: il.keymap
+                        keyW: il.iu * 0.3
+                        keyH: il.iu * 0.3
+                        doneText: Ui.t("inst.continue")
+                        onTyped: function (ch) { il.phys = false; il.type(ch) }
+                        onErase: { il.phys = false; il.del() }
+                        onDone: il.oskDone()
                     }
                 }
             }

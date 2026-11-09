@@ -323,7 +323,8 @@ def settings():
     return dict(S.SETTINGS, volume=STATE["volume"], version={"version": "0.12.1", "build": "abc123"}, ssh=True, live=LIVE["on"],
                 standby=not LIVE["on"],
                 sysupd_days=90, sysupd_choices=[30, 60, 90], frontend=STATE.get("frontend", "qt"), frontends=["qt", "web"],
-                padmouse=STATE.get("padmouse", True))
+                padmouse=STATE.get("padmouse", True),
+                osk=S.SETTINGS.get("osk") or {"choice": os.environ.get("VS_OSK_LAYOUT", "auto"), "mode": os.environ.get("VS_OSK_MODE", "auto")})
 
 
 # Installer (--live): Geraet wie im Web-Installer (DEMO_PROBE), Installation laeuft simuliert in ~20 s durch
@@ -762,6 +763,12 @@ class H(S.H):
                 return self.j({"lang": body.get("lang")})
             if p.endswith("/padmouse"):
                 STATE["padmouse"] = bool(body.get("on"))
+            if p.endswith("/osk"):
+                o = S.SETTINGS.setdefault("osk", {"choice": "auto", "mode": "auto"})
+                if "layout" in body:
+                    o["choice"] = body.get("layout") or "auto"
+                if "mode" in body:
+                    o["mode"] = body.get("mode")
             if p.endswith("/resolution"):
                 d = S.SETTINGS["displays"][0]
                 d["current"] = body.get("mode") or d["current"]

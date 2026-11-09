@@ -1289,5 +1289,17 @@
   "emuopt.v.inherit": "Same as everywhere",
   "hint.romOpts": "<b>Del / Y</b> options",
   "roms.discSub": "In the drive",
-  "player.dvd.game": "Game disc ({system}), start it from the game list"
+  "player.dvd.game": "Game disc ({system}), start it from the game list",
+  "osk.showKeys": "Show keys",
+  "osk.typeHint": "Type on your keyboard · Enter confirms, Esc cancels",
+  "settings.osk": "On-screen keyboard",
+  "settings.oskLayout": "Layout",
+  "settings.oskAuto": "Same as language ({name})",
+  "settings.oskMode": "Show keys",
+  "settings.oskMode.auto": "Automatic",
+  "settings.oskMode.always": "Always",
+  "settings.oskMode.keyboard": "Not with a keyboard",
+  "settings.oskInfo": "Automatic: if a keyboard is connected and you type on it, the keys disappear and only the input field stays. As soon as you use the controller, they come back. “Not with a keyboard” hides them whenever a keyboard is detected – mouse receivers sometimes report themselves as keyboards too.",
+  "settings.oskFound": "A keyboard is connected right now.",
+  "inst.kb.nl": "Nederlands"
 }
