@@ -52,7 +52,7 @@ Rectangle {
             NumberAnimation { target: ly; property: "opacity"; to: 0; duration: 200; easing.type: Easing.OutQuad }
             NumberAnimation { target: sh; property: "x"; to: Ui.screenW * 0.04; duration: 200; easing.type: Easing.OutQuad }
         }
-        ScriptAction { script: { ly.visible = false; ly.closed(); if (hideAnim.done) hideAnim.done(); Ui.app.trimSoon() } }
+        ScriptAction { script: { ly.visible = false; ly.closed(); if (hideAnim.done) hideAnim.done(); if (Ui.app.trimSoon) Ui.app.trimSoon() } }
     }
     MouseArea { anchors.fill: parent; acceptedButtons: Qt.AllButtons; onWheel: function (w) { w.accepted = true } }  // nichts dahinter anklickbar
 
