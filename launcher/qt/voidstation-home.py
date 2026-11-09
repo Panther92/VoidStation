@@ -278,8 +278,8 @@ class Vs(VsBase):
         Am Rand bleibt der Zeiger von selbst haengen – man muss also nur grob in die Ecke schieben, nicht
         genau das letzte Pixel treffen. Die Streifen liegen nur auf der aeussersten Pixelreihe (`edge`), dort
         liegen keine Player-Knoepfe (Vollbild & Co. sitzen ein Stueck vom Rand weg); das Quadrat bleibt
-        deshalb klein. Alle Masse haengen an der kurzen Bildschirmseite (720p, 1080p und 4K gleich gross
-        empfunden). VS_CORNER=<Prozent> aendert `reach` (Standard 12 % der kurzen Seite, 0 = nur das Quadrat)."""
+        deshalb nur so gross wie noetig. Alle Masse haengen an der kurzen Bildschirmseite (720p, 1080p und 4K gleich gross
+        empfunden). VS_CORNER=<Prozent> aendert `reach` (Standard 20 % der kurzen Seite, 0 = nur das Quadrat)."""
         pos = QCursor.pos()
         scr = QGuiApplication.screenAt(pos)
         if scr is None:
@@ -287,12 +287,12 @@ class Vs(VsBase):
         g = scr.geometry()
         short = max(1, min(g.width(), g.height()))
         try:
-            pct = float(os.environ.get("VS_CORNER", "12"))
+            pct = float(os.environ.get("VS_CORNER", "20"))
         except ValueError:
-            pct = 12.0
-        reach = short * max(0.0, min(pct, 50.0)) / 100      # 720p: 86 px · 1080p: 130 px · 2160p: 259 px
-        edge = max(2, round(short * 0.004))                  # 720p: 3 px · 1080p: 4 px · 2160p: 9 px
-        core = max(edge, round(short * 0.015))               # 720p: 11 px · 1080p: 16 px · 2160p: 32 px
+            pct = 20.0
+        reach = short * max(0.0, min(pct, 50.0)) / 100      # 720p: 144 px · 1080p: 216 px · 2160p: 432 px
+        edge = max(2, round(short * 0.01))                   # 720p: 7 px · 1080p: 11 px · 2160p: 22 px
+        core = max(edge, round(short * 0.05))                # 720p: 36 px · 1080p: 54 px · 2160p: 108 px
         dx = pos.x() - g.left() if top_left else g.right() - pos.x()
         dy = pos.y() - g.top() if top_left else g.bottom() - pos.y()
         if dx < 0 or dy < 0:
