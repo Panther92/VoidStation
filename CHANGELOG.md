@@ -9,6 +9,7 @@ ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freig
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
 ## Testing – 2026-11-09
+- Updates: Geräte vertrauen künftig zusätzlich einem offline gelagerten Notfall-Schlüssel, falls der Signaturschlüssel des Herausgebers verloren geht.
 - Heiße Ecken: Sie reagieren jetzt schon, wenn die Maus grob in die Ecke zeigt.
 - Update-Bildschirm neu: Das Programm, das gerade dran ist, zeigt seine Kachel, die sich mit dem Download füllt, dazu Größe, Tempo und Restzeit; darunter stehen alle Programme der Reihe nach.
 - Musik im Hintergrund: Läuft Musik oder Radio und ist ein Spiel oder Programm vorn, gibt es oben links eine Heiße Ecke mit Titel zurück, Titelanzeige (Klick = Pause) und Titel vor, das Mausrad regelt nur die Musik. Beide Heißen Ecken lassen sich jetzt auch mit Steuerkreuz und Pfeiltasten bedienen.

@@ -33,12 +33,15 @@ URL="$(head -n1 update-url)"
 case "$URL" in https://*) ;; *) echo "update-url muss mit https:// beginnen" >&2; exit 1 ;; esac
 
 # Signaturschluessel -> Zeile fuer ssh-keygen "allowed_signers"
+# Fest benannte Dateien statt keys/*.pub: Ein weiterer Schluessel darf nicht durch eine neue Datei unbemerkt gueltig werden.
+# voidstation-notfall.pub: zweiter Schluessel, offline gelagert, falls der auf dem Herausgeber-Rechner verloren geht.
 SIGNERS=""
-if [ -s keys/voidstation-release.pub ]; then
-  read -r ktype kdata _ < keys/voidstation-release.pub
-  case "$ktype" in ssh-ed25519|ssh-rsa|ecdsa-sha2-*) ;; *) echo "keys/voidstation-release.pub ist kein SSH-Schluessel" >&2; exit 1 ;; esac
-  SIGNERS="voidstation-release namespaces=\"voidstation\" $ktype $kdata"
-fi
+for keyfile in keys/voidstation-release.pub keys/voidstation-notfall.pub; do
+  [ -s "$keyfile" ] || continue
+  read -r ktype kdata _ < "$keyfile"
+  case "$ktype" in ssh-ed25519|ssh-rsa|ecdsa-sha2-*) ;; *) echo "$keyfile ist kein SSH-Schluessel" >&2; exit 1 ;; esac
+  SIGNERS="${SIGNERS:+$SIGNERS$'\n'}voidstation-release namespaces=\"voidstation\" $ktype $kdata"
+done
 
 # Sprachdateien: jeder Text aus de.json muss in en.json stehen, mit denselben {Platzhaltern}.
 # Weitere Sprachen (es.json, fr.json, ...) duerfen unvollstaendig sein (es gilt dann Englisch), aber nur bekannte

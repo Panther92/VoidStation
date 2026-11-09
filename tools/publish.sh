@@ -81,9 +81,16 @@ signers_line() {           # oeffentlicher Schluessel -> Zeile fuer ssh-keygen -
   printf 'voidstation-release namespaces="voidstation" %s %s\n' "$t" "$k"
 }
 
+all_signers() {            # <verzeichnis> – Zeilen aller gueltigen Schluessel (Herausgeber, Notfall), wie build.sh
+  local p
+  for p in "$1/$PUB" "$1/keys/voidstation-notfall.pub"; do
+    if [ -s "$p" ]; then signers_line "$p"; fi
+  done
+}
+
 verify_dist() {            # [verzeichnis] – prueft alle Signaturen in dist/ gegen keys/…pub
   local dir="${1:-.}" ok=0 f
-  local signers; signers="$(mktemp)"; signers_line "$dir/$PUB" > "$signers"
+  local signers; signers="$(mktemp)"; all_signers "$dir" > "$signers"
   for f in "$dir"/dist/update.sh "$dir"/dist/install.sh; do
     if ! ssh-keygen -Y verify -f "$signers" -I voidstation-release -n voidstation -s "$f.sig" < "$f" >/dev/null 2>&1; then
       ok=1; echo "  Signatur fehlt/ungueltig: ${f#"$dir"/}"
@@ -325,7 +332,7 @@ iso_publish() {
   [ "$a" = j ] || [ "$a" = J ] || die "Abgebrochen – nichts hochgeladen, nichts geloescht."
 
   # Schluessel einmal in einen kurzlebigen ssh-agent laden -> jede Passphrase nur einmal
-  ISO_SIGNERS="$(mktemp)"; TMPS+=("$ISO_SIGNERS"); signers_line "$REPO/$PUB" > "$ISO_SIGNERS"
+  ISO_SIGNERS="$(mktemp)"; TMPS+=("$ISO_SIGNERS"); all_signers "$REPO" > "$ISO_SIGNERS"
   if [ -s "$file.sha256.sig" ] && ssh-keygen -Y verify -f "$ISO_SIGNERS" -I voidstation-release -n voidstation \
        -s "$file.sha256.sig" < "$file.sha256" >/dev/null 2>&1; then
     need_sign=0

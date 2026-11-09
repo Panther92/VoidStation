@@ -9,6 +9,7 @@ at the top; `vspub --release` or `vspub --hotfix` assigns the number when releas
 Older versions (up to 0.15.0) still use the old numbering.
 
 ## Testing – 2026-11-09
+- Updates: Devices will additionally trust an emergency key kept offline, in case the publisher's signing key is lost.
 - Hot corners: They now respond when the mouse is roughly in the corner.
 - New update screen: The program being updated shows its tile, which fills up with the download, along with size, speed and time left; all programs are lined up below it.
 - Background music: While music or radio plays and a game or app is in front, a new hot corner at the top left offers previous, track info (click to pause) and next; the mouse wheel only changes the music volume. Both hot corners can now also be used with the D-pad and arrow keys.

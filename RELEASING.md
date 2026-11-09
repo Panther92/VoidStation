@@ -63,6 +63,12 @@ Only `vspub` on the publisher's machine builds and signs `dist/` – so code rea
 | Pure documentation and website (`README*.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `RELEASING.md`, `site/`, `docs/screenshots/`) | may also be pushed to `main` directly; `site/` goes live on voidstation.de right away |
 | `stable`, `dist/`, `keys/`, releases, hotfixes, ISO | `vspub --release` / `--hotfix` / `--iso` only, run by the publisher |
 
+**Emergency signing key:** `keys/voidstation-notfall.pub` is a second public key; `build.sh` adds it to the
+devices' `allowed_signers`. Its private key is kept offline. It only works on devices that already received an
+update containing it. If the release key is lost, sign with it from a copy of the key:
+`VS_KEY=/path/to/voidstation-notfall vspub` (the `.pub` file must lie next to the key).
+Only these two file names count: a new file in `keys/` does not become a valid key.
+
 `vspub` pulls in anything pushed directly to `main` before applying a bundle, so direct documentation pushes
 don't get in its way.
 
