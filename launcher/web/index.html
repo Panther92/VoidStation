@@ -1586,10 +1586,10 @@ const SET_PAGES = {
           + (x.ip ? ` · ${esc(x.ip)}` : '') + (x.internet ? ` <span class="sig">· ${esc(T('settings.netViaThis'))}</span>` : '')).join('<br>')
       : sett.net.addresses.length ? sett.net.addresses.map(x => `${esc(x.iface)}: <b>${esc(x.ip)}</b>`).join('<br>') : esc(T('settings.noConn')));
     n.appendChild(info);
-    if (sett.net.has_wired && sett.net.has_wifi) {               // Kabel oder WLAN fuers Internet bevorzugen
+    if (sett.net.has_wired && sett.net.has_wifi) {               // Internet nur ueber Kabel, nur ueber WLAN oder beides
       const rp = row(n, T('settings.netPrefer'));
-      for (const m of ['wired', 'wifi']) {
-        const b = pill(esc(T(m === 'wifi' ? 'settings.netWifiPick' : 'settings.netWiredPick')), () => netPrefer(m), sett.net.prefer === m);
+      for (const m of ['wired', 'wifi', 'both']) {
+        const b = pill(esc(netModeLabel(m)), () => netPrefer(m), sett.net.mode === m);
         b.dataset.key = 'np' + m; rp.appendChild(b);
       }
     }
@@ -1959,10 +1959,11 @@ async function wifiScan() {
   catch (e) { return toast(T('wifi.scanFailed', { msg: e.message }), true); }
   renderSettings();
 }
+function netModeLabel(m) { return T(m === 'wifi' ? 'settings.netWifiPick' : m === 'wired' ? 'settings.netWiredPick' : 'settings.netBothPick'); }
 async function netPrefer(mode) {
-  if (sett?.net?.prefer === mode) return;
+  if (sett?.net?.mode === mode) return;
   toast(T('settings.netSwitching'));
-  try { sett = await api('/api/net/prefer', { mode }); toast(T('settings.netPreferDone', { what: T(mode === 'wifi' ? 'settings.wifi' : 'settings.netWired') })); renderSettings(); }
+  try { sett = await api('/api/net/prefer', { mode }); toast(T('settings.netPreferDone', { what: netModeLabel(mode) })); renderSettings(); }
   catch (e) { toast(T('common.failedMsg', { msg: e.message }), true); }
 }
 function wifiAsk(w) { wifiPick = w; renderSettings(); setFocus($('#wifiPw')); }

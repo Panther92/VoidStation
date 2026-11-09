@@ -15,10 +15,41 @@ URLFILE=/usr/local/share/voidstation/update-url
 CHANNELFILE=/usr/local/share/voidstation/channel
 OPTINFILE=/usr/local/share/voidstation/testing-optin  # Testing bewusst gewaehlt (vsctl channel testing)
 SIGNERS=/usr/local/share/voidstation/allowed_signers
+NM_NOWIRED="${VS_NM_NOWIRED:-/etc/NetworkManager/conf.d/90-voidstation-nowired.conf}"
 XCHOICE=/usr/local/share/voidstation/xserver         # frueher: Wahl XLibre/X.Org (wird entfernt)
 XLIBRE_REPO=https://github.com/xlibre-void/xlibre/releases/latest/download
 XLIBRE_KEYFP=00:ca:42:57:c9:c0:9a:ec:94:b4:7d:97:e5:a9:aa:1e
 export LC_ALL=C
+
+# Internet nur ueber eine Verbindungsart: Das Kabel wird dafuer NetworkManager entzogen (bleibt auch nach einem Neustart
+# aus, auch wenn es eingesteckt wird), WLAN per Funkschalter abgeschaltet. Gespeicherte Netze und Profile bleiben.
+net_mode() {
+  eths="$(nmcli -t -f DEVICE,TYPE device | awk -F: '$2 == "ethernet" { print $1 }')"
+  case "$1" in
+    wifi)
+      mkdir -p "$(dirname "$NM_NOWIRED")"
+      printf '[device-voidstation-nowired]\nmatch-device=type:ethernet\nmanaged=0\n' > "$NM_NOWIRED"
+      nmcli radio wifi on
+      for d in $eths; do
+        nmcli device disconnect "$d" 2>/dev/null || true
+        nmcli device set "$d" managed no
+      done
+      nmcli general reload conf
+      ;;
+    wired|both)
+      rm -f "$NM_NOWIRED"
+      nmcli general reload conf
+      for d in $eths; do
+        nmcli device set "$d" managed yes
+      done
+      if [ "$1" = wired ]; then nmcli radio wifi off; else nmcli radio wifi on; fi
+      for d in $eths; do
+        nmcli device connect "$d" 2>/dev/null || true
+      done
+      ;;
+    *) echo "netmode: wired | wifi | both" >&2; return 2 ;;
+  esac
+}
 
 check_pkgs() {
   [ $# -gt 0 ] || { echo "kein Paket angegeben"; return 2; }
@@ -394,6 +425,8 @@ main() {
     selfupdate)
       selfupdate "${1:-}"
       ;;
+    netmode)                                # Internet nur ueber Kabel, nur ueber WLAN oder ueber beides
+      net_mode "${1:-}" ;;
     xserver)                                # Grafik-Server: nur XLibre
       case "$1" in
         ensure|auto|xlibre) xserver_ensure ;;

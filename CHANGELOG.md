@@ -9,6 +9,7 @@ ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freig
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
 ## Testing – 2026-11-09
+- Netzwerk: Statt „bevorzugt“ gibt es jetzt Kabelnetzwerk, Funknetzwerk (WLAN) oder Beides. Bei einer einzelnen Wahl bleibt die andere Verbindung wirklich aus, auch nach einem Neustart.
 - Updates: Geräte vertrauen künftig zusätzlich einem offline gelagerten Notfall-Schlüssel, falls der Signaturschlüssel des Herausgebers verloren geht.
 - Heiße Ecken: Sie reagieren jetzt schon, wenn die Maus grob in die Ecke zeigt.
 - Update-Bildschirm neu: Das Programm, das gerade dran ist, zeigt seine Kachel, die sich mit dem Download füllt, dazu Größe, Tempo und Restzeit; darunter stehen alle Programme der Reihe nach.

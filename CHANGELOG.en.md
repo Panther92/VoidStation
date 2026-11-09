@@ -9,6 +9,7 @@ at the top; `vspub --release` or `vspub --hotfix` assigns the number when releas
 Older versions (up to 0.15.0) still use the old numbering.
 
 ## Testing – 2026-11-09
+- Network: Instead of “prefer”, you now choose wired network, Wi-Fi or both. With a single choice, the other connection really stays off, even after a restart.
 - Updates: Devices will additionally trust an emergency key kept offline, in case the publisher's signing key is lost.
 - Hot corners: They now respond when the mouse is roughly in the corner.
 - New update screen: The program being updated shows its tile, which fills up with the download, along with size, speed and time left; all programs are lined up below it.

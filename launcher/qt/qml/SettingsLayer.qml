@@ -344,13 +344,14 @@ Layer {
         Api.get("/api/wifi/scan", function (j) { toastBox.hide(); update(function () { wifiList = j || [] }) },
                 function (e) { app.toast(Ui.t("wifi.scanFailed", { msg: e }), true) })
     }
-    // Kabel oder WLAN fuers Internet bevorzugen (beide verbunden: Standardroute ueber die gewaehlte)
+    // Internet nur ueber Kabel, nur ueber WLAN oder ueber beides
+    function netModeLabel(m) { return Ui.t(m === "wifi" ? "settings.netWifiPick" : m === "wired" ? "settings.netWiredPick" : "settings.netBothPick") }
     function netPrefer(mode) {
-        if (sett && sett.net && sett.net.prefer === mode) return
+        if (sett && sett.net && sett.net.mode === mode) return
         app.toast(Ui.t("settings.netSwitching"))
         Api.post("/api/net/prefer", { mode: mode }, function (j) {
             update(function () { sett = j })
-            app.toast(Ui.t("settings.netPreferDone", { what: Ui.t(mode === "wifi" ? "settings.wifi" : "settings.netWired") }))
+            app.toast(Ui.t("settings.netPreferDone", { what: netModeLabel(mode) }))
         }, function (e) { app.toast(Ui.t("common.failedMsg", { msg: e }), true) })
     }
     function netLines() {
@@ -709,19 +710,19 @@ Layer {
         SetGroup {
             visible: s.cat === "net"; availH: s.colH; title: Ui.t("settings.connection")
             Info { html: !s.sett ? "" : s.netLines() }
-            // Nur mit Kabel- UND WLAN-Anschluss: welche Verbindung das Internet nimmt, wenn beide verbunden sind
+            // Nur mit Kabel- UND WLAN-Anschluss: nur Kabel, nur WLAN oder beides
             SetRow {
                 visible: !!s.sett && !!s.sett.net.has_wired && !!s.sett.net.has_wifi
                 label: Ui.t("settings.netPrefer")
                 Repeater {
-                    model: ["wired", "wifi"]
-                    Pill { property string key: "np" + modelData; text: Ui.t(modelData === "wifi" ? "settings.netWifiPick" : "settings.netWiredPick")
-                           on: !!s.sett && s.sett.net.prefer === modelData; onTriggered: s.netPrefer(modelData) }
+                    model: ["wired", "wifi", "both"]
+                    Pill { property string key: "np" + modelData; text: s.netModeLabel(modelData)
+                           on: !!s.sett && s.sett.net.mode === modelData; onTriggered: s.netPrefer(modelData) }
                 }
             }
             // Kabel per Klick trennen und wieder verbinden (ohne eingestecktes Kabel keine Anzeige)
             SetRow {
-                visible: !!s.netLink("wired")
+                visible: !!s.netLink("wired") && !!s.sett && s.sett.net.mode !== "wifi"
                 Pill { property string key: "wiredoff"; visible: !!s.netLink("wired") && s.netLink("wired").connected
                        text: Ui.t("settings.netWiredOff"); onTriggered: s.wiredToggle(false) }
                 Pill { property string key: "wiredon"; visible: !!s.netLink("wired") && !s.netLink("wired").connected
@@ -729,7 +730,7 @@ Layer {
             }
         }
         SetGroup {
-            visible: s.cat === "net"; availH: s.colH; title: Ui.t("settings.wifi")
+            visible: s.cat === "net" && !(s.sett && s.sett.net.mode === "wired"); availH: s.colH; title: Ui.t("settings.wifi")
             SetRow {
                 visible: !!s.wifiPick
                 Field {

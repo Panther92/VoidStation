@@ -89,7 +89,7 @@ SETTINGS = {
     "net": {"hostname": "wohnzimmer", "addresses": [{"iface": "enp1s0", "ip": "192.168.178.42"}],
             "links": [{"dev": "enp1s0", "type": "wired", "connected": True, "name": "Kabelgebundene Verbindung 1",
                        "ip": "192.168.178.42", "internet": True}],
-            "has_wired": True, "has_wifi": True, "prefer": "wired"},
+            "has_wired": True, "has_wifi": True, "mode": "both"},
     "share": {"path": "/home/paul/share", "exists": True, "samba": True, "name": "share", "user": "paul"},
 }
 

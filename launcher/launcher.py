@@ -2060,7 +2060,7 @@ def net_info():
     links = net_links(addrs)
     return {"hostname": socket.gethostname(), "addresses": addrs, "links": links,
             "has_wired": any(l["type"] == "wired" for l in links), "has_wifi": any(l["type"] == "wifi" for l in links),
-            "prefer": net_prefer_get()}
+            "mode": net_mode_get()}
 
 
 # ---------------------------------------------------------------------------
@@ -2070,7 +2070,6 @@ def net_info():
 #  Anlass: Kabelanschluss, der nur noch IPv6 durchlaesst – GitHub braucht IPv4, der Handy-Hotspot hat es.
 # ---------------------------------------------------------------------------
 NM_TYPES = {"ethernet": "wired", "802-3-ethernet": "wired", "wifi": "wifi", "802-11-wireless": "wifi"}
-WIFI_METRIC = 50
 
 
 def net_default_dev(fam):
@@ -2135,9 +2134,10 @@ def net_connect(kind):
             net_device("connect", l["dev"])
 
 
-def net_prefer_get(s=None):
-    p = (s or settings_load()).get("net_prefer")
-    return p if p in ("wired", "wifi") else "wired"
+def net_mode_get(s=None):
+    """Worueber das Internet laeuft: "wired" (nur Kabel), "wifi" (nur WLAN) oder "both"."""
+    m = (s or settings_load()).get("net_mode")
+    return m if m in ("wired", "wifi", "both") else "both"
 
 
 def nm_profiles(kind):
@@ -2151,30 +2151,25 @@ def nm_profiles(kind):
     return out
 
 
-def net_prefer_apply(mode):
-    """Metrik aller WLAN-Profile setzen und auf die laufende WLAN-Verbindung anwenden (reapply, sonst neu verbinden)."""
-    metric = str(WIFI_METRIC) if mode == "wifi" else "-1"
-    changed = 0
+def net_metrics_reset():
+    """Eine aeltere Einstellung „bevorzugt ueber WLAN“ (Routen-Metrik der WLAN-Profile) zuruecknehmen."""
     for u in nm_profiles("wifi"):
-        r = run(["sudo", "-n", "nmcli", "connection", "modify", "uuid", u,
-                 "ipv4.route-metric", metric, "ipv6.route-metric", metric], timeout=15)
-        changed += bool(r and r.returncode == 0)
-    for l in net_links():
-        if l["type"] == "wifi" and l["connected"]:
-            r = run(["sudo", "-n", "nmcli", "device", "reapply", l["dev"]], timeout=30)
-            if not r or r.returncode != 0:
-                run(["sudo", "-n", "nmcli", "--wait", "30", "device", "connect", l["dev"]], timeout=40)
-    log("Netzwerk: bevorzugt", mode, f"({changed} WLAN-Profile)")
-    return changed
+        run(["sudo", "-n", "nmcli", "connection", "modify", "uuid", u, "ipv4.route-metric", "-1", "ipv6.route-metric", "-1"], timeout=15)
 
 
-def net_prefer_set(mode):
-    if mode not in ("wired", "wifi"):
+def net_mode_set(mode):
+    if mode not in ("wired", "wifi", "both"):
         raise ValueError("unbekannte Verbindungsart")
+    if mode != "both" and mode not in {l["type"] for l in net_links()}:
+        raise ValueError("Dieser Anschluss ist nicht vorhanden")
+    net_metrics_reset()
+    r = run(["sudo", "-n", PKG_HELPER, "netmode", mode], timeout=90)
+    if r is None or r.returncode != 0:
+        raise ValueError(((r.stderr or r.stdout or "nmcli") if r else "Zeitueberschreitung").strip().splitlines()[-1])
     s = settings_load()
-    s["net_prefer"] = mode
+    s["net_mode"] = mode
     settings_save(s)
-    net_prefer_apply(mode)
+    log("Netzwerk: Internet ueber", mode)
 
 
 def nm_split(line):
@@ -2307,8 +2302,6 @@ def wifi_connect(ssid, password):
         wifi_forget([u for u in wifi_profiles(ssid) if u not in before])
         log("WLAN:", ssid, "->", err)
         raise RuntimeError(err)
-    if net_prefer_get() == "wifi":
-        net_prefer_apply("wifi")                 # neues Profil: WLAN-Vorrang gleich mitgeben
 
 
 def share_info():
@@ -12137,7 +12130,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, settings_payload())
             if parts == ["api", "net", "prefer"]:
                 try:
-                    net_prefer_set(str(self._body().get("mode", "")))
+                    net_mode_set(str(self._body().get("mode", "")))
                 except ValueError as e:
                     return self._json(400, {"error": str(e)})
                 time.sleep(2)                     # Routen stehen nach reapply erst nach einem Moment
