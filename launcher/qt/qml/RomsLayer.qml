@@ -11,6 +11,7 @@ Layer {
     property var romData: null
     readonly property var roms: romData ? (Array.isArray(romData) ? romData : (romData.roms || [])) : []
     readonly property string sysName: tile ? (Ui.l(tile.label) || tile.id) : ""
+    readonly property bool gameOpts: !!romData && romData.gameOpts === true
     readonly property var fit: Ui.fitRows(stage.height - 18 * Ui.f * 1.36 - 14 * Ui.f - 4, Ui.u, Ui.gap, 3)
     title: Ui.t("roms.title", { system: sysName })
 
@@ -22,14 +23,6 @@ Layer {
         Api.get("/api/roms?system=" + encodeURIComponent(t.id), function (j) { romData = j; focusFirst() },
                 function () { romData = { system: t.id, count: 0, roms: [] }; focusFirst() })
     }
-    function setMute(on) {
-        var t = tile
-        Api.post("/api/roms/mute", { system: t.id, on: on }, function (j) {
-            if (tile !== t || !romData) return
-            var d = Object.assign({}, romData); d.mute = j.mute; romData = d
-            app.toast(Ui.t(j.mute ? "roms.muteOn" : "roms.muteOff", { name: rl.sysName }))
-        }, function (e) { app.toast(Ui.t("common.failedMsg", { msg: e }), true) })
-    }
     // BIOS fehlt (DuckStation, PCSX2, xemu – launcher.py bios_status): was fehlt und wohin damit (share/ROMs/<folder>/bios)
     function biosText() {
         var b = romData && romData.bios
@@ -39,6 +32,8 @@ Layer {
                                     host: app.sett && app.sett.net ? app.sett.net.hostname : "voidstation" })
         return t.replace(/\\/g, "\u2060\\\u2060")         // Pfad \\host\share\ROMs\psx\bios nicht umbrechen
     }
+    // Y auf einem Spiel: Optionen nur fuer dieses Spiel (Bildformat, bei DOS Tempo und Soundkarte)
+    function secondary() { if (gameOpts && Nav.current && Nav.current.rom) emuopts.openFor(tile, Nav.current.rom) }
     function focusFirst() { Qt.callLater(function () { var it = Nav.collect(trk); app.setFocus(it.length ? it[0] : startEmu, true) }) }
     function firstFocus() { var it = Nav.collect(trk); return it.length ? it[0] : startEmu }
     // Spiel starten: Liste zu (zurueck auf der Startseite steht die Kachel als laufend da), Startbild wie bei
@@ -57,15 +52,8 @@ Layer {
         Pill { id: startEmu; text: Ui.t("roms.startEmu"); onTriggered: { var t = rl.tile; app.closeLayer(rl); app.launch(t) } },
         // Tastenbelegung des Emulators (KeymapLayer) – nur fuer Emulatoren, die VoidStation belegen kann
         Pill { property string key: "romkeys"; visible: !!rl.romData && !!rl.romData.keymap; iconName: "gamepad"; text: Ui.t("keymap.title"); onTriggered: keymap.openFor(rl.tile) },
-        // Ton des Emulators aus (z. B. Podcast nebenher) – schaltet den Schalter des Emulators selbst (launcher.py EMU_MUTE)
-        Pill {
-            property string key: "rommute"
-            visible: !!rl.romData && rl.romData.mute !== undefined && rl.romData.mute !== null
-            iconName: "speaker"
-            text: Ui.t("roms.mute")
-            on: !!rl.romData && rl.romData.mute === true
-            onTriggered: rl.setMute(!on)
-        }
+        // Wichtigste Einstellungen des Emulators (EmuOptsLayer) – nur fuer Emulatoren mit Optionen (launcher.py EMU_OPTS)
+        Pill { property string key: "romopts"; visible: !!rl.romData && !!rl.romData.opts; iconName: "gear"; text: Ui.t("emuopt.title"); onTriggered: emuopts.openFor(rl.tile, null) }
     ]
 
     Track {
@@ -126,6 +114,16 @@ Layer {
                             opacity: 0.22
                             width: parent.width * 0.44; height: parent.height * 0.44
                             x: (parent.width - width) / 2; y: parent.height * 0.4 - height / 2
+                        }
+                        // Maus: Optionen des Spiels (Controller/Tastatur: Y bzw. F)
+                        Focusable {
+                            navigable: false
+                            visible: rl.gameOpts && card.focused
+                            width: Math.min(34 * Ui.f, card.height * 0.42); height: width
+                            anchors.right: parent.right; anchors.top: parent.top; anchors.margins: 6 * Ui.f
+                            onTriggered: emuopts.openFor(rl.tile, card.rom)
+                            Rectangle { anchors.fill: parent; radius: width / 2; color: "#000000"; opacity: 0.55 }
+                            Glyph { anchors.centerIn: parent; name: "gear"; color: Ui.c.textPrimary; width: parent.width * 0.6; height: width }
                         }
                         Column {
                             x: card.hasCover ? parent.width * 0.5 + 5 * Ui.f : 14 * Ui.f

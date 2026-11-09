@@ -1018,7 +1018,8 @@ DOSBOX_KEYB = {"de": "gr", "at": "gr", "ch": "sg", "us": "us", "gb": "uk", "fr":
                "pt": "po", "dk": "dk", "se": "sv", "no": "no", "fi": "su", "cz": "cz", "sk": "sk", "tr": "tr"}
 DOSBOX_PRIMARY = """# DOSBox Staging – Grundeinstellung von VoidStation
 # Angelegt beim ersten Start ueber die Kachel. Die Datei gehoert jetzt dir: Aenderungen bleiben erhalten,
-# VoidStation schreibt sie nicht wieder ueber. Geloescht wird sie beim naechsten Start neu angelegt.
+# VoidStation aendert hier nur, was du in der Spieleliste unter "Optionen" umstellst. Geloescht wird sie
+# beim naechsten Start neu angelegt.
 # Nicht aufgefuehrte Einstellungen haben den Standardwert von DOSBox Staging; alle Einstellungen
 # mit Erklaerung: https://www.dosbox-staging.org/manual/
 #
@@ -1057,6 +1058,33 @@ def x_keyboard_layout():
         return None
 
 
+def dosbox_primary():
+    return Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "dosbox" / "dosbox-staging.conf"
+
+
+def dosbox_primary_ensure():
+    """Grundeinstellung anlegen, falls es noch keine gibt. -> Pfad"""
+    primary = dosbox_primary()
+    if not primary.exists():
+        primary.parent.mkdir(parents=True, exist_ok=True)
+        primary.write_text(DOSBOX_PRIMARY, encoding="utf-8")
+        log("DOSBox: Grundeinstellung angelegt:", primary)
+    return primary
+
+
+def dosbox_game_conf(game):
+    """Optionen nur fuer dieses Spiel (Spieleliste): Abschnitte fuer die Datei, die VoidStation vor jedem Start schreibt."""
+    if not game:
+        return ""
+    sections = {}
+    try:
+        for section, values in emu_opts_game_writes("dosbox", game.name):
+            sections.setdefault(section, {}).update(values)
+    except Exception as e:  # noqa: BLE001 – darf den Start nie verhindern
+        log("DOSBox: Optionen des Spiels:", e)
+    return "".join(f"[{sec}]\n" + "".join(f"{k} = {v}\n" for k, v in vals.items()) + "\n" for sec, vals in sections.items())
+
+
 def dosbox_prepare(args):
     """Vor dem Start von DOSBox Staging: Grundeinstellung anlegen (falls noch keine da ist),
     VoidStation-Datei schreiben und per --conf anhaengen. Gibt die Befehlszeile zurueck."""
@@ -1081,11 +1109,7 @@ def dosbox_prepare(args):
                 game = t
     try:
         rom_dir.mkdir(parents=True, exist_ok=True)
-        primary = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config") / "dosbox" / "dosbox-staging.conf"
-        if not primary.exists():
-            primary.parent.mkdir(parents=True, exist_ok=True)
-            primary.write_text(DOSBOX_PRIMARY, encoding="utf-8")
-            log("DOSBox: Grundeinstellung angelegt:", primary)
+        dosbox_primary_ensure()
         keyb = DOSBOX_KEYB.get(x_keyboard_layout() or "", "auto")
         lang = DOSBOX_LANG.get(ui_lang(), "en")
         auto = "" if own_conf else dosbox_game_lines(game, rom_dir)
@@ -1095,6 +1119,7 @@ def dosbox_prepare(args):
             "# Eigene Einstellungen: ~/.config/dosbox/dosbox-staging.conf\n\n"
             f"[dosbox]\nlanguage = {lang}\n\n"
             f"[dos]\nkeyboardlayout = {keyb}\n\n"
+            + dosbox_game_conf(game or own_conf) +
             f'[autoexec]\n{auto}', encoding="utf-8")
     except OSError as e:
         log("DOSBox: Einstellungen nicht geschrieben:", e)
@@ -9389,30 +9414,34 @@ def keymap_prepare(tile):
         fn(ctx)
 
 
-# ---- Ton aus je Emulator (Spieleliste: "Spiel stumm") ----------------------------------------------------------
+# ---- Ton aus je Emulator (Spieleliste: Optionen → "Spiel stumm") ----------------------------------------------------------
 # Geschaltet wird der Schalter des Emulators selbst, damit VoidStation und das Menue des Emulators uebereinstimmen.
 # mGBA 0.10: [ports.qt] mute (Window.cpp Audio -> Stumm; CoreController liest es beim Start).
 # Laeuft der Emulator gerade, schreibt er beim Beenden seine Einstellungen zurueck – deshalb merkt sich VoidStation
 # den Wunsch zusaetzlich und setzt ihn vor dem naechsten Start noch einmal (emu_mute_apply).
-EMU_MUTE = {"gba": lambda: (MGBA_CONFIG, "ports.qt", "mute")}
+# DuckStation, PCSX2 und DOSBox Staging lesen ihren Schalter als Wahr/Falsch (settings.cpp, Pcsx2Config.cpp, mixer.cpp).
+EMU_MUTE = {"gba": lambda: (MGBA_CONFIG, "ports.qt", "mute", "1", "0"),
+            "pcsx2": lambda: (PCSX2_INI, "SPU2/Output", "OutputMuted", "true", "false"),
+            "duckstation": lambda: (DUCK_INI, "Audio", "OutputMuted", "true", "false"),
+            "dosbox": lambda: (dosbox_primary(), "mixer", "nosound", "true", "false")}
+EMU_READY = {"duckstation": lambda: duck_ready(), "pcsx2": lambda: pcsx2_ready()}   # vorher gilt die Datei dem Emulator als neu
 
 
-def emu_muted(tile):
-    """True/False fuer Emulatoren, die VoidStation stumm schalten kann, sonst None."""
-    spec = EMU_MUTE.get(tile)
-    if not spec:
-        return None
-    path, sec, key = spec()
-    return ini_read(path).get(sec, {}).get(key, "0").strip().lower() not in ("0", "", "false")
+def emu_ready(tile):
+    fn = EMU_READY.get(tile)
+    return fn() if fn else True
 
 
 def emu_set_mute(tile, on):
     spec = EMU_MUTE.get(tile)
     if not spec:
         raise ValueError("Dieser Emulator laesst sich nicht stumm schalten")
-    path, sec, key = spec()
+    path, sec, key, yes, no = spec()
     with EMU_LOCK:
-        ini_update(path, sec, {key: "1" if on else "0"})
+        if tile == "dosbox":
+            dosbox_primary_ensure()
+        if emu_ready(tile):
+            ini_update(path, sec, {key: yes if on else no})
         st = emu_state_load()
         st.setdefault("mute", {})[tile] = bool(on)
         emu_state_save(st)
@@ -9424,14 +9453,387 @@ def emu_mute_apply(tile):
     spec = EMU_MUTE.get(tile)
     if not spec:
         return
+    if not emu_ready(tile):
+        return
     with EMU_LOCK:
         st = emu_state_load()
         want = (st.get("mute") or {}).pop(tile, None)
         if want is None:
             return
-        path, sec, key = spec()
-        ini_update(path, sec, {key: "1" if want else "0"})
+        path, sec, key, yes, no = spec()
+        ini_update(path, sec, {key: yes if want else no})
         emu_state_save(st)
+
+
+# ---- Optionen je Emulator (Spieleliste: "Optionen") ------------------------------------------------------------
+# Nur die wichtigsten Schalter; alles Weitere bleibt im Fenster des Emulators. Geschrieben wird immer die Einstellung des
+# Emulators selbst, damit beide dasselbe zeigen. Schluessel und Werte geprueft an den Quelltexten (November 2026):
+# PCSX2 Pcsx2Config.cpp/Config.h, DuckStation settings.cpp, mGBA 0.10 core/config.c + Qt, DOSBox Staging 0.82.2
+# (Void-Paket; glshader gilt in 0.83 weiter, aber als veraltet).
+#
+# "game": auch je Spiel waehlbar. DOSBox: kommt in die Datei, die VoidStation vor jedem Start schreibt. PCSX2/DuckStation:
+# deren eigene Spiel-Einstellungen brauchen Serie und CRC des Spiels, die VoidStation nicht kennt – deshalb gilt der Wert
+# fuer diesen Start in der Haupteinstellung, der alte Wert kommt vor dem naechsten Start bzw. Oeffnen der Optionen zurueck
+# (emu_opts_restore; nur, wo der Nutzer in der Zwischenzeit nichts anderes eingestellt hat).
+EMU_GAME_OPTS = Path.home() / ".config/voidstation/emu-games.json"       # {Kachel: {Spieldatei: {Option: Wert}}}
+_OPT_TF = [{"v": "true", "k": "common.on"}, {"v": "false", "k": "common.off"}]
+_OPT_10 = [{"v": "1", "k": "common.on"}, {"v": "0", "k": "common.off"}]
+
+
+def _opt(oid, section, key, choices, default, game=False):
+    return {"id": oid, "section": section, "keys": key if isinstance(key, list) else [key], "choices": choices,
+            "default": default, "game": game}
+
+
+def _opt_res(values):
+    return [{"v": "1", "k": "emuopt.v.original"}] + [{"v": str(v), "t": f"{v}×"} for v in values]
+
+
+def _opt_cycles(real, protected):
+    return {"cpu_cycles": real, "cpu_cycles_protected": protected}
+
+
+EMU_OPTS = {
+    "pcsx2": {"file": lambda: PCSX2_INI, "groups": [
+        ("picture", [
+            _opt("res", "EmuCore/GS", "upscale_multiplier", _opt_res([2, 3, 4]), "1"),
+            _opt("aspect", "EmuCore/GS", "AspectRatio", [
+                {"v": "Auto 4:3/3:2", "k": "emuopt.v.auto"}, {"v": "4:3", "t": "4:3"}, {"v": "16:9", "t": "16:9"},
+                {"v": "Stretch", "k": "emuopt.v.stretch"}], "Auto 4:3/3:2", game=True),
+            _opt("widescreen", "EmuCore", "EnableWideScreenPatches", _OPT_TF, "false", game=True),
+            _opt("noInterlace", "EmuCore", "EnableNoInterlacingPatches", _OPT_TF, "false"),
+            _opt("renderer", "EmuCore/GS", "Renderer", [
+                {"v": "-1", "k": "emuopt.v.auto"}, {"v": "14", "t": "Vulkan"}, {"v": "12", "t": "OpenGL"},
+                {"v": "13", "t": "Software"}], "-1"),
+        ]),
+        ("play", [
+            _opt("fastBoot", "EmuCore", "EnableFastBoot", _OPT_TF, "true"),
+        ]),
+    ]},
+    "duckstation": {"file": lambda: DUCK_INI, "groups": [
+        ("picture", [
+            _opt("res", "GPU", "ResolutionScale", _opt_res([2, 3, 4, 6]), "1"),
+            _opt("aspect", "Display", "AspectRatio", [
+                {"v": "Auto (Game Native)", "k": "emuopt.v.auto"}, {"v": "4:3", "t": "4:3"}, {"v": "16:9", "t": "16:9"},
+                {"v": "Stretch To Fill", "k": "emuopt.v.stretch"}], "Auto (Game Native)", game=True),
+            _opt("widescreen", "GPU", "WidescreenHack", _OPT_TF, "false", game=True),
+            _opt("pgxp", "GPU", "PGXPEnable", _OPT_TF, "false"),
+            _opt("renderer", "GPU", "Renderer", [
+                {"v": "Automatic", "k": "emuopt.v.auto"}, {"v": "Vulkan", "t": "Vulkan"}, {"v": "OpenGL", "t": "OpenGL"},
+                {"v": "Software", "t": "Software"}], "Automatic"),
+        ]),
+        ("play", [
+            _opt("fastBoot", "BIOS", "PatchFastBoot", _OPT_TF, "false"),
+            _opt("resume", "Main", "SaveStateOnExit", _OPT_TF, "true"),
+        ]),
+    ]},
+    "gba": {"file": lambda: MGBA_CONFIG, "groups": [
+        ("picture", [
+            _opt("integer", "ports.qt", "lockIntegerScaling", _OPT_10, "1"),
+            _opt("smooth", "ports.qt", "resampleVideo", _OPT_10, "0"),
+            _opt("blend", "ports.qt", "interframeBlending", _OPT_10, "0"),
+            _opt("sgb", "ports.qt", "sgb.borders", _OPT_10, "1"),
+        ]),
+        ("play", [
+            _opt("resume", "ports.qt", ["autosave", "autoload"], _OPT_10, "1"),
+            _opt("rewind", "ports.qt", "rewindEnable", _OPT_10, "0"),
+            _opt("ffSpeed", "ports.qt", "fastForwardRatio", [
+                {"v": "-1", "k": "emuopt.v.unlimited"}, {"v": "2", "t": "2×"}, {"v": "3", "t": "3×"},
+                {"v": "4", "t": "4×"}], "-1"),
+        ]),
+    ]},
+    "dosbox": {"file": lambda: dosbox_primary(), "groups": [
+        ("picture", [
+            _opt("shader", "render", "glshader", [
+                {"v": "crt-auto", "k": "emuopt.v.crt"}, {"v": "sharp", "k": "emuopt.v.sharp"},
+                {"v": "bilinear", "k": "emuopt.v.soft"}], "crt-auto"),
+            _opt("aspect", "render", "aspect", [
+                {"v": "auto", "t": "4:3"}, {"v": "square-pixels", "k": "emuopt.v.square"},
+                {"v": "stretch", "k": "emuopt.v.stretch"}], "auto"),
+            _opt("integer", "render", "integer_scaling", [
+                {"v": "auto", "k": "emuopt.v.auto"}, {"v": "off", "k": "common.off"}], "auto"),
+            _opt("fullscreen", "sdl", "fullscreen", _OPT_TF, "true"),
+        ]),
+        ("play", [
+            _opt("speed", "cpu", ["cpu_cycles", "cpu_cycles_protected"], [
+                {"v": "std", "k": "emuopt.v.standard", "set": _opt_cycles("4000", "60000")},
+                {"v": "286", "t": "286", "set": _opt_cycles("1500", "1500")},
+                {"v": "386", "t": "386", "set": _opt_cycles("6000", "6000")},
+                {"v": "486", "t": "486", "set": _opt_cycles("25000", "25000")},
+                {"v": "pentium", "t": "Pentium", "set": _opt_cycles("50000", "50000")},
+                {"v": "max", "t": "Max", "set": _opt_cycles("max", "max")}], "std", game=True),
+            _opt("soundCard", "sblaster", "sbtype", [
+                {"v": "sb16", "t": "Sound Blaster 16"}, {"v": "sbpro2", "t": "Sound Blaster Pro 2"},
+                {"v": "sb1", "t": "Sound Blaster 1.0"}], "sb16", game=True),
+            _opt("reverb", "mixer", "reverb", [
+                {"v": "off", "k": "common.off"}, {"v": "small", "k": "emuopt.v.small"},
+                {"v": "medium", "k": "emuopt.v.medium"}, {"v": "large", "k": "emuopt.v.large"}], "off"),
+        ]),
+    ]},
+}
+_OPT_INDEX = {t: {o["id"]: o for _, opts in spec["groups"] for o in opts} for t, spec in EMU_OPTS.items()}
+
+
+def emu_gpu_class():
+    """Grobe Einstufung fuer Vorgaben: 'none' (kein Render-Knoten, Software-OpenGL), 'dgpu' (Grafikkarte mit genug eigenem
+    Speicher, NVIDIA nur mit dem proprietaeren Treiber) oder 'igp'. Im Zweifel die vorsichtigere Stufe."""
+    if not list(Path("/dev/dri").glob("renderD*")):
+        return "none"
+    if Path("/sys/module/nvidia_drm").exists():
+        return "dgpu"
+    try:
+        apu = any(w in Path("/proc/cpuinfo").read_text(errors="replace").lower() for w in ("radeon", "vega"))
+    except OSError:
+        apu = False
+    if not apu:
+        for f in Path("/sys/class/drm").glob("card*/device/mem_info_vram_total"):
+            try:
+                if int(f.read_text()) >= 3500 * 1024 * 1024:
+                    return "dgpu"
+            except (OSError, ValueError):
+                continue
+    return "igp"
+
+
+def _opt_defaults_for(tile):
+    """Vorgaben von VoidStation, die von der Hardware abhaengen: {Option: Wert}."""
+    gpu = emu_gpu_class()
+    if tile == "pcsx2":                 # PS2 hochskalieren ist teuer: nur mit eigener Grafikkarte
+        return {"res": "2"} if gpu == "dgpu" else {}
+    if tile == "duckstation" and gpu != "none":
+        return {"res": "4" if gpu == "dgpu" else "2", "pgxp": "true"}
+    return {}
+
+
+def _opt_norm(v):
+    s = str(v).strip().lower()
+    try:
+        return f"{float(s):g}"
+    except ValueError:
+        return s
+
+
+def _opt_writes(opt, choice):
+    return dict(choice["set"]) if choice.get("set") else {k: choice["v"] for k in opt["keys"]}
+
+
+def _opt_choice(opt, value):
+    return next((c for c in opt["choices"] if c["v"] == value), None)
+
+
+def _opt_value(tile, opt):
+    """Aktuell gewaehlte Moeglichkeit laut Datei des Emulators, der Standard, wenn nichts drinsteht, oder None (etwas
+    anderes, das sich hier nicht waehlen laesst – dann ist keiner der Knoepfe an)."""
+    sec = ini_read(EMU_OPTS[tile]["file"]()).get(opt["section"], {})
+    if not any(k in sec for k in opt["keys"]):
+        return opt["default"]
+    for c in opt["choices"]:
+        if all(_opt_norm(sec.get(k, v)) == _opt_norm(v) for k, v in _opt_writes(opt, c).items()):
+            return c["v"]
+    return None
+
+
+def _opt_write(tile, opt, value):
+    ini_update(EMU_OPTS[tile]["file"](), opt["section"], _opt_writes(opt, _opt_choice(opt, value)))
+
+
+def emu_opts_has_game(tile):
+    return any(o["game"] for o in _OPT_INDEX.get(tile, {}).values())
+
+
+def emu_games_load():
+    try:
+        d = json.loads(EMU_GAME_OPTS.read_text(encoding="utf-8"))
+        return d if isinstance(d, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
+def emu_games_save(d):
+    EMU_GAME_OPTS.parent.mkdir(parents=True, exist_ok=True)
+    tmp = EMU_GAME_OPTS.with_suffix(".tmp")
+    tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
+    tmp.replace(EMU_GAME_OPTS)
+
+
+def emu_opts_game(tile, game):
+    """Fuer ein Spiel gewaehlte Optionen {Option: Wert}, nur was es (noch) gibt."""
+    idx = _OPT_INDEX.get(tile, {})
+    own = emu_games_load().get(tile, {}).get(os.path.basename(game), {})
+    return {k: v for k, v in own.items() if k in idx and idx[k]["game"] and _opt_choice(idx[k], v)}
+
+
+def emu_opts_game_writes(tile, game):
+    """[(Abschnitt, {Schluessel: Wert})] der Optionen eines Spiels."""
+    idx = _OPT_INDEX[tile]
+    return [(idx[k]["section"], _opt_writes(idx[k], _opt_choice(idx[k], v))) for k, v in emu_opts_game(tile, game).items()]
+
+
+def emu_opts_restore(tile, st):
+    """Was fuer ein Spiel in die Haupteinstellung kam, zuruecknehmen. Hat der Nutzer es im Emulator geaendert, bleibt das.
+    Aufruf mit EMU_LOCK."""
+    rec = st.setdefault("opt_game", {}).pop(tile, None)
+    if not rec:
+        return
+    path = EMU_OPTS[tile]["file"]()
+    ini = ini_read(path)
+    for sec, vals in rec.items():
+        put, drop = {}, []
+        for k, (old, wrote) in vals.items():
+            if _opt_norm(ini.get(sec, {}).get(k, "")) != _opt_norm(wrote):
+                continue
+            if old is None:
+                drop.append(k)
+            else:
+                put[k] = old
+        if put or drop:
+            ini_update(path, sec, put, remove=drop)
+    log(f"{tile}: Optionen des letzten Spiels zurueckgenommen")
+
+
+def _opts_apply_game(tile, game, st):
+    """Optionen eines Spiels vor dem Start in die Haupteinstellung schreiben und den alten Wert merken (s. oben)."""
+    path = EMU_OPTS[tile]["file"]()
+    ini = ini_read(path)
+    rec = {}
+    for sec, vals in emu_opts_game_writes(tile, game):
+        for k, v in vals.items():
+            rec.setdefault(sec, {})[k] = [ini.get(sec, {}).get(k), v]
+        ini_update(path, sec, vals)
+    if rec:
+        st.setdefault("opt_game", {})[tile] = rec
+        log(f"{tile}: Optionen fuer {os.path.basename(game)}:", rec)
+
+
+def _opts_apply_defaults(tile, st):
+    """Vorgaben einmal setzen, solange die Option noch auf dem Standard des Emulators steht. Nie ueber das, was der Nutzer
+    gewaehlt hat (mine[option] = None), egal ob hier oder im Emulator."""
+    mine = st.setdefault("opt_defaults", {}).setdefault(tile, {})
+    idx = _OPT_INDEX[tile]
+    for oid, want in _opt_defaults_for(tile).items():
+        opt = idx[oid]
+        cur = _opt_value(tile, opt)
+        if oid not in mine:
+            if cur == opt["default"]:
+                _opt_write(tile, opt, want)
+                mine[oid] = want
+                log(f"{tile}: Vorgabe {oid}={want}")
+            else:
+                mine[oid] = None
+        elif mine[oid] is not None and cur != mine[oid]:
+            mine[oid] = None
+        elif mine[oid] is not None and want != cur:      # andere Grafikkarte: Vorgabe mitziehen
+            _opt_write(tile, opt, want)
+            mine[oid] = want
+
+
+def emu_opts_prepare(tid, args):
+    """Vor jedem Start (nach dem Erststart): Optionen des letzten Spiels zuruecknehmen, Vorgemerktes eintragen, Vorgaben,
+    dann die Optionen des Spiels, das jetzt startet. DOSBox: Spiel-Optionen stehen schon in voidstation.conf."""
+    if tid not in EMU_OPTS:
+        return
+    if tid == "dosbox":
+        dosbox_primary_ensure()
+    if tid != "gba":                                     # mGBA: schon in mgba_prepare
+        emu_mute_apply(tid)
+    if not emu_ready(tid):
+        return
+    with EMU_LOCK:
+        st = emu_state_load()
+        emu_opts_restore(tid, st)
+        for oid, v in (st.get("opt_pending") or {}).pop(tid, {}).items():
+            opt = _OPT_INDEX[tid].get(oid)
+            if opt and _opt_choice(opt, v):
+                _opt_write(tid, opt, v)
+        _opts_apply_defaults(tid, st)
+        game = str(args[-1]) if len(args) > 1 else ""
+        if tid != "dosbox" and Path(game).suffix.lower() in {e for x in ROMS.EXTENSIONS.values() for e in x}:
+            _opts_apply_game(tid, game, st)
+        emu_state_save(st)
+
+
+def _opt_mute_now(tile, st):
+    want = st.get("mute", {}).get(tile)
+    if want is not None:                               # vorgemerkt (Emulator lief noch nie oder laeuft gerade)
+        return bool(want)
+    path, sec, key = EMU_MUTE[tile]()[:3]
+    return ini_read(path).get(sec, {}).get(key, "0").strip().lower() not in ("0", "", "false", "off", "no")
+
+
+def emu_opts_payload(tile, game=None):
+    spec = EMU_OPTS.get(tile)
+    if not spec:
+        raise ValueError("Dieser Emulator hat keine Optionen")
+    game = os.path.basename(game) if game else None
+    running = bool(APPS._get(tile))
+    with EMU_LOCK:
+        st = emu_state_load()
+        if not running and emu_ready(tile) and st.get("opt_game", {}).get(tile):
+            emu_opts_restore(tile, st)
+            emu_state_save(st)
+        pending = st.get("opt_pending", {}).get(tile, {})
+        values, groups = {}, []
+        own = emu_opts_game(tile, game) if game else {}
+        for gid, opts in spec["groups"]:
+            shown = [o for o in opts if o["game"]] if game else opts
+            if not shown:
+                continue
+            for o in shown:
+                values[o["id"]] = own.get(o["id"]) if game else pending.get(o["id"], _opt_value(tile, o))
+            groups.append({"id": gid, "opts": [{"id": o["id"], "choices": [
+                {x: c[x] for x in ("v", "k", "t") if x in c} for c in o["choices"]]} for o in shown]})
+        if not game and tile in EMU_MUTE and groups:      # "Spiel stumm": eigener Weg, s. emu_set_mute
+            groups[-1]["opts"].append({"id": "mute", "choices": _OPT_TF})
+            values["mute"] = "true" if _opt_mute_now(tile, st) else "false"
+    layout = EMU_LAYOUTS.get(tile) or {}
+    return {"emu": tile, "name": layout.get("name") or tile, "game": game, "groups": groups, "values": values}
+
+
+def emu_opts_set(tile, oid, value, game=None):
+    """Option setzen: fuer ein Spiel (value None = wieder wie ueberall) oder allgemein, in der Datei des Emulators."""
+    if oid == "mute" and tile in EMU_MUTE and not game:
+        if value not in ("true", "false"):
+            raise ValueError("Unbekannter Wert")
+        emu_set_mute(tile, value == "true")
+        return emu_opts_payload(tile)
+    opt = _OPT_INDEX.get(tile, {}).get(oid)
+    if not opt:
+        raise ValueError("Unbekannte Option")
+    if value is not None and not _opt_choice(opt, value):
+        raise ValueError("Unbekannter Wert")
+    if game:
+        if not opt["game"]:
+            raise ValueError("Diese Option gilt nicht je Spiel")
+        name = os.path.basename(game)
+        with EMU_LOCK:
+            d = emu_games_load()
+            own = d.setdefault(tile, {}).setdefault(name, {})
+            if value is None:
+                own.pop(oid, None)
+                if not own:
+                    d[tile].pop(name, None)
+            else:
+                own[oid] = value
+            emu_games_save(d)
+        return emu_opts_payload(tile, name)
+    if value is None:
+        raise ValueError("Wert fehlt")
+    with EMU_LOCK:
+        if tile == "dosbox":
+            dosbox_primary_ensure()
+        st = emu_state_load()
+        ready = emu_ready(tile)
+        if ready and not APPS._get(tile):
+            emu_opts_restore(tile, st)
+        if ready:
+            _opt_write(tile, opt, value)
+        # Laeuft der Emulator, schreibt er beim Beenden seine Einstellungen zurueck; vor dem Einrichten gibt es noch keine
+        if not ready or APPS._get(tile):
+            st.setdefault("opt_pending", {}).setdefault(tile, {})[oid] = value
+        st.setdefault("opt_defaults", {}).setdefault(tile, {})[oid] = None      # ab jetzt die Wahl des Nutzers
+        emu_state_save(st)
+    log(f"{tile}: Option {oid}={value}")
+    return emu_opts_payload(tile)
 
 
 def emu_front(tile):
@@ -9646,6 +10048,10 @@ def emu_prepare(tid, args):
         env["SDL_JOYSTICK_HIDAPI"] = "0"          # rohe Tastennummern wie in sdl_indices (s. SDL_PROBE)
         if flat and not any(str(a).startswith("--env=SDL_JOYSTICK_HIDAPI") for a in args):
             args = ["flatpak", "run", "--env=SDL_JOYSTICK_HIDAPI=0"] + list(args[2:])
+    try:
+        emu_opts_prepare(tid, args)
+    except Exception as e:  # noqa: BLE001 – Optionen duerfen den Start nie verhindern
+        log(f"{tid}: Optionen:", e)
     if flat and tid in EMU_LAYOUTS:
         # Spiele und BIOS liegen in der Freigabe: manche Flatpaks sehen das Home gar nicht (RMG) oder nur lesend
         # (xemu braucht das Festplatten-Image in share/ROMs/xbox/bios zum Schreiben)
@@ -11814,7 +12220,14 @@ class Handler(BaseHTTPRequestHandler):
                 r["cover"] = ROM_COVERS.url(r)
             return self._json(200, {"system": ROMS.canonical_system(system), "folders": ROMS.folders(system),
                                     "count": len(roms), "roms": roms, "keymap": system in EMU_LAYOUTS,
-                                    "mute": emu_muted(system), "bios": bios_status(system)})
+                                    "bios": bios_status(system),
+                                    "opts": system in EMU_OPTS, "gameOpts": emu_opts_has_game(system)})
+        if path == "/api/emuopts":                 # Optionen eines Emulators bzw. eines Spiels (&game=<datei>)
+            qs = urllib.parse.parse_qs(url.query)
+            try:
+                return self._json(200, emu_opts_payload(qs.get("emu", [""])[0], qs.get("game", [""])[0] or None))
+            except ValueError as e:
+                return self._json(404, {"error": str(e)})
         if path == "/api/keymap":                  # Tastenbelegung eines Emulators (Konsole, Controller, Tasten)
             qs = urllib.parse.parse_qs(url.query)
             emu = qs.get("emu", [""])[0]
@@ -12155,13 +12568,13 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, settings_payload())
             if parts[:2] == ["api", "keymap"]:
                 return self._keymap_post(parts[2:], self._body())
-            if parts == ["api", "roms", "mute"]:      # Spieleliste: "Spiel stumm"
+            if parts == ["api", "emuopts", "set"]:    # Spieleliste: "Optionen"
                 b = self._body()
                 try:
-                    emu_set_mute(str(b.get("system", "")), bool(b.get("on")))
+                    return self._json(200, emu_opts_set(str(b.get("emu", "")), str(b.get("id", "")), b.get("value"),
+                                                        str(b.get("game") or "") or None))
                 except (ValueError, OSError) as e:
                     return self._json(400, {"error": str(e)})
-                return self._json(200, {"mute": emu_muted(str(b.get("system", "")))})
             if parts == ["api", "roms", "launch"]:
                 b = self._body()
                 sys_id = str(b.get("system", ""))

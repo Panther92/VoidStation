@@ -67,7 +67,36 @@ PS_TEXT = {"south": "✕", "east": "○", "west": "□", "north": "△", "l1": "
 BIOS_NEED = {"duckstation": ["bios"], "pcsx2": ["bios"], "xemu": ["mcpx", "flash", "hdd"]}
 CAPTURE_ROLES = ["south", "east", "west", "north", "l1", "r1", "l2", "r2", "start", "select", "up", "down", "left", "right",
                  "l3", "r3"]
-KEYMAP = {"own": {}, "step": 0, "nopad": os.environ.get("VS_NO_PAD") == "1", "mute": False}
+KEYMAP = {"own": {}, "step": 0, "nopad": os.environ.get("VS_NO_PAD") == "1"}
+# Optionen der Spieleliste (Attrappe; die echten stehen in launcher.py EMU_OPTS)
+EMUOPTS = {"res": "2", "aspect": "Auto", "widescreen": "false", "renderer": "auto", "speed": "std"}
+EMUOPTS_GAME = {}
+EMUOPT_TF = [{"v": "true", "k": "common.on"}, {"v": "false", "k": "common.off"}]
+EMUOPT_LIST = [("picture", [
+    ("res", False, [{"v": "1", "k": "emuopt.v.original"}, {"v": "2", "t": "2\u00d7"}, {"v": "3", "t": "3\u00d7"}, {"v": "4", "t": "4\u00d7"}]),
+    ("aspect", True, [{"v": "Auto", "k": "emuopt.v.auto"}, {"v": "4:3", "t": "4:3"}, {"v": "16:9", "t": "16:9"}, {"v": "Stretch", "k": "emuopt.v.stretch"}]),
+    ("widescreen", True, EMUOPT_TF),
+    ("pgxp", False, EMUOPT_TF),
+    ("renderer", False, [{"v": "auto", "k": "emuopt.v.auto"}, {"v": "vk", "t": "Vulkan"}, {"v": "gl", "t": "OpenGL"}, {"v": "sw", "t": "Software"}]),
+]), ("play", [
+    ("fastBoot", False, EMUOPT_TF),
+    ("resume", False, EMUOPT_TF),
+    ("mute", False, EMUOPT_TF),
+    ("speed", True, [{"v": "std", "k": "emuopt.v.standard"}, {"v": "286", "t": "286"}, {"v": "386", "t": "386"}, {"v": "486", "t": "486"}, {"v": "pentium", "t": "Pentium"}, {"v": "max", "t": "Max"}]),
+    ("soundCard", True, [{"v": "sb16", "t": "Sound Blaster 16"}, {"v": "sbpro2", "t": "Sound Blaster Pro 2"}, {"v": "sb1", "t": "Sound Blaster 1.0"}]),
+])]
+
+
+def emuopts_payload(emu, game):
+    own = EMUOPTS_GAME.get(game, {})
+    groups, values = [], {}
+    for gid, opts in EMUOPT_LIST:
+        shown = [o for o in opts if o[1]] if game else opts
+        if shown:
+            groups.append({"id": gid, "opts": [{"id": o[0], "choices": o[2]} for o in shown]})
+        for o in shown:
+            values[o[0]] = own.get(o[0]) if game else EMUOPTS.get(o[0], o[2][0]["v"])
+    return {"emu": emu, "name": emu, "game": game or None, "groups": groups, "values": values}
 
 
 def keymap_payload(emu="gba"):
@@ -427,9 +456,10 @@ class H(S.H):
                                        {"ssid": "iPhone von Paul", "signal": 58, "secure": True, "known": True, "active": False},
                                        {"ssid": "Nachbar", "signal": 31, "secure": True, "known": False, "active": False}],
             "/api/keymap": lambda: keymap_payload(q.get("emu", ["gba"])[0]),
+            "/api/emuopts": lambda: emuopts_payload(q.get("emu", ["gba"])[0], q.get("game", [""])[0]),
             "/api/roms": lambda: {"system": q.get("system", ["gba"])[0], "count": len(ROMS), "roms": ROMS,
                                   "keymap": q.get("system", ["gba"])[0] in EMU_LAYOUTS,
-                                  "mute": KEYMAP["mute"] if q.get("system", ["gba"])[0] == "gba" else None,
+                                  "opts": True, "gameOpts": True,
                                   "bios": None if q.get("system", ["gba"])[0] not in BIOS_NEED else
                                   {"ok": True, "missing": []} if os.environ.get("VS_BIOS_OK") == "1" else
                                   {"ok": False, "missing": BIOS_NEED[q.get("system", ["gba"])[0]]}},
@@ -553,9 +583,14 @@ class H(S.H):
         if p == "/api/keymap/reset":
             KEYMAP["own"][body.get("emu", "gba")] = {}
             return self.j(keymap_payload(body.get("emu", "gba")))
-        if p == "/api/roms/mute":
-            KEYMAP["mute"] = bool(body.get("on"))
-            return self.j({"mute": KEYMAP["mute"]})
+        if p == "/api/emuopts/set":
+            game, oid, val = body.get("game") or "", body.get("id"), body.get("value")
+            if game:
+                own = EMUOPTS_GAME.setdefault(game, {})
+                own.pop(oid, None) if val is None else own.__setitem__(oid, val)
+            else:
+                EMUOPTS[oid] = val
+            return self.j(emuopts_payload(body.get("emu", "gba"), game))
         if p == "/api/keymap/cancel":
             return self.j({"ok": True})
         if p.startswith("/api/volume/"):

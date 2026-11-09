@@ -85,7 +85,7 @@ Window {
         Connections { target: hint; function onHeightChanged() { Qt.callLater(app.layout) } }
 
         // ------------------------------------------------------------ Ebenen
-        readonly property var layerOrder: [osk, adlg, powerDlg, keymap, roms, tv, apps, radio, settings, inst]
+        readonly property var layerOrder: [osk, adlg, powerDlg, keymap, emuopts, roms, tv, apps, radio, settings, inst]
         property string layerName: "home"
         property Item layerRoot: homeView
         function updateLayer() {
@@ -94,6 +94,7 @@ Window {
             else if (adlg.open) { n = "adlg"; r = adlg }
             else if (powerDlg.open) { n = "dialog"; r = powerDlg }
             else if (keymap.open) { n = "keymap"; r = keymap }
+            else if (emuopts.open) { n = "emuopts"; r = emuopts }
             else if (roms.open) { n = "roms"; r = roms }
             else if (tv.open) { n = "tv"; r = tv }
             else if (apps.open) { n = "apps"; r = apps }
@@ -105,7 +106,7 @@ Window {
             if (relayout) layout()
         }
         function curTrack() {
-            return ({ home: homeTrack, radio: radio.track, tv: tv.track, apps: null, settings: settings.track, roms: roms.track, keymap: keymap.track, inst: inst.track })[layerName] || null
+            return ({ home: homeTrack, radio: radio.track, tv: tv.track, apps: null, settings: settings.track, roms: roms.track, keymap: keymap.track, emuopts: emuopts.track, inst: inst.track })[layerName] || null
         }
         function navItems() { return Nav.collect(layerRoot) }
         function setFocus(item, instant) { Nav.setFocus(item, instant, layerName) }
@@ -642,6 +643,7 @@ Window {
         TvLayer { id: tv; anchors.fill: parent }
         RomsLayer { id: roms; anchors.fill: parent }
         KeymapLayer { id: keymap; anchors.fill: parent }
+        EmuOptsLayer { id: emuopts; anchors.fill: parent }
 
         JobBand { id: jobBand }
         HintBar { id: hint }
