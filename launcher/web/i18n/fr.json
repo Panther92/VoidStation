@@ -1354,8 +1354,6 @@
   "settings.oskMode.auto": "Automatique",
   "settings.oskMode.always": "Toujours",
   "settings.oskMode.keyboard": "Pas avec un clavier",
-  "settings.oskInfo": "Automatique : si un clavier est branché et que tu tapes dessus, les touches disparaissent et seul le champ de saisie reste. Dès que tu utilises la manette, elles reviennent. « Pas avec un clavier » les masque dès qu’un clavier est détecté – les récepteurs de souris se déclarent parfois aussi comme clavier.",
-  "settings.oskFound": "Un clavier est branché en ce moment.",
   "inst.kb.nl": "Nederlands",
   "inst.kb.jp": "日本語"
 }

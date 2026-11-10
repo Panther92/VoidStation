@@ -22,7 +22,7 @@ Layer {
     readonly property var audioDevs: sett && sett.audio && sett.audio.ok ? (sett.audio.devices || []) : []
     readonly property var audioDev: { for (var i = 0; i < audioDevs.length; i++) if (audioDevs[i].active) return audioDevs[i]; return null }
     readonly property var catDefs: [
-        { id: "lang", icon: "globe", color: "#2d4a6b", title: "settings.language" },
+        { id: "lang", icon: "speech", color: "#2d4a6b", title: "settings.language" },
         { id: "display", icon: "monitor", color: "#2b5b66", title: "settings.catDisplay" },
         { id: "design", icon: "palette", color: "#553a6e", title: "settings.catDesign" },
         { id: "audio", icon: "speaker", color: "#74461f", title: "settings.catAudio" },
@@ -579,7 +579,6 @@ Layer {
                            maxWidth: Ui.screenW * 0.4; onTriggered: s.setOsk({ mode: modelData }) }
                 }
             }
-            Info { html: Ui.esc(Ui.t("settings.oskInfo")) + (vs.kbdPresent ? "<br><br>" + Ui.esc(Ui.t("settings.oskFound")) : "") }
             SetRow {
                 label: Ui.t("settings.oskLayout")
                 Pill {

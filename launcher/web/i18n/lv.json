@@ -1355,8 +1355,6 @@
   "settings.oskMode.auto": "Automātiski",
   "settings.oskMode.always": "Vienmēr",
   "settings.oskMode.keyboard": "Ne ar tastatūru",
-  "settings.oskInfo": "Automātiski: ja pievienota tastatūra un tu raksti uz tās, taustiņi pazūd un paliek tikai ievades lauks. Tiklīdz izmanto kontrolieri, tie atgriežas. “Ne ar tastatūru” tos paslēpj, tiklīdz tiek atpazīta tastatūra – peļu uztvērēji dažreiz arī piesakās kā tastatūra.",
-  "settings.oskFound": "Pašlaik ir pievienota tastatūra.",
   "inst.kb.nl": "Nederlands",
   "inst.kb.jp": "日本語"
 }

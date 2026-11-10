@@ -1356,8 +1356,6 @@
   "settings.oskMode.auto": "Automatikus",
   "settings.oskMode.always": "Mindig",
   "settings.oskMode.keyboard": "Billentyűzettel nem",
-  "settings.oskInfo": "Automatikus: ha billentyűzet csatlakozik és gépelsz rajta, a billentyűk eltűnnek, csak a beviteli mező marad. Amint a kontrollert használod, visszajönnek. A „Billentyűzettel nem” elrejti őket, amint billentyűzetet észlel – az egerek vevői néha billentyűzetként is jelentkeznek.",
-  "settings.oskFound": "Jelenleg billentyűzet csatlakozik.",
   "inst.kb.nl": "Nederlands",
   "inst.kb.jp": "日本語"
 }

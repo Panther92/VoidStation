@@ -1354,8 +1354,6 @@
   "settings.oskMode.auto": "Automático",
   "settings.oskMode.always": "Siempre",
   "settings.oskMode.keyboard": "No con teclado",
-  "settings.oskInfo": "Automático: si hay un teclado conectado y escribes en él, las teclas desaparecen y solo queda el campo de texto. En cuanto usas el mando, vuelven. «No con teclado» las oculta en cuanto se detecta un teclado; los receptores de ratón a veces también se presentan como teclado.",
-  "settings.oskFound": "Ahora mismo hay un teclado conectado.",
   "inst.kb.nl": "Nederlands",
   "inst.kb.jp": "日本語"
 }

@@ -1167,7 +1167,5 @@
   "settings.oskMode.auto": "Automatisch",
   "settings.oskMode.always": "Immer",
   "settings.oskMode.keyboard": "Nicht mit Tastatur",
-  "settings.oskInfo": "Automatisch: Ist eine Tastatur angeschlossen und tippst du darauf, verschwinden die Tasten, nur das Eingabefeld bleibt. Sobald du den Controller benutzt, sind sie wieder da. „Nicht mit Tastatur“ blendet sie aus, sobald eine Tastatur erkannt wird – Funkempfänger von Mäusen melden sich manchmal auch als Tastatur.",
-  "settings.oskFound": "Gerade ist eine Tastatur angeschlossen.",
   "inst.kb.nl": "Nederlands"
 }

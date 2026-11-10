@@ -1354,8 +1354,6 @@
   "settings.oskMode.auto": "Automatisch",
   "settings.oskMode.always": "Altijd",
   "settings.oskMode.keyboard": "Niet met toetsenbord",
-  "settings.oskInfo": "Automatisch: is er een toetsenbord aangesloten en typ je erop, dan verdwijnen de toetsen en blijft alleen het invoerveld. Zodra je de controller gebruikt, komen ze terug. ‘Niet met toetsenbord’ verbergt ze zodra een toetsenbord wordt herkend – ontvangers van muizen melden zich soms ook als toetsenbord.",
-  "settings.oskFound": "Er is nu een toetsenbord aangesloten.",
   "inst.kb.nl": "Nederlands",
   "inst.kb.jp": "日本語"
 }

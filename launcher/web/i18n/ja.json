@@ -1356,7 +1356,5 @@
   "settings.oskMode.auto": "自動",
   "settings.oskMode.always": "常に",
   "settings.oskMode.keyboard": "キーボード接続時は表示しない",
-  "settings.oskInfo": "自動: キーボードが接続されていてそれで入力すると、キーが消えて入力欄だけが残ります。コントローラーを使うとすぐに戻ります。「キーボード接続時は表示しない」はキーボードを検出した時点で隠します。マウスの受信機がキーボードとして認識されることもあります。",
-  "settings.oskFound": "現在キーボードが接続されています。",
   "inst.kb.nl": "Nederlands"
 }
