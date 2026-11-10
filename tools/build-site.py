@@ -344,6 +344,7 @@ class Site:
             f'<a href="{self.url("impressum", lang)}">{esc(self.t(lang, "foot.impressum"))}</a>',
             f'<a href="{self.url("privacy", lang)}">{esc(self.t(lang, "foot.privacy"))}</a>',
             f'<a href="{esc(self.cfg["github"])}" rel="noopener">GitHub</a>',
+            *([f'<a href="{esc(self.cfg["distrowatch"])}" rel="noopener">DistroWatch</a>'] if self.cfg.get("distrowatch") else []),
             f'<a href="{self.url("news", lang)}feed.xml">RSS</a>',
             *([f'<a href="{esc(self.cfg["donate"])}" rel="noopener">{esc(self.t(lang, "foot.donate"))}</a>'] if self.cfg.get("donate") else []),
             f'<a href="{alt[other]}" hreflang="{other}" lang="{other}">{esc(self.t(other, "lang.name"))}</a>',

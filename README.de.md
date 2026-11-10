@@ -2,7 +2,7 @@
 
 **[English](README.md)** · Deutsch · [voidstation.de](https://voidstation.de) · [Download](https://voidstation.de/download/) · [Fragen](https://github.com/Panther92/VoidStation/discussions) · [Fehler melden](https://github.com/Panther92/VoidStation/issues/new/choose)
 
-[![Stable](https://img.shields.io/github/v/release/Panther92/VoidStation?label=stable)](https://github.com/Panther92/VoidStation/releases/latest) [![Checks](https://github.com/Panther92/VoidStation/actions/workflows/checks.yml/badge.svg)](https://github.com/Panther92/VoidStation/actions/workflows/checks.yml) [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE) [![ISO downloads](https://img.shields.io/sourceforge/dt/voidstation?label=ISO%20downloads)](https://sourceforge.net/projects/voidstation/files/)
+[![Stable](https://img.shields.io/github/v/release/Panther92/VoidStation?label=stable)](https://github.com/Panther92/VoidStation/releases/latest) [![Checks](https://github.com/Panther92/VoidStation/actions/workflows/checks.yml/badge.svg)](https://github.com/Panther92/VoidStation/actions/workflows/checks.yml) [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue)](LICENSE) [![ISO downloads](https://img.shields.io/sourceforge/dt/voidstation?label=ISO%20downloads)](https://sourceforge.net/projects/voidstation/files/) [![DistroWatch](https://img.shields.io/badge/DistroWatch-listed-2f6f4f)](https://distrowatch.com/table.php?distribution=voidstation)
 
 Void Linux als TV-Station: Kacheloberfläche im Stil von Windows 8, dunkel, bedienbar mit Gamepad, Fernbedienung, Maus und Tastatur.
 Läuft auf Openbox; die Startseite ist ein eigenes Programm in Python + Qt 6, das direkt auf der Grafikkarte zeichnet.
