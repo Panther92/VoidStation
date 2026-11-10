@@ -436,6 +436,11 @@ class Site:
             meta.append("x86_64")
             sha = (f'<p class="sha"><span>SHA-256</span> <code>{esc(iso["sha256"])}</code></p>' if iso.get("sha256") else "")
             more = f'<a href="{esc(sf)}" rel="noopener">{esc(self.t(lang, "iso.all"))}</a>' if sf else ""
+            badges = ['<img class="badge" src="/assets/sf-rising-star.svg" alt="SourceForge: Rising Star" width="110" height="110">']
+            if self.cfg.get("distrowatch"):
+                badges.append(f'<a class="badge dw" href="{esc(self.cfg["distrowatch"])}" rel="noopener">'
+                              f'<span>{esc(self.t(lang, "iso.dw"))}</span><b>DistroWatch</b></a>')
+            more += f'<span class="badges">{"".join(badges)}</span>'
             return f"""<div class="isocard">
   <a class="tile large dl" style="--c:#2b5f46" href="{esc(iso['url'])}" rel="noopener">
     <span class="sub">{esc(" · ".join(meta))}</span>

@@ -225,7 +225,13 @@ kbd { display: inline-block; min-width: 1.6em; padding: 0 6px; font: inherit; fo
 .isocard .sha { font-size: 14px; color: var(--text-dim); }
 .isocard .sha span { display: block; }
 .isocard .dl ~ .isotext > p:last-child { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 0; }
-.isocard .dl ~ .isotext > p:last-child::after { content: ""; content: "" / "SourceForge: Rising Star"; flex: none; width: 110px; height: 110px; background: url(sf-rising-star.svg) center / contain no-repeat; }
+.isocard .badges { display: flex; flex: none; gap: 12px; }
+.isocard .badge { width: 110px; height: 110px; flex: none; }
+.isocard .badge.dw { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; box-sizing: border-box; padding: 8px; background: #2b5f46; color: var(--text-primary); text-align: center; text-decoration: none; box-shadow: inset 0 0 0 3px rgba(255,255,255,.18); transition: transform .15s; }
+.isocard .badge.dw:hover { transform: scale(1.05); color: var(--text-primary); }
+.isocard .badge.dw span { font-size: 12px; line-height: 1.2; color: var(--text-secondary); }
+.isocard .badge.dw b { font-size: 14px; line-height: 1.2; letter-spacing: .01em; }
+@media (max-width: 420px) { .isocard .dl ~ .isotext > p:last-child { flex-wrap: wrap; } }
 .iso32 { margin: -12px 0 28px; padding: 16px 20px; border-left: 3px solid var(--text-dim); background: rgba(255,255,255,.03); }
 .iso32 p { margin: 6px 0; }
 .iso32 .btn { gap: 10px; background: transparent; color: var(--text-primary); box-shadow: inset 0 0 0 2px var(--text-dim); }
