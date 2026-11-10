@@ -150,7 +150,6 @@
   "settings.title": "Ustawienia",
   "settings.loadFailed": "Nie udało się wczytać ustawień",
   "settings.language": "Język · Language",
-  "settings.langApps": "Programy takie jak VLC, menedżer plików czy YouTube użyją nowego języka przy następnym uruchomieniu.",
   "settings.scale": "Skalowanie",
   "settings.scaleToast": "Skalowanie {scale}× – dotyczy programów otwieranych od teraz",
   "settings.theme": "Motyw",

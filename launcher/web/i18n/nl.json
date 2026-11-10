@@ -150,7 +150,6 @@
   "settings.title": "Instellingen",
   "settings.loadFailed": "Instellingen konden niet worden geladen",
   "settings.language": "Taal · Language",
-  "settings.langApps": "Programma’s als VLC, de bestandsbeheerder of YouTube gebruiken de nieuwe taal bij de volgende keer starten.",
   "settings.scale": "Schaal",
   "settings.scaleToast": "Schaal {scale}× – geldt voor programma’s die je vanaf nu opent",
   "settings.theme": "Thema",

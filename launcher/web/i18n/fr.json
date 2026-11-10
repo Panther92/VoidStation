@@ -150,7 +150,6 @@
   "settings.title": "Réglages",
   "settings.loadFailed": "Impossible de charger les réglages",
   "settings.language": "Langue · Language",
-  "settings.langApps": "Les programmes comme VLC, le gestionnaire de fichiers ou YouTube prendront la nouvelle langue à leur prochain démarrage.",
   "settings.scale": "Mise à l’échelle",
   "settings.scaleToast": "Échelle {scale}× – s’applique aux programmes ouverts à partir de maintenant",
   "settings.theme": "Thème",

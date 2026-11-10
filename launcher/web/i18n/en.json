@@ -150,7 +150,6 @@
   "settings.title": "Settings",
   "settings.loadFailed": "Could not load settings",
   "settings.language": "Language · Sprache",
-  "settings.langApps": "Programs like VLC, the file manager or YouTube use the new language the next time they start.",
   "settings.scale": "Scaling",
   "settings.scaleToast": "Scaling {scale}× – applies to programs opened from now on",
   "settings.theme": "Theme",

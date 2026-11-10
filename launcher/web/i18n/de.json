@@ -150,7 +150,6 @@
   "settings.title": "Einstellungen",
   "settings.loadFailed": "Einstellungen nicht ladbar",
   "settings.language": "Sprache · Language",
-  "settings.langApps": "Programme wie VLC, Dateimanager oder YouTube übernehmen die Sprache beim nächsten Start.",
   "settings.scale": "Skalierung",
   "settings.scaleToast": "Skalierung {scale}× – gilt für neu geöffnete Programme",
   "settings.theme": "Design · Theme",

@@ -150,7 +150,6 @@
   "settings.title": "Beállítások",
   "settings.loadFailed": "Nem sikerült betölteni a beállításokat",
   "settings.language": "Nyelv · Language",
-  "settings.langApps": "Az olyan programok, mint a VLC, a fájlkezelő vagy a YouTube, a következő indításkor veszik át az új nyelvet.",
   "settings.scale": "Méretezés",
   "settings.scaleToast": "Méretezés {scale}× – a mostantól megnyitott programokra érvényes",
   "settings.theme": "Téma",

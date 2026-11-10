@@ -1479,7 +1479,6 @@ const SET_PAGES = {
     for (const l of sett.langs || [{ id: 'de', label: 'Deutsch' }, { id: 'en', label: 'English' }]) {
       const b = pill(esc(l.label), () => setLang(l.id), l.id === LANG); b.dataset.key = 'lang' + l.id; lr.appendChild(b);
     }
-    const li = document.createElement('div'); li.className = 'info'; li.textContent = T('settings.langApps'); lc.appendChild(li);
   },
   display(tr) {
     const a = col(tr, T('settings.scale'));

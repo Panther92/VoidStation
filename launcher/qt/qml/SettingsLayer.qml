@@ -567,7 +567,6 @@ Layer {
                     Pill { property string key: "lang" + modelData.id; text: modelData.label; on: modelData.id === Ui.lang; maxWidth: Ui.screenW * 0.4; onTriggered: s.setLang(modelData.id) }
                 }
             }
-            Info { html: Ui.esc(Ui.t("settings.langApps")) }
         }
         SetGroup {
             visible: s.cat === "lang"; availH: s.colH; title: Ui.t("settings.osk")

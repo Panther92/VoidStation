@@ -150,7 +150,6 @@
   "settings.title": "Iestatījumi",
   "settings.loadFailed": "Neizdevās ielādēt iestatījumus",
   "settings.language": "Valoda · Language",
-  "settings.langApps": "Tādas programmas kā VLC, failu pārvaldnieks vai YouTube izmantos jauno valodu nākamajā palaišanas reizē.",
   "settings.scale": "Mērogs",
   "settings.scaleToast": "Mērogs {scale}× – attiecas uz programmām, kuras atver no šī brīža",
   "settings.theme": "Motīvs",

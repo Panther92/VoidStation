@@ -150,7 +150,6 @@
   "settings.title": "設定",
   "settings.loadFailed": "設定を読み込めませんでした",
   "settings.language": "言語 · Sprache",
-  "settings.langApps": "VLC、ファイルマネージャー、YouTube などのプログラムは、次回の起動時に新しい言語になります。",
   "settings.scale": "表示倍率",
   "settings.scaleToast": "表示倍率 {scale}× – これから開くプログラムに適用されます",
   "settings.theme": "テーマ",

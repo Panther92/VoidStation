@@ -150,7 +150,6 @@
   "settings.title": "Nastavenia",
   "settings.loadFailed": "Nastavenia sa nedajú načítať",
   "settings.language": "Jazyk · Language",
-  "settings.langApps": "Programy ako VLC, správca súborov alebo YouTube použijú nový jazyk pri ďalšom spustení.",
   "settings.scale": "Mierka",
   "settings.scaleToast": "Mierka {scale}× – platí pre novo otvorené programy",
   "settings.theme": "Motív",

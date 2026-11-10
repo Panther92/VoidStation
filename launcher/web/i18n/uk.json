@@ -150,7 +150,6 @@
   "settings.title": "Налаштування",
   "settings.loadFailed": "Не вдалося завантажити налаштування",
   "settings.language": "Мова · Language",
-  "settings.langApps": "Програми на кшталт VLC, файлового менеджера чи YouTube перейдуть на нову мову під час наступного запуску.",
   "settings.scale": "Масштаб",
   "settings.scaleToast": "Масштаб {scale}× – для програм, відкритих відтепер",
   "settings.theme": "Тема",

@@ -150,7 +150,6 @@
   "settings.title": "Ρυθμίσεις",
   "settings.loadFailed": "Δεν ήταν δυνατή η φόρτωση των ρυθμίσεων",
   "settings.language": "Γλώσσα · Language",
-  "settings.langApps": "Προγράμματα όπως το VLC, η διαχείριση αρχείων ή το YouTube θα χρησιμοποιήσουν τη νέα γλώσσα την επόμενη φορά που θα ξεκινήσουν.",
   "settings.scale": "Κλιμάκωση",
   "settings.scaleToast": "Κλιμάκωση {scale}× – ισχύει για προγράμματα που ανοίγουν από τώρα",
   "settings.theme": "Θέμα",
