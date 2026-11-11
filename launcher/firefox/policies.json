@@ -37,8 +37,7 @@
         "install_url": "https://addons.mozilla.org/firefox/downloads/latest/enhanced-h264ify/latest.xpi"
       },
       "{87ce8680-7931-493f-9125-19c2c7ca092a}": {
-        "installation_mode": "force_installed",
-        "install_url": "file:///usr/local/share/voidstation/fx_osk.xpi"
+        "installation_mode": "blocked"
       }
     }
   }

@@ -12,6 +12,7 @@ Aufgaben dieses Programms (alles andere steht in qml/):
   * Texte aus web/i18n/*.json und Farben aus web/themes/*.css – eine Quelle fuer beide Oberflaechen
   * Gamepad ueber evdev (python3-evdev), Symbole als SVG
   * Controller als Maus in Programmen (uinput): rechter Stick Zeiger, A/B (✕/○) Klicks, linker Stick scrollt, R3 umschalten
+  * Bildschirmtastatur ueber Programmen (L2 + L3 oder Eingabefeld in Firefox): tippt per XTest, s. vsx11.type_text
 
 Darstellung: Qt Quick zeichnet mit OpenGL direkt auf der Grafikkarte (auch mit dem NVIDIA-Treiber).
 Ohne Render-Schnittstelle (/dev/dri/renderD*) oder mit VS_QT_SOFTWARE=1 zeichnet Qt per Software.
@@ -70,6 +71,7 @@ class PadMouse:
     """Controller als Maus, solange ein Programm vorn ist (nicht die Startseite): rechter Stick bewegt den Zeiger
     (je weiter, desto schneller), untere Taste (Xbox A, PlayStation ✕) = Linksklick (halten zieht), rechte Taste
     (Xbox B, PlayStation ○) = Rechtsklick, linker Stick hoch/runter scrollt, R3 schaltet fuer das Programm um.
+    L2 halten + L3 (linken Stick druecken) oeffnet die Bildschirmtastatur ueber dem Programm (nur wo die Maus an ist).
     Die Startseite bekommt die Tasten in dieser Zeit nicht (PadPump nur, wenn sie vorn ist). Von selbst an oder aus je nach Kachel (/api/front: "mouse"; Spiele
     und Emulatoren aus), ganz aus mit Einstellungen -> System ("padmouse"). Virtuelle Maus ueber /dev/uinput
     (Gruppe input, sysfix.sh) – kein eigenes Programm, kein Dienst. Laeuft in einem eigenen Thread mit 100 Hz,
@@ -78,8 +80,10 @@ class PadMouse:
     DEAD = 0.20                    # Totzone der Sticks (driftende Sticks bewegen nichts)
     SCROLL_DEAD = 0.35
 
-    def __init__(self, pad, notify):
+    def __init__(self, pad, notify, keyboard=None):
         self.pad, self.notify = pad, notify     # notify(an: bool) – Hinweis ueber dem Programm (R3)
+        self.keyboard = keyboard or (lambda: None)   # L2 + L3: Bildschirmtastatur ueber dem Programm
+        self.combo_prev = False
         self.home_wins = set()     # Fenster der Startseite (setzt der Qt-Thread)
         self.screen_w = 1920       # Breite des Bildschirms (setzt der Qt-Thread), bestimmt die Geschwindigkeit
         self.ui = None
@@ -90,7 +94,7 @@ class PadMouse:
         self.r3_prev = False
         self.last_on = True
         self.btn = {"left": False, "right": False}
-        self.paused = False        # heisse Ecke offen: Controller bedient die Ecke, nicht die Maus
+        self.paused = False        # heisse Ecke oder Tastatur offen: Controller bedient sie, nicht die Maus
         # Tasten, die schon gedrueckt waren, bevor die Maus zustaendig wurde (z. B. A zum Starten der Kachel):
         # zaehlen erst nach dem Loslassen, sonst klickte der Start gleich ins Programm
         self.held_off = set()
@@ -159,15 +163,22 @@ class PadMouse:
     def step(self, st, now, dt):
         """Ein Takt: Zustand der Sticks/Tasten -> Mausereignisse. Rueckgabe: ob etwas geschrieben wurde."""
         from evdev import ecodes as E
+        held = {k for k in ("a", "b") if st[k]}
+        combo = bool(st.get("lt") and st.get("l3"))
         if self.paused:
+            # A, mit dem in der Ecke bzw. auf der Tastatur ausgeloest wurde, klickt nach dem Schliessen nicht ins Programm
+            self.held_off |= held
+            if combo and not self.combo_prev:          # Tastatur offen: L2 + L3 macht sie wieder zu
+                self.keyboard()
+            self.combo_prev = combo
             self.release()
             return False
         busy = (abs(st["rx"]) > self.DEAD or abs(st["ry"]) > self.DEAD or abs(st["ly"]) > self.SCROLL_DEAD
-                or st["r3"] or st["a"] or st["b"] or any(self.btn.values()))
-        held = {k for k in ("a", "b") if st[k]}
+                or st["r3"] or st.get("l3") or st["a"] or st["b"] or any(self.btn.values()))
         self.held_off &= held                         # losgelassen: zaehlt beim naechsten Druck wieder
         if not busy:
             self.r3_prev = False
+            self.combo_prev = False
             self.act_t = 0.0                          # nach einer Pause zuerst nachsehen, was vorn ist
             return False
         d = self.decide(now)
@@ -185,8 +196,13 @@ class PadMouse:
         self.r3_prev = st["r3"]
         if not on or not self._device():
             self.held_off |= held
+            self.combo_prev = combo
             self.release()
             return False
+        if combo and not self.combo_prev:
+            log("Controller-Maus: L2 + L3, Bildschirmtastatur fuer", key)
+            self.keyboard()
+        self.combo_prev = combo
         vmax = self.screen_w * 1.1                    # Pixel je Sekunde bei vollem Ausschlag
         wrote = False
         for i, axis, code in ((0, "rx", E.REL_X), (1, "ry", E.REL_Y)):
@@ -230,13 +246,41 @@ class PadMouse:
                 time.sleep(1)
 
 
+class FieldWatch:
+    """Eingabefelder in Firefox: Die Erweiterung VoidStation-Tastatur meldet sie dem Launcher, hier wartet ein Thread
+    darauf (GET /api/osk/wait, bis zu 25 s offen, kehrt bei jeder Meldung sofort zurueck) und reicht sie an die
+    Oberflaeche weiter. Kein Takt, solange nichts passiert. Der Stand beim Start der Startseite ist alt und zaehlt nicht."""
+
+    def __init__(self, emit):
+        self.emit = emit
+        threading.Thread(target=self._run, daemon=True).start()
+
+    def _run(self):
+        seq = -1
+        while True:
+            try:
+                with urllib.request.urlopen(f"{API}/api/osk/wait?seq={seq}", timeout=40) as r:
+                    st = json.loads(r.read().decode())
+            except (OSError, ValueError):
+                time.sleep(3)                    # Launcher startet gerade neu o. ae.
+                continue
+            new = int(st.get("seq", 0))
+            if seq >= 0 and new != seq and st.get("ev"):
+                self.emit(st)
+            seq = new
+
+
 # ---------------------------------------------------------------------------
 #  Verbindung zur Oberflaeche
 # ---------------------------------------------------------------------------
 class Vs(VsBase):
-    """Bruecke der Startseite: dazu Controller-Maus-Hinweis, heisse Ecke, Zeitzonen (Installer), Neustart."""
+    """Bruecke der Startseite: dazu Controller-Maus-Hinweis, heisse Ecke, Tastatur ueber Programmen, Zeitzonen
+    (Installer), Neustart."""
     padMouse = Signal(bool)                     # Controller-Maus per R3 an/aus (Hinweis ueber dem Programm)
+    padKeyboard = Signal()                      # L2 + L3 in einem Programm: Bildschirmtastatur auf/zu
+    oskField = Signal("QVariantMap")            # Eingabefeld in Firefox angewaehlt/verlassen (FieldWatch)
     corner_on = False                           # heisse Ecke offen
+    kbd_on = False                              # Bildschirmtastatur ueber einem Programm offen
     key_timer = None
 
     @Slot(str, result=str)
@@ -319,8 +363,7 @@ class Vs(VsBase):
         if on == self.corner_on:
             return
         self.corner_on = on
-        self.pad.grab(on)
-        self.mouse.paused = on
+        self._inputs()
         vsx11.grab_keys(on)
         if self.key_timer is None:
             self.key_timer = QTimer(self)
@@ -330,6 +373,45 @@ class Vs(VsBase):
             self.key_timer.start()
         else:
             self.key_timer.stop()
+
+    @Slot(bool)
+    def kbdInput(self, on):
+        """Bildschirmtastatur ueber einem Programm auf bzw. zu: Der Controller bedient solange die Tastatur (das
+        Programm bekommt ihn nicht, die Controller-Maus ruht). Die echte Tastatur bleibt beim Programm."""
+        if on == self.kbd_on:
+            return
+        self.kbd_on = on
+        self._inputs()
+        if not on:
+            vsx11.type_reset()
+
+    def _inputs(self):
+        busy = self.corner_on or self.kbd_on
+        self.pad.grab(busy)
+        self.mouse.paused = busy
+
+    @Slot(str)
+    def kbdType(self, text):
+        """Zeichen an das Programm vorn schicken (wie eine echte Tastatur)."""
+        vsx11.type_text(text)
+
+    @Slot(str)
+    def kbdTap(self, name):
+        """Sondertaste an das Programm vorn: BackSpace, Tab, Return, Left, Right …"""
+        vsx11.tap(name)
+
+    @Slot()
+    def kbdTyped(self):
+        """In einem Programm wurde auf einer echten Tastatur getippt (Firefox-Erweiterung): wie Tippen auf der Startseite."""
+        if not self._kbd_typing:
+            self._kbd_typing = True
+            self.kbdChanged.emit()
+
+    @Slot(result=float)
+    def kbdIdle(self):
+        """Sekunden seit dem letzten eigenen Tastendruck (Unterscheidung von der echten Tastatur)."""
+        t = vsx11.last_typed()
+        return 1e9 if not t else time.monotonic() - t
 
     def _corner_keys(self):
         for k in vsx11.poll_keys():
@@ -364,9 +446,11 @@ def main():
             break
     vs = Vs()
     vs.pad = Gamepad()
-    pump = PadPump(vs.pad, active=lambda: QGuiApplication.focusWindow() is not None or vs.corner_on)
+    pump = PadPump(vs.pad, active=lambda: QGuiApplication.focusWindow() is not None or vs.corner_on or vs.kbd_on,
+                   absorb=True)
     vs.attach_pump(pump)
-    vs.mouse = PadMouse(vs.pad, vs.padMouse.emit)
+    vs.mouse = PadMouse(vs.pad, vs.padMouse.emit, vs.padKeyboard.emit)
+    FieldWatch(vs.oskField.emit)
 
     def mouse_info():                            # Fenster der Startseite + Bildschirmbreite fuer die Controller-Maus
         vs.mouse.home_wins = {int(w.winId()) for w in QGuiApplication.topLevelWindows()}
@@ -406,6 +490,9 @@ def main():
         from PySide6.QtGui import QKeyEvent
 
         def press(name):                                  # k:Return, k:Escape, k:Left …, t:Text, c:x:y (Mausklick)
+            if name == "kbdpad":                          # wie L2 + L3 in einem Programm: Tastatur ueber Programmen
+                vs.padKeyboard.emit()
+                return
             if name == "osk":                             # Bildschirmtastatur fuer das erste Eingabefeld oeffnen
                 from PySide6.QtCore import Q_ARG, QMetaObject
                 items, todo = [], [win.contentItem()]
@@ -445,7 +532,7 @@ def main():
             for typ in (QEvent.KeyPress, QEvent.KeyRelease):
                 QGuiApplication.sendEvent(win, QKeyEvent(typ, key, Qt.NoModifier))
         for k in steps:
-            if k.startswith(("k:", "t:", "c:", "m:", "kd:", "ku:")) or k == "osk":
+            if k.startswith(("k:", "t:", "c:", "m:", "kd:", "ku:")) or k in ("osk", "kbdpad"):
                 QTimer.singleShot(t, lambda k=k: press(k))
             elif k.startswith("shot:"):
                 QTimer.singleShot(t, lambda f=k[5:]: win.grabWindow().save(f))

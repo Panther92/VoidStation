@@ -225,8 +225,20 @@ done
 cat "$TV/firefox/user-youtube.js" >> "$TV/profiles/youtube/user.js"
 install -d /etc/firefox/policies /usr/local/share/voidstation
 cp "$TV/firefox/policies.json" /etc/firefox/policies/policies.json
-# Bildschirmtastatur fuer Firefox (FX OSK, von Mozilla signiert) – per Richtlinie aus lokaler Datei, auch offline
-install -m 644 "$TV/firefox/fx_osk.xpi" /usr/local/share/voidstation/fx_osk.xpi
+# Bildschirmtastatur in Firefox: eigene Erweiterung "VoidStation-Tastatur" (firefox/keyboard/) meldet angewaehlte
+# Eingabefelder an die Startseite, die dann ihre Tastatur ueber Firefox oeffnet. Im Programmordner (App-Bereich) darf
+# sie unsigniert sein: Void baut Firefox mit --with-unsigned-addon-scopes=app,system. FX OSK sperrt die Richtlinie.
+FXEXT=/usr/lib/firefox/browser/extensions
+if [ -d /usr/lib/firefox ] && [ -f "$TV/firefox/keyboard/manifest.json" ]; then
+  install -d "$FXEXT"
+  rm -f "$FXEXT/keyboard@voidstation.de.xpi.tmp"
+  if (cd "$TV/firefox/keyboard" && python3 -m zipfile -c "$FXEXT/keyboard@voidstation.de.xpi.tmp" manifest.json background.js focus.js); then
+    chmod 644 "$FXEXT/keyboard@voidstation.de.xpi.tmp" && mv -f "$FXEXT/keyboard@voidstation.de.xpi.tmp" "$FXEXT/keyboard@voidstation.de.xpi"
+  else
+    rm -f "$FXEXT/keyboard@voidstation.de.xpi.tmp"; warn "Firefox-Erweiterung VoidStation-Tastatur nicht eingerichtet"
+  fi
+fi
+rm -f /usr/local/share/voidstation/fx_osk.xpi
 
 # ---------------------------------------------------------------------
 say "6/8  Ton (PipeWire) einrichten"

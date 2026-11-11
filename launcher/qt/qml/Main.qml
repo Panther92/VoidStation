@@ -16,7 +16,7 @@ Window {
     flags: Qt.Window | Qt.FramelessWindowHint
     color: Ui.c.bgMain
     onActiveChanged: {
-        if (active) { corner.close(); music.close(); app.forceActiveFocus(); app.poll() }
+        if (active) { corner.close(); music.close(); kbd.close("Startseite vorn"); app.forceActiveFocus(); app.poll() }
         else if (app.splashTile) hideSplashLater.restart()     // Programm hat ein Fenster: Startbildschirm weg
     }
     Timer { id: hideSplashLater; interval: 400; onTriggered: if (!win.active) app.hideSplash() }
@@ -90,7 +90,8 @@ Window {
         property Item layerRoot: homeView
         function updateLayer() {
             var n = "home", r = homeView
-            if (osk.open) { n = "osk"; r = osk }
+            if (kbd.visible) { n = "kbd"; r = kbd.root }          // Tastatur ueber einem Programm (eigenes Fenster)
+            else if (osk.open) { n = "osk"; r = osk }
             else if (adlg.open) { n = "adlg"; r = adlg }
             else if (powerDlg.open) { n = "dialog"; r = powerDlg }
             else if (keymap.open) { n = "keymap"; r = keymap }
@@ -266,6 +267,7 @@ Window {
             function onPadKey(k) {
                 if (music.visible) return music.navKey(k)
                 if (corner.visible) return corner.navKey(k)
+                if (kbd.visible) return kbd.pad(k)
                 if (updScreen.shown) { if (k === "b") updScreen.toBackground(); return }
                 if (app.layerName === "osk") return osk.pad(k)
                 if (app.layerRoot.padFilter && app.layerRoot.padFilter(k)) return
@@ -282,6 +284,36 @@ Window {
             }
             function onPadConnected(name) { app.toast(Ui.t("pad.connected", { name: name })) }
             function onPadMouse(on) { mouseHint.show(on) }
+            function onPadKeyboard() {                            // L2 + L3 in einem Programm
+                if (kbd.visible) kbd.close("L2 + L3")
+                else if (!corner.visible && !music.visible) kbd.openFor("pad")
+            }
+            function onOskField(st) { app.oskField(st) }
+        }
+
+        // ------------------------------------------------------------ Tastatur ueber Programmen
+        // Meldungen der Firefox-Erweiterung (FieldWatch in voidstation-home.py): focus oeffnet, blur derselben Seite
+        // schliesst (nur, was sie selbst geoeffnet hat), typed = auf einer echten Tastatur getippt. Einstellung
+        // "Tasten zeigen" wie auf der Startseite: Automatisch (nach Tippen auf der echten Tastatur nicht mehr),
+        // Immer, Nicht mit Tastatur (sobald eine angeschlossen ist).
+        function oskField(st) {
+            var mode = sett && sett.osk ? sett.osk.mode : "auto"
+            if (st.ev === "typed") {
+                if (vs.kbdIdle() < 0.6) return                    // das waren unsere eigenen Tastendruecke
+                vs.kbdTyped()
+                if (kbd.visible && kbd.auto && mode !== "always") kbd.close("echte Tastatur")
+                return
+            }
+            if (st.ev === "blur") {
+                if (kbd.visible && kbd.auto && st.sid === kbd.sid) kbd.close("Feld verlassen")
+                return
+            }
+            if (st.ev !== "focus" || corner.visible || music.visible) return
+            if (win.active && vs.homeInFront()) return
+            if (kbd.visible && !kbd.auto) return                  // per L2 + L3 offen: bleibt, wie sie ist
+            if (mode === "keyboard" && vs.kbdPresent) return
+            if (mode === "auto" && vs.kbdPresent && vs.kbdTyping) return
+            kbd.openFor("field", st)
         }
 
         // ------------------------------------------------------------ Start
@@ -660,6 +692,16 @@ Window {
             onVisibleChanged: if (!visible) app.musicArmed = false
         }
         MouseHint { id: mouseHint }
+        KbdOverlay {
+            id: kbd
+            onOpened: { vs.kbdInput(true); app.updateLayer() }
+            onClosed: {
+                vs.kbdInput(false)
+                app.updateLayer()
+                var f = Nav.alive(savedFocus, app.layerRoot) ? savedFocus : Nav.remembered(app.layerName, app.layerRoot)
+                if (f) app.setFocus(f, true)
+            }
+        }
         Osk { id: osk; anchors.fill: parent }
         Splash { id: splash; anchors.fill: parent; tile: app.splashTile }
         UpdateScreen { id: updScreen; anchors.fill: parent }

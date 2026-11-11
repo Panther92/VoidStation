@@ -2,7 +2,8 @@
 // Tastenfeld der Bildschirmtastatur – dasselbe in Startseite, Player und Installer. Belegungen: OskLayouts.js.
 // Seiten: Buchstaben, Akzente (wenn die Belegung welche hat), Symbole; griechisch und kyrillisch zusaetzlich
 // lateinische Buchstaben. Shift gilt fuer ein Zeichen. Die Tasten tragen Schluessel (key: "k0-3", "kdel" …),
-// damit der Fokus beim Umschalten der Seite auf derselben Stelle bleibt.
+// damit der Fokus beim Umschalten der Seite auf derselben Stelle bleibt. extra: weitere Tasten in der unteren Reihe
+// (Tastatur ueber Programmen: Tab, Cursor), sie melden sich ueber special(name).
 import QtQuick
 import "OskLayouts.js" as OL
 
@@ -16,9 +17,12 @@ Column {
     property bool shift: false
     property string page: "abc"                 // abc, acc, sym
     property bool latin: false
+    property var extra: []                      // [{ l: "⇥", a: "Tab" }, …] vor der Leertaste
+    property bool fitFont: false                // Schrift nach der Tastenhoehe statt nach der Skalierung (Tastatur ueber Programmen)
     signal typed(string ch)
     signal erase()
     signal done()
+    signal special(string name)
     spacing: gap
 
     readonly property var lay: OL.layout(layoutId)
@@ -28,7 +32,8 @@ Column {
     readonly property int units: {
         var all = [lay.rows, OL.SYM, OL.split(lay.acc)]
         if (lay.latin) all.push(OL.layout(lay.latin).rows)
-        var m = 12
+        // untere Reihe: Seitenwechsel, Zusatztasten, Leertaste (mindestens 2), @ und Enter (3)
+        var m = Math.max(12, 2 + (lay.acc ? 2 : 0) + (lay.latin ? 2 : 0) + extra.length + 2 + 4)
         for (var p = 0; p < all.length; p++)
             for (var i = 0; i < all[p].length; i++) m = Math.max(m, rowExtra(i, all[p].length, all[p] === OL.SYM) + all[p][i].length)
         return m
@@ -49,6 +54,7 @@ Column {
         var b = [{ l: sym ? lettersLabel() : Ui.t("osk.symbols"), a: "sym", w: 2, k: "ksym" }]
         if (lay.acc) b.push({ l: page === "acc" ? lettersLabel() : (lay.accLabel || lay.acc.slice(0, 2)), a: "acc", w: 2, k: "kacc" })
         if (lay.latin) b.push({ l: latin ? lay.nativeLabel : "ABC", a: "latin", w: 2, k: "klatin" })
+        for (var e = 0; e < extra.length; e++) b.push({ l: extra[e].l, a: "special", w: 1, k: "kx" + extra[e].a, name: extra[e].a })
         var used = 0
         for (var j = 0; j < b.length; j++) used += b[j].w
         b.push({ l: Ui.t("osk.space"), a: "char", w: Math.max(2, units - used - 4), k: "kspace", ch: " " })
@@ -73,6 +79,7 @@ Column {
         else if (m.a === "acc") keep(function () { page = page === "acc" ? "abc" : "acc" })
         else if (m.a === "latin") keep(function () { latin = !latin; page = "abc" })
         else if (m.a === "go") done()
+        else if (m.a === "special") special(m.name)
     }
     // Seite wechseln, Fokus auf derselben Taste (bzw. der ersten) lassen
     function keep(fn) {
@@ -119,7 +126,8 @@ Column {
                             width: Math.min(implicitWidth, parent.width - 8)
                             horizontalAlignment: Text.AlignHCenter
                             text: modelData.a === "char" && modelData.w === 1 ? kp.caseOf(modelData.l) : modelData.l
-                            font.pixelSize: (modelData.w === 1 ? 18 : 15) * Ui.f
+                            font.pixelSize: kp.fitFont ? kp.keyH * (modelData.w === 1 ? 0.44 : 0.36)
+                                                       : (modelData.w === 1 ? 18 : 15) * Ui.f
                             fontSizeMode: Text.HorizontalFit
                             minimumPixelSize: 9 * Ui.f
                             elide: Text.ElideNone

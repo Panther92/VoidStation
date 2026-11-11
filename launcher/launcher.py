@@ -980,7 +980,8 @@ def app_env():
 def firefox_prefs(args, lang, dark):
     """Firefox mit --profile (Kacheln: YouTube, Mediatheken, Firefox): vor jedem Start in user.js setzen
     - Sprache der Oberflaeche: intl.locale.requested (Menues), intl.accept_languages (Webseiten, z. B. YouTube)
-    - hell/dunkel nach dem VoidStation-Theme: Webseiten (prefers-color-scheme) und Leisten"""
+    - hell/dunkel nach dem VoidStation-Theme: Webseiten (prefers-color-scheme) und Leisten
+    - Erweiterungen im Programmordner bei jedem Start einlesen (VoidStation-Tastatur auch in bestehenden Profilen)"""
     try:
         uj = Path(args[args.index("--profile") + 1]) / "user.js"
         old = uj.read_text(encoding="utf-8")
@@ -990,7 +991,9 @@ def firefox_prefs(args, lang, dark):
     scheme = 0 if dark else 1                    # 0 = dunkel, 1 = hell (2 waere "wie das System")
     want = {"intl.locale.requested": req, "intl.accept_languages": acc,
             "layout.css.prefers-color-scheme.content-override": scheme,
-            "browser.theme.toolbar-theme": scheme, "browser.theme.content-theme": scheme}
+            "browser.theme.toolbar-theme": scheme, "browser.theme.content-theme": scheme,
+            # Erweiterungen im Programmordner (VoidStation-Tastatur) bei jedem Start einlesen, nicht nur nach Firefox-Updates
+            "extensions.startupScanScopes": 4}
     out, seen = [], set()
     for line in old.splitlines():
         m = re.match(r'\s*user_pref\("([^"]+)"', line)
@@ -12206,6 +12209,47 @@ YT = YtLight()
 # ---------------------------------------------------------------------------
 #  HTTP
 # ---------------------------------------------------------------------------
+class OskField:
+    """Eingabefeld im Browser angewaehlt oder verlassen (Firefox-Erweiterung "VoidStation-Tastatur", firefox/keyboard/):
+    Die Erweiterung meldet es per POST /api/osk/field, die Startseite wartet darauf mit GET /api/osk/wait (lange offen,
+    kehrt bei jeder Aenderung sofort zurueck) und oeffnet bzw. schliesst die Bildschirmtastatur ueber dem Programm.
+    Ereignisse: focus (Feld angewaehlt, kind = text/password/search/email/url/tel/number/textarea, pos = Mitte des
+    Felds als Anteil der Bildschirmhoehe 0..1), blur (verlassen), typed (auf einer echten Tastatur getippt).
+    sid kennzeichnet die meldende Seite bzw. den Frame."""
+    KINDS = ("text", "password", "search", "email", "url", "tel", "number", "textarea")
+
+    def __init__(self):
+        self.cv = threading.Condition()
+        self.seq = 0
+        self.state = {}
+
+    def post(self, b):
+        ev = str(b.get("ev") or "")
+        if ev not in ("focus", "blur", "typed"):
+            return False
+        kind = str(b.get("kind") or "text")
+        try:
+            pos = max(0.0, min(1.0, float(b.get("pos"))))
+        except (TypeError, ValueError):
+            pos = None
+        with self.cv:
+            self.seq += 1
+            self.state = {"ev": ev, "kind": kind if kind in self.KINDS else "text", "pos": pos,
+                          "sid": str(b.get("sid") or "")[:40], "t": time.time()}
+            self.cv.notify_all()
+        return True
+
+    def wait(self, seq, timeout=25.0):
+        """Neuester Stand, sobald er sich gegenueber seq geaendert hat (seq < 0: sofort)."""
+        with self.cv:
+            if seq >= 0:
+                self.cv.wait_for(lambda: self.seq != seq, timeout)
+            return dict(self.state, seq=self.seq)
+
+
+OSK_FIELD = OskField()
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "voidstation"
 
@@ -12292,6 +12336,13 @@ class Handler(BaseHTTPRequestHandler):
             tid = APPS.front()
             return self._json(200, {"id": tid, "mouse": pad_mouse_default(tid),
                                     "padmouse": bool(settings_load().get("padmouse", True))})
+        if path == "/api/osk/wait":                # Startseite: Eingabefeld im Browser (Long-Poll, s. OskField)
+            qs = urllib.parse.parse_qs(url.query)
+            try:
+                seq = int(qs.get("seq", ["-1"])[0])
+            except ValueError:
+                seq = -1
+            return self._json(200, OSK_FIELD.wait(seq))
         if path == "/api/nowplaying":              # heisse Ecke oben links
             return self._json(200, now_playing())
         if path == "/api/status":
@@ -12490,6 +12541,8 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "home"]:
                 raise_home()
                 return self._json(200, {"running": APPS.running()})
+            if parts == ["api", "osk", "field"]:       # Firefox-Erweiterung: Eingabefeld an/ab
+                return self._json(200 if OSK_FIELD.post(self._body()) else 400, {"ok": True})
             if parts == ["api", "nowplaying", "control"]:
                 return self._json(200, now_control(str(self._body().get("action", ""))))
             if parts == ["api", "radio", "play"]:

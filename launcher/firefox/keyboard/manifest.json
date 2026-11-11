@@ -1,0 +1,18 @@
+{
+  "manifest_version": 2,
+  "name": "VoidStation Keyboard",
+  "version": "1.0",
+  "description": "Opens the VoidStation on-screen keyboard when a text field is selected.",
+  "browser_specific_settings": {
+    "gecko": { "id": "keyboard@voidstation.de", "strict_min_version": "115.0" }
+  },
+  "permissions": ["http://127.0.0.1/*"],
+  "background": { "scripts": ["background.js"] },
+  "content_scripts": [{
+    "matches": ["<all_urls>"],
+    "js": ["focus.js"],
+    "all_frames": true,
+    "match_about_blank": true,
+    "run_at": "document_start"
+  }]
+}

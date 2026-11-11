@@ -587,10 +587,23 @@ gtk-icon-theme-name="Adwaita"
 gtk-cursor-theme-name="Bibata-Modern-Ice"
 gtk-cursor-theme-size=48
 GTK
-# Firefox-Richtlinien + Bildschirmtastatur (FX OSK, per Richtlinie aus lokaler Datei)
+# Firefox-Richtlinien (FX OSK gesperrt, ersetzt durch die Bildschirmtastatur der Startseite)
 install -d /etc/firefox/policies /usr/local/share/voidstation
 [ -f "$TV/firefox/policies.json" ] && cp "$TV/firefox/policies.json" /etc/firefox/policies/policies.json
-[ -f "$TV/firefox/fx_osk.xpi" ] && install -m 644 "$TV/firefox/fx_osk.xpi" /usr/local/share/voidstation/fx_osk.xpi
+# Bildschirmtastatur in Firefox: eigene Erweiterung "VoidStation-Tastatur" (firefox/keyboard/) meldet angewaehlte
+# Eingabefelder an die Startseite, die dann ihre Tastatur ueber Firefox oeffnet. Im Programmordner (App-Bereich) darf
+# sie unsigniert sein: Void baut Firefox mit --with-unsigned-addon-scopes=app,system. FX OSK sperrt die Richtlinie.
+FXEXT=/usr/lib/firefox/browser/extensions
+if [ -d /usr/lib/firefox ] && [ -f "$TV/firefox/keyboard/manifest.json" ]; then
+  install -d "$FXEXT"
+  rm -f "$FXEXT/keyboard@voidstation.de.xpi.tmp"
+  if (cd "$TV/firefox/keyboard" && python3 -m zipfile -c "$FXEXT/keyboard@voidstation.de.xpi.tmp" manifest.json background.js focus.js); then
+    chmod 644 "$FXEXT/keyboard@voidstation.de.xpi.tmp" && mv -f "$FXEXT/keyboard@voidstation.de.xpi.tmp" "$FXEXT/keyboard@voidstation.de.xpi"
+  else
+    rm -f "$FXEXT/keyboard@voidstation.de.xpi.tmp"; warn "Firefox-Erweiterung VoidStation-Tastatur nicht eingerichtet"
+  fi
+fi
+rm -f /usr/local/share/voidstation/fx_osk.xpi
 # bestehende Firefox-Profile ebenfalls dunkel schalten
 for uj in "$TV"/profiles/*/user.js; do
   [ -f "$uj" ] || continue

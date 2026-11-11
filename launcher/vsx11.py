@@ -7,10 +7,13 @@ schickt (EWMH). Fehlt libX11 oder laesst sich das Display nicht oeffnen, laufen 
 
 Fenster-Kennungen: Rueckgaben wie bei wmctrl als Text ("0x01a00003"), Aufrufe nehmen Text oder Zahl.
 Alle Zugriffe laufen unter einer Sperre ueber eine eigene Verbindung, XInitThreads ist deshalb nicht noetig."""
+import collections
 import ctypes
+import queue
 import re
 import subprocess
 import threading
+import time
 from ctypes import POINTER, Structure, Union, byref, c_char_p, c_int, c_long, c_ubyte, c_uint, c_ulong, c_void_p
 
 _lock = threading.RLock()
@@ -284,3 +287,241 @@ def poll_keys():
                 if ev.xkey.type == 2 and ev.xkey.keycode in _grabbed:      # KeyPress
                     out.append(_grabbed[ev.xkey.keycode])
     return out
+
+
+# ---------------------------------------------------------------------------
+#  Tippen fuer die Bildschirmtastatur ueber Programmen (XTest)
+# ---------------------------------------------------------------------------
+# Die Tastatur ueber Programmen nimmt keinen Fokus; sie schickt Tastendruecke ueber XTest an das Fenster vorn, wie eine
+# echte Tastatur. Zeichen, die auf der eingestellten X-Belegung direkt (oder mit Shift) liegen, gehen ueber ihre Taste.
+# Alles andere (AltGr-Zeichen wie @ und € auf deutscher Belegung, Kyrillisch auf US, Akzente, aktive zweite Gruppe,
+# Feststelltaste an) bekommt fuer die Dauer der Sitzung einen freien Tastencode mit genau diesem Zeichen auf beiden
+# Ebenen - so spielen Shift, Feststelltaste und AltGr keine Rolle. type_reset() gibt die Tastencodes wieder frei.
+# Laeuft in einem eigenen Thread (Reihenfolge bleibt), eine eigene X-Verbindung. Ohne libXtst: xdotool.
+_NAMED = {"BackSpace": 0xff08, "Tab": 0xff09, "Return": 0xff0d, "Escape": 0xff1b, "Left": 0xff51, "Up": 0xff52,
+          "Right": 0xff53, "Down": 0xff54, "Home": 0xff50, "End": 0xff57, "Delete": 0xffff}
+_SHIFT_L = 0xffe1
+_LOCK_MASK = 0x02
+
+
+class _XkbState(Structure):
+    _fields_ = [("group", c_ubyte), ("locked_group", c_ubyte), ("base_group", ctypes.c_ushort),
+                ("latched_group", ctypes.c_ushort), ("mods", c_ubyte), ("base_mods", c_ubyte), ("latched_mods", c_ubyte),
+                ("locked_mods", c_ubyte), ("compat_state", c_ubyte), ("grab_mods", c_ubyte), ("compat_grab_mods", c_ubyte),
+                ("lookup_mods", c_ubyte), ("compat_lookup_mods", c_ubyte), ("ptr_buttons", ctypes.c_ushort)]
+
+
+def keysym_of(ch):
+    """X-Keysym eines Zeichens: Latin-1 direkt, alles andere als Unicode-Keysym (0x01000000 + Codepunkt)."""
+    o = ord(ch)
+    if ch == "\n":
+        return _NAMED["Return"]
+    if ch == "\t":
+        return _NAMED["Tab"]
+    if 0x20 <= o <= 0x7e or 0xa0 <= o <= 0xff:
+        return o
+    return 0x01000000 + o
+
+
+class _Typer:
+    PAUSE = 0.006                 # zwischen zwei Zeichen (manche Programme verschlucken sonst Tasten)
+    SETTLE = 0.04                 # nach dem Umbelegen eines Tastencodes: Programme lesen die Belegung neu
+
+    def __init__(self):
+        self.q = queue.Queue()
+        self.thread = None
+        self.ok = None
+        self.x = self.xt = self.dpy = None
+        self.mine = collections.OrderedDict()      # Tastencode -> Keysym (von uns belegt, zuletzt benutzt hinten)
+        self.lo = self.hi = 0
+        self.injected = 0.0                        # Zeitpunkt des letzten Tastendrucks (monotonic)
+
+    def _open(self):
+        if self.ok is not None:
+            return self.ok
+        self.ok = False
+        try:
+            x = ctypes.CDLL("libX11.so.6")
+            xt = ctypes.CDLL("libXtst.so.6")
+        except OSError:
+            return False
+        x.XOpenDisplay.restype, x.XOpenDisplay.argtypes = c_void_p, [c_char_p]
+        x.XDisplayKeycodes.argtypes = [c_void_p, POINTER(c_int), POINTER(c_int)]
+        x.XGetKeyboardMapping.restype = POINTER(c_ulong)
+        x.XGetKeyboardMapping.argtypes = [c_void_p, c_ubyte, c_int, POINTER(c_int)]
+        x.XChangeKeyboardMapping.argtypes = [c_void_p, c_int, c_int, POINTER(c_ulong), c_int]
+        x.XKeysymToKeycode.restype, x.XKeysymToKeycode.argtypes = c_ubyte, [c_void_p, c_ulong]
+        x.XkbGetState.argtypes = [c_void_p, c_uint, POINTER(_XkbState)]
+        x.XFree.argtypes = [c_void_p]
+        x.XFlush.argtypes = [c_void_p]
+        x.XSync.argtypes = [c_void_p, c_int]
+        x.XPending.argtypes = [c_void_p]
+        x.XNextEvent.argtypes = [c_void_p, POINTER(_XEvent)]
+        x.XSetErrorHandler.restype, x.XSetErrorHandler.argtypes = c_void_p, [c_void_p]
+        xt.XTestQueryExtension.argtypes = [c_void_p] + [POINTER(c_int)] * 4
+        xt.XTestFakeKeyEvent.argtypes = [c_void_p, c_uint, c_int, c_ulong]
+        dpy = x.XOpenDisplay(None)
+        if not dpy:
+            return False
+        a, b, c, d = c_int(), c_int(), c_int(), c_int()
+        if not xt.XTestQueryExtension(dpy, byref(a), byref(b), byref(c), byref(d)):
+            return False
+        lo, hi = c_int(), c_int()
+        x.XDisplayKeycodes(dpy, byref(lo), byref(hi))
+        self.x, self.xt, self.dpy, self.lo, self.hi = x, xt, dpy, lo.value, hi.value
+        self.ok = True
+        return True
+
+    def _drain(self):
+        ev = _XEvent()                            # MappingNotify & Co. gehen an jede Verbindung: abholen, nicht sammeln
+        while self.x.XPending(self.dpy) > 0:
+            self.x.XNextEvent(self.dpy, byref(ev))
+
+    def _mapping(self):
+        """{Tastencode: (Ebene 1, Ebene 2)} der ersten Gruppe; freie Codes haben (0, 0)."""
+        per = c_int()
+        n = self.hi - self.lo + 1
+        syms = self.x.XGetKeyboardMapping(self.dpy, self.lo, n, byref(per))
+        if not syms:
+            return {}
+        w = per.value
+        try:
+            return {self.lo + i: (syms[i * w] if w > 0 else 0, syms[i * w + 1] if w > 1 else 0,
+                                  any(syms[i * w + j] for j in range(w))) for i in range(n)}
+        finally:
+            self.x.XFree(syms)
+
+    def _plain_ok(self):
+        """Nur in der ersten Gruppe und ohne Feststelltaste passt die Belegung zu dem, was wir nachschlagen."""
+        st = _XkbState()
+        if self.x.XkbGetState(self.dpy, 0x0100, byref(st)) != 0:
+            return False
+        return st.group == 0 and not (st.mods & _LOCK_MASK)
+
+    def _tap(self, code, shift=False):
+        fake = self.xt.XTestFakeKeyEvent
+        sc = self.x.XKeysymToKeycode(self.dpy, _SHIFT_L) if shift else 0
+        if sc:
+            fake(self.dpy, sc, 1, 0)
+        fake(self.dpy, code, 1, 0)
+        fake(self.dpy, code, 0, 0)
+        if sc:
+            fake(self.dpy, sc, 0, 0)
+        self.x.XFlush(self.dpy)
+        self.injected = time.monotonic()
+        time.sleep(self.PAUSE)
+
+    def _borrow(self, sym, mapping):
+        """Freien Tastencode mit dem Zeichen belegen (beide Ebenen gleich), notfalls den am laengsten unbenutzten."""
+        for code, s in self.mine.items():
+            if s == sym:
+                self.mine.move_to_end(code)
+                return code, False
+        free = [c for c in range(self.hi, self.lo - 1, -1) if c not in self.mine and not mapping.get(c, (0, 0, True))[2]]
+        if free:
+            code = free[0]
+        elif self.mine:
+            code = next(iter(self.mine))
+        else:
+            return 0, False
+        arr = (c_ulong * 2)(sym, sym)
+        self.x.XChangeKeyboardMapping(self.dpy, code, 2, arr, 1)
+        self.x.XSync(self.dpy, 0)
+        self.mine[code] = sym
+        self.mine.move_to_end(code)
+        return code, True
+
+    def _text(self, text):
+        mapping = self._mapping()
+        lvl1, lvl2 = {}, {}                           # Keysym -> erster Tastencode auf Ebene 1 bzw. 2
+        if self._plain_ok():
+            for c, (l1, l2, _any) in mapping.items():
+                if c not in self.mine:
+                    if l1:
+                        lvl1.setdefault(l1, c)
+                    if l2:
+                        lvl2.setdefault(l2, c)
+        for ch in text:
+            sym = keysym_of(ch)
+            if sym in lvl1:
+                self._tap(lvl1[sym])
+            elif sym in lvl2:
+                self._tap(lvl2[sym], shift=True)
+            else:
+                code, fresh = self._borrow(sym, mapping)
+                if not code:
+                    continue
+                if fresh:
+                    time.sleep(self.SETTLE)
+                self._tap(code)
+        self._drain()
+
+    def _key(self, name):
+        sym = _NAMED.get(name)
+        code = self.x.XKeysymToKeycode(self.dpy, sym) if sym else 0
+        if code:
+            self._tap(code)
+        self._drain()
+
+    def _reset(self):
+        if not self.mine:
+            return
+        zero = (c_ulong * 2)(0, 0)
+        for code in self.mine:
+            self.x.XChangeKeyboardMapping(self.dpy, code, 2, zero, 1)
+        self.mine.clear()
+        self.x.XSync(self.dpy, 0)
+        self._drain()
+
+    def _fallback(self, kind, arg):
+        if kind == "text":
+            _tool("xdotool", "type", "--clearmodifiers", "--delay", "8", "--", arg, timeout=10)
+        elif kind == "key" and arg in _NAMED:
+            _tool("xdotool", "key", "--clearmodifiers", arg, timeout=5)
+        self.injected = time.monotonic()
+
+    def _run(self):
+        while True:
+            kind, arg = self.q.get()
+            try:
+                if not self._open():
+                    self._fallback(kind, arg)
+                    continue
+                old = self.x.XSetErrorHandler(ctypes.cast(_ignore, c_void_p))
+                try:
+                    {"text": self._text, "key": self._key, "reset": lambda _a: self._reset()}[kind](arg)
+                finally:
+                    self.x.XSetErrorHandler(old)
+            except Exception:  # noqa: BLE001  - Tippen darf den Aufrufer nie mitreissen
+                pass
+
+    def put(self, kind, arg=None):
+        if self.thread is None:
+            self.thread = threading.Thread(target=self._run, daemon=True)
+            self.thread.start()
+        self.q.put((kind, arg))
+
+
+_typer = _Typer()
+
+
+def type_text(text):
+    """Zeichen an das Fenster mit dem Tastaturfokus schicken (Reihenfolge bleibt, kehrt sofort zurueck)."""
+    if text:
+        _typer.put("text", str(text))
+
+
+def tap(name):
+    """Sondertaste druecken: BackSpace, Tab, Return, Escape, Left, Right, Up, Down, Home, End, Delete."""
+    if name in _NAMED:
+        _typer.put("key", name)
+
+
+def type_reset():
+    """Fuer Sonderzeichen geliehene Tastencodes wieder freigeben (Tastatur zu)."""
+    _typer.put("reset")
+
+
+def last_typed():
+    """Wann zuletzt getippt wurde (time.monotonic); 0 = noch nie."""
+    return _typer.injected

@@ -425,11 +425,28 @@ def updates(q):
             "system": system, "reboot": {}}
 
 
+# Eingabefeld im Browser (wie OskField in launcher.py): melden mit
+#   curl -H 'X-TV: 1' -d '{"ev":"focus","kind":"search","pos":0.1,"sid":"t"}' http://127.0.0.1:8766/api/osk/field
+OSKF = {"cv": threading.Condition(), "seq": 0, "state": {}}
+
+
+def osk_wait(seq):
+    with OSKF["cv"]:
+        if seq >= 0:
+            OSKF["cv"].wait_for(lambda: OSKF["seq"] != seq, 25)
+        return dict(OSKF["state"], seq=OSKF["seq"])
+
+
 class H(S.H):
     def do_GET(self):
         u = urlparse(self.path)
         p, q = u.path, parse_qs(u.query)
         st = STATE
+        if p == "/api/osk/wait":
+            try:
+                return self.j(osk_wait(int(q.get("seq", ["-1"])[0])))
+            except (BrokenPipeError, ConnectionResetError):        # Startseite beendet, waehrend sie wartete
+                return None
         routes = {
             "/tiles.json": lambda: TILES,
             "/api/status": lambda: {"running": st["running"], "starting": [], "radio": st["radio"], "tv": st["tv"],
@@ -555,6 +572,13 @@ class H(S.H):
         n = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(n) or b"{}") if n else {}
         st = STATE
+        if p == "/api/osk/field":
+            with OSKF["cv"]:
+                OSKF["seq"] += 1
+                OSKF["state"] = {k: body.get(k) for k in ("ev", "kind", "pos", "sid")}
+                OSKF["cv"].notify_all()
+            print("[vorschau] Eingabefeld:", OSKF["state"], flush=True)
+            return self.j({"ok": True})
         if p == "/api/nowplaying/control":          # heisse Ecke oben links
             a = body.get("action")
             print("[vorschau] Musik:", a, flush=True)

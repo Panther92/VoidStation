@@ -348,16 +348,17 @@ class Gamepad:
             self.raw[(dev, key)] = val
 
     def mouse_state(self):
-        """Fuer die Controller-Maus: staerkster Ausschlag je Achse ueber alle Controller, R3, untere/rechte Taste."""
-        out = {"rx": 0.0, "ry": 0.0, "ly": 0.0, "r3": False, "a": False, "b": False}
+        """Fuer die Controller-Maus: staerkster Ausschlag je Achse ueber alle Controller, R3, untere/rechte Taste,
+        dazu L2 und L3 (zusammen: Bildschirmtastatur ueber dem Programm)."""
+        out = {"rx": 0.0, "ry": 0.0, "ly": 0.0, "r3": False, "l3": False, "a": False, "b": False, "lt": False}
         with self.lock:
             for (_d, k), v in self.raw.items():
-                if k == "r3":
-                    out["r3"] = out["r3"] or bool(v)
+                if k in ("r3", "l3"):
+                    out[k] = out[k] or bool(v)
                 elif abs(v) > abs(out[k]):
                     out[k] = v
             for (_d, k), v in self.state.items():
-                if k in ("a", "b") and v:
+                if k in ("a", "b", "lt") and v:
                     out[k] = True
         return out
 
@@ -410,6 +411,9 @@ class Gamepad:
                         elif ev.type == E.EV_KEY and (ev.code == E.BTN_THUMBR or
                                                       (ev.code == E.BTN_BASE6 and dev.path in self.generic)):
                             self._raw(dev.path, "r3", ev.value != 0)
+                        elif ev.type == E.EV_KEY and (ev.code == E.BTN_THUMBL or
+                                                      (ev.code == E.BTN_BASE5 and dev.path in self.generic)):
+                            self._raw(dev.path, "l3", ev.value != 0)
                         elif ev.type == E.EV_ABS:
                             self._abs(dev.path, ev.code, ev.value, axes.get(ev.code))
                 except OSError:
@@ -456,9 +460,12 @@ class PadPump(QObject):
     style = Signal(str)            # Bauart des Controllers fuer die Tasten-Hinweise ("" = keiner angeschlossen)
     connected = Signal(str)
 
-    def __init__(self, pad, active=None):
+    def __init__(self, pad, active=None, absorb=False):
         super().__init__()
         self.pad, self.held, self.next = pad, {}, {}
+        # absorb: Tasten, die beim Zustaendigwerden schon gehalten sind, zaehlen erst nach dem Loslassen (Startseite:
+        # A der Controller-Maus, mit dem in Firefox ein Feld angeklickt wurde, tippt sonst gleich auf der Tastatur)
+        self.absorb, self.was_active = absorb, False
         self.last_style = None
         # Wann gehoert der Controller diesem Programm? Standard: eines seiner Fenster ist vorn
         self.active = active or (lambda: QGuiApplication.focusWindow() is not None)
@@ -477,11 +484,16 @@ class PadPump(QObject):
             self.style.emit(st)
         if not self.active():                          # nicht vorn: Controller gehoert dem anderen Programm
             self.held = {}
+            self.was_active = False
             return
         raw = self.pad.pressed()
         now = time.monotonic()
         want = {k for k in raw if not k.startswith(("hat", "stick"))}
         want |= {k[3:] for k in raw if k.startswith("hat")} | {k[5:] for k in raw if k.startswith("stick")}
+        if self.absorb and not self.was_active:
+            self.held = {k: True for k in want}
+            self.next = {k: float("inf") for k in want}         # auch keine Wiederholung, bis losgelassen
+        self.was_active = True
         for k in list(self.held):
             if k not in want:
                 del self.held[k]
