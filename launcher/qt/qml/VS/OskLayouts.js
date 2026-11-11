@@ -26,17 +26,22 @@ var L = {
     ro: { rows: ["1234567890", "qwertyuiop", "asdfghjkl'", "zxcvbnm,.-"], acc: "ăâîșț", accLabel: "ăș" },
     // Türkçe Q: i/İ und ı/I sind verschiedene Buchstaben – Grossform von i ist İ (toUpperCase() kennt das nicht)
     tr: { rows: ["1234567890", "qwertyuıopğü", "asdfghjklşi", "zxcvbnmöç."], upper: { "i": "İ" } },
+    // 한국어, 2-Beolsik wie auf koreanischen Tastaturen; Shift gibt die doppelten Konsonanten und ㅒ ㅖ. Die Jamo
+    // setzen sich zu Silben zusammen (hangul, s. KeyPad.qml / Hangul.js)
+    ko: { rows: ["1234567890", "ㅂㅈㄷㄱㅅㅛㅕㅑㅐㅔ", "ㅁㄴㅇㄹㅎㅗㅓㅏㅣ", "ㅋㅌㅊㅍㅠㅜㅡ,.-"],
+          upper: { "ㅂ": "ㅃ", "ㅈ": "ㅉ", "ㄷ": "ㄸ", "ㄱ": "ㄲ", "ㅅ": "ㅆ", "ㅐ": "ㅒ", "ㅔ": "ㅖ" },
+          hangul: true, latin: "us", nativeLabel: "한" },
     gr: { rows: ["1234567890", ";ςερτυθιοπ", "ασδφγηξκλ", "ζχψωβνμ,.-"], acc: "άέήίόύώϊϋΐΰ", accLabel: "άέ",
           latin: "us", nativeLabel: "ΑΒΓ" },
     ru: { rows: ["1234567890ё", "йцукенгшщзх", "фывапролджэ", "ячсмитьбюъ"], latin: "us", nativeLabel: "АБВ" },
     ua: { rows: ["1234567890ґ", "йцукенгшщзхї", "фівапролджє", "ячсмитьбю'"], latin: "us", nativeLabel: "АБВ" }
 }
 // Zur Auswahl in den Einstellungen (Reihenfolge der Anzeige); Namen: Texte "inst.kb.<id>"
-var LIST = ["de", "us", "gb", "fr", "es", "it", "br", "nl", "lv", "hu", "pl", "cz", "ro", "sk", "tr", "gr", "ru", "ua"]
-// Vorgabe je Sprache der Oberflaeche (wie INSTALL_DEFAULTS in launcher.py; Japanisch, Koreanisch und Chinesisch
-// ohne eigene Eingabemethode: US)
+var LIST = ["de", "us", "gb", "fr", "es", "it", "br", "nl", "lv", "hu", "pl", "cz", "ro", "sk", "tr", "gr", "ru", "ua", "ko"]
+// Vorgabe je Sprache der Oberflaeche (sonst wie INSTALL_DEFAULTS in launcher.py). Koreanisch setzt die Tastatur
+// selbst zusammen; Japanisch und Chinesisch brauchen eine Kandidatenauswahl (fcitx5) – dort tippt sie lateinisch.
 var BY_LANG = { de: "de", en: "us", cs: "cz", es: "es", fr: "fr", it: "it", lv: "lv", hu: "hu", nl: "nl", pl: "pl",
-                "pt-BR": "br", ro: "ro", sk: "sk", tr: "tr", el: "gr", ru: "ru", uk: "ua", ja: "us", ko: "us",
+                "pt-BR": "br", ro: "ro", sk: "sk", tr: "tr", el: "gr", ru: "ru", uk: "ua", ja: "us", ko: "ko",
                 "zh-CN": "us", "zh-TW": "us" }
 
 function layout(id) { return L[id] || L.us }

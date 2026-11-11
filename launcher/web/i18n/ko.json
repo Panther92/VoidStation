@@ -1359,5 +1359,7 @@
   "settings.oskMode.keyboard": "키보드가 있으면 숨김",
   "inst.kb.nl": "Nederlands",
   "inst.kb.ro": "Română",
-  "inst.kb.tr": "Türkçe"
+  "inst.kb.tr": "Türkçe",
+  "inst.kb.ko": "한국어",
+  "ime.job": "한국어 입력기 (fcitx5)"
 }

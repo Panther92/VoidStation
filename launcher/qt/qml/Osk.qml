@@ -28,6 +28,7 @@ Rectangle {
     onShowKeysChanged: if (open) Qt.callLater(fixFocus)
 
     function openFor(field) {
+        kp.endCompose()                        // Koreanisch: nicht mit dem vorigen Feld verbinden
         target = field
         value = field.value || ""
         navMode = false
@@ -62,6 +63,7 @@ Rectangle {
         if (t) t.submitted(value)
     }
     function key(e) {                          // echte Tastatur
+        kp.endCompose()                        // Koreanisch: getippte Silbe ist abgeschlossen
         if (e.key === Qt.Key_Escape) { close(); return true }
         if (e.key === Qt.Key_Return || e.key === Qt.Key_Enter) { if (navMode && showKeys && Nav.current) app.activate(); else submit(); return true }
         if (e.key === Qt.Key_Backspace) { navMode = false; backspace(); return true }
@@ -82,8 +84,8 @@ Rectangle {
         if (!showKeys) forceKeys = true           // Controller in der Hand: Tasten wieder zeigen
         var dirs = ["left", "right", "up", "down"]
         if ((k === "a" || dirs.indexOf(k) >= 0) && !Nav.alive(Nav.current, o)) { fixFocus(); return }
-        if (k === "x") return backspace()
-        if (k === "y") return add(" ")
+        if (k === "x") return kp.backspace()   // Koreanisch: nur den letzten Teil der Silbe
+        if (k === "y") { kp.endCompose(); return add(" ") }
         if (k === "b") return close()
         if (k === "start") return submit()
         if (k === "a") return app.activate()

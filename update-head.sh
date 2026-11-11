@@ -345,6 +345,9 @@ import json, sys
 c = json.load(open(sys.argv[1], encoding="utf-8"))
 arch = sys.argv[2] if len(sys.argv) > 2 else ""
 pk = {"flatpak"}
+# Eingabemethode fuer Japanisch, Koreanisch, Chinesisch (IME_PKGS/IME_ENGINES in launcher.py)
+pk.update(["fcitx5", "fcitx5-gtk+3", "fcitx5-gtk4", "fcitx5-qt6", "fcitx5-hangul", "fcitx5-chinese-addons",
+           "fcitx5-chewing", "fcitx5-mozc", "fcitx5-anthy"])
 for a in c["apps"]:
     s = a["source"]
     if arch and isinstance(a.get("arch"), list) and arch not in a["arch"]:

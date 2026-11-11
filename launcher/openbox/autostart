@@ -2,6 +2,7 @@
 TV="$HOME/.local/share/voidstation"
 mkdir -p "$TV/logs"
 [ -f "$TV/env.sh" ] && . "$TV/env.sh"          # Mauszeiger, dunkles Theme (vom Launcher gepflegt)
+[ -f "$TV/im.sh" ] && . "$TV/im.sh"            # Eingabemethode fcitx5 bei ja/ko/zh (vom Launcher gepflegt)
 
 # Tastatur: Layout aus /etc/X11/xorg.conf.d/00-keyboard.conf (Installer bzw. Startmenue des Sticks);
 # nur Geraete ohne diese Datei (eingerichtet per install.sh) bekommen wie bisher Deutsch

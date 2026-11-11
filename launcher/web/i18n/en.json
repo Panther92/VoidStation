@@ -1302,5 +1302,7 @@
   "settings.oskMode.keyboard": "Not with a keyboard",
   "inst.kb.nl": "Nederlands",
   "inst.kb.ro": "Română",
-  "inst.kb.tr": "Türkçe"
+  "inst.kb.tr": "Türkçe",
+  "inst.kb.ko": "한국어",
+  "ime.job": "Input method (fcitx5)"
 }

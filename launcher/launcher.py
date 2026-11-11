@@ -801,7 +801,7 @@ DEFAULTS = {"scale": 1.75, "resolution": None, "cursor_theme": "Bibata-Modern-Ic
             "emu_fullscreen": True, "save_backup": True, "rom_covers": True,
             "rate": None, "match_rate": False, "osk_layout": None, "osk_mode": "auto"}
 # Bildschirmtastatur: Belegungen (Qt: VS/OskLayouts.js, gleiche Kennungen) und wann die Tasten zu sehen sind
-OSK_LAYOUTS = ("de", "us", "gb", "fr", "es", "it", "br", "nl", "lv", "hu", "pl", "cz", "sk", "ro", "tr", "gr", "ru", "ua")
+OSK_LAYOUTS = ("de", "us", "gb", "fr", "es", "it", "br", "nl", "lv", "hu", "pl", "cz", "sk", "ro", "tr", "gr", "ru", "ua", "ko")
 OSK_MODES = ("auto", "always", "keyboard")      # automatisch / immer / nicht mit angeschlossener Tastatur
 SYSUPD_DAYS = (30, 60, 90)                  # Erinnerung an Systemupdates (ohne VoidStation-Update) nach … Tagen
 # Sprachen der Oberflaeche: Texte in web/i18n/<id>.json, fehlende Texte kommen aus en.json, dann aus de.json.
@@ -985,7 +985,134 @@ def app_env():
     if locale_available(LOCALES[lang]):
         env["LANG"] = LOCALES[lang]
     env["LANGUAGE"] = LANGUAGE_ENV[lang]
+    if IME_STATE["on"]:                              # Japanisch, Koreanisch, Chinesisch: Eingabe ueber fcitx5
+        env.update(IME_ENV)
     return env
+
+
+# ---- Eingabemethode fuer Japanisch, Koreanisch und Chinesisch (fcitx5) ----------------------------------------------
+# Mit echter Tastatur tippt man diese Sprachen ueber eine Eingabemethode: Koreanisch setzt Silben zusammen, Chinesisch
+# und Japanisch waehlen Schriftzeichen aus einer Kandidatenliste. Steht die Oberflaeche auf ja/ko/zh, installiert
+# VoidStation fcitx5 samt Engine der Sprache (Auftrag im Hintergrund, nur mit Internet, nicht im Live-System),
+# startet es und gibt den Programmen aus den Kacheln die Umgebung dafuer mit; die Startseite bekommt sie ueber im.sh
+# (Openbox-Autostart) beim naechsten Start. Umschalten Lateinisch <-> Landesschrift: Strg+Leertaste, auf koreanischen
+# bzw. japanischen Tastaturen auch die Hangul- bzw. Zenkaku-Taste (Vorgaben von fcitx5). Erst lateinisch, damit
+# Steuerung und Bildschirmtastatur unveraendert bleiben. Bei allen anderen Sprachen laeuft fcitx5 nicht; die Pakete
+# bleiben. Paketnamen stehen auch in der Freigabeliste (install-head.sh, update-head.sh).
+IME_PKGS = ("fcitx5", "fcitx5-gtk+3", "fcitx5-gtk4", "fcitx5-qt6")
+IME_ENGINES = {"ko": ("fcitx5-hangul", "hangul"), "zh-CN": ("fcitx5-chinese-addons", "pinyin"),
+               "zh-TW": ("fcitx5-chewing", "chewing"), "ja": ("fcitx5-mozc", "mozc")}
+IME_ENGINES_32 = {"ja": ("fcitx5-anthy", "anthy")}            # Mozc gibt es nur fuer x86_64
+IME_ENV = {"GTK_IM_MODULE": "fcitx", "QT_IM_MODULE": "fcitx", "XMODIFIERS": "@im=fcitx"}
+IME_STATE = {"on": False, "asked": None}
+IME_LOCK = threading.Lock()
+
+
+def ime_engine(lang):
+    """(Paket, fcitx5-Name) der Eingabemethode fuer die Sprache, sonst None."""
+    if lang in IME_ENGINES_32 and os.uname().machine != "x86_64":
+        return IME_ENGINES_32[lang]
+    return IME_ENGINES.get(lang)
+
+
+def ime_missing(lang):
+    eng = ime_engine(lang)
+    return [p for p in (*IME_PKGS, eng[0]) if not xbps_installed(p)] if eng else []
+
+
+def xkb_layout():
+    """Erstes Tastaturlayout der Sitzung (Installer bzw. Startmenue des Sticks), sonst us."""
+    try:
+        m = re.search(r'XkbLayout"\s+"([^"]+)"', Path("/etc/X11/xorg.conf.d/00-keyboard.conf").read_text())
+        if m:
+            return m.group(1).split(",")[0].strip() or "us"
+    except OSError:
+        pass
+    return "us"
+
+
+def ime_config(engine):
+    """fcitx5-Profil: lateinische Tastatur zuerst (= aus), dann die Engine. Nur neu schreiben, wenn sich Engine oder
+    Tastatur geaendert haben – sonst bleiben Aenderungen aus dem fcitx5-Konfigurationsprogramm erhalten.
+    Kandidatenfenster: Schrift fuer den Fernseher, hell/dunkel nach dem VoidStation-Theme."""
+    d = Path.home() / ".config" / "fcitx5"
+    kb = xkb_layout()
+    mark = d / ".voidstation"
+    want = f"{engine} {kb}"
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+        if not (mark.read_text().strip() == want if mark.exists() else False) or not (d / "profile").exists():
+            (d / "profile").write_text(
+                "[Groups/0]\nName=VoidStation\nDefault Layout=" + kb + "\nDefaultIM=" + engine + "\n\n"
+                "[Groups/0/Items/0]\nName=keyboard-" + kb + "\nLayout=\n\n"
+                "[Groups/0/Items/1]\nName=" + engine + "\nLayout=\n\n"
+                "[GroupOrder]\n0=VoidStation\n", encoding="utf-8")
+            mark.write_text(want + "\n")
+        dark = theme_is_dark(settings_load().get("theme") or DEFAULTS["theme"])
+        (d / "conf").mkdir(exist_ok=True)
+        _ini_flat(d / "conf" / "classicui.conf", {"Font": '"Sans 16"', "MenuFont": '"Sans 14"',
+                                                  "Theme": "default-dark" if dark else "default",
+                                                  "Vertical Candidate List": "False"})
+    except OSError as e:
+        log("fcitx5-Einstellungen nicht geschrieben:", e)
+
+
+def _ini_flat(path, vals):
+    """Schluessel=Wert-Datei ohne Abschnitte (fcitx5) setzen, andere Zeilen behalten."""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        lines = []
+    keep = [l for l in lines if l.split("=", 1)[0].strip() not in vals]
+    path.write_text("\n".join(keep + [f"{k}={v}" for k, v in vals.items()]) + "\n", encoding="utf-8")
+
+
+def ime_running():
+    r = run(["pgrep", "-u", str(os.getuid()), "-x", "fcitx5"])
+    return bool(r and r.returncode == 0)
+
+
+def ime_sync():
+    """Eingabemethode passend zur Sprache: einrichten und starten bzw. beenden. Fehlen Pakete, laeuft ein Auftrag,
+    der am Ende ime_sync() erneut aufruft. Beim Start des Launchers und nach jedem Sprachwechsel."""
+    with IME_LOCK:
+        lang = ui_lang()
+        eng = ime_engine(lang)
+        im_sh = BASE / "im.sh"
+        if not eng:
+            if IME_STATE["on"] or ime_running():
+                run(["pkill", "-u", str(os.getuid()), "-x", "fcitx5"])
+                log("Eingabemethode beendet")
+            IME_STATE["on"] = False
+            im_sh.unlink(missing_ok=True)
+            return
+        missing = ime_missing(lang)
+        if missing:
+            IME_STATE["on"] = False
+            if LIVE or not net_online() or JOBS.busy() or IME_STATE["asked"] == lang:
+                return                                   # spaeter (naechster Start / Sprachwechsel)
+            IME_STATE["asked"] = lang                    # pro Sprache nur ein Versuch je Launcher-Lauf
+            name = i18n_text("ime.job", lang) or "fcitx5"
+            log("Eingabemethode fehlt:", " ".join(missing))
+            try:
+                JOBS.start("ime", {"id": "ime", "name": name, "pkgs": missing})
+            except RuntimeError:
+                IME_STATE["asked"] = None
+            return
+        ime_config(eng[1])
+        im_sh.write_text("".join(f"export {k}={v}\n" for k, v in IME_ENV.items()))
+        if not ime_running():
+            try:
+                with open(BASE / "logs" / "fcitx5.log", "w") as out:
+                    subprocess.Popen(["fcitx5", "-d", "--replace"], stdin=subprocess.DEVNULL, stdout=out,
+                                     stderr=subprocess.STDOUT, start_new_session=True)
+                log("Eingabemethode gestartet:", eng[1])
+            except OSError as e:
+                log("fcitx5 startet nicht:", e)
+                return
+        else:
+            run(["fcitx5-remote", "-r"])                # Profil neu einlesen (Sprachwechsel ja <-> ko …)
+        IME_STATE["on"] = True
 
 
 def firefox_prefs(args, lang, dark):
@@ -1455,6 +1582,8 @@ def apply_appearance(s):
     except OSError as e:
         log("Openbox-Theme nicht geschrieben:", e)
     threading.Thread(target=apply_color_scheme, args=(dark,), daemon=True).start()   # Start nicht aufhalten
+    if IME_STATE["on"]:                             # Kandidatenfenster von fcitx5 hell/dunkel mitziehen
+        threading.Thread(target=ime_sync, daemon=True).start()
 
 
 # Openbox: Fenster, die Openbox selbst zeichnet (Dialoge und Hilfsfenster von Emulatoren & Co. – normale Fenster
@@ -5299,6 +5428,11 @@ class Jobs:
                     if ok:
                         tile_remove(a["id"])
                     self._finish(ok)
+                elif action == "ime":                    # Eingabemethode (fcitx5) fuer ja/ko/zh nachinstallieren
+                    ok = self._run(["sudo", "-n", PKG_HELPER, "install", *a["pkgs"]]) == 0
+                    self._finish(ok)
+                    if ok:
+                        threading.Thread(target=ime_sync, daemon=True).start()
                 elif action == "update":
                     self._open_log()
                     try:
@@ -12799,6 +12933,7 @@ class Handler(BaseHTTPRequestHandler):
                 s = settings_load(); s["lang"] = lang; settings_save(s)
                 log("Sprache:", lang)
                 threading.Thread(target=bios_sync, daemon=True).start()      # Hinweise in den bios-Ordnern
+                threading.Thread(target=ime_sync, daemon=True).start()       # Eingabemethode ja/ko/zh
                 return self._json(200, {"lang": lang})
             if parts == ["api", "settings", "scale"]:
                 val = float(self._body().get("scale", 1.75))
@@ -13192,6 +13327,7 @@ def main():
     BLUETOOTH.start()                               # Kopplungs-Agent (BlueZ ueber D-Bus)
     threading.Thread(target=AUDIO_WATCH.run, daemon=True).start()   # neue Kopfhoerer, HDMI-Vorgabe Stereo
     threading.Thread(target=bios_sync, daemon=True).start()         # bios-Ordner je System samt Hinweis
+    threading.Thread(target=ime_sync, daemon=True).start()          # Eingabemethode fuer ja/ko/zh (fcitx5)
     if not LIVE:                                    # im Live-System gibt es keine Updates
         threading.Thread(target=updates_background_check, daemon=True).start()
         threading.Thread(target=kernel_autopurge, daemon=True).start()

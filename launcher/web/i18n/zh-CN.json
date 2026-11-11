@@ -1359,5 +1359,7 @@
   "settings.oskMode.keyboard": "有键盘时不显示",
   "inst.kb.nl": "Nederlands",
   "inst.kb.ro": "Română",
-  "inst.kb.tr": "Türkçe"
+  "inst.kb.tr": "Türkçe",
+  "inst.kb.ko": "한국어",
+  "ime.job": "中文输入法（fcitx5）"
 }

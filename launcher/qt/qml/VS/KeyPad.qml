@@ -4,8 +4,12 @@
 // lateinische Buchstaben. Shift gilt fuer ein Zeichen. Die Tasten tragen Schluessel (key: "k0-3", "kdel" …),
 // damit der Fokus beim Umschalten der Seite auf derselben Stelle bleibt. extra: weitere Tasten in der unteren Reihe
 // (Tastatur ueber Programmen: Tab, Cursor), sie melden sich ueber special(name).
+// Koreanisch (Belegung mit hangul: true): Jamo setzen sich zu Silben zusammen (VS/Hangul.js). Dafuer ersetzt die
+// Tastatur das zuletzt getippte Zeichen ueber erase() + typed(). Wer den Cursor anders bewegt oder echte Tasten
+// tippt, ruft endCompose(); backspace() nimmt beim Zusammensetzen nur den letzten Teil der Silbe weg.
 import QtQuick
 import "OskLayouts.js" as OL
+import "Hangul.js" as HG
 
 Column {
     id: kp
@@ -19,6 +23,7 @@ Column {
     property bool latin: false
     property var extra: []                      // [{ l: "⇥", a: "Tab" }, …] vor der Leertaste
     property bool fitFont: false                // Schrift nach der Tastenhoehe statt nach der Skalierung (Tastatur ueber Programmen)
+    property string hprev: ""                   // Koreanisch: zuletzt getipptes Zeichen, solange es sich noch verbinden kann
     signal typed(string ch)
     signal erase()
     signal done()
@@ -64,7 +69,26 @@ Column {
         return out
     }
 
-    function reset() { shift = false; page = "abc"; latin = false }
+    function reset() { shift = false; page = "abc"; latin = false; hprev = "" }
+    function endCompose() { hprev = "" }
+    function typeChar(ch) {
+        if (lay.hangul && page === "abc" && !latin && HG.isJamo(ch)) {
+            var r = HG.compose(hprev, ch)
+            if (r.replace) erase()
+            for (var i = 0; i < r.out.length; i++) typed(r.out.charAt(i))
+            hprev = r.out.charAt(r.out.length - 1)
+            return
+        }
+        hprev = ""
+        typed(ch)
+    }
+    function backspace() {
+        if (!hprev) { erase(); return }
+        var rest = HG.back(hprev)
+        erase()
+        if (rest) typed(rest)
+        hprev = rest
+    }
     onLayoutIdChanged: reset()
     function caseOf(ch) {
         if (!shift || ch === " ") return ch
@@ -73,14 +97,14 @@ Column {
         return u.length === 1 ? u : ch          // ß, ΐ: keine einzelne Grossform
     }
     function press(m) {
-        if (m.a === "char") { typed(caseOf(m.ch)); if (shift && m.ch !== " ") shift = false }
-        else if (m.a === "del") erase()
+        if (m.a === "char") { typeChar(caseOf(m.ch)); if (shift && m.ch !== " ") shift = false }
+        else if (m.a === "del") backspace()
         else if (m.a === "shift") shift = !shift
         else if (m.a === "sym") keep(function () { page = page === "sym" ? "abc" : "sym" })
         else if (m.a === "acc") keep(function () { page = page === "acc" ? "abc" : "acc" })
         else if (m.a === "latin") keep(function () { latin = !latin; page = "abc" })
-        else if (m.a === "go") done()
-        else if (m.a === "special") special(m.name)
+        else if (m.a === "go") { hprev = ""; done() }
+        else if (m.a === "special") { hprev = ""; special(m.name) }
     }
     // Seite wechseln, Fokus auf derselben Taste (bzw. der ersten) lassen
     function keep(fn) {

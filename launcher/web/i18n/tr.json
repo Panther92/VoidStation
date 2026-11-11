@@ -1359,5 +1359,6 @@
   "settings.oskMode.keyboard": "Klavye varken değil",
   "inst.kb.nl": "Nederlands",
   "inst.kb.ro": "Română",
-  "inst.kb.tr": "Türkçe"
+  "inst.kb.tr": "Türkçe",
+  "inst.kb.ko": "한국어"
 }

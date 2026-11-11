@@ -38,6 +38,7 @@ Window {
 
     // how: "pad" (L2/L3) oder "field" (Erweiterung: st = { kind, pos, sid })
     function openFor(how, st) {
+        kp.endCompose()                        // Koreanisch: nicht mit dem vorigen Feld verbinden
         auto = how === "field"
         kind = st && st.kind ? st.kind : "text"
         sid = st && st.sid ? st.sid : ""
@@ -82,10 +83,10 @@ Window {
         if ((k === "a" || dirs.indexOf(k) >= 0) && !Nav.alive(Nav.current, body)) { Ui.app.setFocus(firstFocus(), true); return }
         if (k === "a") return Ui.app.activate()
         if (dirs.indexOf(k) >= 0) return Ui.app.move(k)
-        if (k === "x") return tap("BackSpace")
-        if (k === "y") return type(" ")
-        if (k === "lb") return tap("Left")
-        if (k === "rb") return tap("Right")
+        if (k === "x") return kp.backspace()      // erase -> BackSpace (Koreanisch: nur den letzten Teil der Silbe)
+        if (k === "y") { kp.endCompose(); return type(" ") }
+        if (k === "lb") { kp.endCompose(); return tap("Left") }
+        if (k === "rb") { kp.endCompose(); return tap("Right") }
         if (k === "rt") { kp.shift = !kp.shift; return }
         if (k === "start") return enter()
         if (k === "b") return close("Taste B")
