@@ -1361,5 +1361,6 @@
   "inst.kb.jp": "日本語",
   "inst.kb.ro": "Română",
   "inst.kb.tr": "Türkçe",
-  "inst.kb.ko": "한국어"
+  "inst.kb.ko": "한국어",
+  "ime.job": "Ievades metode (fcitx5)"
 }
