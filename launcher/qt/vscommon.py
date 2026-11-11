@@ -128,6 +128,8 @@ def theme_tokens(name):
 PAD_STYLES = ("xbox", "ps", "nintendo")
 _RE_NINTENDO = re.compile(r"nintendo|pro controller|joy-?con|\bswitch\b", re.I)
 _RE_PS = re.compile(r"sony|playstation|wireless controller|dualsense|dualshock|\bps[345]\b", re.I)
+# Vor _RE_PS: Xbox-Pads per Bluetooth heissen "Xbox Wireless Controller" (DualShock 4: "Wireless Controller")
+_RE_XBOX = re.compile(r"xbox|x-box|microsoft", re.I)
 
 
 def pad_style(name, vendor=0):
@@ -137,6 +139,8 @@ def pad_style(name, vendor=0):
     Nintendo-Pad ist "a" (bestaetigen) also die untere Taste mit der Aufschrift B – genau das zeigen die Hinweise."""
     if vendor == 0x057e or _RE_NINTENDO.search(name or ""):
         return "nintendo"
+    if vendor == 0x045e or _RE_XBOX.search(name or ""):
+        return "xbox"
     if vendor == 0x054c or _RE_PS.search(name or ""):
         return "ps"
     return "xbox"

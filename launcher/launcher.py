@@ -7792,6 +7792,9 @@ def pad_style(name, pid=""):
     vendor = str(pid).split(":")[0].lower()
     if vendor == "057e" or re.search(r"nintendo|pro controller|joy-?con|\bswitch\b", name or "", re.I):
         return "nintendo"
+    # vor PlayStation: Xbox-Pads per Bluetooth heissen "Xbox Wireless Controller" (DualShock 4: "Wireless Controller")
+    if vendor == "045e" or re.search(r"xbox|x-box|microsoft", name or "", re.I):
+        return "xbox"
     if vendor == "054c" or re.search(r"sony|playstation|wireless controller|dualsense|dualshock|\bps[345]\b", name or "", re.I):
         return "ps"
     return "xbox"
