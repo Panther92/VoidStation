@@ -12,7 +12,8 @@
 #  (passt er konfliktfrei auf main? fasst er dist/ oder keys/ an?), baut daraus ein
 #  Bundle mit der Referenz refs/heads/main – genau wie tools/mkbundle.sh – und legt
 #  es nach ~/share/Updates. Eingespielt wird weiterhin nur mit  vspub.
-#  Zweige, die schon in main stecken, bietet vsget zum Loeschen auf GitHub an.
+#  Zweige, die schon in main stecken (auch per Squash oder Rebase), bietet vsget
+#  zum Loeschen auf GitHub an.
 #
 #  vsget aendert am lokalen Repo nichts (kein Checkout, kein Merge) – nur die
 #  Remote-Referenzen werden aktualisiert.
@@ -37,7 +38,7 @@ trap cleanup EXIT
 
 ARG="${1:-}"
 case "$ARG" in
-  -h|--help) sed -n '3,21p' "$0" | sed 's/^# \{0,2\}//'; exit 0 ;;
+  -h|--help) sed -n '3,22p' "$0" | sed 's/^# \{0,2\}//'; exit 0 ;;
 esac
 
 [ -d "$REPO/.git" ] || die "Kein Repo unter $REPO gefunden."
@@ -50,6 +51,19 @@ BASE="$(git rev-parse origin/main)"
 # merge-tree --write-tree gibt es ab git 2.38
 MT=1
 git merge-tree --write-tree "$BASE" "$BASE" >/dev/null 2>&1 || MT=0
+
+included() {               # <tip> – steckt der Zweig schon in main? (Merge, Rebase oder "Squash and merge")
+  local tip="$1" mb pid out
+  git merge-base --is-ancestor "$tip" "$BASE" && return 0
+  mb="$(git merge-base "$BASE" "$tip")" || return 1
+  # Rebase/Cherry-pick: jeder Commit des Zweigs hat ein Gegenstueck in main
+  out="$(git cherry "$BASE" "$tip" 2>/dev/null || true)"
+  if [ -n "$out" ] && ! printf '%s\n' "$out" | grep -q '^+'; then return 0; fi
+  # Squash: die Gesamtaenderung des Zweigs steckt als ein Commit in main (gleiche patch-id)
+  pid="$(git diff "$mb" "$tip" | git patch-id --stable | cut -d' ' -f1)"
+  [ -n "$pid" ] || return 0                                                    # Zweig aendert nichts
+  git log -p --no-merges "$mb..$BASE" | git patch-id --stable | cut -d' ' -f1 | grep -qxF "$pid"
+}
 
 ago() {                    # <unix-zeit> -> "vor 3 Std." / "vor 2 Tagen"
   local s=$(( $(date +%s) - $1 ))
@@ -68,7 +82,7 @@ while read -r ref; do
   [ -n "$ref" ] || continue
   name="${ref#origin/}"
   tip="$(git rev-parse "$ref")"
-  if git merge-base --is-ancestor "$tip" "$BASE"; then DONE+=("$name"); continue; fi
+  if included "$tip"; then DONE+=("$name"); continue; fi
 
   state="passt"; info=""
   if ! git diff --quiet "$BASE...$tip" -- dist keys; then
