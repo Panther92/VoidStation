@@ -24,13 +24,12 @@
     if (el.isContentEditable) return "textarea";
     return null;
   }
-  function pos(el) {                                    // Mitte des Felds als Anteil der Bildschirmhoehe
+  function pos(el) {                                    // Mitte des Felds als Anteil der Hoehe des Seiteninhalts
+    // Bildschirmkoordinaten taugen nicht: LibreWolf faelscht sie (resistFingerprinting), Chromium kennt die Lage des
+    // Inhalts im Fenster nicht. Die Programme laufen im Vollbild, der Anteil am sichtbaren Inhalt passt also gut.
     try {
       const r = el.getBoundingClientRect();
-      // Firefox kennt die Lage des Seiteninhalts, Chromium nur die des Fensters: Leisten oben grob abziehen
-      const top = typeof window.mozInnerScreenY === "number" ? window.mozInnerScreenY
-                : window.screenY + (window.top === window ? Math.max(0, window.outerHeight - window.innerHeight) : 0);
-      return Math.max(0, Math.min(1, (top + r.top + r.height / 2) / (screen.height || 1)));
+      return Math.max(0, Math.min(1, (r.top + r.height / 2) / (window.innerHeight || 1)));
     } catch (e) {
       return null;
     }

@@ -41,7 +41,7 @@ Window {
         auto = how === "field"
         kind = st && st.kind ? st.kind : "text"
         sid = st && st.sid ? st.sid : ""
-        atTop = auto && st.pos !== null && st.pos !== undefined && st.pos > 0.55
+        atTop = auto && st.pos !== null && st.pos !== undefined && st.pos > 0.45     // unten belegt sie gut 45 %
         scr = vs.cursorScreen()
         if (!visible) {
             savedFocus = Nav.current
