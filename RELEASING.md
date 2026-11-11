@@ -59,7 +59,7 @@ Only `vspub` on the publisher's machine builds and signs `dist/` – so code rea
 
 | Change | Way in |
 |---|---|
-| Code, device files (`launcher/`, `iso/`, install/update scripts, changelog), `tools/`, `.github/` | bundle → `~/share/Updates` → `vspub` (or a pull request, merged and then published with `vspub`) |
+| Code, device files (`launcher/`, `iso/`, install/update scripts, changelog), `tools/`, `.github/` | Claude: branch `claude/<topic>` → `vsget` → `vspub`; otherwise bundle → `~/share/Updates` → `vspub` (or a pull request, merged and then published with `vspub`) |
 | Pure documentation and website (`README*.md`, `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, `RELEASING.md`, `site/`, `docs/screenshots/`) | may also be pushed to `main` directly; `site/` goes live on voidstation.de right away |
 | `stable`, `dist/`, `keys/`, releases, hotfixes, ISO | `vspub --release` / `--hotfix` / `--iso` only, run by the publisher |
 
@@ -71,6 +71,21 @@ Only these two file names count: a new file in `keys/` does not become a valid k
 
 `vspub` pulls in anything pushed directly to `main` before applying a bundle, so direct documentation pushes
 don't get in its way.
+
+**Claude branches and `vsget`:** Claude never pushes code to `main`. Each chat pushes its work to its own branch
+`claude/<topic>`, based on the current `origin/main` (rebased before every push). On the publisher's machine,
+`tools/vsget.sh` (alias `vsget`) lists the open `claude/*` branches, checks each one against the current GitHub state
+(merges cleanly into `main`? touches `dist/` or `keys/`?), turns the chosen one into a bundle in `~/share/Updates`
+and offers to run `vspub` right away. A branch with a conflict is refused – the chat it came from rebases it onto
+`origin/main` and pushes again. Branches already contained in `main` are offered for deletion. `vsget` only reads
+from GitHub and writes the bundle; it never changes the local repository, so `vspub` stays the only way in.
+
+```sh
+echo "alias vsget='bash ~/VoidStation/tools/vsget.sh'" >> ~/.bashrc   # once, then log in again
+vsget              # show open claude/* branches, fetch one as a bundle, optionally run vspub
+vsget 2            # fetch branch no. 2 (or: vsget claude/<topic>)
+vsget --liste      # only show
+```
 
 **Building a bundle:** `tools/mkbundle.sh <folder>` – always cumulative (everything since the current GitHub
 state, `origin/main..main`), always with the ref `refs/heads/main`, test-applied before it is written. Only the

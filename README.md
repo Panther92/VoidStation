@@ -263,7 +263,9 @@ When and what gets released – release train, hotfixes, ISO schedule – is des
 ```sh
 git config --global credential.helper store      # once: remember GitHub access (token)
 echo "alias vspub='bash ~/VoidStation/tools/publish.sh'" >> ~/.bashrc   # once, then log in again
+echo "alias vsget='bash ~/VoidStation/tools/vsget.sh'" >> ~/.bashrc   # once
 vspub --init-key                                 # once: create signing key (back it up!)
+vsget                                            # fetch a Claude branch (claude/*) as a bundle -> ~/share/Updates
 vspub                                            # take the bundle from ~/share/Updates, build, sign,
                                                  # push to main (Testing channel)
 vspub --status                                   # what's in Testing, since when, what is ripe?

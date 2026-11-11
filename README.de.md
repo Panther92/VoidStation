@@ -264,7 +264,9 @@ Wann was freigegeben wird – Release-Zug, Hotfixes, ISO-Rhythmus – steht in [
 ```sh
 git config --global credential.helper store      # einmalig: GitHub-Zugang (Token) merken
 echo "alias vspub='bash ~/VoidStation/tools/publish.sh'" >> ~/.bashrc   # einmalig, dann neu anmelden
+echo "alias vsget='bash ~/VoidStation/tools/vsget.sh'" >> ~/.bashrc   # einmalig
 vspub --init-key                                 # einmalig: Signaturschlüssel anlegen (Sicherungskopie!)
+vsget                                            # Claude-Zweig (claude/*) als Bundle -> ~/share/Updates holen
 vspub                                            # Bundle aus ~/share/Updates übernehmen, bauen, signieren,
                                                  # nach main (Kanal Testing) pushen
 vspub --status                                   # was liegt in Testing, seit wann, was ist reif?
