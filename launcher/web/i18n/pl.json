@@ -800,6 +800,7 @@
   "app.firefox.desc": "Firefox jako zwykła przeglądarka z paskiem adresu i kartami – z własnym profilem, oddzielnym od YouTube i aplikacji streamingowych.",
   "app.chromium.desc": "Wolna podstawa Google Chrome, z repozytorium Void.",
   "app.brave.desc": "Przeglądarka oparta na Chromium z wbudowanym blokowaniem reklam i trackerów.",
+  "app.braveorigin.desc": "Odchudzona wersja Brave: przeglądarka i bloker reklam, bez asystenta AI, portfela, VPN i nagród.",
   "app.librewolf.desc": "Odmiana Firefoksa nastawiona na prywatność, z wbudowanym uBlock Origin.",
   "app.missioncenter.desc": "Graficzny monitor systemu: procesor, pamięć, grafika, sieć i uruchomione programy w jednym miejscu.",
   "app.localsend.desc": "Wysyłaj zdjęcia, filmy i pliki z telefonu lub PC na urządzenie przez Wi-Fi – bez kabla i bez chmury. Aplikacja jest dostępna na Androida, iOS, Windows i macOS.",

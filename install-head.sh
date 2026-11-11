@@ -228,16 +228,23 @@ cp "$TV/firefox/policies.json" /etc/firefox/policies/policies.json
 # Bildschirmtastatur in Firefox: eigene Erweiterung "VoidStation-Tastatur" (firefox/keyboard/) meldet angewaehlte
 # Eingabefelder an die Startseite, die dann ihre Tastatur ueber Firefox oeffnet. Im Programmordner (App-Bereich) darf
 # sie unsigniert sein: Void baut Firefox mit --with-unsigned-addon-scopes=app,system. FX OSK sperrt die Richtlinie.
+# LibreWolf bekommt dieselbe Datei vor jedem Start ins Profil (librewolf_keyboard in launcher.py), Chromium, Brave und
+# Brave Origin eine signierte .crx per Richtlinie, dazu uBlock Origin (Lite) – crxpack.py.
+VSX=/usr/local/share/voidstation/keyboard.xpi
 FXEXT=/usr/lib/firefox/browser/extensions
-if [ -d /usr/lib/firefox ] && [ -f "$TV/firefox/keyboard/manifest.json" ]; then
-  install -d "$FXEXT"
-  rm -f "$FXEXT/keyboard@voidstation.de.xpi.tmp"
-  if (cd "$TV/firefox/keyboard" && python3 -m zipfile -c "$FXEXT/keyboard@voidstation.de.xpi.tmp" manifest.json background.js focus.js); then
-    chmod 644 "$FXEXT/keyboard@voidstation.de.xpi.tmp" && mv -f "$FXEXT/keyboard@voidstation.de.xpi.tmp" "$FXEXT/keyboard@voidstation.de.xpi"
-  else
-    rm -f "$FXEXT/keyboard@voidstation.de.xpi.tmp"; warn "Firefox-Erweiterung VoidStation-Tastatur nicht eingerichtet"
+install -d /usr/local/share/voidstation
+rm -f "$VSX.tmp"
+if [ -f "$TV/firefox/keyboard/manifest.json" ] && \
+   (cd "$TV/firefox/keyboard" && python3 -m zipfile -c "$VSX.tmp" manifest.json background.js focus.js); then
+  chmod 644 "$VSX.tmp" && mv -f "$VSX.tmp" "$VSX"
+  if [ -d /usr/lib/firefox ]; then
+    install -d "$FXEXT" && install -m 644 "$VSX" "$FXEXT/keyboard@voidstation.de.xpi"
   fi
+else
+  rm -f "$VSX.tmp"; warn "Firefox-Erweiterung VoidStation-Tastatur nicht eingerichtet"
 fi
+python3 "$TV/crxpack.py" "$TV/firefox/keyboard" /usr/local/share/voidstation/chromium \
+  || warn "VoidStation-Tastatur fuer Chromium/Brave nicht eingerichtet"
 rm -f /usr/local/share/voidstation/fx_osk.xpi
 
 # ---------------------------------------------------------------------

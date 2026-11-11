@@ -800,6 +800,7 @@
   "app.firefox.desc": "A Firefox normál böngészőként, címsorral és lapokkal – saját profillal, a YouTube-tól és a streamingalkalmazásoktól elkülönítve.",
   "app.chromium.desc": "A Google Chrome szabad alapja, a Void tárolójából.",
   "app.brave.desc": "Chromium-alapú böngésző beépített reklám- és nyomkövető-blokkolással.",
+  "app.braveorigin.desc": "A Brave karcsú változata: böngésző és reklámblokkoló, MI-asszisztens, tárca, VPN és jutalmak nélkül.",
   "app.librewolf.desc": "Adatvédelemre összpontosító Firefox-változat, a uBlock Origin már benne van.",
   "app.missioncenter.desc": "Grafikus rendszerfigyelő: processzor, memória, videokártya, hálózat és a futó programok egy pillantással.",
   "app.localsend.desc": "Fotók, videók és fájlok küldése a telefonról vagy a PC-ről az eszközre Wi-Fi-n – kábel és felhő nélkül. Az alkalmazás elérhető Androidra, iOS-re, Windowsra és macOS-re.",

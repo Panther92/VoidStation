@@ -800,6 +800,7 @@
   "app.firefox.desc": "Firefox als gewone browser met adresbalk en tabbladen – met een eigen profiel, los van YouTube en de streaming-apps.",
   "app.chromium.desc": "De vrije basis van Google Chrome, uit de Void-repository.",
   "app.brave.desc": "Op Chromium gebaseerde browser met ingebouwde blokkering van advertenties en trackers.",
+  "app.braveorigin.desc": "Slanke versie van Brave: browser en advertentieblokker, zonder AI-assistent, wallet, VPN en beloningen.",
   "app.librewolf.desc": "Firefox-variant gericht op privacy, uBlock Origin zit er al in.",
   "app.missioncenter.desc": "Grafische systeemmonitor: processor, geheugen, videokaart, netwerk en draaiende programma’s in één oogopslag.",
   "app.localsend.desc": "Stuur foto’s, video’s en bestanden van je telefoon of pc via wifi naar het apparaat – zonder kabel, zonder cloud. De app is er voor Android, iOS, Windows en macOS.",

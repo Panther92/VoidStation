@@ -800,6 +800,7 @@
   "app.firefox.desc": "Firefox kā parasts pārlūks ar adreses joslu un cilnēm – ar savu profilu, atsevišķi no YouTube un straumēšanas lietotnēm.",
   "app.chromium.desc": "Google Chrome brīvais pamats, no Void repozitorija.",
   "app.brave.desc": "Chromium bāzēts pārlūks ar iebūvētu reklāmu un izsekotāju bloķēšanu.",
+  "app.braveorigin.desc": "Brave vienkāršotā versija: pārlūks un reklāmu bloķētājs bez MI asistenta, maka, VPN un atlīdzībām.",
   "app.librewolf.desc": "Uz privātumu vērsts Firefox variants, uBlock Origin jau iekļauts.",
   "app.missioncenter.desc": "Grafisks sistēmas monitors: procesors, atmiņa, grafika, tīkls un darbojošās programmas vienā skatā.",
   "app.localsend.desc": "Sūti fotoattēlus, video un failus no tālruņa vai datora uz ierīci pa Wi-Fi – bez kabeļa un bez mākoņa. Lietotne pieejama Android, iOS, Windows un macOS.",

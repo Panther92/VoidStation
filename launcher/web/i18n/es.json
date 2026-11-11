@@ -800,6 +800,7 @@
   "app.firefox.desc": "Firefox como navegador normal con barra de direcciones y pestañas – con su propio perfil, separado de YouTube y de las apps de streaming.",
   "app.chromium.desc": "La base libre de Google Chrome, del repositorio de Void.",
   "app.brave.desc": "Navegador basado en Chromium con bloqueo de anuncios y rastreadores integrado.",
+  "app.braveorigin.desc": "Versión ligera de Brave: navegador y bloqueador de anuncios, sin asistente de IA, monedero, VPN ni recompensas.",
   "app.librewolf.desc": "Variante de Firefox centrada en la privacidad, con uBlock Origin ya incluido.",
   "app.missioncenter.desc": "Monitor del sistema gráfico: procesador, memoria, gráfica, red y programas en ejecución de un vistazo.",
   "app.localsend.desc": "Envía fotos, vídeos y archivos del móvil o del PC al equipo por Wi-Fi – sin cables ni nube. La app está disponible para Android, iOS, Windows y macOS.",

@@ -801,6 +801,7 @@
   "app.firefox.desc": "アドレスバーとタブのある普通のブラウザとして使う Firefox。YouTube やストリーミングアプリとは別のプロファイルです。",
   "app.chromium.desc": "Google Chrome のもとになっているフリーのブラウザ。Void のリポジトリから入れます。",
   "app.brave.desc": "広告とトラッカーのブロック機能を内蔵した Chromium ベースのブラウザ。",
+  "app.braveorigin.desc": "Brave の軽量版：ブラウザーと広告ブロックのみで、AI アシスタント、ウォレット、VPN、リワードはありません。",
   "app.librewolf.desc": "プライバシー重視の Firefox 派生版。uBlock Origin が最初から入っています。",
   "app.missioncenter.desc": "CPU、メモリ、グラフィック、ネットワーク、実行中のプログラムがひと目でわかるシステムモニター。",
   "app.localsend.desc": "スマホやPCから写真・動画・ファイルを Wi-Fi 経由で本体に送れます。ケーブルもクラウドも不要。アプリは Android、iOS、Windows、macOS 用があります。",

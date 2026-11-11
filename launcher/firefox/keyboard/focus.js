@@ -6,6 +6,7 @@
 (function () {
   "use strict";
   const TEXT = new Set(["", "text", "search", "email", "url", "tel", "password", "number"]);
+  const api = globalThis.browser || globalThis.chrome;       // Firefox/LibreWolf bzw. Chromium/Brave
   const sid = Math.random().toString(36).slice(2, 10);
   let open = false, touched = false, typed = false, blurTimer = 0, lastFocus = 0;
 
@@ -26,7 +27,9 @@
   function pos(el) {                                    // Mitte des Felds als Anteil der Bildschirmhoehe
     try {
       const r = el.getBoundingClientRect();
-      const top = typeof window.mozInnerScreenY === "number" ? window.mozInnerScreenY : window.screenY;
+      // Firefox kennt die Lage des Seiteninhalts, Chromium nur die des Fensters: Leisten oben grob abziehen
+      const top = typeof window.mozInnerScreenY === "number" ? window.mozInnerScreenY
+                : window.screenY + (window.top === window ? Math.max(0, window.outerHeight - window.innerHeight) : 0);
       return Math.max(0, Math.min(1, (top + r.top + r.height / 2) / (screen.height || 1)));
     } catch (e) {
       return null;
@@ -34,7 +37,10 @@
   }
   function send(msg) {
     msg.sid = sid;
-    try { browser.runtime.sendMessage(msg).catch(() => {}); } catch (e) { /* Erweiterung neu geladen */ }
+    try {
+      const p = api.runtime.sendMessage(msg);
+      if (p && p.catch) p.catch(() => {});
+    } catch (e) { /* Erweiterung neu geladen */ }
   }
   function report(el) {
     const kind = kindOf(el);

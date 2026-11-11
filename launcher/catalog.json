@@ -1400,6 +1400,43 @@
       }
     },
     {
+      "id": "braveorigin",
+      "name": "Brave Origin",
+      "cat": "Browser",
+      "desc": "Schlanke Fassung von Brave: Browser und Werbeblocker, ohne KI-Assistent, Wallet, VPN und Belohnungen.",
+      "source": {
+        "type": "appimage",
+        "gh": "brave/brave-browser",
+        "assets": [
+          "brave-origin-{ver}-linux-amd64.zip"
+        ],
+        "run": [
+          "brave-origin",
+          "brave"
+        ],
+        "chromium": true,
+        "host_pkgs": [
+          "gtk+3",
+          "nss",
+          "libcups",
+          "libgbm",
+          "at-spi2-core",
+          "alsa-lib",
+          "libxkbcommon"
+        ]
+      },
+      "cmd": [
+        "~/.local/share/voidstation/apps/braveorigin/AppRun"
+      ],
+      "tile": {
+        "group": "Programme",
+        "size": "medium",
+        "color": "#4a2438",
+        "icon": "globe",
+        "sub": "Browser"
+      }
+    },
+    {
       "id": "librewolf",
       "name": "LibreWolf",
       "cat": "Browser",

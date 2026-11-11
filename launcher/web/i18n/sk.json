@@ -800,6 +800,7 @@
   "app.firefox.desc": "Firefox ako bežný prehliadač s panelom adries a kartami – vlastný profil, oddelený od YouTube a streamovacích aplikácií.",
   "app.chromium.desc": "Slobodný základ Google Chrome, z repozitára Void.",
   "app.brave.desc": "Prehliadač založený na Chromiu so vstavaným blokovaním reklám a sledovačov.",
+  "app.braveorigin.desc": "Odľahčená verzia Brave: prehliadač a blokovač reklám, bez AI asistenta, peňaženky, VPN a odmien.",
   "app.librewolf.desc": "Variant Firefoxu zameraný na súkromie, uBlock Origin je už súčasťou.",
   "app.missioncenter.desc": "Grafický monitor systému: procesor, pamäť, grafika, sieť a bežiace programy na prvý pohľad.",
   "app.localsend.desc": "Posielajte fotky, videá a súbory z telefónu alebo PC do zariadenia cez Wi-Fi – bez kábla, bez cloudu. Aplikácia je dostupná pre Android, iOS, Windows a macOS.",

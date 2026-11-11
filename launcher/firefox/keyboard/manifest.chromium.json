@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "VoidStation Keyboard",
+  "version": "1.0",
+  "description": "Opens the VoidStation on-screen keyboard when a text field is selected.",
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [{
+    "matches": ["<all_urls>"],
+    "js": ["focus.js"],
+    "all_frames": true,
+    "match_about_blank": true,
+    "run_at": "document_start"
+  }],
+  "update_url": "http://127.0.0.1:8765/ext/keyboard.xml"
+}

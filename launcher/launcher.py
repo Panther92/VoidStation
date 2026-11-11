@@ -340,6 +340,10 @@ class AppManager:
         before = {int(w, 16) for w, _, _ in windows()}  # Fenster vor dem Start (Zuordnung ohne Prozess-ID)
         if Path(args[0]).name == "firefox":
             firefox_prefs(args, ui_lang(), theme_is_dark(settings_load().get("theme") or DEFAULTS["theme"]))
+        if tid == "librewolf":
+            librewolf_keyboard()
+        elif tid == "braveorigin":
+            brave_origin_prepare()
         if Path(args[0]).name in ("dosbox", "dosbox-staging"):
             args = dosbox_prepare(args)
         args, emu_env, wm_fs = emu_prepare(tid, args)   # Emulatoren: Vorgaben, Vollbild, Controller
@@ -1007,6 +1011,62 @@ def firefox_prefs(args, lang, dark):
     new = "\n".join(out) + "\n"
     if new != old:
         uj.write_text(new, encoding="utf-8")
+
+
+def brave_origin_prepare():
+    """Brave Origin fragt beim allerersten Start nach einem Kauf, unter Linux ist es kostenlos ("Proceed with Origin for
+    free on Linux"). Ein neues Profil bekommt diese Antwort schon vorab (brave.origin.free_tier_accepted in Local
+    State, wie nach dem Klick); ein vorhandenes bleibt unberuehrt. Kaufen geht weiter ueber die Einstellungen."""
+    ls = Path.home() / ".config/BraveSoftware/Brave-Origin/Local State"
+    if ls.exists():
+        return
+    try:
+        ls.parent.mkdir(parents=True, exist_ok=True)
+        ls.write_text(json.dumps({"brave": {"origin": {"free_tier_accepted": True}}}), encoding="utf-8")
+    except OSError as e:
+        log("Brave Origin: Local State nicht angelegt:", e)
+
+
+LIBREWOLF_KBD = Path("/usr/local/share/voidstation/keyboard.xpi")
+LIBREWOLF_PREFS = (                                 # librewolf.overrides.cfg, Block zwischen den Markierungen
+    '// VoidStation-Tastatur (Bildschirmtastatur): eigene, nicht von Mozilla signierte Erweiterung im Profil\n'
+    'defaultPref("xpinstall.signatures.required", false);\n'
+    'defaultPref("extensions.autoDisableScopes", 14);\n'      # Profil-Bereich (1) nicht abschalten, die anderen schon
+    'defaultPref("extensions.startupScanScopes", 1);\n')       # Profilordner bei jedem Start einlesen
+
+
+def librewolf_keyboard():
+    """LibreWolf (Firefox-Ableger aus dem AppCenter) liest den Programmordner von Void-Firefox nicht. Vor jedem Start:
+    Erweiterung VoidStation-Tastatur (dieselbe .xpi wie Firefox) in den Ordner extensions/ jedes Profils, in
+    librewolf.overrides.cfg die Signaturpflicht aus (LibreWolf erlaubt das, Firefox nicht). Ein neues Profil bekommt
+    sie beim zweiten Start. Eigene Zeilen in der .cfg bleiben."""
+    if not LIBREWOLF_KBD.is_file():
+        return
+    data = LIBREWOLF_KBD.read_bytes()
+    home = Path.home()
+    for root in (home / ".librewolf", home / ".config/librewolf", home / ".config/librewolf/librewolf"):
+        ini = root / "profiles.ini"
+        if not ini.is_file():
+            continue
+        try:
+            cfg = root / "librewolf.overrides.cfg"
+            old = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
+            body = re.sub(r"\n?// >>> VoidStation.*?// <<< VoidStation\n?", "\n", old, flags=re.S).strip("\n")
+            new = (body + "\n\n" if body else "") + "// >>> VoidStation\n" + LIBREWOLF_PREFS + "// <<< VoidStation\n"
+            if new != old:
+                cfg.write_text(new, encoding="utf-8")
+            for m in re.finditer(r"^Path=(.+)$", ini.read_text(encoding="utf-8", errors="replace"), re.M):
+                prof = Path(m.group(1).strip())
+                prof = prof if prof.is_absolute() else root / prof
+                if not prof.is_dir():
+                    continue
+                dst = prof / "extensions" / "keyboard@voidstation.de.xpi"
+                if not dst.exists() or dst.read_bytes() != data:
+                    dst.parent.mkdir(exist_ok=True)
+                    dst.write_bytes(data)
+                    log("LibreWolf: VoidStation-Tastatur in", prof.name)
+        except OSError as e:
+            log("LibreWolf: Tastatur nicht eingerichtet:", e)
 
 
 # ---------------------------------------------------------------------------
@@ -12248,6 +12308,7 @@ class OskField:
 
 
 OSK_FIELD = OskField()
+CRX_DIR = Path("/usr/local/share/voidstation/chromium")     # Tastatur-Erweiterung fuer Chromium/Brave, s. crxpack.py
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -12336,6 +12397,13 @@ class Handler(BaseHTTPRequestHandler):
             tid = APPS.front()
             return self._json(200, {"id": tid, "mouse": pad_mouse_default(tid),
                                     "padmouse": bool(settings_load().get("padmouse", True))})
+        if path in ("/ext/keyboard.xml", "/ext/keyboard.crx"):   # VoidStation-Tastatur fuer Chromium/Brave (crxpack.py)
+            try:
+                data = (CRX_DIR / path.rsplit("/", 1)[1]).read_bytes()
+            except OSError:
+                return self._send(404)
+            return self._send(200, data, "text/xml; charset=utf-8" if path.endswith(".xml")
+                              else "application/x-chrome-extension")
         if path == "/api/osk/wait":                # Startseite: Eingabefeld im Browser (Long-Poll, s. OskField)
             qs = urllib.parse.parse_qs(url.query)
             try:
