@@ -347,6 +347,50 @@ ssh_ctl() {
   esac
 }
 
+# ---------------------------------------------------------------------
+#  Steam + proprietaerer NVIDIA-Treiber: 32-Bit-Bibliotheken nachruesten
+# ---------------------------------------------------------------------
+# Ohne <treiber>-libs-32bit findet Steam (32 Bit) kein OpenGL/Vulkan der Karte und startet nicht oder nur mit
+# llvmpipe. Welche Treiber in Frage kommen, steht in der Freigabeliste (driver_deps von Steam im Katalog:
+# nvidia -> nvidia-libs-32bit usw.). Installiert wird nur GENAU die Version des installierten Treibers: Systemupdates
+# koennen bis zu 90 Tage warten, ein neueres -libs-32bit passte dann nicht zum Kernelmodul. Liegt die Version nicht
+# (mehr) im Repo, wartet es aufs naechste Systemupdate ("update" ruft gpu32 danach auf), ebenso update.sh.
+# --nosync: Paketlisten wurden gerade geladen.
+gpu32() {
+  xbps-query steam >/dev/null 2>&1 || { echo "gpu32: Steam nicht installiert"; return 0; }
+  # shellcheck disable=SC2013  # Paketnamen ohne Leerzeichen; while-read in einer Pipe verlegte das return in eine Subshell
+  for lib in $(grep -x '[A-Za-z0-9._+-]*-libs-32bit' "$ALLOW" 2>/dev/null); do
+    drv="${lib%-libs-32bit}"
+    pv="$(xbps-query -p pkgver "$drv" 2>/dev/null)"
+    [ -n "$pv" ] || continue
+    ver="${pv#"$drv"-}"
+    have="$(xbps-query -p pkgver "$lib" 2>/dev/null)"
+    if [ -n "$have" ]; then
+      [ "$have" = "$lib-$ver" ] && { echo "gpu32: $lib passt zum Treiber ($ver)"; return 0; }
+      echo "gpu32: $have weicht vom Treiber ab ($ver) – gleicht das naechste Systemupdate an"
+      return 0
+    fi
+    if ! xbps-query void-repo-multilib-nonfree >/dev/null 2>&1; then   # Steam-Installationen vor diesem Repo
+      check_pkgs void-repo-multilib void-repo-multilib-nonfree || return $?
+      xbps-install -y void-repo-multilib void-repo-multilib-nonfree || return 1
+      [ "${1:-}" = --nosync ] && set --              # neue Repos: Paketlisten muessen jetzt geladen werden
+    fi
+    if [ "${1:-}" != --nosync ]; then
+      mirror_auto
+      repo_sync || return 1
+    fi
+    if ! xbps-query -R "$lib-$ver" >/dev/null 2>&1; then
+      echo "gpu32: $lib $ver nicht im Repo (Treiber nicht aktuell) – kommt mit dem naechsten Systemupdate"
+      return 0
+    fi
+    echo "gpu32: installiere $lib $ver (32-Bit-Treiber fuer Steam)"
+    xbps-install -y "$lib-$ver" || return 1
+    xbps-pkgdb -m auto "$lib"                         # geht mit Steam wieder (remove: xbps-remove -o)
+    return 0
+  done
+  echo "gpu32: kein proprietaerer NVIDIA-Treiber"
+}
+
 kernel_purge() {
   # Alte Kernel entfernen – nur, wenn gerade der neueste installierte Kernel laeuft (der Aufrufer
   # wartet zusaetzlich, bis die Oberflaeche eine Weile stabil laeuft). Prueft hier selbst noch einmal.
@@ -396,7 +440,9 @@ main() {
       mirror_auto now                       # vor jedem Update den schnellsten Mirror suchen (dauert hoechstens 10 s)
       repo_sync || return 1
       xbps-install -yu xbps || true         # xbps muss sich ggf. zuerst selbst aktualisieren
-      xbps-install -yu
+      xbps-install -yu; rc=$?
+      [ $rc -eq 0 ] && { gpu32 --nosync || echo "gpu32: fehlgeschlagen – naechstes Update versucht es erneut"; }
+      return $rc
       ;;
     check)                                  # ausstehende Paket-Updates auflisten (--nosync: ohne Paketlisten zu laden)
       synced=1
@@ -445,6 +491,9 @@ main() {
     suspend)                                # Standby (Weckquellen: sysfix.sh, Abschnitt 6)
       suspend_now
       ;;
+    gpu32)                                  # Steam + NVIDIA: 32-Bit-Bibliotheken passend zum Treiber [--nosync]
+      gpu32 "${1:-}"
+      ;;
     kernelpurge)                            # alte Kernel weg, wenn der neueste laeuft
       kernel_purge
       ;;
@@ -470,7 +519,7 @@ main() {
       esac
       ;;
     *)
-      echo "Benutzung: voidstation-pkg install|remove|markauto <paket>... | sync | update | check [--nosync] | mirror status|auto | selfupdate [--markers] | kernelpurge | channel stable|main|auto | xserver ensure|repair|status | ssh on|off|status | bluetooth on|off|status | suspend"
+      echo "Benutzung: voidstation-pkg install|remove|markauto <paket>... | sync | update | check [--nosync] | mirror status|auto | selfupdate [--markers] | gpu32 [--nosync] | kernelpurge | channel stable|main|auto | xserver ensure|repair|status | ssh on|off|status | bluetooth on|off|status | suspend"
       return 2
       ;;
   esac

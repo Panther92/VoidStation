@@ -5623,6 +5623,10 @@ class Jobs:
         for addon in s.get("addons", []):
             if addon == "proton-ge" and not self._proton_ge():
                 self._log("Hinweis: Proton-GE kommt mit dem naechsten Update (Einstellungen → Updates)")
+            # Proprietaerer NVIDIA-Treiber: 32-Bit-Bibliotheken in genau der Treiberversion (driver_deps im Katalog).
+            # Paketlisten hat "install" gerade geladen. Scheitert es, holt das naechste Systemupdate es nach.
+            if addon == "gpu32" and self._run(["sudo", "-n", PKG_HELPER, "gpu32", "--nosync"]) != 0:
+                self._log("Hinweis: 32-Bit-Treiber fuer NVIDIA kommen mit dem naechsten Update (Einstellungen → Updates)")
         return True
 
     def _proton_ge(self):

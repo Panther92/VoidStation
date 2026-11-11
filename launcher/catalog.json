@@ -46,8 +46,20 @@
             "mesa-vulkan-radeon-32bit"
           ]
         },
+        "driver_deps": {
+          "nvidia": [
+            "nvidia-libs-32bit"
+          ],
+          "nvidia580": [
+            "nvidia580-libs-32bit"
+          ],
+          "nvidia470": [
+            "nvidia470-libs-32bit"
+          ]
+        },
         "addons": [
-          "proton-ge"
+          "proton-ge",
+          "gpu32"
         ]
       },
       "cmd": [

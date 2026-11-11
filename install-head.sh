@@ -403,6 +403,8 @@ for a in c["apps"]:
         pk.update(s.get(k, []))
     for v in s.get("gpu_deps", {}).values():
         pk.update(v)
+    for v in s.get("driver_deps", {}).values():  # nur wenn der Treiber installiert ist (voidstation-pkg gpu32)
+        pk.update(v)
 pk = sorted(pk)
 print("\n".join(pk))
 PYEOF

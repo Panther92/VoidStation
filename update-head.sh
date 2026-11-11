@@ -358,11 +358,15 @@ for a in c["apps"]:
         pk.update(s.get(k, []))
     for v in s.get("gpu_deps", {}).values():
         pk.update(v)
+    for v in s.get("driver_deps", {}).values():  # nur wenn der Treiber installiert ist (voidstation-pkg gpu32)
+        pk.update(v)
 pk = sorted(pk)
 print("\n".join(pk))
 PYEOF
 chmod 644 /usr/local/share/voidstation/allowed-packages
 echo "$(wc -l < /usr/local/share/voidstation/allowed-packages) Pakete freigegeben"
+# Steam mit proprietaerem NVIDIA-Treiber: 32-Bit-Bibliotheken nachruesten (laedt Paketlisten nur, wenn noetig)
+sh /usr/local/sbin/voidstation-pkg gpu32 || warn "32-Bit-Treiber fuer Steam (NVIDIA) nicht installiert – naechstes Update versucht es erneut"
 printf '%s\n' "__VS_UPDATE_URL__" > /usr/local/share/voidstation/update-url
 chmod 644 /usr/local/share/voidstation/update-url
 # Update-Kanal (stable = fuer alle, main = Testing); bestehende Wahl bleibt
