@@ -75,7 +75,8 @@ class PadMouse:
     Die Startseite bekommt die Tasten in dieser Zeit nicht (PadPump nur, wenn sie vorn ist). Von selbst an oder aus je nach Kachel (/api/front: "mouse"; Spiele
     und Emulatoren aus), ganz aus mit Einstellungen -> System ("padmouse"). Virtuelle Maus ueber /dev/uinput
     (Gruppe input, sysfix.sh) – kein eigenes Programm, kein Dienst. Laeuft in einem eigenen Thread mit 100 Hz,
-    fragt Fenstermanager und Launcher aber nur, waehrend am Controller etwas passiert."""
+    solange am Controller etwas ausgelenkt oder gedrueckt ist; in Ruhe schlaeft er, bis sich etwas aendert
+    (Gamepad.wait_change). Fenstermanager und Launcher fragt er nur, waehrend am Controller etwas passiert."""
     NAME = PADMOUSE_NAME
     DEAD = 0.20                    # Totzone der Sticks (driftende Sticks bewegen nichts)
     SCROLL_DEAD = 0.35
@@ -237,17 +238,27 @@ class PadMouse:
             self.ui.syn()
         return wrote
 
+    def idle(self, st):
+        """Nichts ausgelenkt, nichts gedrueckt, keine Maustaste gehalten: kein Takt noetig."""
+        return not (abs(st["rx"]) > self.DEAD or abs(st["ry"]) > self.DEAD or abs(st["ly"]) > self.SCROLL_DEAD
+                    or st["r3"] or st["l3"] or st["lt"] or st["a"] or st["b"] or any(self.btn.values()))
+
     def _run(self):
         last = time.monotonic()
         while True:
-            time.sleep(0.01)
+            st = self.pad.mouse_state()
             now = time.monotonic()
             dt, last = min(now - last, 0.05), now
             try:
-                self.step(self.pad.mouse_state(), now, dt)
+                self.step(st, now, dt)
             except Exception as e:  # noqa: BLE001  – die Startseite darf daran nicht haengen
                 log("Controller-Maus:", e)
                 time.sleep(1)
+            if self.idle(st):
+                self.pad.wait_change()           # schlafen bis zur naechsten Aenderung am Controller
+                last = time.monotonic()          # die Pause zaehlt nicht als Bewegungszeit
+            else:
+                time.sleep(0.01)
 
 
 class FieldWatch:
@@ -393,6 +404,8 @@ class Vs(VsBase):
         busy = self.corner_on or self.kbd_on
         self.pad.grab(busy)
         self.mouse.paused = busy
+        self.pad.changed.set()                   # Controller-Maus: Pause sofort uebernehmen
+        self.padOwnerChanged.emit()              # PadPump: ist jetzt fuer Ecke bzw. Tastatur zustaendig (oder nicht mehr)
 
     @Slot(str)
     def kbdType(self, text):

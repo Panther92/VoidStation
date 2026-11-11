@@ -19,6 +19,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+import weakref
 from pathlib import Path
 
 from PySide6.QtCore import Property, QEvent, QObject, Qt, QTimer, Signal, Slot
@@ -308,6 +309,9 @@ class Gamepad:
         self.generic = set()       # einfache USB-Pads (Tasten ab BTN_TRIGGER, R3 = BTN_BASE6)
         self.styles = {}           # geraet -> Bauart (xbox/ps/nintendo)
         self.last_style = ""       # Bauart des zuletzt benutzten Controllers
+        # Kein Takt im Leerlauf: Wer den Zustand liest, wird bei Aenderungen geweckt statt staendig nachzufragen.
+        self.listeners = []        # Rueckrufe (aus dem Geraete-Thread) bei Tasten, neuen oder abgezogenen Controllern
+        self.changed = threading.Event()   # gesetzt bei jeder Aenderung, auch an den Sticks (Controller-Maus)
         try:
             import evdev  # noqa: F401
         except ImportError:
@@ -326,15 +330,42 @@ class Gamepad:
             except OSError:
                 pass
 
+    def on_change(self, cb):
+        """cb() kommt aus dem Geraete-Thread, sobald sich Tasten aendern oder ein Controller kommt bzw. geht.
+        Methoden werden nur schwach gehalten: Sonst hielte das Gamepad die Pumpe und ueber deren active() die
+        Bruecke fest (Kreis vs -> pad -> pump -> vs), und Python raeumte sie beim Beenden zu beliebiger Zeit ab."""
+        self.listeners.append(weakref.WeakMethod(cb) if hasattr(cb, "__self__") else (lambda: cb))
+
+    def _notify(self, keys=True):
+        self.changed.set()
+        if keys:
+            for ref in list(self.listeners):
+                cb = ref()
+                if cb is None:
+                    self.listeners.remove(ref)
+                    continue
+                try:
+                    cb()
+                except Exception as e:  # noqa: BLE001  – der Geraete-Thread darf daran nicht sterben
+                    log("Gamepad-Rueckruf:", e)
+
+    def wait_change(self, timeout=None):
+        """Fuer Threads (Controller-Maus): schlafen, bis sich am Controller etwas aendert."""
+        self.changed.wait(timeout)
+        self.changed.clear()
+
     def pressed(self):
         with self.lock:
             return {k for (_d, k), v in self.state.items() if v}
 
     def _set(self, dev, key, on):
         with self.lock:
+            if self.state.get((dev, key), False) == on:
+                return                                # Stick bewegt sich nur innerhalb der Richtung: nichts Neues
             self.state[(dev, key)] = on
             if on:
                 self.last_style = self.styles.get(dev, self.last_style)
+        self._notify()
 
     def style(self):
         """Bauart fuer die Tasten-Hinweise: die des zuletzt benutzten Controllers, "" = keiner angeschlossen."""
@@ -347,7 +378,10 @@ class Gamepad:
 
     def _raw(self, dev, key, val):
         with self.lock:
+            if self.raw.get((dev, key)) == val:
+                return
             self.raw[(dev, key)] = val
+        self._notify(keys=False)
 
     def mouse_state(self):
         """Fuer die Controller-Maus: staerkster Ausschlag je Achse ueber alle Controller, R3, untere/rechte Taste,
@@ -401,6 +435,7 @@ class Gamepad:
                             if not self.last_style:
                                 self.last_style = style
                         log("Controller:", dev.name, f"({style})")
+                        self._notify()
                     except OSError:
                         pass
             for key, _ in sel.select(timeout=1):
@@ -427,6 +462,7 @@ class Gamepad:
                             del self.state[k]
                         for k in [k for k in self.raw if k[0] == dev.path]:
                             del self.raw[k]
+                    self._notify()
 
     def _abs(self, dev, code, value, info):
         from evdev import ecodes as E
@@ -457,10 +493,15 @@ class Gamepad:
 
 
 class PadPump(QObject):
-    """Fragt den Gamepad-Zustand ab (60 Hz) und meldet Druecke wie im Web: 380 ms bis zur Wiederholung, dann alle 140 ms."""
+    """Meldet Controller-Druecke wie im Web: 380 ms bis zur Wiederholung, dann alle 140 ms.
+    Ohne festen Takt: Der Geraete-Thread weckt die Pumpe bei jeder Aenderung (Taste, neuer oder abgezogener
+    Controller), ein Zeitgeber laeuft nur, solange eine Taste mit Wiederholung gehalten wird. Ist ein anderes
+    Programm vorn oder liegt der Controller still, laeuft hier kein Python. Wer "active" von sich aus umschaltet
+    (heisse Ecke, Tastatur ueber Programmen), ruft poke(); Fensterwechsel bemerkt die Pumpe selbst."""
     key = Signal(str)
     style = Signal(str)            # Bauart des Controllers fuer die Tasten-Hinweise ("" = keiner angeschlossen)
     connected = Signal(str)
+    _wake = Signal()               # aus dem Geraete-Thread, landet in der Ereignisschleife (QueuedConnection)
 
     def __init__(self, pad, active=None, absorb=False):
         super().__init__()
@@ -468,14 +509,35 @@ class PadPump(QObject):
         # absorb: Tasten, die beim Zustaendigwerden schon gehalten sind, zaehlen erst nach dem Loslassen (Startseite:
         # A der Controller-Maus, mit dem in Firefox ein Feld angeklickt wurde, tippt sonst gleich auf der Tastatur)
         self.absorb, self.was_active = absorb, False
+        self.idle_held = set()     # zuletzt gehaltene Tasten, waehrend die Pumpe nicht zustaendig war (absorb)
         self.last_style = None
+        self.pending = False       # Wecken unterwegs (mehrere Ereignisse ergeben einen Durchlauf)
         # Wann gehoert der Controller diesem Programm? Standard: eines seiner Fenster ist vorn
         self.active = active or (lambda: QGuiApplication.focusWindow() is not None)
         self.t = QTimer(self)
+        self.t.setSingleShot(True)
+        self.t.setTimerType(Qt.TimerType.PreciseTimer)
         self.t.timeout.connect(self.tick)
-        self.t.start(16)
+        self._wake.connect(self.tick, Qt.QueuedConnection)
+        app = QGuiApplication.instance()
+        if app is not None:
+            app.focusWindowChanged.connect(self.poke)
+        if pad is not None:
+            pad.on_change(self._from_thread)
+        QTimer.singleShot(0, self.poke)            # Controller, die schon vor der Pumpe erkannt wurden
 
-    def tick(self):
+    def _from_thread(self):
+        if not self.pending:
+            self.pending = True
+            self._wake.emit()
+
+    def poke(self, *_):
+        """Zustaendigkeit hat sich geaendert (Fenster, heisse Ecke, Tastatur): gleich neu bewerten. Wird die Pumpe
+        dabei zustaendig, schluckt absorb alle gehaltenen Tasten (wie frueher beim ersten Takt)."""
+        self.tick(poked=True)
+
+    def tick(self, poked=False):
+        self.pending = False                       # vor dem Lesen: spaetere Aenderungen wecken erneut
         with self.pad.lock:
             names, self.pad.names = self.pad.names, []
         for n in names:
@@ -484,18 +546,24 @@ class PadPump(QObject):
         if st != self.last_style:
             self.last_style = st
             self.style.emit(st)
+        raw = self.pad.pressed()
+        want = {k for k in raw if not k.startswith(("hat", "stick"))}
+        want |= {k[3:] for k in raw if k.startswith("hat")} | {k[5:] for k in raw if k.startswith("stick")}
         if not self.active():                          # nicht vorn: Controller gehoert dem anderen Programm
             self.held = {}
             self.was_active = False
+            self.idle_held = want
+            self.t.stop()
             return
-        raw = self.pad.pressed()
         now = time.monotonic()
-        want = {k for k in raw if not k.startswith(("hat", "stick"))}
-        want |= {k[3:] for k in raw if k.startswith("hat")} | {k[5:] for k in raw if k.startswith("stick")}
         if self.absorb and not self.was_active:
-            self.held = {k: True for k in want}
-            self.next = {k: float("inf") for k in want}         # auch keine Wiederholung, bis losgelassen
+            # Per poke() zustaendig: alles Gehaltene schlucken. Bemerkt erst durch einen Tastendruck (Zustaendigkeit
+            # wechselte still, z. B. Player mit mpv-Fenster): nur was schon vorher gehalten war, der neue Druck zaehlt
+            keep = want if poked else want & self.idle_held
+            self.held = {k: True for k in keep}
+            self.next = {k: float("inf") for k in keep}         # auch keine Wiederholung, bis losgelassen
         self.was_active = True
+        self.idle_held = set()
         for k in list(self.held):
             if k not in want:
                 del self.held[k]
@@ -507,7 +575,11 @@ class PadPump(QObject):
             elif k in Gamepad.REPEAT and now >= self.next.get(k, 0):
                 self.next[k] = now + 0.14
                 self.key.emit(k)
-
+        due = [self.next[k] for k in self.held if k in Gamepad.REPEAT and self.next.get(k, 0) != float("inf")]
+        if due:
+            self.t.start(max(1, int((min(due) - time.monotonic()) * 1000 + 0.999)))
+        else:
+            self.t.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -561,6 +633,7 @@ class VsBase(QObject):
     padConnected = Signal(str)
     padStyleChanged = Signal()
     kbdChanged = Signal()
+    padOwnerChanged = Signal()                  # wem der Controller gehoert, hat sich geaendert (heisse Ecke, Tastatur)
 
     def __init__(self):
         super().__init__()
@@ -593,7 +666,9 @@ class VsBase(QObject):
 
     # ---- Controller oder Tastatur? (Tasten-Hinweise passen sich an) ----
     def attach_pump(self, pump):
-        """Controller-Tasten weiterreichen und merken, welche Bauart zuletzt benutzt wurde."""
+        """Controller-Tasten weiterreichen und merken, welche Bauart zuletzt benutzt wurde. padOwnerChanged weckt die
+        Pumpe, wenn sich ihre Zustaendigkeit aendert (ueber ein Signal statt einer Referenz: kein Kreis vs <-> pump)."""
+        self.padOwnerChanged.connect(pump.poke)
         pump.key.connect(self._pad_used)
         pump.key.connect(self.padKey)
         pump.connected.connect(self.padConnected)
