@@ -671,7 +671,7 @@
   "settings.padMouseHint": "En aplicaciones como el navegador, FreeTube o Discord: el stick derecho mueve el puntero, <b>A</b> hace clic (mantener para arrastrar), <b>B</b> es clic derecho y el stick izquierdo desplaza. <b>R3</b> (pulsar el stick derecho) lo activa o desactiva para la aplicación; en juegos y emuladores el ratón está desactivado de forma predeterminada.",
   "settings.padMouseOnToast": "Ratón del mando activado",
   "settings.padMouseOffToast": "Ratón del mando desactivado",
-  "pad.mouseOn": "Ratón del mando activado · <b>R3</b> lo desactiva · <b>LT + L3</b> teclado",
+  "pad.mouseOn": "Ratón del mando activado · <b>R3</b> lo desactiva · <b>LT / L3</b> teclado",
   "pad.mouseOff": "Ratón del mando desactivado · <b>R3</b> lo activa",
   "kbd.hint": "<b>A</b> escribir · <b>X</b> borrar · <b>Y</b> espacio · <b>LB / RB</b> cursor · <b>RT</b> Mayús · <b>Start</b> Intro · <b>B</b> cerrar",
   "osk.space": "Espacio",

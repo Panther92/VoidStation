@@ -671,7 +671,7 @@
   "settings.padMouseHint": "V aplikacích jako prohlížeč, FreeTube nebo Discord: pravá páčka pohybuje ukazatelem, <b>A</b> klikne (podržením táhnete), <b>B</b> klikne pravým tlačítkem, levá páčka posouvá. <b>R3</b> (stisk pravé páčky) ho pro aplikaci zapne či vypne – ve hrách a emulátorech je myš standardně vypnutá.",
   "settings.padMouseOnToast": "Myš ovladačem zapnuta",
   "settings.padMouseOffToast": "Myš ovladačem vypnuta",
-  "pad.mouseOn": "Myš ovladačem zap. · <b>R3</b> ji vypne · <b>LT + L3</b> klávesnice",
+  "pad.mouseOn": "Myš ovladačem zap. · <b>R3</b> ji vypne · <b>LT / L3</b> klávesnice",
   "pad.mouseOff": "Myš ovladačem vyp. · <b>R3</b> ji zapne",
   "kbd.hint": "<b>A</b> psát · <b>X</b> smazat · <b>Y</b> mezera · <b>LB / RB</b> kurzor · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> zavřít",
   "osk.space": "Mezera",

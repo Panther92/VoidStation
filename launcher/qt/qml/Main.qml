@@ -284,8 +284,8 @@ Window {
             }
             function onPadConnected(name) { app.toast(Ui.t("pad.connected", { name: name })) }
             function onPadMouse(on) { mouseHint.show(on) }
-            function onPadKeyboard() {                            // L2 + L3 in einem Programm
-                if (kbd.visible) kbd.close("L2 + L3")
+            function onPadKeyboard() {                            // L2 oder L3 in einem Programm
+                if (kbd.visible) kbd.close("L2/L3")
                 else if (!corner.visible && !music.visible) kbd.openFor("pad")
             }
             function onOskField(st) { app.oskField(st) }
@@ -310,7 +310,7 @@ Window {
             }
             if (st.ev !== "focus" || corner.visible || music.visible) return
             if (win.active && vs.homeInFront()) return
-            if (kbd.visible && !kbd.auto) return                  // per L2 + L3 offen: bleibt, wie sie ist
+            if (kbd.visible && !kbd.auto) return                  // per L2/L3 offen: bleibt, wie sie ist
             if (mode === "keyboard" && vs.kbdPresent) return
             if (mode === "auto" && vs.kbdPresent && vs.kbdTyping) return
             kbd.openFor("field", st)

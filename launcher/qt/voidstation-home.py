@@ -12,7 +12,7 @@ Aufgaben dieses Programms (alles andere steht in qml/):
   * Texte aus web/i18n/*.json und Farben aus web/themes/*.css – eine Quelle fuer beide Oberflaechen
   * Gamepad ueber evdev (python3-evdev), Symbole als SVG
   * Controller als Maus in Programmen (uinput): rechter Stick Zeiger, A/B (✕/○) Klicks, linker Stick scrollt, R3 umschalten
-  * Bildschirmtastatur ueber Programmen (L2 + L3 oder Eingabefeld in Firefox): tippt per XTest, s. vsx11.type_text
+  * Bildschirmtastatur ueber Programmen (L2 oder L3 oder Eingabefeld im Browser): tippt per XTest, s. vsx11.type_text
 
 Darstellung: Qt Quick zeichnet mit OpenGL direkt auf der Grafikkarte (auch mit dem NVIDIA-Treiber).
 Ohne Render-Schnittstelle (/dev/dri/renderD*) oder mit VS_QT_SOFTWARE=1 zeichnet Qt per Software.
@@ -71,7 +71,8 @@ class PadMouse:
     """Controller als Maus, solange ein Programm vorn ist (nicht die Startseite): rechter Stick bewegt den Zeiger
     (je weiter, desto schneller), untere Taste (Xbox A, PlayStation ✕) = Linksklick (halten zieht), rechte Taste
     (Xbox B, PlayStation ○) = Rechtsklick, linker Stick hoch/runter scrollt, R3 schaltet fuer das Programm um.
-    L2 halten + L3 (linken Stick druecken) oeffnet die Bildschirmtastatur ueber dem Programm (nur wo die Maus an ist).
+    L2 oder L3 (linken Stick druecken), jede Taste fuer sich, oeffnet bzw. schliesst die Bildschirmtastatur ueber dem
+    Programm (nur wo die Maus an ist).
     Die Startseite bekommt die Tasten in dieser Zeit nicht (PadPump nur, wenn sie vorn ist). Von selbst an oder aus je nach Kachel (/api/front: "mouse"; Spiele
     und Emulatoren aus), ganz aus mit Einstellungen -> System ("padmouse"). Virtuelle Maus ueber /dev/uinput
     (Gruppe input, sysfix.sh) – kein eigenes Programm, kein Dienst. Laeuft in einem eigenen Thread mit 100 Hz,
@@ -82,8 +83,9 @@ class PadMouse:
 
     def __init__(self, pad, notify, keyboard=None):
         self.pad, self.notify = pad, notify     # notify(an: bool) – Hinweis ueber dem Programm (R3)
-        self.keyboard = keyboard or (lambda: None)   # L2 + L3: Bildschirmtastatur ueber dem Programm
-        self.combo_prev = False
+        self.keyboard = keyboard or (lambda: None)   # L2 oder L3: Bildschirmtastatur ueber dem Programm auf/zu
+        self.kbd_prev = set()                          # davon im letzten Takt gehalten
+        self.kbd_t = 0.0                               # letztes Auf/Zu: analoge L2-Achsen zittern an der Schwelle
         self.home_wins = set()     # Fenster der Startseite (setzt der Qt-Thread)
         self.screen_w = 1920       # Breite des Bildschirms (setzt der Qt-Thread), bestimmt die Geschwindigkeit
         self.ui = None
@@ -164,21 +166,24 @@ class PadMouse:
         """Ein Takt: Zustand der Sticks/Tasten -> Mausereignisse. Rueckgabe: ob etwas geschrieben wurde."""
         from evdev import ecodes as E
         held = {k for k in ("a", "b") if st[k]}
-        combo = bool(st.get("lt") and st.get("l3"))
+        kbd = {k for k in ("lt", "l3") if st.get(k)}
+        kbd_new = bool(kbd - self.kbd_prev) and now - self.kbd_t > 0.3   # L2 oder L3 gerade gedrueckt (jede fuer sich)
+        if kbd_new:
+            self.kbd_t = now
         if self.paused:
             # A, mit dem in der Ecke bzw. auf der Tastatur ausgeloest wurde, klickt nach dem Schliessen nicht ins Programm
             self.held_off |= held
-            if combo and not self.combo_prev:          # Tastatur offen: L2 + L3 macht sie wieder zu
+            if kbd_new:                                # Tastatur offen: L2 oder L3 macht sie wieder zu
                 self.keyboard()
-            self.combo_prev = combo
+            self.kbd_prev = kbd
             self.release()
             return False
         busy = (abs(st["rx"]) > self.DEAD or abs(st["ry"]) > self.DEAD or abs(st["ly"]) > self.SCROLL_DEAD
-                or st["r3"] or st.get("l3") or st["a"] or st["b"] or any(self.btn.values()))
+                or st["r3"] or kbd or st["a"] or st["b"] or any(self.btn.values()))
         self.held_off &= held                         # losgelassen: zaehlt beim naechsten Druck wieder
         if not busy:
             self.r3_prev = False
-            self.combo_prev = False
+            self.kbd_prev = set()
             self.act_t = 0.0                          # nach einer Pause zuerst nachsehen, was vorn ist
             return False
         d = self.decide(now)
@@ -196,13 +201,13 @@ class PadMouse:
         self.r3_prev = st["r3"]
         if not on or not self._device():
             self.held_off |= held
-            self.combo_prev = combo
+            self.kbd_prev = kbd
             self.release()
             return False
-        if combo and not self.combo_prev:
-            log("Controller-Maus: L2 + L3, Bildschirmtastatur fuer", key)
+        if kbd_new:
+            log("Controller-Maus:", " + ".join(sorted(kbd)).upper().replace("LT", "L2"), "-> Bildschirmtastatur fuer", key)
             self.keyboard()
-        self.combo_prev = combo
+        self.kbd_prev = kbd
         vmax = self.screen_w * 1.1                    # Pixel je Sekunde bei vollem Ausschlag
         wrote = False
         for i, axis, code in ((0, "rx", E.REL_X), (1, "ry", E.REL_Y)):
@@ -277,7 +282,7 @@ class Vs(VsBase):
     """Bruecke der Startseite: dazu Controller-Maus-Hinweis, heisse Ecke, Tastatur ueber Programmen, Zeitzonen
     (Installer), Neustart."""
     padMouse = Signal(bool)                     # Controller-Maus per R3 an/aus (Hinweis ueber dem Programm)
-    padKeyboard = Signal()                      # L2 + L3 in einem Programm: Bildschirmtastatur auf/zu
+    padKeyboard = Signal()                      # L2 oder L3 in einem Programm: Bildschirmtastatur auf/zu
     oskField = Signal("QVariantMap")            # Eingabefeld in Firefox angewaehlt/verlassen (FieldWatch)
     corner_on = False                           # heisse Ecke offen
     kbd_on = False                              # Bildschirmtastatur ueber einem Programm offen
@@ -490,7 +495,7 @@ def main():
         from PySide6.QtGui import QKeyEvent
 
         def press(name):                                  # k:Return, k:Escape, k:Left …, t:Text, c:x:y (Mausklick)
-            if name == "kbdpad":                          # wie L2 + L3 in einem Programm: Tastatur ueber Programmen
+            if name == "kbdpad":                          # wie L2/L3 in einem Programm: Tastatur ueber Programmen
                 vs.padKeyboard.emit()
                 return
             if name == "osk":                             # Bildschirmtastatur fuer das erste Eingabefeld oeffnen

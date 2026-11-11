@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Bildschirmtastatur ueber Programmen (Firefox, Terminal, Steam …). Geht auf mit L2 + L3 am Controller (nur wo die
+// Bildschirmtastatur ueber Programmen (Firefox, Terminal, Steam …). Geht auf mit L2 oder L3 am Controller (nur wo die
 // Controller-Maus an ist) oder von selbst, wenn in Firefox ein Eingabefeld angewaehlt wird (Erweiterung
 // VoidStation-Tastatur, s. firefox/keyboard/). Tastenfeld und Belegungen wie auf der Startseite (VS/KeyPad.qml).
 // Getippt wird per XTest wie auf einer echten Tastatur (vs.kbdType, vsx11.py) – auch Zeichen, die auf der
 // eingestellten X-Belegung fehlen. Eigenes Fenster ohne Fensterverwaltung wie die heissen Ecken (Corner.qml): liegt
 // ueber Vollbild-Programmen und nimmt ihnen den Fokus nicht weg, sonst kaemen die Tasten nicht an.
 // Controller, solange offen: Steuerkreuz waehlen, A tippen, X loeschen, Y Leerzeichen, LB/RB Cursor, RT Shift,
-// Start Enter, B (oder L2 + L3) zu. Maus: Tasten anklicken. Steht das Feld unten im Bild, liegt die Tastatur oben.
+// Start Enter, B (oder L2/L3) zu. Maus: Tasten anklicken. Steht das Feld unten im Bild, liegt die Tastatur oben.
 import QtQuick
 import QtQuick.Window
 import VS
@@ -36,7 +36,7 @@ Window {
     signal opened()
     signal closed()
 
-    // how: "pad" (L2 + L3) oder "field" (Erweiterung: st = { kind, pos, sid })
+    // how: "pad" (L2/L3) oder "field" (Erweiterung: st = { kind, pos, sid })
     function openFor(how, st) {
         auto = how === "field"
         kind = st && st.kind ? st.kind : "text"
@@ -52,7 +52,7 @@ Window {
         raise()
         opened()
         Qt.callLater(function () { if (!Nav.alive(Nav.current, body)) Ui.app.setFocus(firstFocus(), true) })
-        vs.log("Tastatur: offen (" + (auto ? "Eingabefeld " + kind : "L2 + L3") + (atTop ? ", oben" : ", unten") + ")")
+        vs.log("Tastatur: offen (" + (auto ? "Eingabefeld " + kind : "L2/L3") + (atTop ? ", oben" : ", unten") + ")")
     }
     function place() {
         kw.x = scr[0]

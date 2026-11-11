@@ -671,7 +671,7 @@
   "settings.padMouseHint": "Em apps como o navegador, FreeTube ou Discord: o analógico direito move o ponteiro, <b>A</b> clica (segure para arrastar), <b>B</b> é o clique direito e o analógico esquerdo rola a tela. <b>R3</b> (pressionar o analógico direito) liga ou desliga para o app – em jogos e emuladores o mouse fica desligado por padrão.",
   "settings.padMouseOnToast": "Mouse do controle ativado",
   "settings.padMouseOffToast": "Mouse do controle desativado",
-  "pad.mouseOn": "Mouse do controle ligado · <b>R3</b> desliga · <b>LT + L3</b> teclado",
+  "pad.mouseOn": "Mouse do controle ligado · <b>R3</b> desliga · <b>LT / L3</b> teclado",
   "pad.mouseOff": "Mouse do controle desligado · <b>R3</b> liga",
   "kbd.hint": "<b>A</b> digitar · <b>X</b> apagar · <b>Y</b> espaço · <b>LB / RB</b> cursor · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> fechar",
   "osk.space": "Espaço",

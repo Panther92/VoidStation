@@ -671,7 +671,7 @@
   "settings.padMouseHint": "W aplikacjach takich jak przeglądarka, FreeTube czy Discord: prawa gałka porusza kursorem, <b>A</b> klika (przytrzymanie przeciąga), <b>B</b> to prawy przycisk, lewa gałka przewija. <b>R3</b> (wciśnięcie prawej gałki) włącza lub wyłącza to dla aplikacji – w grach i emulatorach mysz jest domyślnie wyłączona.",
   "settings.padMouseOnToast": "Mysz kontrolera włączona",
   "settings.padMouseOffToast": "Mysz kontrolera wyłączona",
-  "pad.mouseOn": "Mysz kontrolera wł. · <b>R3</b> wyłącza · <b>LT + L3</b> klawiatura",
+  "pad.mouseOn": "Mysz kontrolera wł. · <b>R3</b> wyłącza · <b>LT / L3</b> klawiatura",
   "pad.mouseOff": "Mysz kontrolera wył. · <b>R3</b> włącza",
   "kbd.hint": "<b>A</b> pisz · <b>X</b> usuń · <b>Y</b> spacja · <b>LB / RB</b> kursor · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> zamknij",
   "osk.space": "Spacja",

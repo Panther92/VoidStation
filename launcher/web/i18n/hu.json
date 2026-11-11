@@ -671,7 +671,7 @@
   "settings.padMouseHint": "Olyan alkalmazásokban, mint a böngésző, a FreeTube vagy a Discord: a jobb kar mozgatja a mutatót, az <b>A</b> kattint (nyomva tartva húz), a <b>B</b> jobb kattintás, a bal kar görget. Az <b>R3</b> (a jobb kar lenyomása) be- és kikapcsolja az alkalmazásban – játékokban és emulátorokban az egér alapból ki van kapcsolva.",
   "settings.padMouseOnToast": "Kontroller-egér bekapcsolva",
   "settings.padMouseOffToast": "Kontroller-egér kikapcsolva",
-  "pad.mouseOn": "Kontroller-egér be · <b>R3</b> kikapcsolja · <b>LT + L3</b> billentyűzet",
+  "pad.mouseOn": "Kontroller-egér be · <b>R3</b> kikapcsolja · <b>LT / L3</b> billentyűzet",
   "pad.mouseOff": "Kontroller-egér ki · <b>R3</b> bekapcsolja",
   "kbd.hint": "<b>A</b> gépelés · <b>X</b> törlés · <b>Y</b> szóköz · <b>LB / RB</b> kurzor · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> bezárás",
   "osk.space": "Szóköz",

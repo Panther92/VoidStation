@@ -671,7 +671,7 @@
   "settings.padMouseHint": "In apps zoals de browser, FreeTube of Discord: de rechterstick beweegt de aanwijzer, <b>A</b> klikt (vasthouden om te slepen), <b>B</b> is rechtsklikken, de linkerstick scrolt. <b>R3</b> (rechterstick indrukken) schakelt het voor de app aan of uit – in games en emulators staat de muis standaard uit.",
   "settings.padMouseOnToast": "Controllermuis ingeschakeld",
   "settings.padMouseOffToast": "Controllermuis uitgeschakeld",
-  "pad.mouseOn": "Controllermuis aan · <b>R3</b> zet hem uit · <b>LT + L3</b> toetsenbord",
+  "pad.mouseOn": "Controllermuis aan · <b>R3</b> zet hem uit · <b>LT / L3</b> toetsenbord",
   "pad.mouseOff": "Controllermuis uit · <b>R3</b> zet hem aan",
   "kbd.hint": "<b>A</b> typen · <b>X</b> wissen · <b>Y</b> spatie · <b>LB / RB</b> cursor · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> sluiten",
   "osk.space": "Spatie",

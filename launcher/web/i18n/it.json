@@ -671,7 +671,7 @@
   "settings.padMouseHint": "In app come il browser, FreeTube o Discord: lo stick destro muove il puntatore, <b>A</b> fa clic (tenere premuto per trascinare), <b>B</b> è il clic destro, lo stick sinistro scorre. <b>R3</b> (premere lo stick destro) lo attiva o disattiva per l’app – nei giochi e negli emulatori il mouse è disattivato di default.",
   "settings.padMouseOnToast": "Mouse del controller attivato",
   "settings.padMouseOffToast": "Mouse del controller disattivato",
-  "pad.mouseOn": "Mouse del controller attivo · <b>R3</b> lo disattiva · <b>LT + L3</b> tastiera",
+  "pad.mouseOn": "Mouse del controller attivo · <b>R3</b> lo disattiva · <b>LT / L3</b> tastiera",
   "pad.mouseOff": "Mouse del controller disattivato · <b>R3</b> lo attiva",
   "kbd.hint": "<b>A</b> digita · <b>X</b> cancella · <b>Y</b> spazio · <b>LB / RB</b> cursore · <b>RT</b> Maiusc · <b>Start</b> Invio · <b>B</b> chiudi",
   "osk.space": "Spazio",
