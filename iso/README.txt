@@ -9,8 +9,9 @@ Booting
 
 Boot menu
   First pick the language: Deutsch, English, Français – all others (Čeština, Español, Italiano,
-  Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Slovenčina, Ελληνικά, Русский,
-  Українська) are under "Other Languages". Then one of the two entries below it:
+  Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Română, Slovenčina, Türkçe, Ελληνικά,
+  Русский, Українська, 日本語, 한국어, 简体中文, 繁體中文) are under "Other Languages".
+  Then one of the two entries below it:
   Start VoidStation Live                 live system (nothing gets installed), open graphics drivers
   Start VoidStation Live (NVIDIA only)   with the NVIDIA driver – for GeForce GTX 16xx, RTX 20xx and newer
   Reboot                                 restart

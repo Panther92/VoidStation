@@ -68,7 +68,8 @@ Column {
     onLayoutIdChanged: reset()
     function caseOf(ch) {
         if (!shift || ch === " ") return ch
-        var u = ch.toUpperCase()
+        var lay0 = latin && lay.latin ? OL.layout(lay.latin) : lay
+        var u = page === "abc" && lay0.upper && lay0.upper[ch] ? lay0.upper[ch] : ch.toUpperCase()
         return u.length === 1 ? u : ch          // ß, ΐ: keine einzelne Grossform
     }
     function press(m) {

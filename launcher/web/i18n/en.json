@@ -1300,5 +1300,7 @@
   "settings.oskMode.auto": "Automatic",
   "settings.oskMode.always": "Always",
   "settings.oskMode.keyboard": "Not with a keyboard",
-  "inst.kb.nl": "Nederlands"
+  "inst.kb.nl": "Nederlands",
+  "inst.kb.ro": "Română",
+  "inst.kb.tr": "Türkçe"
 }

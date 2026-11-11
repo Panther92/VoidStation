@@ -54,7 +54,10 @@ BIOS_EXTRA = "vga=791"
 #   99-voidstation-live.sh und KEYMAPS im Installer), Konsolen-Tastatur (vconsole.keymap, kbd-Name),
 #   Umschrift fuers BIOS-Menue (nur wenn der Name nicht in Codepage 437 geht), Zurueck, Start, Start nur NVIDIA.
 # Griechisch/Russisch/Ukrainisch: Oberflaeche mit US-Tastatur + Landesbelegung (Alt+Umschalt wechselt),
-# Konsole bleibt US (Anmeldename und Befehle sind lateinisch). Niederlaendisch: US-Tastatur wie dort ueblich.
+# Konsole bleibt US (Anmeldename und Befehle sind lateinisch). Niederlaendisch: US-Tastatur wie dort ueblich,
+# ebenso Koreanisch und Chinesisch (ohne Eingabemethode tippt die Landesbelegung ohnehin lateinisch).
+# Japanisch, Koreanisch, Chinesisch: die Schriften des Startmenues haben keine CJK-Zeichen – dort stehen Umschrift
+# und die englischen Starteintraege (grub_text/bios_text).
 LANGUAGES = [
     ("de", "Deutsch", "de_DE", "de", "de", None, "Zurück",
      "VoidStation Live starten", "VoidStation Live starten (nur NVIDIA)"),
@@ -78,8 +81,12 @@ LANGUAGES = [
      "Uruchom VoidStation Live", "Uruchom VoidStation Live (tylko NVIDIA)"),
     ("pt-BR", "Português (Brasil)", "pt_BR", "br", "br-abnt2", None, "Voltar",
      "Iniciar o VoidStation Live", "Iniciar o VoidStation Live (somente NVIDIA)"),
+    ("ro", "Română", "ro_RO", "ro", "ro", None, "Înapoi",
+     "Pornește VoidStation Live", "Pornește VoidStation Live (doar NVIDIA)"),
     ("sk", "Slovenčina", "sk_SK", "sk", "sk-qwertz", None, "Späť",
      "Spustiť VoidStation Live", "Spustiť VoidStation Live (iba NVIDIA)"),
+    ("tr", "Türkçe", "tr_TR", "tr", "trq", None, "Geri",
+     "VoidStation Live’ı başlat", "VoidStation Live’ı başlat (yalnızca NVIDIA)"),
     ("el", "Ελληνικά", "el_GR", "gr", "us", "Ellinika (Greek)", "Πίσω",
      "Εκκίνηση VoidStation Live",
      "Εκκίνηση VoidStation Live (μόνο NVIDIA)"),
@@ -91,6 +98,12 @@ LANGUAGES = [
      "Запустити VoidStation Live (лише NVIDIA)"),
     ("ja", "日本語", "ja_JP", "jp", "jp106", "Nihongo (Japanese)", "戻る",
      "VoidStation Liveを起動", "VoidStation Liveを起動(NVIDIAのみ)"),
+    ("ko", "한국어", "ko_KR", "us", "us", "Hangugeo (Korean)", "뒤로",
+     "VoidStation Live 시작", "VoidStation Live 시작 (NVIDIA 전용)"),
+    ("zh-CN", "简体中文", "zh_CN", "us", "us", "Jianti Zhongwen (Chinese, Simplified)", "返回",
+     "启动 VoidStation Live", "启动 VoidStation Live(仅 NVIDIA)"),
+    ("zh-TW", "繁體中文", "zh_TW", "us", "us", "Fanti Zhongwen (Chinese, Traditional)", "返回",
+     "啟動 VoidStation Live", "啟動 VoidStation Live(僅 NVIDIA)"),
 ]
 TOP = ("de", "en", "fr")                                    # 1. Seite, der Rest unter "Other Languages"
 OTHER = ("vs-other", "Other Languages", "Back")
@@ -274,7 +287,8 @@ def isolinux_boot_lines(cfg):
 
 
 # Zeichen der GRUB-Schriften (grub-mkfont -r in build-iso.sh): Latein mit Akzenten, Griechisch, Kyrillisch, Striche, Pfeile
-GRUB_RANGES = ((0x20, 0x7E), (0xA0, 0x17F), (0x370, 0x3FF), (0x400, 0x4FF), (0x2010, 0x2027), (0x2190, 0x2193))
+GRUB_RANGES = ((0x20, 0x7E), (0xA0, 0x17F), (0x218, 0x21B), (0x370, 0x3FF), (0x400, 0x4FF), (0x2010, 0x2027),
+               (0x2190, 0x2193))
 
 
 def grub_text(text, fallback):
@@ -285,10 +299,15 @@ def grub_text(text, fallback):
     return fallback or text
 
 
+# Buchstaben ohne zerlegbaren Akzent, die Codepage 437 nicht kennt (Türkçe: "Live’ı başlat" -> "Live'i baslat")
+BIOS_PLAIN = str.maketrans({"ı": "i", "İ": "I", "’": "'", "ł": "l", "Ł": "L"})
+
+
 def bios_text(text, fallback):
     """Text fuer das BIOS-Menue (Codepage 437): unveraendert, wenn er dort geht, sonst ohne Akzente
     (Čeština -> Cestina, Atpakaļ -> Atpakal), sonst der Ersatztext (Umschrift bzw. Englisch)."""
-    for cand in (text, "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))):
+    plain = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c))
+    for cand in (text, plain.translate(BIOS_PLAIN)):
         try:
             cand.encode("cp437")
             return cand
@@ -300,8 +319,8 @@ def bios_text(text, fallback):
 def build_isolinux(cfg):
     kernel, base = isolinux_boot_lines(cfg)
     # 640x480, Schrift 8x16 -> 80 Spalten, 30 Zeilen; das Logo steht im Hintergrundbild (Zeilen 6–10).
-    # Alle *ROW-Angaben verschieben sich um VSHIFT: Eintraege ab Zeile 13 (14 Zeilen: alle "Other Languages"
-    # ohne Blaettern), Countdown Zeile 27
+    # Alle *ROW-Angaben verschieben sich um VSHIFT: Eintraege ab Zeile 13 (14 Zeilen; "Other Languages" hat mehr
+    # Eintraege, dort blaettert das Menue mit den Pfeiltasten), Countdown Zeile 27
     out = [f"""# VoidStation Live – Startmenue (BIOS), erzeugt von grub-entries.py
 UI vesamenu.c32
 PROMPT 0

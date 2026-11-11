@@ -862,6 +862,7 @@
   "region.SM": "Sanmarīno",
   "region.UY": "Urugvaja",
   "region.VE": "Venecuēla",
+  "region.TW": "Taivāna",
   "labels": {
     "Start": "Sākums",
     "Unterhaltung": "Izklaide",
@@ -1357,5 +1358,7 @@
   "settings.oskMode.always": "Vienmēr",
   "settings.oskMode.keyboard": "Ne ar tastatūru",
   "inst.kb.nl": "Nederlands",
-  "inst.kb.jp": "日本語"
+  "inst.kb.jp": "日本語",
+  "inst.kb.ro": "Română",
+  "inst.kb.tr": "Türkçe"
 }

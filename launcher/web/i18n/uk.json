@@ -862,6 +862,7 @@
   "region.SM": "Сан-Марино",
   "region.UY": "Уругвай",
   "region.VE": "Венесуела",
+  "region.TW": "Тайвань",
   "labels": {
     "Start": "Головна",
     "Unterhaltung": "Розваги",
@@ -1358,5 +1359,7 @@
   "settings.oskMode.always": "Завжди",
   "settings.oskMode.keyboard": "Не з клавіатурою",
   "inst.kb.nl": "Nederlands",
-  "inst.kb.jp": "日本語"
+  "inst.kb.jp": "日本語",
+  "inst.kb.ro": "Română",
+  "inst.kb.tr": "Türkçe"
 }

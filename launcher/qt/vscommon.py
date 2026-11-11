@@ -226,18 +226,20 @@ def pad_glyph_svg(role, style, h):
 #  Gamepad (evdev): Zustand im Lese-Thread, Tastendruecke + Wiederholung im Qt-Thread
 # ---------------------------------------------------------------------------
 
-# Japanisch: Kanji aus Noto Sans CJK JP. Noto Sans hat keine CJK-Zeichen; die Ersatzschrift der Systemauswahl
-# ist sonst oft die chinesische Variante (andere Schriftformen derselben Zeichen).
-CJK_JP = "Noto Sans CJK JP"
+# Japanisch, Koreanisch, Chinesisch: Schriftzeichen aus der passenden Fassung von Noto Sans CJK. Noto Sans hat keine
+# CJK-Zeichen; die Ersatzschrift der Systemauswahl ist sonst oft eine andere Fassung (dieselben Zeichen sehen in
+# Japan, Korea, China und Taiwan verschieden aus). Alle Fassungen stecken in noto-fonts-cjk.
+CJK_FONTS = {"ja": "Noto Sans CJK JP", "ko": "Noto Sans CJK KR", "zh-CN": "Noto Sans CJK SC", "zh-TW": "Noto Sans CJK TC"}
 
 
 def cjk_font(lang):
     if QGuiApplication.instance() is None:
         return
+    cjk = CJK_FONTS.get(lang)
     for fam in ("Noto Sans", "DejaVu Sans"):
         QFont.removeSubstitutions(fam)
-        if lang == "ja" and CJK_JP in QFontDatabase.families():
-            QFont.insertSubstitution(fam, CJK_JP)
+        if cjk and cjk in QFontDatabase.families():
+            QFont.insertSubstitution(fam, cjk)
 
 
 class Gamepad:

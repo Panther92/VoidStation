@@ -2575,7 +2575,8 @@ const gb = b => { const v = b / 1e9; return (v < 10 ? v.toLocaleString(loc(), { 
 const TZS = ['America/Los_Angeles', 'America/Denver', 'America/Chicago', 'America/New_York', 'America/Sao_Paulo',
   'Europe/London', 'Europe/Lisbon', 'Europe/Madrid', 'Europe/Paris', 'Europe/Brussels', 'Europe/Amsterdam', 'Europe/Berlin',
   'Europe/Zurich', 'Europe/Vienna', 'Europe/Rome', 'Europe/Prague', 'Europe/Bratislava', 'Europe/Warsaw', 'Europe/Budapest',
-  'Europe/Riga', 'Europe/Athens', 'Europe/Kyiv', 'Europe/Moscow', 'Australia/Sydney', 'UTC'];
+  'Europe/Riga', 'Europe/Athens', 'Europe/Bucharest', 'Europe/Kyiv', 'Europe/Istanbul', 'Europe/Moscow',
+  'Asia/Shanghai', 'Asia/Taipei', 'Asia/Seoul', 'Asia/Tokyo', 'Australia/Sydney', 'UTC'];
 // Sprachen mit Vorgaben fuer Tastatur und Zeitzone kommen vom Launcher (probe.langs, Reihenfolge der Einstellungen)
 const instLangs = () => I?.probe?.langs || [{ id: 'de', label: 'Deutsch', kb: 'de', tz: 'Europe/Berlin' }, { id: 'en', label: 'English', kb: 'us', tz: 'America/New_York' }];
 const instLang = id => instLangs().find(l => l.id === id) || instLangs()[0];

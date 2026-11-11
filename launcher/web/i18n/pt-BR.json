@@ -862,6 +862,7 @@
   "region.SM": "San Marino",
   "region.UY": "Uruguai",
   "region.VE": "Venezuela",
+  "region.TW": "Taiwan",
   "labels": {
     "Start": "Início",
     "Unterhaltung": "Entretenimento",
@@ -1357,5 +1358,7 @@
   "settings.oskMode.always": "Sempre",
   "settings.oskMode.keyboard": "Não com teclado",
   "inst.kb.nl": "Nederlands",
-  "inst.kb.jp": "日本語"
+  "inst.kb.jp": "日本語",
+  "inst.kb.ro": "Română",
+  "inst.kb.tr": "Türkçe"
 }

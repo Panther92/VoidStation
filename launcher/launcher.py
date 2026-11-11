@@ -801,7 +801,7 @@ DEFAULTS = {"scale": 1.75, "resolution": None, "cursor_theme": "Bibata-Modern-Ic
             "emu_fullscreen": True, "save_backup": True, "rom_covers": True,
             "rate": None, "match_rate": False, "osk_layout": None, "osk_mode": "auto"}
 # Bildschirmtastatur: Belegungen (Qt: VS/OskLayouts.js, gleiche Kennungen) und wann die Tasten zu sehen sind
-OSK_LAYOUTS = ("de", "us", "gb", "fr", "es", "it", "br", "nl", "lv", "hu", "pl", "cz", "sk", "gr", "ru", "ua")
+OSK_LAYOUTS = ("de", "us", "gb", "fr", "es", "it", "br", "nl", "lv", "hu", "pl", "cz", "sk", "ro", "tr", "gr", "ru", "ua")
 OSK_MODES = ("auto", "always", "keyboard")      # automatisch / immer / nicht mit angeschlossener Tastatur
 SYSUPD_DAYS = (30, 60, 90)                  # Erinnerung an Systemupdates (ohne VoidStation-Update) nach … Tagen
 # Sprachen der Oberflaeche: Texte in web/i18n/<id>.json, fehlende Texte kommen aus en.json, dann aus de.json.
@@ -820,11 +820,16 @@ LANG_TABLE = [  # (id, Name, Locale, Firefox-Sprache)
     ("nl", "Nederlands", "nl_NL", "nl"),
     ("pl", "Polski", "pl_PL", "pl"),
     ("pt-BR", "Português (Brasil)", "pt_BR", "pt-BR"),
+    ("ro", "Română", "ro_RO", "ro"),
     ("sk", "Slovenčina", "sk_SK", "sk"),
+    ("tr", "Türkçe", "tr_TR", "tr"),
     ("el", "Ελληνικά", "el_GR", "el"),
     ("ru", "Русский", "ru_RU", "ru"),
     ("uk", "Українська", "uk_UA", "uk"),
     ("ja", "日本語", "ja_JP", "ja"),
+    ("ko", "한국어", "ko_KR", "ko"),
+    ("zh-CN", "简体中文", "zh_CN", "zh-CN"),
+    ("zh-TW", "繁體中文", "zh_TW", "zh-TW"),
 ]
 LANGS = [{"id": i, "label": n} for i, n, _, _ in LANG_TABLE]
 CURSOR_SIZES = [32, 48, 64, 80, 96]
@@ -886,7 +891,7 @@ LANG_REGIONS = {
     "cs": ["CZ"], "sk": ["SK"], "fr": ["FR", "BE", "CH", "LU", "CA", "MC"],
     "es": ["ES", "MX", "AR", "CO", "CL", "PE", "VE", "UY"], "it": ["IT", "CH", "SM"], "lv": ["LV"], "hu": ["HU"],
     "nl": ["NL", "BE"], "pl": ["PL"], "pt-BR": ["BR", "PT"], "el": ["GR", "CY"], "ru": ["RU", "BY", "KZ"], "uk": ["UA"],
-    "ja": ["JP"],
+    "ja": ["JP"], "ro": ["RO"], "tr": ["TR"], "ko": ["KR"], "zh-CN": ["CN"], "zh-TW": ["TW"],
 }
 # Schnellwahl der Laender im Fernsehen je Sprache (das eigene Land kommt immer zuerst), der Rest unter "Weitere Laender"
 TV_QUICK = {
@@ -894,6 +899,8 @@ TV_QUICK = {
     "fr": ["FR", "BE", "CH"], "es": ["ES", "MX", "AR"], "it": ["IT", "CH", "SM"], "lv": ["LV", "LT", "EE"],
     "hu": ["HU", "AT", "SK"], "nl": ["NL", "BE", "DE"], "pl": ["PL", "DE", "CZ"], "pt-BR": ["BR", "PT"],
     "el": ["GR", "CY"], "ru": ["RU", "BY", "KZ"], "uk": ["UA", "PL"], "ja": ["JP", "KR", "TW"],
+    "ro": ["RO", "IT", "ES"], "tr": ["TR", "DE", "CY"], "ko": ["KR", "JP", "US"], "zh-CN": ["CN", "JP", "KR"],
+    "zh-TW": ["TW", "JP", "KR"],
 }
 
 
@@ -1081,7 +1088,7 @@ DOSBOX_LANG = {"de": "de", "en": "en", "es": "es", "fr": "fr", "it": "it", "nl":
 # X-Tastaturbelegung -> DOS-Tastaturcode (FreeDOS KEYB); unbekannt -> auto
 DOSBOX_KEYB = {"de": "gr", "at": "gr", "ch": "sg", "us": "us", "gb": "uk", "fr": "fr", "it": "it", "es": "sp",
                "nl": "nl", "be": "be", "pl": "pl", "hu": "hu", "ru": "ru", "ua": "ur", "gr": "gk", "br": "br",
-               "pt": "po", "dk": "dk", "se": "sv", "no": "no", "fi": "su", "cz": "cz", "sk": "sk", "tr": "tr"}
+               "pt": "po", "dk": "dk", "se": "sv", "no": "no", "fi": "su", "cz": "cz", "sk": "sk", "tr": "tr", "ro": "ro"}
 DOSBOX_PRIMARY = """# DOSBox Staging – Grundeinstellung von VoidStation
 # Angelegt beim ersten Start ueber die Kachel. Die Datei gehoert jetzt dir: Aenderungen bleiben erhalten,
 # VoidStation aendert hier nur, was du in der Spieleliste unter "Optionen" umstellst. Geloescht wird sie
@@ -6945,14 +6952,16 @@ KEYMAPS = {"de": ["-layout", "de", "-option", ""], "us": ["-layout", "us", "-opt
            "lv": ["-layout", "lv", "-option", ""], "hu": ["-layout", "hu", "-option", ""], "pl": ["-layout", "pl", "-option", ""],
            "br": ["-layout", "br", "-option", ""], "cz": ["-layout", "cz", "-option", ""], "sk": ["-layout", "sk", "-option", ""],
            "gr": ["-layout", "us,gr"] + _GRP, "ru": ["-layout", "us,ru"] + _GRP, "ua": ["-layout", "us,ua"] + _GRP,
-           "jp": ["-layout", "jp", "-option", ""]}
+           "jp": ["-layout", "jp", "-option", ""], "ro": ["-layout", "ro", "-option", ""],
+           "tr": ["-layout", "tr", "-option", ""]}
 # Vorgaben im Installer je Sprache: Tastatur und Zeitzone (aenderbar)
 INSTALL_DEFAULTS = {"de": ("de", "Europe/Berlin"), "en": ("us", "America/New_York"), "cs": ("cz", "Europe/Prague"),
                     "es": ("es", "Europe/Madrid"), "fr": ("fr", "Europe/Paris"), "it": ("it", "Europe/Rome"),
                     "lv": ("lv", "Europe/Riga"), "hu": ("hu", "Europe/Budapest"), "nl": ("us", "Europe/Amsterdam"),
                     "pl": ("pl", "Europe/Warsaw"), "pt-BR": ("br", "America/Sao_Paulo"), "sk": ("sk", "Europe/Bratislava"),
                     "el": ("gr", "Europe/Athens"), "ru": ("ru", "Europe/Moscow"), "uk": ("ua", "Europe/Kyiv"),
-                    "ja": ("jp", "Asia/Tokyo")}
+                    "ja": ("jp", "Asia/Tokyo"), "ro": ("ro", "Europe/Bucharest"), "tr": ("tr", "Europe/Istanbul"),
+                    "ko": ("us", "Asia/Seoul"), "zh-CN": ("us", "Asia/Shanghai"), "zh-TW": ("us", "Asia/Taipei")}
 
 
 # ---------------------------------------------------------------------------

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Belegungen der Bildschirmtastatur (Startseite, Player, Installer). Kennungen wie die Tastaturen in launcher.py
 // (INSTALL_DEFAULTS, setxkbmap): de, us, gb, fr … Je Belegung vier Reihen (Ziffern + drei Buchstabenreihen),
-// dazu optional "acc" (Seite mit Akzenten, die auf der Hauptseite keinen Platz haben) und "latin" (griechisch und
-// kyrillisch: Umschalter auf lateinische Buchstaben, z. B. fuer WLAN-Passwoerter und Adressen).
+// dazu optional "acc" (Seite mit Akzenten, die auf der Hauptseite keinen Platz haben), "latin" (griechisch und
+// kyrillisch: Umschalter auf lateinische Buchstaben, z. B. fuer WLAN-Passwoerter und Adressen) und "upper"
+// (Grossbuchstaben, die toUpperCase() falsch bildet, z. B. tuerkisch i -> İ).
 // Die Symbol-Seite ist fuer alle gleich und enthaelt jedes ASCII-Satzzeichen – Passwoerter gehen also immer.
 .pragma library
 
@@ -22,16 +23,21 @@ var L = {
     pl: { rows: ["1234567890", "qwertyuiop", "asdfghjkl'", "zxcvbnm,.-"], acc: "ąćęłńóśźż", accLabel: "ąę" },
     cz: { rows: ["1234567890", "qwertzuiopú", "asdfghjklů", "yxcvbnm,.-"], acc: "áčďéěíňóřšťúůýž", accLabel: "čř" },
     sk: { rows: ["1234567890", "qwertzuiopú", "asdfghjklô", "yxcvbnm,.-"], acc: "áäčďéíĺľňóôŕšťúýž", accLabel: "čš" },
+    ro: { rows: ["1234567890", "qwertyuiop", "asdfghjkl'", "zxcvbnm,.-"], acc: "ăâîșț", accLabel: "ăș" },
+    // Türkçe Q: i/İ und ı/I sind verschiedene Buchstaben – Grossform von i ist İ (toUpperCase() kennt das nicht)
+    tr: { rows: ["1234567890", "qwertyuıopğü", "asdfghjklşi", "zxcvbnmöç."], upper: { "i": "İ" } },
     gr: { rows: ["1234567890", ";ςερτυθιοπ", "ασδφγηξκλ", "ζχψωβνμ,.-"], acc: "άέήίόύώϊϋΐΰ", accLabel: "άέ",
           latin: "us", nativeLabel: "ΑΒΓ" },
     ru: { rows: ["1234567890ё", "йцукенгшщзх", "фывапролджэ", "ячсмитьбюъ"], latin: "us", nativeLabel: "АБВ" },
     ua: { rows: ["1234567890ґ", "йцукенгшщзхї", "фівапролджє", "ячсмитьбю'"], latin: "us", nativeLabel: "АБВ" }
 }
 // Zur Auswahl in den Einstellungen (Reihenfolge der Anzeige); Namen: Texte "inst.kb.<id>"
-var LIST = ["de", "us", "gb", "fr", "es", "it", "br", "nl", "lv", "hu", "pl", "cz", "sk", "gr", "ru", "ua"]
-// Vorgabe je Sprache der Oberflaeche (wie INSTALL_DEFAULTS in launcher.py; Japanisch ohne eigene Eingabe: US)
+var LIST = ["de", "us", "gb", "fr", "es", "it", "br", "nl", "lv", "hu", "pl", "cz", "ro", "sk", "tr", "gr", "ru", "ua"]
+// Vorgabe je Sprache der Oberflaeche (wie INSTALL_DEFAULTS in launcher.py; Japanisch, Koreanisch und Chinesisch
+// ohne eigene Eingabemethode: US)
 var BY_LANG = { de: "de", en: "us", cs: "cz", es: "es", fr: "fr", it: "it", lv: "lv", hu: "hu", nl: "nl", pl: "pl",
-                "pt-BR": "br", sk: "sk", el: "gr", ru: "ru", uk: "ua", ja: "us" }
+                "pt-BR": "br", ro: "ro", sk: "sk", tr: "tr", el: "gr", ru: "ru", uk: "ua", ja: "us", ko: "us",
+                "zh-CN": "us", "zh-TW": "us" }
 
 function layout(id) { return L[id] || L.us }
 function forLang(lang) { return BY_LANG[lang] || "us" }

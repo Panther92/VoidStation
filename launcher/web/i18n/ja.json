@@ -1357,5 +1357,7 @@
   "settings.oskMode.auto": "自動",
   "settings.oskMode.always": "常に",
   "settings.oskMode.keyboard": "キーボード接続時は表示しない",
-  "inst.kb.nl": "Nederlands"
+  "inst.kb.nl": "Nederlands",
+  "inst.kb.ro": "Română",
+  "inst.kb.tr": "Türkçe"
 }

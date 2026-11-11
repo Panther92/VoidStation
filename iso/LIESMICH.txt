@@ -9,8 +9,9 @@ Starten
 
 Startmenü
   Zuerst die Sprache wählen: Deutsch, English, Français – alle weiteren (Čeština, Español, Italiano,
-  Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Slovenčina, Ελληνικά, Русский,
-  Українська) stehen unter „Other Languages“. Darunter die beiden Einträge:
+  Latviešu, Magyar, Nederlands, Polski, Português (Brasil), Română, Slovenčina, Türkçe, Ελληνικά,
+  Русский, Українська, 日本語, 한국어, 简体中文, 繁體中文) stehen unter „Other Languages“.
+  Darunter die beiden Einträge:
   VoidStation Live starten                Live-System (nichts wird installiert), freie Grafiktreiber
   VoidStation Live starten (nur NVIDIA)   mit NVIDIA-Treiber – für GeForce GTX 16xx, RTX 20xx und neuer
   Reboot                                  Neustart
