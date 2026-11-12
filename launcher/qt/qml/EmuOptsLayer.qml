@@ -2,6 +2,8 @@
 // Optionen eines Emulators bzw. eines einzelnen Spiels (aus der Spieleliste): die wichtigsten Schalter, alles Weitere
 // bleibt im Fenster des Emulators. Daten: /api/emuopts (launcher.py EMU_OPTS). Pro Option eine Zeile Knoepfe; "values"
 // getrennt von der Liste, damit beim Umschalten nichts neu aufgebaut wird und der Fokus bleibt, wo er ist.
+// Allgemein steht oben der Schalter "VoidStation-Einstellungen | Anpassen" (Option "mode"): Erst mit "Anpassen" schickt der
+// Launcher die uebrigen Zeilen – nur dieser Schalter baut die Liste neu auf.
 import QtQuick
 import VS
 
@@ -38,8 +40,17 @@ Layer {
     function choose(oid, v) {
         var body = { emu: tile.id, id: oid, value: v }
         if (rom) body.game = rom.filename
-        Api.post("/api/emuopts/set", body, function (j) { values = j.values },
-                 function (e) { app.toast(Ui.t("common.failedMsg", { msg: e }), true) })
+        Api.post("/api/emuopts/set", body, function (j) {
+            if (oid !== "mode") { values = j.values; return }
+            od = j
+            values = j.values
+            Qt.callLater(function () { focusKey("eomode" + (j.values.mode === "custom" ? 1 : 0)) })
+        }, function (e) { app.toast(Ui.t("common.failedMsg", { msg: e }), true) })
+    }
+    function focusKey(key) {
+        var it = Nav.collect(trk)
+        for (var i = 0; i < it.length; i++) if (it[i].key === key) { app.setFocus(it[i], true); return }
+        focusFirst()
     }
     // Fuer ein Spiel steht vorn "Wie ueberall" (keine eigene Wahl)
     function choicesOf(o) {
@@ -70,7 +81,7 @@ Layer {
                         id: row
                         property var o: modelData
                         width: eo.colW
-                        label: Ui.t("emuopt." + o.id)
+                        label: o.id === "mode" ? "" : Ui.t("emuopt." + o.id)
                         Repeater {
                             model: eo.choicesOf(row.o)
                             Pill {
