@@ -1315,6 +1315,7 @@
   "emuopt.aspect": "Képarány",
   "emuopt.widescreen": "Szélesvásznú javítás",
   "emuopt.noInterlace": "Váltottsoros javítás",
+  "emuopt.fps": "Képkockasebesség-patch",
   "emuopt.renderer": "Grafikus API",
   "emuopt.fastBoot": "Indítóképernyő kihagyása",
   "emuopt.pgxp": "Stabil geometria",

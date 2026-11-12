@@ -1315,6 +1315,7 @@
   "emuopt.aspect": "Співвідношення сторін",
   "emuopt.widescreen": "Широкоекранний патч",
   "emuopt.noInterlace": "Патч без черезрядковості",
+  "emuopt.fps": "Патч частоти кадрів",
   "emuopt.renderer": "Графічний API",
   "emuopt.fastBoot": "Пропускати заставку",
   "emuopt.pgxp": "Стабільна геометрія",

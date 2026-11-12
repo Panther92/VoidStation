@@ -1280,6 +1280,33 @@ def dosbox_primary_ensure():
     return primary
 
 
+DOSBOX_SOUNDFONT = Path("/usr/share/soundfonts/FluidR3_GM.sf2")       # Void-Paket soundfont-fluid (MIT, rund 140 MB)
+_DOSBOX_SF_TRIED: list = []
+
+
+def dosbox_midi_conf():
+    """General MIDI ueber den eingebauten FluidSynth, sobald das Soundfont da ist – sonst bleibt ein Spiel, das im eigenen
+    SETUP auf "General MIDI" steht, stumm ("auto" nimmt in DOSBox Staging 0.82 weder fluidsynth noch mt32, midi.cpp).
+    Nur, solange der Nutzer in seiner eigenen Datei nichts anderes gewaehlt hat. Fehlt das Soundfont, wird es einmal je
+    Lauf im Hintergrund nachinstalliert (catalog.json: optional) und gilt ab dem naechsten Start von DOSBox."""
+    try:
+        own = ini_read(dosbox_primary())
+        if own.get("midi", {}).get("mididevice", "auto").strip().lower() != "auto" or "soundfont" in own.get("fluidsynth", {}):
+            return ""
+        if DOSBOX_SOUNDFONT.is_file():
+            return f"[midi]\nmididevice = fluidsynth\n\n[fluidsynth]\nsoundfont = {DOSBOX_SOUNDFONT}\n\n"
+        if not _DOSBOX_SF_TRIED:
+            _DOSBOX_SF_TRIED.append(1)
+
+            def fetch():
+                r = run(["sudo", "-n", PKG_HELPER, "install", "soundfont-fluid"])
+                log("DOSBox: Soundfont fuer General MIDI", "installiert" if r and r.returncode == 0 else "nicht installiert")
+            threading.Thread(target=fetch, daemon=True).start()
+    except Exception as e:  # noqa: BLE001 – darf den Start nie verhindern
+        log("DOSBox: MIDI:", e)
+    return ""
+
+
 def dosbox_game_conf(game):
     """Optionen nur fuer dieses Spiel (Spieleliste): Abschnitte fuer die Datei, die VoidStation vor jedem Start schreibt."""
     if not game:
@@ -1336,7 +1363,7 @@ def dosbox_prepare(args):
             "# Eigene Einstellungen: ~/.config/dosbox/dosbox-staging.conf\n\n"
             f"[dosbox]\nlanguage = {lang}\n\n"
             f"[dos]\nkeyboardlayout = {keyb}\n\n"
-            + dosbox_game_conf(game or own_conf) +
+            + dosbox_midi_conf() + dosbox_game_conf(game or own_conf) +
             f'[autoexec]\n{auto}', encoding="utf-8")
     except OSError as e:
         log("DOSBox: Einstellungen nicht geschrieben:", e)
@@ -9951,15 +9978,19 @@ def emu_mute_apply(tile):
 EMU_GAME_OPTS = Path.home() / ".config/voidstation/emu-games.json"       # {Kachel: {Spieldatei: {Option: Wert}}}
 _OPT_MODE = [{"v": "vs", "k": "emuopt.v.vs"}, {"v": "custom", "k": "emuopt.v.custom"}]
 EMU_AUTO = {"duckstation": {"texfilter": "auto"}, "dosbox": {"speed": "std"}}   # {Kachel: {Option: Stufe, auf der Profile gelten}}
+EMU_OWN = BASE / "emu-own.ini"                         # Schalter von VoidStation selbst: [<Kachel>] <Option> = Wert
 _OPT_TF = [{"v": "true", "k": "common.on"}, {"v": "false", "k": "common.off"}]
 _OPT_10 = [{"v": "1", "k": "common.on"}, {"v": "0", "k": "common.off"}]
 
 
-def _opt(oid, section, key, choices, default, game=False, hidden=False):
+def _opt(oid, section, key, choices, default, game=False, hidden=False, own=False, label=None):
     """hidden: gehoert zu den VoidStation-Einstellungen (Vorgabe, wird beim Zurueckstellen mitgesetzt), hat auf der Karte
-    aber keine eigene Zeile – wer daran drehen will, tut das im Emulator."""
+    aber keine eigene Zeile – wer daran drehen will, tut das im Emulator.
+    own: kein Schluessel des Emulators, sondern ein Schalter von VoidStation selbst (EMU_OWN, Abschnitt = Kachel) – fuer
+    die Patches je Spiel (EMU_PATCHES), fuer die die Emulatoren keinen allgemeinen Schalter haben.
+    label: Beschriftung einer anderen Option uebernehmen (emuopt.<label>)."""
     return {"id": oid, "section": section, "keys": key if isinstance(key, list) else [key], "choices": choices,
-            "default": default, "game": game, "hidden": hidden}
+            "default": default, "game": game, "hidden": hidden, "own": own, "label": label}
 
 
 def _opt_res(values):
@@ -9985,6 +10016,8 @@ EMU_OPTS: dict[str, Any] = {
             _opt("sharpen", "EmuCore/GS", "CASMode", [{"v": "0"}, {"v": "2"}], "0", hidden=True),
             # Texturpakete aus share/ROMs/ps2/textures/<Seriennummer>/replacements laden (wirkt nur, wo eins liegt)
             _opt("textures", "EmuCore/GS", "LoadTextureReplacements", _OPT_TF, "false", hidden=True),
+            # Bildraten-Patch aus PCSX2' patches.zip, je Spiel eingetragen (EMU_PATCHES, _patches_apply)
+            _opt("fps", "pcsx2", "fps", _OPT_TF, "false", game=True, hidden=True, own=True),
         ]),
         ("play", [
             _opt("fastBoot", "EmuCore", "EnableFastBoot", _OPT_TF, "true"),
@@ -10011,6 +10044,9 @@ EMU_OPTS: dict[str, Any] = {
             # Ersatzbilder fuer gemalte Hintergruende aus share/ROMs/psx/textures/<Seriennummer>/replacements (nur, wo welche liegen).
             # Ersatz fuer 3D-Texturen braucht DuckStations Textur-Cache (GPU/EnableTextureCache) – der bleibt aus.
             _opt("textures", "TextureReplacements", "EnableVRAMWriteReplacements", _OPT_TF, "false", hidden=True),
+            # Echte Breitbild- und Bildraten-Patches aus DuckStations patches.zip, je Spiel eingetragen (EMU_PATCHES)
+            _opt("wsPatch", "duckstation", "wsPatch", _OPT_TF, "false", game=True, hidden=True, own=True, label="widescreen"),
+            _opt("fps", "duckstation", "fps", _OPT_TF, "false", game=True, hidden=True, own=True),
         ]),
         ("play", [
             _opt("fastBoot", "BIOS", "PatchFastBoot", _OPT_TF, "false"),
@@ -10093,6 +10129,24 @@ def emu_gpu_class():
     return "igp"
 
 
+def emu_cpu_class():
+    """'strong' oder 'weak' – grobe Annahme, ob der Rechner PS2-Spiele auch mit doppelter Bildrate schafft: mindestens
+    vier echte Kerne, mindestens 3 GHz und AVX2 (Haswell bzw. Ryzen oder neuer). Nicht gemessen; im Zweifel 'weak'."""
+    try:
+        info = Path("/proc/cpuinfo").read_text(errors="replace")
+        m = re.search(r"^cpu cores\s*:\s*(\d+)", info, re.M)
+        cores = int(m.group(1)) if m else 0
+        f = re.search(r"^flags\s*:\s*(.*)$", info, re.M)
+        avx2 = bool(f and " avx2 " in f" {f.group(1)} ")
+        try:
+            mhz = int(Path("/sys/devices/system/cpu/cpu0/cpufreq/cpuinfo_max_freq").read_text()) / 1000
+        except (OSError, ValueError):
+            mhz = max((float(x) for x in re.findall(r"^cpu MHz\s*:\s*([\d.]+)", info, re.M)), default=0.0)
+        return "strong" if cores >= 4 and mhz >= 3000 and avx2 else "weak"
+    except (OSError, ValueError):
+        return "weak"
+
+
 def _opt_defaults_for(tile):
     """Vorgaben von VoidStation, die von der Hardware abhaengen: {Option: Wert}."""
     gpu = emu_gpu_class()
@@ -10103,9 +10157,11 @@ def _opt_defaults_for(tile):
             d["sharpen"] = "2"
         if gpu == "dgpu":               # PS2 hochskalieren ist teuer: nur mit eigener Grafikkarte
             d.update({"res": "2", "aniso": "16"})
+        if gpu != "none" and emu_cpu_class() == "strong":     # doppelte Bildrate, oft mit uebertakteter PS2-CPU: kostet Rechenzeit
+            d["fps"] = "true"
         return d
     if tile == "duckstation":
-        d = {"cdSpeed": "4", "fmvSmooth": "true", "textures": "true"}
+        d = {"cdSpeed": "4", "fmvSmooth": "true", "textures": "true", "wsPatch": "true", "fps": "true"}
         if gpu != "none":
             d.update({"res": "4" if gpu == "dgpu" else "2", "pgxp": "true"})
         return d
@@ -10154,6 +10210,8 @@ def _opt_auto_on(tile, opt, st):
 def _opt_value(tile, opt, ini=None):
     """Aktuell gewaehlte Moeglichkeit laut Datei des Emulators, der Standard, wenn nichts drinsteht, oder None (etwas
     anderes, das sich hier nicht waehlen laesst – dann ist keiner der Knoepfe an)."""
+    if opt["own"]:
+        ini = ini_read(EMU_OWN)
     sec = (ini_read(EMU_OPTS[tile]["file"]()) if ini is None else ini).get(opt["section"], {})
     if not any(k in sec for k in opt["keys"]):
         return opt["default"]
@@ -10273,7 +10331,7 @@ def emu_opts_mode_set(tile, mode):
 
 
 def _opt_write(tile, opt, value):
-    ini_update(EMU_OPTS[tile]["file"](), opt["section"], _opt_writes(opt, _opt_choice(opt, value)))
+    ini_update(EMU_OWN if opt["own"] else EMU_OPTS[tile]["file"](), opt["section"], _opt_writes(opt, _opt_choice(opt, value)))
 
 
 def emu_opts_has_game(tile):
@@ -10435,13 +10493,17 @@ def _game_ini_write(tile, opt, ini, value):
 def _game_sync(tile, name, ini):
     """Frueher in VoidStation gemerkte Werte in die Spiel-Datei des Emulators uebernehmen."""
     d = emu_games_load()
-    own = d.get(tile, {}).pop(name, None)
-    if not own:
+    own = d.get(tile, {}).get(name) or {}
+    move = {k: v for k, v in own.items() if k not in EMU_PATCHES.get(tile, {})}
+    if not move:
         return
     idx = _OPT_INDEX[tile]
-    for oid, v in own.items():
+    for oid, v in move.items():
         if oid in idx and idx[oid]["game"] and _opt_game_choice(idx[oid], v):
             _game_ini_write(tile, idx[oid], ini, v)
+        own.pop(oid)
+    if not own:
+        d[tile].pop(name, None)
     emu_games_save(d)
     log(f"{tile}: Optionen fuer {name} in {ini.name} uebernommen")
 
@@ -10456,7 +10518,8 @@ def emu_opts_game(tile, game):
 def emu_opts_game_writes(tile, game):
     """[(Abschnitt, {Schluessel: Wert})] der Optionen eines Spiels."""
     idx = _OPT_INDEX[tile]
-    return [(idx[k]["section"], _opt_writes(idx[k], _opt_choice(idx[k], v))) for k, v in emu_opts_game(tile, game).items()]
+    return [(idx[k]["section"], _opt_writes(idx[k], _opt_choice(idx[k], v))) for k, v in emu_opts_game(tile, game).items()
+            if not idx[k]["own"]]
 
 
 def emu_opts_restore(tile, st):
@@ -10540,6 +10603,175 @@ def emu_profile(tile, game):
     if got:
         log(f"{tile}: Spielprofil {why} ->", got)
     return got
+
+
+# ---- Patches je Spiel (Paul, 12.11.2026: Bildraten-Patches fuer jedes Spiel, bei der PS1 dazu die echten Breitbild-Patches) --
+# Quelle sind die Sammlungen, die die Emulatoren selbst mitbringen und mit jedem ihrer Updates erneuern (resources/patches.zip:
+# PCSX2 <Seriennummer>_<CRC>.pnach, DuckStation <Seriennummer>[_<Hash>].cht) – VoidStation pflegt keine eigene Liste und laedt
+# nichts herunter. Vor jedem Start: Spiel an Seriennummer (und CRC) erkennen, in der Sammlung nachsehen, den Patch in den
+# Spiel-Einstellungen des Emulators eintragen ([Patches] Enable = <Name>, geprueft an Patch.cpp bzw. cheats.cpp).
+# Was VoidStation eingetragen hat, steht in emu-defaults.json unter "patches" – nur das nimmt es auch wieder heraus. Schaltet
+# der Nutzer einen solchen Patch im Emulator ab, gilt das als seine Wahl fuer dieses Spiel. Gewollt ist ein Patch, wenn der
+# Schalter fuer das Spiel an ist (emu-games.json), sonst wenn der allgemeine Schalter (EMU_OWN) an ist.
+_FPS_PATCH = re.compile(r"(?:50|60|50/60) FPS")
+EMU_PATCHES: dict[str, dict[str, Any]] = {            # Kachel -> {Option: Muster fuer den Namen des Patches}
+    "pcsx2": {"fps": _FPS_PATCH},
+    "duckstation": {"wsPatch": re.compile(r"Widescreen 16:9"), "fps": _FPS_PATCH},
+}
+PCSX2_EE_RATE = {"130": 1, "180": 2, "300": 3}        # "Might need EE Overclock at 130%" -> [EmuCore/Speedhacks] EECycleRate
+_EMU_RES: dict[tuple, Any] = {}
+_PATCH_CACHE: dict[tuple, Any] = {}
+
+
+def emu_resource(tile, name):
+    """Datei aus dem resources-Ordner eines Emulators (gamedb.yaml, patches.zip; nur lesen) oder None."""
+    hit = _EMU_RES.get((tile, name))
+    if hit is not None and hit.is_file():
+        return hit
+    roots = [APPDIR / tile]
+    if tile == "pcsx2":                                  # bis zum Wechsel aufs AppImage: Flatpak
+        roots += [Path(r) / "app/net.pcsx2.PCSX2/current/active/files" for r in
+                  ("/var/lib/flatpak", Path.home() / ".local/share/flatpak")]
+    found = None
+    for root in roots:
+        found = next((x for x in (root / "usr/bin/resources" / name, root / "bin/resources" / name,
+                                  root / "resources" / name) if x.is_file()), None)
+        if not found and root.is_dir() and root.parts[-2:] != ("active", "files"):
+            found = next(iter(sorted(root.rglob(name))), None)
+        if found:
+            break
+    if found:
+        _EMU_RES[(tile, name)] = found
+    return found
+
+
+def _patch_got(tile, game):
+    """Seriennummer (DuckStation) bzw. [Seriennummer, CRC] (PCSX2) eines Spiels oder einer Disc im Laufwerk, sonst None."""
+    path = Path(game)
+    if _DISC_NAME.fullmatch(path.name):
+        g = DVD.game("/dev/" + path.name) or {}
+        if tile == "pcsx2":
+            return [g["serial"], g["crc"]] if g.get("serial") and g.get("crc") else None
+        return g.get("serial") or None
+    if not path.is_absolute():
+        path = emu_rom_path(tile, game) or path
+    return _disc_id(tile, path) if path.is_file() else None
+
+
+def emu_patch_plan(tile, game):
+    """Welche Patches aus EMU_PATCHES es fuer dieses Spiel gibt: {Option: {"label": Name, "ee": Stufe oder None}}.
+    Nur, wo genau ein Patch der Art in der Datei steht. Liest Abbild und Archiv – nicht unter EMU_LOCK."""
+    rules = EMU_PATCHES.get(tile)
+    if not rules or not game:
+        return {}
+    try:
+        got = _patch_got(tile, game)
+        src = emu_resource(tile, "patches.zip") if got else None
+        if not src:
+            return {}
+        key = (tile, json.dumps(got), src.stat().st_mtime_ns)
+        if key in _PATCH_CACHE:
+            return _PATCH_CACHE[key]
+        import zipfile                                   # nur bei Bedarf
+        found: list[tuple[str, str]] = []                # (Name, Beschreibung)
+        with zipfile.ZipFile(src) as z:
+            if tile == "pcsx2":
+                want = f"{got[0]}_{got[1]:08X}.pnach".lower()
+                names = [n for n in z.namelist() if n.lower() == want]
+            else:
+                names = [n for n in z.namelist() if n.lower() == f"{got}.cht".lower() or n.lower().startswith(f"{got}_".lower())]
+            for n in names:
+                text = z.read(n).decode("utf-8", "replace")
+                for m in re.finditer(r"^\[([^\]\r\n]+)\][ \t]*\r?\n((?:(?!\[).*(?:\r?\n|$))*)", text, re.M):
+                    desc = " ".join(re.findall(r"(?im)^description\s*=\s*(.*)$", m.group(2)))
+                    found.append((m.group(1).strip(), desc))
+        plan: dict[str, Any] = {}
+        for oid, rule in rules.items():
+            hits = {lab: d for lab, d in found if rule.fullmatch(lab)}
+            if len(hits) != 1:
+                continue                                 # keiner oder mehrere (welcher gilt, haengt vom Spiel ab): nichts
+            lab, desc = next(iter(hits.items()))
+            ee = None
+            if tile == "pcsx2" and re.search(r"(?i)overclock", desc):
+                pct = re.search(r"(\d{3}) ?%", desc)
+                ee = PCSX2_EE_RATE.get(pct.group(1), 1) if pct else 1
+            plan[oid] = {"label": lab, "ee": ee}
+        _PATCH_CACHE[key] = plan
+        return plan
+    except Exception as e:  # noqa: BLE001 – darf den Start nie verhindern
+        log(f"{tile}: Patches nachsehen:", e)
+        return {}
+
+
+def _ini_multi_all(path, section, key):
+    """Alle Werte eines mehrfachen Schluessels in einem Abschnitt."""
+    out: list[str] = []
+    sec = None
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        t = line.strip()
+        if t.startswith("[") and t.endswith("]"):
+            sec = t[1:-1]
+        elif sec == section and "=" in t:
+            k, _, v = t.partition("=")
+            if k.strip() == key:
+                out.append(v.strip())
+    return out
+
+
+def _patches_apply(tile, game, native, plan, st):
+    """Patches fuer dieses Spiel in dessen Spiel-Datei ein- bzw. austragen (s. oben). Aufruf mit EMU_LOCK."""
+    idx = _OPT_INDEX[tile]
+    name = os.path.basename(str(game))
+    games = emu_games_load()
+    own = games.get(tile, {}).get(name, {})
+    book = st.setdefault("patches", {}).setdefault(tile, {})
+    mine = book.setdefault(native.name, {})              # {Option: {"label": Name, "ee": Stufe}} – von VoidStation eingetragen
+    enabled = _ini_multi_all(native, "Patches", "Enable")
+    for oid in EMU_PATCHES.get(tile, {}):
+        info, rec = plan.get(oid), mine.get(oid)
+        if rec and rec["label"] not in enabled:          # im Emulator abgeschaltet: die Wahl des Nutzers fuer dieses Spiel
+            if rec.get("ee") and ini_read(native).get("EmuCore/Speedhacks", {}).get("EECycleRate") == str(rec["ee"]):
+                ini_update(native, "EmuCore/Speedhacks", {}, remove=["EECycleRate"])     # unsere Uebertaktung geht mit
+            mine.pop(oid)
+            rec = None
+            if own.get(oid) != "true":
+                games.setdefault(tile, {}).setdefault(name, {})[oid] = "false"
+                emu_games_save(games)
+                own = games[tile][name]
+                log(f"{tile}: {name}: Patch im Emulator abgeschaltet – bleibt aus")
+        choice = own.get(oid)
+        if choice in ("true", "false"):
+            want = choice == "true"
+        else:                                            # allgemein an; 300 % Uebertaktung nur auf ausdruecklichen Wunsch
+            want = _opt_value(tile, idx[oid]) == "true" and not (info and info.get("ee") == 3)
+        if want and info:
+            if info["label"] in enabled and not rec:
+                continue                                 # hat der Nutzer selbst eingeschaltet: nicht unseres
+            if info["label"] not in enabled:
+                ini_multi_set(native, "Patches", {"Enable": info["label"]}, lambda v, lab=info["label"]: v == lab)
+                rec = mine[oid] = {"label": info["label"], "ee": None}
+                log(f"{tile}: {name}: Patch {info['label']} eingetragen")
+            if info.get("ee") and rec and not rec.get("ee") \
+                    and "EECycleRate" not in ini_read(native).get("EmuCore/Speedhacks", {}):
+                ini_update(native, "EmuCore/Speedhacks", {"EECycleRate": str(info["ee"])})
+                rec["ee"] = info["ee"]
+        elif rec:                                        # nicht mehr gewollt: nur zuruecknehmen, was von VoidStation kam
+            ini_multi_set(native, "Patches", {"Enable": None}, lambda v, lab=rec["label"]: v == lab)
+            if rec.get("ee") and ini_read(native).get("EmuCore/Speedhacks", {}).get("EECycleRate") == str(rec["ee"]):
+                ini_update(native, "EmuCore/Speedhacks", {}, remove=["EECycleRate"])
+            mine.pop(oid)
+            log(f"{tile}: {name}: Patch {rec['label']} herausgenommen")
+    if not mine:
+        book.pop(native.name, None)
+    try:
+        if native.is_file() and not any("=" in line for line in native.read_text(encoding="utf-8", errors="replace").splitlines()):
+            native.unlink()                              # nichts mehr drin: keine leere Datei liegen lassen
+    except OSError:
+        pass
 
 
 _PAL_SERIAL = re.compile(r"S[LC]E[SD]", re.I)          # SLES/SCES (Europa), SLED/SCED (Demos)
@@ -10679,6 +10911,7 @@ def emu_opts_prepare(tid, args):
     native = emu_game_ini(tid, game or disc) if game or disc else None      # Abbild lesen dauert: nicht unter der Sperre
     profile = emu_profile(tid, game or disc) if game or disc else {}        # DOSBox: s. dosbox_game_conf
     emu_pal_rate(tid, game or disc)
+    plan = emu_patch_plan(tid, game or disc) if native else {}
     with EMU_LOCK:
         st = emu_state_load()
         emu_opts_restore(tid, st)
@@ -10694,6 +10927,8 @@ def emu_opts_prepare(tid, args):
             _opts_apply_game(tid, game, st)
         if profile:
             _opts_apply_profile(tid, game or disc, native, profile, st)
+        if native and tid in EMU_PATCHES:
+            _patches_apply(tid, game or disc, native, plan, st)
         emu_state_save(st)
 
 
@@ -10713,6 +10948,8 @@ def emu_opts_payload(tile, game=None):
     game = os.path.basename(game) if game else None
     running = bool(APPS._get(tile))
     native = emu_game_ini(tile, rel) if rel else None
+    patches = EMU_PATCHES.get(tile, {})
+    plan = emu_patch_plan(tile, rel) if rel and native and patches else {}      # nur Patches, die es fuer das Spiel gibt
     with EMU_LOCK:
         st = emu_state_load()
         if not running and emu_ready(tile) and st.get("opt_game", {}).get(tile):
@@ -10729,17 +10966,23 @@ def emu_opts_payload(tile, game=None):
         # Zeilen nur bei "Anpassen". Je Spiel: wie bisher Bild, dann Spiel, nur was sich je Spiel waehlen laesst.
         order = spec["groups"] if game else sorted(spec["groups"], key=lambda g: g[0] != "play")
         for gid, opts in order:
-            shown = [o for o in opts if o["game"]] if game else [o for o in opts if not o["hidden"]] if mode == "custom" else []
+            if game:                                     # ein echter Breitbild-Patch ersetzt bei dem Spiel den Schalter fuer den Hack
+                shown = [o for o in opts if o["game"] and (o["id"] in plan if o["id"] in patches else
+                                                           not (o["id"] == "widescreen" and "wsPatch" in plan))]
+            else:
+                shown = [o for o in opts if not o["hidden"]] if mode == "custom" else []
             for o in shown:
-                if native:
+                if game and o["id"] in patches:          # Patch-Schalter merkt VoidStation selbst (s. EMU_PATCHES)
+                    values[o["id"]] = emu_opts_game(tile, game).get(o["id"])
+                elif native:
                     values[o["id"]] = _game_ini_read(tile, o, native)
                 elif game:
                     values[o["id"]] = own.get(o["id"])
                 else:
                     values[o["id"]] = _opt_shown(tile, o, st, ini)
-            rows = [{"id": o["id"], "choices": [
-                {x: c[x] for x in ("v", "k", "t") if x in c} for c in o["choices"] if not (game and c.get("auto"))]}
-                for o in shown]
+            rows = [dict({"id": o["id"], "choices": [
+                {x: c[x] for x in ("v", "k", "t") if x in c} for c in o["choices"] if not (game and c.get("auto"))]},
+                **({"label": o["label"]} if o["label"] else {})) for o in shown]
             if not game and gid == "play":
                 rows.insert(0, {"id": "mode", "choices": _OPT_MODE})
                 values["mode"] = mode
@@ -10770,6 +11013,18 @@ def emu_opts_set(tile, oid, value, game=None):
         if not opt["game"]:
             raise ValueError("Diese Option gilt nicht je Spiel")
         name, rel = os.path.basename(game), _game_rel(game)
+        if oid in EMU_PATCHES.get(tile, {}):             # gilt ab dem naechsten Start des Spiels (_patches_apply)
+            with EMU_LOCK:
+                d = emu_games_load()
+                mine = d.setdefault(tile, {}).setdefault(name, {})
+                if value is None:
+                    mine.pop(oid, None)
+                    if not mine:
+                        d[tile].pop(name, None)
+                else:
+                    mine[oid] = value
+                emu_games_save(d)
+            return emu_opts_payload(tile, rel)
         native = emu_game_ini(tile, rel)
         if native:
             with EMU_LOCK:

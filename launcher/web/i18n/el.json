@@ -1315,6 +1315,7 @@
   "emuopt.aspect": "Αναλογία εικόνας",
   "emuopt.widescreen": "Ενημέρωση ευρείας οθόνης",
   "emuopt.noInterlace": "Ενημέρωση χωρίς πλέξη",
+  "emuopt.fps": "Patch ρυθμού καρέ",
   "emuopt.renderer": "API γραφικών",
   "emuopt.fastBoot": "Παράλειψη οθόνης εκκίνησης",
   "emuopt.pgxp": "Σταθερή γεωμετρία",

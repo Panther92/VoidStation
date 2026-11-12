@@ -1314,6 +1314,7 @@
   "emuopt.aspect": "화면 비율",
   "emuopt.widescreen": "와이드스크린 패치",
   "emuopt.noInterlace": "인터레이스 제거 패치",
+  "emuopt.fps": "프레임 속도 패치",
   "emuopt.renderer": "그래픽 API",
   "emuopt.fastBoot": "부팅 화면 건너뛰기",
   "emuopt.pgxp": "안정된 지오메트리",

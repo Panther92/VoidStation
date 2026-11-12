@@ -81,7 +81,7 @@ Layer {
                         id: row
                         property var o: modelData
                         width: eo.colW
-                        label: o.id === "mode" ? "" : Ui.t("emuopt." + o.id)
+                        label: o.id === "mode" ? "" : Ui.t("emuopt." + (o.label || o.id))
                         Repeater {
                             model: eo.choicesOf(row.o)
                             Pill {

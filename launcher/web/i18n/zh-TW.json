@@ -1314,6 +1314,7 @@
   "emuopt.aspect": "長寬比",
   "emuopt.widescreen": "寬螢幕修補",
   "emuopt.noInterlace": "去交錯修補",
+  "emuopt.fps": "幀率修補",
   "emuopt.renderer": "圖形 API",
   "emuopt.fastBoot": "略過開機畫面",
   "emuopt.pgxp": "穩定幾何",

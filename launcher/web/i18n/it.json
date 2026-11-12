@@ -1314,6 +1314,7 @@
   "emuopt.aspect": "Formato immagine",
   "emuopt.widescreen": "Patch widescreen",
   "emuopt.noInterlace": "Patch senza interlacciamento",
+  "emuopt.fps": "Patch frequenza fotogrammi",
   "emuopt.renderer": "API grafica",
   "emuopt.fastBoot": "Salta schermata iniziale",
   "emuopt.pgxp": "Geometria stabile",

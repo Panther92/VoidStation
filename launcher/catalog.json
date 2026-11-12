@@ -666,7 +666,10 @@
       "desc": "DOS-Spiele und -Programme.",
       "source": {
         "type": "xbps",
-        "pkg": "dosbox-staging"
+        "pkg": "dosbox-staging",
+        "optional": [
+          "soundfont-fluid"
+        ]
       },
       "cmd": [
         "dosbox"

@@ -1313,6 +1313,7 @@
   "emuopt.aspect": "Relación de aspecto",
   "emuopt.widescreen": "Parche panorámico",
   "emuopt.noInterlace": "Parche sin entrelazado",
+  "emuopt.fps": "Parche de FPS",
   "emuopt.renderer": "API gráfica",
   "emuopt.fastBoot": "Saltar pantalla de inicio",
   "emuopt.pgxp": "Geometría estable",

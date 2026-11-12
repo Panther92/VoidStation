@@ -1314,6 +1314,7 @@
   "emuopt.aspect": "Proporção da tela",
   "emuopt.widescreen": "Patch widescreen",
   "emuopt.noInterlace": "Patch sem entrelaçamento",
+  "emuopt.fps": "Patch de taxa de quadros",
   "emuopt.renderer": "API gráfica",
   "emuopt.fastBoot": "Pular tela inicial",
   "emuopt.pgxp": "Geometria estável",

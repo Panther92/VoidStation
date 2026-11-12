@@ -1313,6 +1313,7 @@
   "emuopt.aspect": "Format d’image",
   "emuopt.widescreen": "Patch écran large",
   "emuopt.noInterlace": "Patch sans entrelacement",
+  "emuopt.fps": "Patch de fréquence d’images",
   "emuopt.renderer": "API graphique",
   "emuopt.fastBoot": "Passer l’écran de démarrage",
   "emuopt.pgxp": "Géométrie stable",

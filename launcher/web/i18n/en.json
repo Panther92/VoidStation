@@ -1257,6 +1257,7 @@
   "emuopt.aspect": "Aspect ratio",
   "emuopt.widescreen": "Widescreen patch",
   "emuopt.noInterlace": "No-interlacing patch",
+  "emuopt.fps": "Frame rate patch",
   "emuopt.renderer": "Graphics API",
   "emuopt.fastBoot": "Skip boot screen",
   "emuopt.pgxp": "Stable geometry",

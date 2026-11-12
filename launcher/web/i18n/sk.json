@@ -1313,6 +1313,7 @@
   "emuopt.aspect": "Pomer strán",
   "emuopt.widescreen": "Širokouhlý patch",
   "emuopt.noInterlace": "Patch bez prekladania",
+  "emuopt.fps": "Záplata snímkovej frekvencie",
   "emuopt.renderer": "Grafické rozhranie",
   "emuopt.fastBoot": "Preskočiť úvodnú obrazovku",
   "emuopt.pgxp": "Stabilná geometria",

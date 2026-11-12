@@ -1314,6 +1314,7 @@
   "emuopt.aspect": "宽高比",
   "emuopt.widescreen": "宽屏补丁",
   "emuopt.noInterlace": "去隔行补丁",
+  "emuopt.fps": "帧率补丁",
   "emuopt.renderer": "图形 API",
   "emuopt.fastBoot": "跳过开机画面",
   "emuopt.pgxp": "稳定几何",

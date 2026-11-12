@@ -1314,6 +1314,7 @@
   "emuopt.aspect": "Malu attiecība",
   "emuopt.widescreen": "Platekrāna ielāps",
   "emuopt.noInterlace": "Ielāps bez rindpārleces",
+  "emuopt.fps": "Kadru ātruma ielāps",
   "emuopt.renderer": "Grafikas API",
   "emuopt.fastBoot": "Izlaist sākuma ekrānu",
   "emuopt.pgxp": "Stabila ģeometrija",

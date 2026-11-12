@@ -1313,6 +1313,7 @@
   "emuopt.aspect": "Beeldverhouding",
   "emuopt.widescreen": "Breedbeeldpatch",
   "emuopt.noInterlace": "Patch zonder interlacing",
+  "emuopt.fps": "Framerate-patch",
   "emuopt.renderer": "Grafische API",
   "emuopt.fastBoot": "Opstartscherm overslaan",
   "emuopt.pgxp": "Stabiele geometrie",

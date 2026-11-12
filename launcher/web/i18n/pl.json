@@ -1313,6 +1313,7 @@
   "emuopt.aspect": "Proporcje obrazu",
   "emuopt.widescreen": "Łatka panoramiczna",
   "emuopt.noInterlace": "Łatka bez przeplotu",
+  "emuopt.fps": "Łatka liczby klatek",
   "emuopt.renderer": "Interfejs graficzny",
   "emuopt.fastBoot": "Pomiń ekran startowy",
   "emuopt.pgxp": "Stabilna geometria",

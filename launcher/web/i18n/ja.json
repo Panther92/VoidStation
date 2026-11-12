@@ -1314,6 +1314,7 @@
   "emuopt.aspect": "アスペクト比",
   "emuopt.widescreen": "ワイドスクリーンパッチ",
   "emuopt.noInterlace": "インターレース解除パッチ",
+  "emuopt.fps": "フレームレートパッチ",
   "emuopt.renderer": "グラフィックAPI",
   "emuopt.fastBoot": "起動画面をスキップ",
   "emuopt.pgxp": "安定したジオメトリ",

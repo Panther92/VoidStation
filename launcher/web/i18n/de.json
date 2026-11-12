@@ -1124,6 +1124,7 @@
   "emuopt.aspect": "Bildformat",
   "emuopt.widescreen": "Breitbild-Patch",
   "emuopt.noInterlace": "Zeilensprung-Patch",
+  "emuopt.fps": "Bildraten-Patch",
   "emuopt.renderer": "Grafik-Schnittstelle",
   "emuopt.fastBoot": "Startbild überspringen",
   "emuopt.pgxp": "Geometrie ohne Wackeln",
