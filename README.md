@@ -262,7 +262,7 @@ git config --global credential.helper store      # once: remember GitHub access 
 echo "alias vspub='bash ~/VoidStation/tools/publish.sh'" >> ~/.bashrc   # once, then log in again
 echo "alias vsget='bash ~/VoidStation/tools/vsget.sh'" >> ~/.bashrc   # once
 vspub --init-key                                 # once: create signing key (back it up!)
-vsget                                            # fetch a Claude branch (claude/*) as a bundle -> ~/share/Updates
+vsget                                            # fetch Claude branches (claude/*) as one bundle -> ~/share/Updates (pick: 2, 1,3, 1-3, alle)
 vspub                                            # take the bundle from ~/share/Updates, build, sign,
                                                  # push to main (Testing channel)
 vspub --status                                   # what's in Testing, since when, what is ripe?

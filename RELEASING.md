@@ -75,15 +75,19 @@ don't get in its way.
 **Claude branches and `vsget`:** Claude never pushes code to `main`. Each chat pushes its work to its own branch
 `claude/<topic>`, based on the current `origin/main` (rebased before every push). On the publisher's machine,
 `tools/vsget.sh` (alias `vsget`) lists the open `claude/*` branches, checks each one against the current GitHub state
-(merges cleanly into `main`? touches `dist/` or `keys/`?), turns the chosen one into a bundle in `~/share/Updates`
-and offers to run `vspub` right away. A branch with a conflict is refused – the chat it came from rebases it onto
-`origin/main` and pushes again. Branches already contained in `main` are offered for deletion. `vsget` only reads
+(merges cleanly into `main`? touches `dist/` or `keys/`?), merges the chosen ones onto `main` and turns the result
+into one bundle in `~/share/Updates`, then offers to run `vspub` right away. Several branches at once (`1,3`, `1-3`,
+`alle`) mean one bundle, one build and one passphrase. Because every branch adds its entry at the top of
+`CHANGELOG.md`/`CHANGELOG.en.md`, vsget keeps both sides there (Git's `union` merge driver, set only in vsget's own
+helper repository) instead of reporting a conflict. A conflict in any other file is refused – the chat it came from
+rebases the branch onto `origin/main` and pushes again. Branches already contained in `main` are offered for deletion. `vsget` only reads
 from GitHub and writes the bundle; it never changes the local repository, so `vspub` stays the only way in.
 
 ```sh
 echo "alias vsget='bash ~/VoidStation/tools/vsget.sh'" >> ~/.bashrc   # once, then log in again
 vsget              # show open claude/* branches, fetch one as a bundle, optionally run vspub
 vsget 2            # fetch branch no. 2 (or: vsget claude/<topic>)
+vsget 1,3          # fetch several as one bundle (also: 1 3, 1-3, alle)
 vsget --liste      # only show
 ```
 

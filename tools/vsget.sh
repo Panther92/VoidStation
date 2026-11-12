@@ -3,20 +3,31 @@
 #  vsget – Beitraege von Claude-Zweigen (claude/*) auf GitHub abholen
 #  Laeuft auf dem Rechner des Herausgebers (NiPoGi), nur dort, nur von Paul.
 #
-#    vsget               offene claude/*-Zweige zeigen, einen als Bundle nach ~/share/Updates
-#    vsget <nr|zweig>    genau diesen Zweig holen (z. B.  vsget 2  oder  vsget claude/tastatur)
+#    vsget               offene claude/*-Zweige zeigen, einen oder mehrere als ein Bundle nach ~/share/Updates
+#    vsget <auswahl>     genau diese Zweige holen, z. B.  vsget 2   vsget 1,3   vsget 1-3   vsget alle
+#                        oder  vsget claude/tastatur  (Name, auch mehrere)
 #    vsget --liste       nur anzeigen, nichts holen
+#
+#  Auswahl (auch bei der Frage "Welche holen?"): Nummern mit Komma oder Leerzeichen
+#  ("1, 2"), Bereiche ("1-3"), "alle". Mehrere Zweige werden in Listenreihenfolge
+#  auf main zusammengefuehrt und landen in EINEM Bundle – ein vspub, eine Passphrase.
 #
 #  Ablauf: Claude pusht nie nach main, sondern auf einen eigenen Zweig claude/<thema>
 #  (ein Zweig pro Chat). vsget prueft jeden Zweig gegen den aktuellen GitHub-Stand
-#  (passt er konfliktfrei auf main? fasst er dist/ oder keys/ an?), baut daraus ein
-#  Bundle mit der Referenz refs/heads/main – genau wie tools/mkbundle.sh – und legt
-#  es nach ~/share/Updates. Eingespielt wird weiterhin nur mit  vspub.
+#  (passt er konfliktfrei auf main? fasst er dist/ oder keys/ an?), fuehrt ihn mit
+#  main zusammen, baut daraus ein Bundle mit der Referenz refs/heads/main – genau wie
+#  tools/mkbundle.sh – und legt es nach ~/share/Updates. Eingespielt wird weiterhin
+#  nur mit  vspub.
+#  CHANGELOG.md/CHANGELOG.en.md: Jeder Zweig setzt seinen Eintrag ganz oben ein, das
+#  ergaebe bei jedem zweiten Zweig einen Konflikt. Beim Zusammenfuehren behaelt vsget
+#  deshalb beide Seiten (Git-Treiber "union", nur im Hilfs-Repo von vsget), die
+#  Eintraege des Zweigs oben. Konflikte in anderen Dateien bleiben Konflikte.
 #  Zweige, die schon in main stecken (auch per Squash oder Rebase), bietet vsget
 #  zum Loeschen auf GitHub an.
 #
 #  vsget aendert am lokalen Repo nichts (kein Checkout, kein Merge) – nur die
-#  Remote-Referenzen werden aktualisiert.
+#  Remote-Referenzen werden aktualisiert. Zusammengefuehrt wird in einem Hilfs-Repo,
+#  das die Objekte von hier mitbenutzt.
 #
 #  Alias – einmalig in ~/.bashrc eintragen:
 #     alias vsget='bash ~/VoidStation/tools/vsget.sh'
@@ -36,9 +47,9 @@ TMPS=()
 cleanup() { [ ${#TMPS[@]} -eq 0 ] || rm -rf "${TMPS[@]}"; }
 trap cleanup EXIT
 
-ARG="${1:-}"
-case "$ARG" in
-  -h|--help) sed -n '3,22p' "$0" | sed 's/^# \{0,2\}//'; exit 0 ;;
+ARG="$*"
+case "${1:-}" in
+  -h|--help) sed -n '3,36p' "$0" | sed 's/^# \{0,2\}//'; exit 0 ;;
 esac
 
 [ -d "$REPO/.git" ] || die "Kein Repo unter $REPO gefunden."
@@ -48,9 +59,25 @@ git fetch -q --prune origin || die "GitHub nicht erreichbar."
 git rev-parse -q --verify origin/main >/dev/null || die "origin/main fehlt."
 BASE="$(git rev-parse origin/main)"
 
+# Hilfs-Repo: benutzt die Objekte von hier mit, Changelogs werden beim Zusammenfuehren
+# vereinigt statt als Konflikt gemeldet (info/attributes gilt nur dort).
+HELP="$(mktemp -d)"; TMPS+=("$HELP"); HB="$HELP/b.git"
+git init -q --bare "$HB"
+( cd "$(git rev-parse --git-path objects)" && pwd ) > "$HB/objects/info/alternates"
+printf '%s\n' 'CHANGELOG.md merge=union' 'CHANGELOG.en.md merge=union' > "$HB/info/attributes"
+hg() { git -C "$HB" "$@"; }
+
 # merge-tree --write-tree gibt es ab git 2.38
 MT=1
-git merge-tree --write-tree "$BASE" "$BASE" >/dev/null 2>&1 || MT=0
+hg merge-tree --write-tree "$BASE" "$BASE" >/dev/null 2>&1 || MT=0
+
+merge_tree() {             # <a> <b> – Baum von a+b (Changelog-Zeilen von a oben); bei Konflikt Dateiliste, rc 1
+  local out
+  if out="$(hg merge-tree --write-tree --name-only "$1" "$2" 2>/dev/null)"; then
+    printf '%s\n' "$out" | head -n1; return 0
+  fi
+  printf '%s\n' "$out" | sed -n '2,/^$/p' | sed '/^$/d' | paste -sd ' '; return 1
+}
 
 included() {               # <tip> – steckt der Zweig schon in main? (Merge, Rebase oder "Squash and merge")
   local tip="$1" mb pid out
@@ -88,15 +115,14 @@ while read -r ref; do
   if ! git diff --quiet "$BASE...$tip" -- dist keys; then
     state="gesperrt"; info="aendert dist/ oder keys/ – das darf nur vspub"
   elif [ "$MT" = 1 ]; then
-    if ! out="$(git merge-tree --write-tree --name-only "$BASE" "$tip" 2>/dev/null)"; then
-      state="Konflikt"
-      info="$(printf '%s\n' "$out" | sed -n '2,/^$/p' | sed '/^$/d' | paste -sd ' ')"
+    if ! out="$(merge_tree "$tip" "$BASE")"; then
+      state="Konflikt"; info="$out"
     fi
   else
     state="ungeprueft"; info="git zu alt fuer die Konfliktpruefung (ab 2.38)"
   fi
   if [ "$state" = passt ] && ! git merge-base --is-ancestor "$BASE" "$tip"; then
-    info="baut auf aelterem Stand auf, laesst sich aber sauber zusammenfuehren"
+    info="baut auf aelterem Stand auf, laesst sich aber zusammenfuehren"
   fi
   OPEN_NAME+=("$name"); OPEN_TIP+=("$tip"); OPEN_STATE+=("$state"); OPEN_INFO+=("$info")
 done < <(git for-each-ref --sort=committerdate --format='%(refname:short)' "refs/remotes/origin/$PREFIX")
@@ -137,35 +163,60 @@ fi
 [ ${#OPEN_NAME[@]} -gt 0 ] || { echo; echo "Nichts abzuholen."; exit 0; }
 
 # ---------------------------------------------------------------------
-#  Auswahl
+#  Auswahl: "2", "1, 3", "1 3", "1-3", "alle", Zweignamen – auch gemischt
 # ---------------------------------------------------------------------
-pick=""
+PICKS=()
+add_pick() { local p; for p in "${PICKS[@]}"; do [ "$p" = "$1" ] && return 0; done; PICKS+=("$1"); }
+parse_sel() {              # <text> -> PICKS (Indizes ab 0), sonst Abbruch
+  local tok a b i want found toks
+  set -f; read -r -a toks <<< "${1//,/ }"; set +f
+  for tok in "${toks[@]}"; do
+    case "$tok" in
+      alle|a|\*) for i in "${!OPEN_NAME[@]}"; do add_pick "$i"; done ;;
+      *-*) if [[ "$tok" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+             a="${BASH_REMATCH[1]}"; b="${BASH_REMATCH[2]}"
+             [ "$a" -ge 1 ] && [ "$b" -le ${#OPEN_NAME[@]} ] && [ "$a" -le "$b" ] || die "Ungueltiger Bereich: $tok"
+             for (( i = a; i <= b; i++ )); do add_pick $((i - 1)); done
+           else
+             want="${tok#origin/}"; [[ "$want" == "$PREFIX"* ]] || want="$PREFIX$want"; found=""
+             for i in "${!OPEN_NAME[@]}"; do [ "${OPEN_NAME[i]}" = "$want" ] && found=$i; done
+             [ -n "$found" ] || die "Kein offener Zweig $want."; add_pick "$found"
+           fi ;;
+      *) if [[ "$tok" =~ ^[0-9]+$ ]]; then
+           [ "$tok" -ge 1 ] && [ "$tok" -le ${#OPEN_NAME[@]} ] || die "Keinen Zweig Nr. $tok."
+           add_pick $((tok - 1))
+         else
+           want="${tok#origin/}"; [[ "$want" == "$PREFIX"* ]] || want="$PREFIX$want"; found=""
+           for i in "${!OPEN_NAME[@]}"; do [ "${OPEN_NAME[i]}" = "$want" ] && found=$i; done
+           [ -n "$found" ] || die "Kein offener Zweig $want."; add_pick "$found"
+         fi ;;
+    esac
+  done
+  [ ${#PICKS[@]} -gt 0 ] || die "Ungueltige Auswahl: $1"
+  # Reihenfolge wie in der Liste (aelteste zuerst)
+  mapfile -t PICKS < <(printf '%s\n' "${PICKS[@]}" | sort -n)
+}
+
 if [ -n "$ARG" ]; then
-  if [[ "$ARG" =~ ^[0-9]+$ ]]; then
-    [ "$ARG" -ge 1 ] && [ "$ARG" -le ${#OPEN_NAME[@]} ] || die "Keinen Zweig Nr. $ARG."
-    pick=$((ARG - 1))
-  else
-    want="${ARG#origin/}"; [[ "$want" == "$PREFIX"* ]] || want="$PREFIX$want"
-    for i in "${!OPEN_NAME[@]}"; do [ "${OPEN_NAME[i]}" = "$want" ] && pick=$i; done
-    [ -n "$pick" ] || die "Kein offener Zweig $want."
-  fi
+  parse_sel "$ARG"
 elif [ ${#OPEN_NAME[@]} -eq 1 ]; then
-  pick=0
+  PICKS=(0)
 else
   echo
-  read -r -p "Welchen holen? (Nummer, Enter = keinen) " a
+  read -r -p "Welche holen? (z. B. 2 oder 1,3 oder 1-3 oder alle; Enter = keinen) " a
   [ -n "$a" ] || { echo "Nichts geholt."; exit 0; }
-  [[ "$a" =~ ^[0-9]+$ ]] && [ "$a" -ge 1 ] && [ "$a" -le ${#OPEN_NAME[@]} ] || die "Ungueltige Auswahl: $a"
-  pick=$((a - 1))
+  parse_sel "$a"
 fi
 
-name="${OPEN_NAME[pick]}"; tip="${OPEN_TIP[pick]}"; state="${OPEN_STATE[pick]}"
-case "$state" in
-  gesperrt) die "$name ${OPEN_INFO[pick]}." ;;
-  Konflikt) die "$name passt nicht mehr auf main (Konflikt in: ${OPEN_INFO[pick]}).
+for pick in "${PICKS[@]}"; do
+  name="${OPEN_NAME[pick]}"
+  case "${OPEN_STATE[pick]}" in
+    gesperrt) die "$name ${OPEN_INFO[pick]}." ;;
+    Konflikt) die "$name passt nicht mehr auf main (Konflikt in: ${OPEN_INFO[pick]}).
     Im zugehoerigen Chat sagen: \"Zweig auf origin/main rebasen und neu pushen\" – dann nochmal  vsget." ;;
-  ungeprueft) warn "Konfliktpruefung nicht moeglich – vspub merkt einen Konflikt spaetestens beim Einspielen (und aendert dann nichts)." ;;
-esac
+    ungeprueft) warn "$name: Konfliktpruefung nicht moeglich – vspub merkt einen Konflikt spaetestens beim Einspielen (und aendert dann nichts)." ;;
+  esac
+done
 
 # Nicht eingespielte Bundles im Eingang? vspub nimmt immer nur das neueste.
 old="$(ls -t "$INBOX"/*.bundle 2>/dev/null || true)"
@@ -176,28 +227,46 @@ $(printf '%s\n' "$old" | sed 's|.*/|  |')
 fi
 
 # ---------------------------------------------------------------------
-#  Bundle bauen: Referenz refs/heads/main = Zweigspitze, Vorgaenger = origin/main
-#  (in einem Hilfs-Repo, das die Objekte von hier mitbenutzt – das echte main bleibt unberuehrt)
+#  Zusammenfuehren (im Hilfs-Repo): von main aus jeden gewaehlten Zweig dazu –
+#  vorspulen, wo es geht, sonst Merge-Commit (Changelogs vereinigt).
+#  Bundle: Referenz refs/heads/main = Ergebnis, Vorgaenger = origin/main.
 # ---------------------------------------------------------------------
-say "Hole $name"
-git log --reverse --no-merges --format='  %h %s' "$BASE..$tip" | cut -c1-100
-sess="$(git log -1 --format='%(trailers:key=Claude-Session,valueonly)' "$tip" | head -n1)"
-[ -z "$sess" ] || echo "  Chat: $sess"
+cur="$BASE"; topics=(); names=()
+for pick in "${PICKS[@]}"; do
+  name="${OPEN_NAME[pick]}"; tip="${OPEN_TIP[pick]}"
+  say "Hole $name"
+  if hg merge-base --is-ancestor "$tip" "$cur"; then
+    echo "  steckt schon in den vorher gewaehlten Zweigen"
+  else
+    hg log --reverse --no-merges --format='  %h %s' "$cur..$tip" | cut -c1-100
+    sess="$(hg log -1 --format='%(trailers:key=Claude-Session,valueonly)' "$tip" | head -n1)"
+    [ -z "$sess" ] || echo "  Chat: $sess"
+    if hg merge-base --is-ancestor "$cur" "$tip"; then
+      cur="$tip"
+    else
+      [ "$MT" = 1 ] || die "git zu alt zum Zusammenfuehren (ab 2.38) – Zweige einzeln holen."
+      tree="$(merge_tree "$tip" "$cur")" || die "$name passt nicht zu den vorher gewaehlten Zweigen (Konflikt in: $tree).
+    Einzeln holen und einspielen, dann den Rest im zugehoerigen Chat neu auf main setzen lassen."
+      cur="$(hg commit-tree "$tree" -p "$cur" -p "$tip" -m "$name zusammengefuehrt (vsget)")"
+    fi
+  fi
+  topic="${name#"$PREFIX"}"; topics+=("${topic//[^A-Za-z0-9._-]/-}"); names+=("$name")
+done
+[ "$cur" != "$BASE" ] || { echo; echo "Nichts Neues – alles steckt schon in main."; exit 0; }
 
 mkdir -p "$INBOX"
-topic="${name#"$PREFIX"}"; topic="${topic//[^A-Za-z0-9._-]/-}"
-f="$INBOX/VoidStation-$(git rev-parse --short "$tip")-$topic.bundle"
-tmp="$(mktemp -d)"; TMPS+=("$tmp")
-git init -q --bare "$tmp/b.git"
-( cd "$(git rev-parse --git-path objects)" && pwd ) > "$tmp/b.git/objects/info/alternates"
-git -C "$tmp/b.git" update-ref refs/heads/main "$tip"
-git -C "$tmp/b.git" update-ref refs/remotes/origin/main "$BASE"
-git -C "$tmp/b.git" bundle create -q "$f.part" origin/main..main
+label="$(IFS=+; echo "${topics[*]}")"; label="${label:0:80}"
+f="$INBOX/VoidStation-$(hg rev-parse --short "$cur")-$label.bundle"
+hg update-ref refs/heads/main "$cur"
+hg update-ref refs/remotes/origin/main "$BASE"
+hg bundle create -q "$f.part" origin/main..main
 
 # Probe wie vspub: passt zum Repo, enthaelt genau refs/heads/main
 git bundle verify -q "$f.part" >/dev/null 2>&1 || { rm -f "$f.part"; die "Bundle passt nicht zum Repo."; }
-[ "$(git bundle list-heads "$f.part")" = "$tip refs/heads/main" ] || { rm -f "$f.part"; die "Bundle enthaelt die falschen Referenzen."; }
+[ "$(git bundle list-heads "$f.part")" = "$cur refs/heads/main" ] || { rm -f "$f.part"; die "Bundle enthaelt die falschen Referenzen."; }
 mv "$f.part" "$f"
+echo
+[ ${#names[@]} -eq 1 ] || echo "Zusammen: ${names[*]}"
 echo "Bundle: $f"
 
 echo
