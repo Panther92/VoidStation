@@ -9940,7 +9940,14 @@ def emu_mute_apply(tile):
 # Eingetragen wird es wie der Rueckfall oben: fuer diesen einen Start, danach kommt der alte Wert zurueck.
 # Eine Moeglichkeit mit "auto": True schreibt denselben Wert wie eine andere (bei DuckStation "Nearest"); welche von beiden
 # gemeint ist, steht in emu-defaults.json unter opt_fixed. Je Spiel gibt es sie nicht (dort heisst "nichts gewaehlt" schon das).
+#
+# "VoidStation-Einstellungen | Anpassen" (Paul, 12.11.2026): Die Karte zeigt zuerst nur diesen Schalter und "Spiel stumm".
+# VoidStation-Einstellungen = jede Option steht auf dem, was VoidStation vorsieht (_opt_vs: Vorgabe je Geraet, sonst der
+# Standard) – das wird nicht gespeichert, sondern an den Einstellungen des Emulators abgelesen (emu_opts_mode): Wer dort
+# etwas aendert, sieht hier "Anpassen" und seine Werte. "Anpassen" ohne Aenderung merkt opt_mode in emu-defaults.json.
+# Zurueck auf VoidStation-Einstellungen: Werte merken (opt_saved), Vorgaben eintragen; "Anpassen" holt die gemerkten zurueck.
 EMU_GAME_OPTS = Path.home() / ".config/voidstation/emu-games.json"       # {Kachel: {Spieldatei: {Option: Wert}}}
+_OPT_MODE = [{"v": "vs", "k": "emuopt.v.vs"}, {"v": "custom", "k": "emuopt.v.custom"}]
 EMU_AUTO = {"duckstation": {"texfilter": "auto"}, "dosbox": {"speed": "std"}}   # {Kachel: {Option: Stufe, auf der Profile gelten}}
 _OPT_TF = [{"v": "true", "k": "common.on"}, {"v": "false", "k": "common.off"}]
 _OPT_10 = [{"v": "1", "k": "common.on"}, {"v": "0", "k": "common.off"}]
@@ -9970,12 +9977,13 @@ EMU_OPTS: dict[str, Any] = {
             _opt("noInterlace", "EmuCore", "EnableNoInterlacingPatches", _OPT_TF, "false"),
             _opt("aniso", "EmuCore/GS", "MaxAnisotropy", [
                 {"v": "0", "k": "common.off"}, {"v": "4", "t": "4×"}, {"v": "8", "t": "8×"}, {"v": "16", "t": "16×"}], "0"),
-            _opt("renderer", "EmuCore/GS", "Renderer", [
-                {"v": "-1", "k": "emuopt.v.auto"}, {"v": "14", "t": "Vulkan"}, {"v": "12", "t": "OpenGL"},
-                {"v": "13", "t": "Software"}], "-1"),
         ]),
         ("play", [
             _opt("fastBoot", "EmuCore", "EnableFastBoot", _OPT_TF, "true"),
+            # Automatik nimmt unter Linux Vulkan, bei Intel-Grafik und Software-Treibern OpenGL (GSUtil::GetPreferredRenderer)
+            _opt("renderer", "EmuCore/GS", "Renderer", [
+                {"v": "-1", "k": "emuopt.v.auto"}, {"v": "14", "t": "Vulkan"}, {"v": "12", "t": "OpenGL"},
+                {"v": "13", "t": "Software"}], "-1"),
         ]),
     ]},
     "duckstation": {"file": lambda: DUCK_INI, "groups": [
@@ -9990,13 +9998,14 @@ EMU_OPTS: dict[str, Any] = {
             _opt("texfilter", "GPU", "TextureFilter", [
                 {"v": "auto", "k": "emuopt.v.auto", "set": {"TextureFilter": "Nearest"}, "auto": True},
                 {"v": "BilinearBinAlpha", "k": "common.on"}, {"v": "Nearest", "k": "common.off"}], "auto", game=True),
-            _opt("renderer", "GPU", "Renderer", [
-                {"v": "Automatic", "k": "emuopt.v.auto"}, {"v": "Vulkan", "t": "Vulkan"}, {"v": "OpenGL", "t": "OpenGL"},
-                {"v": "Software", "t": "Software"}], "Automatic"),
         ]),
         ("play", [
             _opt("fastBoot", "BIOS", "PatchFastBoot", _OPT_TF, "false"),
             _opt("resume", "Main", "SaveStateOnExit", _OPT_TF, "true"),
+            # Automatik nimmt unter Linux Vulkan, nur bei Software-Treibern und alter Intel-Grafik (bis Broadwell) OpenGL
+            _opt("renderer", "GPU", "Renderer", [
+                {"v": "Automatic", "k": "emuopt.v.auto"}, {"v": "Vulkan", "t": "Vulkan"}, {"v": "OpenGL", "t": "OpenGL"},
+                {"v": "Software", "t": "Software"}], "Automatic"),
         ]),
     ]},
     "gba": {"file": lambda: MGBA_CONFIG, "groups": [
@@ -10117,16 +10126,125 @@ def _opt_auto_on(tile, opt, st):
     return bool(level) and _opt_value(tile, opt) == level and not _opt_fixed(tile, opt, st)
 
 
-def _opt_value(tile, opt):
+def _opt_value(tile, opt, ini=None):
     """Aktuell gewaehlte Moeglichkeit laut Datei des Emulators, der Standard, wenn nichts drinsteht, oder None (etwas
     anderes, das sich hier nicht waehlen laesst – dann ist keiner der Knoepfe an)."""
-    sec = ini_read(EMU_OPTS[tile]["file"]()).get(opt["section"], {})
+    sec = (ini_read(EMU_OPTS[tile]["file"]()) if ini is None else ini).get(opt["section"], {})
     if not any(k in sec for k in opt["keys"]):
         return opt["default"]
     for c in opt["choices"]:
         if all(_opt_norm(sec.get(k, v)) == _opt_norm(v) for k, v in _opt_writes(opt, c).items()):
             return c["v"]
     return None
+
+
+def _opts_ini_base(tile, st):
+    """Haupteinstellung ohne das, was nur fuer das gerade laufende Spiel drinsteht (opt_game, s. emu_opts_restore)."""
+    ini = {sec: dict(vals) for sec, vals in ini_read(EMU_OPTS[tile]["file"]()).items()}
+    for sec, vals in (st.get("opt_game", {}).get(tile) or {}).items():
+        for k, (old, wrote) in vals.items():
+            if _opt_norm(ini.get(sec, {}).get(k, "")) != _opt_norm(wrote):
+                continue
+            if old is None:
+                ini[sec].pop(k, None)
+            else:
+                ini[sec][k] = old
+    return ini
+
+
+def _opt_shown(tile, opt, st, ini):
+    """Was die Karte fuer diese Option allgemein zeigt: Vorgemerktes vor der Datei; "Automatik" oder ihr Zwilling."""
+    v = st.get("opt_pending", {}).get(tile, {}).get(opt["id"], _opt_value(tile, opt, ini))
+    c = _opt_choice(opt, v) if v is not None else None
+    return _opt_plain(opt, c)["v"] if c and c.get("auto") and _opt_fixed(tile, opt, st) else v
+
+
+def _opt_vs(tile):
+    """Was VoidStation je Option vorsieht: Vorgabe fuer dieses Geraet, sonst der Standard."""
+    own = _opt_defaults_for(tile)
+    return {oid: own.get(oid, opt["default"]) for oid, opt in _OPT_INDEX[tile].items()}
+
+
+def emu_opts_mode(tile, st, ini=None):
+    """"vs" (alles steht auf den VoidStation-Einstellungen) oder "custom" (der Nutzer passt an bzw. hat etwas geaendert,
+    hier oder im Emulator). Aufruf mit EMU_LOCK."""
+    if st.get("opt_mode", {}).get(tile) == "custom":
+        return "custom"
+    ini = _opts_ini_base(tile, st) if ini is None else ini
+    mine = st.get("opt_defaults", {}).get(tile, {})
+    for oid, want in _opt_vs(tile).items():
+        opt = _OPT_INDEX[tile][oid]
+        cur = _opt_shown(tile, opt, st, ini)
+        if cur == want:
+            continue
+        # Vorgabe, die erst der naechste Start eintraegt bzw. nachzieht (anderes Geraet): zaehlt als VoidStation
+        if (oid not in mine and cur == opt["default"]) or (mine.get(oid) is not None and cur == mine[oid]):
+            continue
+        return "custom"
+    return "vs"
+
+
+def _opt_user_set(tile, opt, value, st, ready, running):
+    """Eine Option allgemein auf die Wahl des Nutzers stellen. Aufruf mit EMU_LOCK."""
+    oid = opt["id"]
+    pending = st.setdefault("opt_pending", {}).setdefault(tile, {})
+    if ready:
+        _opt_write(tile, opt, value)
+    # Laeuft der Emulator, schreibt er beim Beenden seine Einstellungen zurueck; vor dem Einrichten gibt es noch keine
+    if not ready or running:
+        pending[oid] = value
+    else:
+        pending.pop(oid, None)                           # sonst zeigte die Karte weiter das frueher Vorgemerkte
+    st.setdefault("opt_defaults", {}).setdefault(tile, {})[oid] = None      # ab jetzt die Wahl des Nutzers
+    if any(c.get("auto") for c in opt["choices"]):   # "Automatik" und "Aus" schreiben dasselbe: merken, was gemeint ist
+        fixed = [o for o in st.setdefault("opt_fixed", {}).get(tile, []) if o != oid]
+        st["opt_fixed"][tile] = fixed if _opt_choice(opt, value).get("auto") else fixed + [oid]
+
+
+def emu_opts_mode_set(tile, mode):
+    """Zwischen "VoidStation-Einstellungen" und "Anpassen" wechseln (s. oben)."""
+    if tile not in EMU_OPTS or mode not in ("vs", "custom"):
+        raise ValueError("Unbekannter Wert")
+    idx = _OPT_INDEX[tile]
+    with EMU_LOCK:
+        if tile == "dosbox":
+            dosbox_primary_ensure()
+        st = emu_state_load()
+        ready, running = emu_ready(tile), bool(APPS._get(tile))
+        if ready and not running:
+            emu_opts_restore(tile, st)
+        ini = _opts_ini_base(tile, st)
+        now = {oid: _opt_shown(tile, opt, st, ini) for oid, opt in idx.items()}
+        was = emu_opts_mode(tile, st, ini)
+        if mode == "custom":
+            st.setdefault("opt_mode", {})[tile] = "custom"
+            for oid, v in ((st.get("opt_saved") or {}).pop(tile, None) or {}).items():      # die frueheren Werte zurueck
+                if oid in idx and _opt_choice(idx[oid], v) and now[oid] != v:
+                    _opt_user_set(tile, idx[oid], v, st, ready, running)
+        else:
+            vs = _opt_vs(tile)
+            if was == "custom" and any(now[oid] not in (None, vs[oid]) for oid in idx):
+                st.setdefault("opt_saved", {})[tile] = {oid: v for oid, v in now.items() if v is not None}
+            hw = _opt_defaults_for(tile)
+            mine = st.setdefault("opt_defaults", {}).setdefault(tile, {})
+            pending = st.setdefault("opt_pending", {}).setdefault(tile, {})
+            for oid, want in vs.items():
+                if now[oid] != want or _opt_value(tile, idx[oid], ini) != want:
+                    if ready:
+                        _opt_write(tile, idx[oid], want)
+                    if not ready or running:
+                        pending[oid] = want
+                if ready and not running:
+                    pending.pop(oid, None)
+                if oid in hw:
+                    mine[oid] = want                     # wieder Vorgabe: zieht mit, wenn sich das Geraet aendert
+                else:
+                    mine.pop(oid, None)
+            st.setdefault("opt_fixed", {})[tile] = []
+            st.setdefault("opt_mode", {}).pop(tile, None)
+        emu_state_save(st)
+    log(f"{tile}: Optionen: {'Anpassen' if mode == 'custom' else 'VoidStation-Einstellungen'}")
+    return emu_opts_payload(tile)
 
 
 def _opt_write(tile, opt, value):
@@ -10506,32 +10624,38 @@ def emu_opts_payload(tile, game=None):
         if not running and emu_ready(tile) and st.get("opt_game", {}).get(tile):
             emu_opts_restore(tile, st)
             emu_state_save(st)
-        pending = st.get("opt_pending", {}).get(tile, {})
-        values, groups = {}, []
+        values: dict[str, Any] = {}
+        groups: list[dict[str, Any]] = []
         if native:
             _game_sync(tile, game, native)
         own = emu_opts_game(tile, game) if game and not native else {}
-        for gid, opts in spec["groups"]:
-            shown = [o for o in opts if o["game"]] if game else opts
-            if not shown:
-                continue
+        ini = None if game else _opts_ini_base(tile, st)
+        mode = None if game else emu_opts_mode(tile, st, ini)
+        # Allgemein: links "Allgemein" mit dem Schalter VoidStation-Einstellungen | Anpassen, rechts "Bild"; die uebrigen
+        # Zeilen nur bei "Anpassen". Je Spiel: wie bisher Bild, dann Spiel, nur was sich je Spiel waehlen laesst.
+        order = spec["groups"] if game else sorted(spec["groups"], key=lambda g: g[0] != "play")
+        for gid, opts in order:
+            shown = [o for o in opts if o["game"]] if game else opts if mode == "custom" else []
             for o in shown:
                 if native:
                     values[o["id"]] = _game_ini_read(tile, o, native)
                 elif game:
                     values[o["id"]] = own.get(o["id"])
                 else:
-                    v = pending.get(o["id"], _opt_value(tile, o))
-                    c = _opt_choice(o, v) if v is not None else None
-                    values[o["id"]] = _opt_plain(o, c)["v"] if c and c.get("auto") and _opt_fixed(tile, o, st) else v
-            groups.append({"id": gid, "opts": [{"id": o["id"], "choices": [
+                    values[o["id"]] = _opt_shown(tile, o, st, ini)
+            rows = [{"id": o["id"], "choices": [
                 {x: c[x] for x in ("v", "k", "t") if x in c} for c in o["choices"] if not (game and c.get("auto"))]}
-                for o in shown]})
-        if not game and tile in EMU_MUTE and groups:      # "Spiel stumm": eigener Weg, s. emu_set_mute
-            groups[-1]["opts"].append({"id": "mute", "choices": _OPT_TF})
-            values["mute"] = "true" if _opt_mute_now(tile, st) else "false"
+                for o in shown]
+            if not game and gid == "play":
+                rows.insert(0, {"id": "mode", "choices": _OPT_MODE})
+                values["mode"] = mode
+                if tile in EMU_MUTE:                     # "Spiel stumm": eigener Weg (emu_set_mute); bleibt beim Umschalten stehen
+                    rows.insert(1, {"id": "mute", "choices": _OPT_TF})
+                    values["mute"] = "true" if _opt_mute_now(tile, st) else "false"
+            if rows:
+                groups.append({"id": "general" if gid == "play" and not game else gid, "opts": rows})
     layout = EMU_LAYOUTS.get(tile) or {}
-    return {"emu": tile, "name": layout.get("name") or tile, "game": game, "groups": groups, "values": values}
+    return {"emu": tile, "name": layout.get("name") or tile, "game": game, "mode": mode, "groups": groups, "values": values}
 
 
 def emu_opts_set(tile, oid, value, game=None):
@@ -10541,6 +10665,8 @@ def emu_opts_set(tile, oid, value, game=None):
             raise ValueError("Unbekannter Wert")
         emu_set_mute(tile, value == "true")
         return emu_opts_payload(tile)
+    if oid == "mode" and not game:
+        return emu_opts_mode_set(tile, value)
     opt = _OPT_INDEX.get(tile, {}).get(oid)
     if not opt:
         raise ValueError("Unbekannte Option")
@@ -10575,18 +10701,11 @@ def emu_opts_set(tile, oid, value, game=None):
         if tile == "dosbox":
             dosbox_primary_ensure()
         st = emu_state_load()
-        ready = emu_ready(tile)
-        if ready and not APPS._get(tile):
+        ready, running = emu_ready(tile), bool(APPS._get(tile))
+        if ready and not running:
             emu_opts_restore(tile, st)
-        if ready:
-            _opt_write(tile, opt, value)
-        # Laeuft der Emulator, schreibt er beim Beenden seine Einstellungen zurueck; vor dem Einrichten gibt es noch keine
-        if not ready or APPS._get(tile):
-            st.setdefault("opt_pending", {}).setdefault(tile, {})[oid] = value
-        st.setdefault("opt_defaults", {}).setdefault(tile, {})[oid] = None      # ab jetzt die Wahl des Nutzers
-        if any(c.get("auto") for c in opt["choices"]):   # "Automatisch" und "Aus" schreiben dasselbe: merken, was gemeint ist
-            fixed = [o for o in st.setdefault("opt_fixed", {}).get(tile, []) if o != oid]
-            st["opt_fixed"][tile] = fixed if _opt_choice(opt, value).get("auto") else fixed + [oid]
+        _opt_user_set(tile, opt, value, st, ready, running)
+        st.setdefault("opt_mode", {})[tile] = "custom"   # wer einen Schalter anfasst, passt an
         emu_state_save(st)
     log(f"{tile}: Option {oid}={value}")
     return emu_opts_payload(tile)
