@@ -1861,11 +1861,12 @@ class DisplayRate:
     def __init__(self):
         self.lock = threading.RLock()
         self.wanted = 0.0                              # Bildrate des Videos, das gerade vorn laeuft (0 = keins)
-        self.src = ""                                  # welcher Player sie gemeldet hat (tv, media, yt)
+        self.src = ""                                  # welcher Player sie gemeldet hat (tv, media, yt) bzw. die Emulator-Kachel
+        self.forced = False                            # PAL-Spiel: gilt auch ohne "Bildrate an Video anpassen" (emu_pal_rate)
         self.base = {}                                 # Ausgang -> (Modus, Rate) vor dem Umschalten
         self.now = None                                # zuletzt gesetzte Video-Rate (fuer die Technik-Anzeige)
 
-    def request(self, fps, src=""):
+    def request(self, fps, src="", force=False):
         with self.lock:
             try:
                 fps = float(fps or 0)
@@ -1875,6 +1876,7 @@ class DisplayRate:
                 return self.state()                    # ein anderer Player hat inzwischen uebernommen
             self.wanted = fps if 10 <= fps <= 121 else 0.0
             self.src = src if self.wanted else ""
+            self.forced = bool(force and self.wanted)
             self._apply()
             return self.state()
 
@@ -1888,7 +1890,7 @@ class DisplayRate:
         return {"on": bool(settings_load().get("match_rate")), "fps": self.wanted, "rate": self.now}
 
     def _apply(self):
-        if not self.wanted or not settings_load().get("match_rate"):
+        if not self.wanted or not (self.forced or settings_load().get("match_rate")):
             self._restore()
             return
         for o in xrandr_info():
@@ -9953,9 +9955,11 @@ _OPT_TF = [{"v": "true", "k": "common.on"}, {"v": "false", "k": "common.off"}]
 _OPT_10 = [{"v": "1", "k": "common.on"}, {"v": "0", "k": "common.off"}]
 
 
-def _opt(oid, section, key, choices, default, game=False):
+def _opt(oid, section, key, choices, default, game=False, hidden=False):
+    """hidden: gehoert zu den VoidStation-Einstellungen (Vorgabe, wird beim Zurueckstellen mitgesetzt), hat auf der Karte
+    aber keine eigene Zeile – wer daran drehen will, tut das im Emulator."""
     return {"id": oid, "section": section, "keys": key if isinstance(key, list) else [key], "choices": choices,
-            "default": default, "game": game}
+            "default": default, "game": game, "hidden": hidden}
 
 
 def _opt_res(values):
@@ -9977,6 +9981,10 @@ EMU_OPTS: dict[str, Any] = {
             _opt("noInterlace", "EmuCore", "EnableNoInterlacingPatches", _OPT_TF, "false"),
             _opt("aniso", "EmuCore/GS", "MaxAnisotropy", [
                 {"v": "0", "k": "common.off"}, {"v": "4", "t": "4×"}, {"v": "8", "t": "8×"}, {"v": "16", "t": "16×"}], "0"),
+            # Nachschaerfen (CAS, Config.h GSCASMode: 0 aus, 1 nur schaerfen, 2 schaerfen und auf Bildschirmgroesse rechnen)
+            _opt("sharpen", "EmuCore/GS", "CASMode", [{"v": "0"}, {"v": "2"}], "0", hidden=True),
+            # Texturpakete aus share/ROMs/ps2/textures/<Seriennummer>/replacements laden (wirkt nur, wo eins liegt)
+            _opt("textures", "EmuCore/GS", "LoadTextureReplacements", _OPT_TF, "false", hidden=True),
         ]),
         ("play", [
             _opt("fastBoot", "EmuCore", "EnableFastBoot", _OPT_TF, "true"),
@@ -9998,10 +10006,18 @@ EMU_OPTS: dict[str, Any] = {
             _opt("texfilter", "GPU", "TextureFilter", [
                 {"v": "auto", "k": "emuopt.v.auto", "set": {"TextureFilter": "Nearest"}, "auto": True},
                 {"v": "BilinearBinAlpha", "k": "common.on"}, {"v": "Nearest", "k": "common.off"}], "auto", game=True),
+            # Filmsequenzen (24-Bit-Bild): Farbkloetzchen glaetten
+            _opt("fmvSmooth", "GPU", "ChromaSmoothing24Bit", _OPT_TF, "false", hidden=True),
+            # Ersatzbilder fuer gemalte Hintergruende aus share/ROMs/psx/textures/<Seriennummer>/replacements (nur, wo welche liegen).
+            # Ersatz fuer 3D-Texturen braucht DuckStations Textur-Cache (GPU/EnableTextureCache) – der bleibt aus.
+            _opt("textures", "TextureReplacements", "EnableVRAMWriteReplacements", _OPT_TF, "false", hidden=True),
         ]),
         ("play", [
             _opt("fastBoot", "BIOS", "PatchFastBoot", _OPT_TF, "false"),
             _opt("resume", "Main", "SaveStateOnExit", _OPT_TF, "true"),
+            # Daten 4-mal so schnell von der CD lesen; Musik und Filme laufen normal (cdrom.cpp CanUseReadSpeedup), bei
+            # Spielen, die es nicht vertragen, schaltet DuckStation selbst ab (gamedb DisableCDROMReadSpeedup)
+            _opt("cdSpeed", "CDROM", "ReadSpeedup", [{"v": "1"}, {"v": "4"}], "1", hidden=True),
             # Automatik nimmt unter Linux Vulkan, nur bei Software-Treibern und alter Intel-Grafik (bis Broadwell) OpenGL
             _opt("renderer", "GPU", "Renderer", [
                 {"v": "Automatic", "k": "emuopt.v.auto"}, {"v": "Vulkan", "t": "Vulkan"}, {"v": "OpenGL", "t": "OpenGL"},
@@ -10080,10 +10096,19 @@ def emu_gpu_class():
 def _opt_defaults_for(tile):
     """Vorgaben von VoidStation, die von der Hardware abhaengen: {Option: Wert}."""
     gpu = emu_gpu_class()
-    if tile == "pcsx2":                 # PS2 hochskalieren ist teuer: nur mit eigener Grafikkarte
-        return {"res": "2", "aniso": "16"} if gpu == "dgpu" else {}
-    if tile == "duckstation" and gpu != "none":
-        return {"res": "4" if gpu == "dgpu" else "2", "pgxp": "true"}
+    if tile == "pcsx2":
+        # Offizielle Patches, wo PCSX2 fuer das Spiel einen hat (4.280 Breitbild, 332 Zeilensprung; Stand 11/2026) – kostet nichts
+        d = {"widescreen": "true", "noInterlace": "true", "textures": "true"}
+        if gpu != "none":               # schaerfen statt hochrechnen: fuer integrierte Grafik gedacht, schadet der grossen nicht
+            d["sharpen"] = "2"
+        if gpu == "dgpu":               # PS2 hochskalieren ist teuer: nur mit eigener Grafikkarte
+            d.update({"res": "2", "aniso": "16"})
+        return d
+    if tile == "duckstation":
+        d = {"cdSpeed": "4", "fmvSmooth": "true", "textures": "true"}
+        if gpu != "none":
+            d.update({"res": "4" if gpu == "dgpu" else "2", "pgxp": "true"})
+        return d
     if tile == "dosbox":                # Fernseher: scharfe Pixel statt nachgemachter Roehre (DOSBox' eigener Standard)
         return {"shader": "sharp"}
     return {}
@@ -10517,6 +10542,73 @@ def emu_profile(tile, game):
     return got
 
 
+_PAL_SERIAL = re.compile(r"S[LC]E[SD]", re.I)          # SLES/SCES (Europa), SLED/SCED (Demos)
+
+
+def emu_pal_rate(tile, game):
+    """PAL-Spiel der PlayStation (50 Bilder/s): Bildschirm fuer die Dauer des Spiels auf 50 Hz, wenn er das bei dieser
+    Aufloesung anbietet – auf 60 Hz ruckelt es sonst zehnmal in der Sekunde. Zurueck geht es, wenn der Emulator endet
+    (Apps._watch). Nur DuckStation: Viele PAL-Spiele der PS2 bieten beim Start 60 Hz an, da waere 50 Hz die falsche Wahl.
+    Abschalten ohne Oberflaeche: "pal50": false in settings.json. Liest ggf. das Abbild – nicht unter EMU_LOCK."""
+    if tile != "duckstation" or not game or settings_load().get("pal50") is False:
+        return
+    try:
+        path = Path(game)
+        if _DISC_NAME.fullmatch(path.name):
+            serial = (DVD.game("/dev/" + path.name) or {}).get("serial")
+        else:
+            serial = _disc_id(tile, path) if path.is_file() else None
+        if isinstance(serial, str) and _PAL_SERIAL.match(serial):
+            DISPLAY_RATE.request(50.0, tile, force=True)
+    except Exception as e:  # noqa: BLE001 – darf den Start nie verhindern
+        log(f"{tile}: 50 Hz fuer PAL-Spiel:", e)
+
+
+EMU_TEXTURES_NOTE = """HD-Texturen / HD textures
+=========================
+
+Deutsch: Texturpakete fuer einzelne Spiele kommen in einen Unterordner mit der Seriennummer des Spiels (z. B. {ex}).
+VoidStation laedt selbst keine Pakete herunter. Liegt hier eins, nimmt {emu} es beim naechsten Start von selbst.
+{how_de}
+
+English: Texture packs for a game go into a subfolder named after the game's serial (e.g. {ex}).
+VoidStation does not download packs itself. If one is here, {emu} picks it up on the next start.
+{how_en}
+"""
+EMU_TEXTURES = {
+    "pcsx2": ("PCSX2", "SLES-52541", "Aufbau: textures/<Seriennummer>/replacements/<Dateien>.png oder .dds",
+              "Layout: textures/<serial>/replacements/<files>.png or .dds"),
+    "duckstation": ("DuckStation", "SLES-02080", "Aufbau: textures/<Seriennummer>/replacements/<Dateien>.png. Ersetzt werden gemalte "
+                    "Hintergruende und Bilder; Pakete fuer 3D-Texturen brauchen in DuckStation zusaetzlich "
+                    "Grafik > Textur-Cache.", "Layout: textures/<serial>/replacements/<files>.png. Replaces painted backgrounds and "
+                    "images; packs for 3D textures additionally need Graphics > Texture Cache in DuckStation."),
+}
+
+
+def emu_textures_prepare(tile):
+    """Ordner fuer Texturpakete in der Freigabe (share/ROMs/<system>/textures) anlegen und dem Emulator zeigen – nur, solange
+    dort noch sein eigener Standardordner steht. Aufruf mit EMU_LOCK, Emulator eingerichtet."""
+    spec = EMU_TEXTURES.get(tile)
+    folders = ROMS.folders(tile) if spec else []
+    if not spec or not folders:
+        return
+    path = EMU_OPTS[tile]["file"]()
+    cur = ini_read(path).get("Folders", {}).get("Textures", "")
+    if cur not in ("", "textures"):
+        return                                           # der Nutzer hat einen eigenen Ordner gewaehlt (oder unserer steht schon)
+    tex = ROMS.rom_dir / folders[0] / "textures"
+    try:
+        tex.mkdir(parents=True, exist_ok=True)
+        note = tex / "LIESMICH.txt"
+        if not note.exists():
+            note.write_text(EMU_TEXTURES_NOTE.format(emu=spec[0], ex=spec[1], how_de=spec[2], how_en=spec[3]), encoding="utf-8")
+    except OSError as e:
+        log(f"{tile}: Texturordner:", e)
+        return
+    ini_update(path, "Folders", {"Textures": str(tex)})
+    log(f"{tile}: Texturpakete aus {tex}")
+
+
 def _opts_apply_profile(tile, game, native, profile, st):
     """Spielprofil fuer diesen Start in die Haupteinstellung schreiben und den alten Wert merken – nur Optionen, die allgemein
     auf Automatik stehen und fuer die der Nutzer bei diesem Spiel nichts gewaehlt hat. Aufruf mit EMU_LOCK."""
@@ -10586,6 +10678,7 @@ def emu_opts_prepare(tid, args):
     disc = last if last.startswith("/dev/") and _DISC_NAME.fullmatch(os.path.basename(last)) else ""     # Disc im Laufwerk
     native = emu_game_ini(tid, game or disc) if game or disc else None      # Abbild lesen dauert: nicht unter der Sperre
     profile = emu_profile(tid, game or disc) if game or disc else {}        # DOSBox: s. dosbox_game_conf
+    emu_pal_rate(tid, game or disc)
     with EMU_LOCK:
         st = emu_state_load()
         emu_opts_restore(tid, st)
@@ -10594,6 +10687,7 @@ def emu_opts_prepare(tid, args):
             if opt and _opt_choice(opt, v):
                 _opt_write(tid, opt, v)
         _opts_apply_defaults(tid, st)
+        emu_textures_prepare(tid)
         if native and game:
             _game_sync(tid, os.path.basename(game), native)
         elif game:
@@ -10635,7 +10729,7 @@ def emu_opts_payload(tile, game=None):
         # Zeilen nur bei "Anpassen". Je Spiel: wie bisher Bild, dann Spiel, nur was sich je Spiel waehlen laesst.
         order = spec["groups"] if game else sorted(spec["groups"], key=lambda g: g[0] != "play")
         for gid, opts in order:
-            shown = [o for o in opts if o["game"]] if game else opts if mode == "custom" else []
+            shown = [o for o in opts if o["game"]] if game else [o for o in opts if not o["hidden"]] if mode == "custom" else []
             for o in shown:
                 if native:
                     values[o["id"]] = _game_ini_read(tile, o, native)
