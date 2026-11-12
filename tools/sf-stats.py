@@ -150,7 +150,9 @@ def main():
     total_days = sum(n for _, n in days)
     have = supported_langs()
 
-    by_lang, members, unknown = {}, {}, []
+    by_lang: dict = {}
+    members: dict = {}
+    unknown: list = []
     for cc, n in countries:
         lang = "fr" if a.maghreb_fr and cc in MAGHREB else COUNTRY_LANG.get(cc)
         if not lang:

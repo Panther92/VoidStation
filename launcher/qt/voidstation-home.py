@@ -26,6 +26,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Any
 
 T0 = time.monotonic()
 HERE = Path(__file__).resolve().parent
@@ -88,7 +89,7 @@ class PadMouse:
         self.kbd_t = 0.0                               # letztes Auf/Zu: analoge L2-Achsen zittern an der Schwelle
         self.home_wins = set()     # Fenster der Startseite (setzt der Qt-Thread)
         self.screen_w = 1920       # Breite des Bildschirms (setzt der Qt-Thread), bestimmt die Geschwindigkeit
-        self.ui = None
+        self.ui: Any = None        # evdev.UInput, beim ersten Gebrauch angelegt
         self.broken = False
         self.override = {}         # Kachel (bzw. Fenster) -> per R3 gewaehlt, gilt bis zum Neustart der Startseite
         self.act, self.act_t = None, 0.0

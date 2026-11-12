@@ -36,7 +36,10 @@ def hx(c):
 
 
 def raster():
-    d = re.search(r' d="([^"]+)"', (ROOT / "site/assets/favicon.svg").read_text()).group(1)
+    m = re.search(r' d="([^"]+)"', (ROOT / "site/assets/favicon.svg").read_text())
+    if not m:
+        sys.exit("favicon.svg: kein Pfad gefunden")
+    d = m.group(1)
     s = V_HEIGHT * H / 276.0            # Pfad: x 8..281, y 8..284 (Mitte 144/146)
     tx, ty = W / 2 - 144 * s, H / 2 - 146 * s
     svg = f'''<svg xmlns="http://www.w3.org/2000/svg" width="{W}" height="{H}" viewBox="0 0 {W} {H}">
@@ -52,7 +55,7 @@ def raster():
     for y in range(H):
         row = ""
         for x in range(W):
-            cnt = {}
+            cnt: dict[str, int] = {}
             for yy in range(y * SS, y * SS + SS):
                 for xx in range(x * SS, x * SS + SS):
                     r, g, b, a = px[xx, yy]
@@ -64,7 +67,7 @@ def raster():
                         k = min("rtbp", key=lambda c: sum((u - v) ** 2 for u, v in zip(COLS[c], (r, g, b))))
                     cnt[k] = cnt.get(k, 0) + 1
             # Weiss gewinnt schon ab 40 %, damit die Striche des V nicht abreissen
-            row += "w" if cnt.get("w", 0) >= 0.40 * SS * SS else max(cnt, key=cnt.get)
+            row += "w" if cnt.get("w", 0) >= 0.40 * SS * SS else max(cnt, key=lambda k: cnt[k])
         grid.append(row)
     return grid
 

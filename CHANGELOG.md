@@ -9,6 +9,7 @@ ganz oben; die Nummer vergibt `vspub --release` bzw. `vspub --hotfix` beim Freig
 Ältere Versionen (bis 0.15.0) tragen noch Nummern nach dem alten Schema.
 
 ## Testing – 2026-11-12
+- Intern: Launcher, Startseite, Player, Installer und Mullvad-Helfer werden jetzt vollständig auf Typfehler geprüft (mypy). Am Verhalten ändert sich nichts.
 - Fernsehen: Die Filterspalte (Länder und Themen) scrollt jetzt mit, wenn sie nicht ganz auf den Bildschirm passt – vorher waren die Themen bei großer Skalierung nicht erreichbar. Eine schmale Leiste links zeigt in scrollenden Listen, dass es weitergeht und wo man gerade ist, auch im AppCenter bei den Kategorien und der App-Liste. Scrollende Spalten blenden oben und unten jetzt sauber aus
 - **YouTube Light: Kapitel**: Hat ein Video Kapitel, zeigt die Zeitleiste sie als Abschnitte und das Bild den Namen des aktuellen Kapitels. <kbd>LB</kbd>/<kbd>RB</kbd> springen dann zum vorigen bzw. nächsten Kapitel (wie bei YouTube erst an den Anfang des laufenden), ohne Kapitel weiter um eine Minute. Die Kapitelliste öffnet sich mit <kbd>Start</kbd> → oberster Eintrag oder mit der Maus über den Listen-Knopf oben rechts
 - Weniger Last im Leerlauf: Startseite und Player fragen den Controller nicht mehr 60-mal pro Sekunde ab, die Controller-Maus nicht mehr 100-mal – beide werden nur noch aktiv, wenn am Controller wirklich etwas passiert. Das schont vor allem ältere Rechner, Bedienung und Tastenwiederholung bleiben gleich

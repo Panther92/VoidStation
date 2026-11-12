@@ -48,8 +48,8 @@ def bt_devices():
 def bt_status():
     return {"available": True, "service": True, "powered": STATE["bt_powered"], "scanning": False,
             "pairing": BT["pairing"], "prompt": BT["prompt"], "blocked": False, "devices": bt_devices()}
-NOWP = {"kind": "music", "title": "Beispieltitel", "sub": "Beispielband", "paused": False, "volume": 80, "skip": True}
-STATE = {"running": ["youtube"], "radio": S.RADIO_NOW, "tv": None, "favs": list(S.RADIO_FAVS), "tvfavs": list(S.TV_FAVS),
+NOWP: dict[str, Any] = {"kind": "music", "title": "Beispieltitel", "sub": "Beispielband", "paused": False, "volume": 80, "skip": True}
+STATE: dict[str, Any] = {"running": ["youtube"], "radio": S.RADIO_NOW, "tv": None, "favs": list(S.RADIO_FAVS), "tvfavs": list(S.TV_FAVS),
          "volume": dict(S.SETTINGS["volume"]), "bt_powered": True, "update": {"available": True, "version": "0.13.0"}}
 STATIONS = [{"name": f"Testsender {i}", "url": f"https://example.invalid/s{i}", "favicon": ""} for i in range(1, 15)]
 ROMS = [{"title": n, "name": n, "filename": n.lower().replace(" ", "-") + ".gba", "size": "8 MB"} for n in
@@ -58,7 +58,7 @@ ROM_COVERS = Path(os.environ["VS_ROM_COVERS"]) if os.environ.get("VS_ROM_COVERS"
 # Tastenbelegung: Beispiel-Controller (PS4) und mGBA-Belegung wie im Launcher (EMU_LAYOUTS, keymap_payload)
 # Layouts wie im Launcher (EMU_LAYOUTS, dort gepflegt – hier nur ausgelesen, damit die Vorschau nicht abweicht)
 _src = (REPO / "launcher" / "launcher.py").read_text(encoding="utf-8")
-_ns: dict[str, Any] = {}
+_ns: dict[str, Any] = {"Any": Any}      # Ausschnitt nutzt Annotationen mit Any
 exec(_src[_src.index("_DPAD = ["):_src.index("EMU_ACTIONS = {")], _ns)
 EMU_LAYOUTS = _ns["EMU_LAYOUTS"]
 PS_TEXT = {"south": "✕", "east": "○", "west": "□", "north": "△", "l1": "L1", "r1": "R1", "l2": "L2", "r2": "R2",
@@ -68,12 +68,12 @@ PS_TEXT = {"south": "✕", "east": "○", "west": "□", "north": "△", "l1": "
 BIOS_NEED = {"duckstation": ["bios"], "pcsx2": ["bios"], "xemu": ["mcpx", "flash", "hdd"]}
 CAPTURE_ROLES = ["south", "east", "west", "north", "l1", "r1", "l2", "r2", "start", "select", "up", "down", "left", "right",
                  "l3", "r3"]
-KEYMAP = {"own": {}, "step": 0, "nopad": os.environ.get("VS_NO_PAD") == "1"}
+KEYMAP: dict[str, Any] = {"own": {}, "step": 0, "nopad": os.environ.get("VS_NO_PAD") == "1"}
 # Optionen der Spieleliste (Attrappe; die echten stehen in launcher.py EMU_OPTS)
-EMUOPTS = {"res": "2", "aspect": "Auto", "widescreen": "false", "renderer": "auto", "speed": "std"}
+EMUOPTS: dict[Any, Any] = {"res": "2", "aspect": "Auto", "widescreen": "false", "renderer": "auto", "speed": "std"}
 EMUOPTS_GAME: dict[str, Any] = {}
 # VS_GAME_DISC=1: Spieleliste mit eingelegter PlayStation-Disc
-PREVIEW_DISC = {"dev": "/dev/sr0", "name": "sr0", "label": "Beispielspiel", "serial": "SLUS-20946", "opts": True} \
+PREVIEW_DISC: dict[str, Any] | None = {"dev": "/dev/sr0", "name": "sr0", "label": "Beispielspiel", "serial": "SLUS-20946", "opts": True} \
     if os.environ.get("VS_GAME_DISC") == "1" else None
 EMUOPT_TF = [{"v": "true", "k": "common.on"}, {"v": "false", "k": "common.off"}]
 EMUOPT_LIST = [("picture", [
@@ -130,7 +130,7 @@ TILES["groups"].insert(1, {"name": "Spiele", "tiles": [
 
 JOB: dict[str, Any] = {}
 # Mullvad VPN (VS_VPN=login | off | on | locked | nodaemon): Kachel in "System", Symbol oben rechts, Seite mit Attrappe
-VPNM = {"mode": os.environ.get("VS_VPN", ""), "loc": ["se", "sto"], "recent": [{"cc": "de", "city": "fra"},
+VPNM: dict[str, Any] = {"mode": os.environ.get("VS_VPN", ""), "loc": ["se", "sto"], "recent": [{"cc": "de", "city": "fra"},
         {"cc": "nl", "city": "ams"}, {"cc": "ch", "city": "zrh"}],
         "opt": {"lockdown": True, "autoconnect": True, "lan": True, "customDns": False,
                 "dns": {"ads": True, "trackers": True, "malware": True, "gambling": False, "adult_content": False, "social_media": False}}}
@@ -203,15 +203,15 @@ def media():
         L.MediaLib.THUMBS = tmp / "thumbs"
         L.CoverFetcher.CACHE = tmp / "covers"                   # Cover-Suche: Zwischenspeicher im Wegwerf-Ordner,
         L.CoverFetcher.MISSES = tmp / "covers" / "misses.json"  # Schalter nur im Speicher (VS_MB_URL/VS_CAA_URL: Testserver)
-        L.CoverFetcher.auto = staticmethod(lambda: PLAYER.get("covers_auto", True))
-        L.CoverFetcher.embed = staticmethod(lambda: PLAYER.get("covers_embed", False))
+        L.CoverFetcher.auto = staticmethod(lambda: PLAYER.get("covers_auto", True))  # type: ignore[method-assign]
+        L.CoverFetcher.embed = staticmethod(lambda: PLAYER.get("covers_embed", False))  # type: ignore[method-assign]
         L.SETTINGS = tmp / "settings.json"                     # Einstellungen (Musik suchen) nicht ins Repo schreiben
         if os.environ.get("VS_DVD"):                           # VS_DVD=<Ordner mit VIDEO_TS>: gilt als eingelegte DVD
             dvd = str(Path(os.environ["VS_DVD"]).resolve())
-            L.DVD.devices = staticmethod(lambda: [dvd])
-            L.DVD._status = lambda d: L.DvdDrive.CDS_DISC_OK
-            L.DVD._size = staticmethod(lambda d: 1)
-            L.DVD.eject = lambda d: True
+            L.DVD.devices = staticmethod(lambda: [dvd])  # type: ignore[method-assign]
+            L.DVD._status = lambda d: L.DvdDrive.CDS_DISC_OK  # type: ignore[method-assign]
+            L.DVD._size = staticmethod(lambda d: 1)  # type: ignore[method-assign]
+            L.DVD.eject = lambda d: True  # type: ignore[method-assign]
         PLAYER["L"] = L
         PLAYER["media"], PLAYER["tmp"] = L.MediaLib(), tmp
     return PLAYER["media"]
@@ -244,6 +244,7 @@ def yt():
             sys.path.insert(0, str(REPO / "tools"))
             import importlib.util
             spec = importlib.util.spec_from_file_location("ytmock", REPO / "tools" / "yt-dlp-mock.py")
+            assert spec is not None and spec.loader is not None
             M = importlib.util.module_from_spec(spec); spec.loader.exec_module(M)
             Y = YTP["YT"]
             Y._save(C.SUBS, [{"id": c, "title": n, "thumb": f"/api/yt/img?u=https://yt3.ggpht.com/{c}"} for c, n in M.CHANNELS])
@@ -332,7 +333,7 @@ def job():
                        **{"from": "0.12.1", "to": "0.13.0"})
             for i, x in enumerate(JOB["steps"]):
                 x["state"] = "done" if t >= 2.5 + 1.5 * i else "run" if t >= 1 + 1.5 * i else "wait"
-            items = [{"id": "system", "icon": "cube", "color": "#2f5578", "n": 12}, {"id": "app:spotify", "name": "Spotify", "icon": "music", "color": "#1e4a2e"},
+            items: list[dict[str, Any]] = [{"id": "system", "icon": "cube", "color": "#2f5578", "n": 12}, {"id": "app:spotify", "name": "Spotify", "icon": "music", "color": "#1e4a2e"},
                      {"id": "app:heroic", "name": "Heroic Games Launcher", "icon": "gamepad", "color": "#3b2d5c"},
                      {"id": "vs", "name": "VoidStation", "icon": "update", "color": "#1f6470"}, {"id": "check", "icon": "search", "color": "#50575f"}]
             spans = [(1, 2), (2, 4.5), (4.5, 5.5), (5.5, 6.5), (6.5, 7)]
@@ -389,7 +390,7 @@ def settings():
 
 # Installer (--live): Geraet wie im Web-Installer (DEMO_PROBE), Installation laeuft simuliert in ~20 s durch
 GiB = 1024 ** 3
-PROBE = {"uefi": True, "secureboot": False, "arch": "x86_64", "ram": 3.7 * GiB, "cpu": "Intel Core i3-6100T", "gpu": ["Intel HD Graphics 530"],
+PROBE: dict[str, Any] = {"uefi": True, "secureboot": False, "arch": "x86_64", "ram": 3.7 * GiB, "cpu": "Intel Core i3-6100T", "gpu": ["Intel HD Graphics 530"],
          "net": "lan", "screen": {"mode": "1280x720", "rate": 60}, "favs": {"radio": 2, "tv": 1}, "wifi_saved": ["Zuhause-5G"],
          "windows": False, "lang": "de", "users": [],
          "disks": [
@@ -410,7 +411,7 @@ PROBE = {"uefi": True, "secureboot": False, "arch": "x86_64", "ram": 3.7 * GiB, 
               "free": [{"start": 777534528, "sectors": 199000000, "bytes": 101888000000}],
               "options": {"whole": True, "free": [{"start": 777534528, "sectors": 199000000, "bytes": 101888000000}]}}]}
 # Sprachen, Tastaturen und Vorgaben wie im Launcher (probe: langs, kbs, kb, lang)
-_li: dict[str, Any] = {}
+_li: dict[str, Any] = {"Any": Any}
 exec(_src[_src.index("LANG_TABLE = ["):_src.index("LANGS = [")], _li)
 exec(_src[_src.index("_GRP = ["):_src.index("# ----", _src.index("_GRP = ["))], _li)
 PROBE["langs"] = [{"id": i, "label": n, "kb": _li["INSTALL_DEFAULTS"][i][0], "tz": _li["INSTALL_DEFAULTS"][i][1]}
@@ -427,8 +428,8 @@ def region_of(lang):
 def region_quick(lang):
     r = region_of(lang)
     return [r] + [c for c in _li["TV_QUICK"].get(lang, []) if c != r][:2]
-INST = {"state": "idle"}
-LIVE = {"on": False, "fail": False}
+INST: dict[str, Any] = {"state": "idle"}
+LIVE: dict[str, Any] = {"on": False, "fail": False}
 
 
 def inst_status():
@@ -463,7 +464,7 @@ def inst_status():
 # Einstellungen → Updates: ?force=1 stoesst wie auf dem Geraet eine Paketpruefung "im Hintergrund" an, die hier
 # VS_UPD_CHECK Sekunden dauert (Standard 4). VS_UPD=sys -> kein VoidStation-Update, Systemupdates erst nach der Pruefung
 # (die Oberflaeche wartet); VS_UPD=none -> nichts zu tun. VS_CHANNEL=main -> Geraet steht auf Testing.
-UPD = {"until": 0.0, "done": False, "channel": os.environ.get("VS_CHANNEL", "stable")}
+UPD: dict[str, Any] = {"until": 0.0, "done": False, "channel": os.environ.get("VS_CHANNEL", "stable")}
 
 
 def updates(q):
@@ -487,7 +488,7 @@ def updates(q):
 
 # Eingabefeld im Browser (wie OskField in launcher.py): melden mit
 #   curl -H 'X-TV: 1' -d '{"ev":"focus","kind":"search","pos":0.1,"sid":"t"}' http://127.0.0.1:8766/api/osk/field
-OSKF = {"cv": threading.Condition(), "seq": 0, "state": {}}
+OSKF: dict[str, Any] = {"cv": threading.Condition(), "seq": 0, "state": {}}
 
 
 def osk_wait(seq):

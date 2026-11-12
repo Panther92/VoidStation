@@ -244,7 +244,8 @@ def parse_changelog(path):
     """[{version, date, body}] – body = Markdown der Stichpunkte (auch eingerueckte)."""
     if not path.exists():
         return []
-    entries, cur = [], None
+    entries: list = []
+    cur: dict | None = None
     for line in path.read_text(encoding="utf-8").splitlines():
         m = re.match(r"^##\s+(\S+)\s+[–-]\s+(\d{4}-\d{2}-\d{2})", line)
         if m:
@@ -545,7 +546,7 @@ class Site:
                 first = re.search(r"<li>(.*?)(?:</li>|<ul>|<ol>)", body, re.S)
                 item["excerpt"][lang] = shorten(first.group(1) if first else body, 170)
             items.append(item)
-        posts = {}
+        posts: dict = {}
         for p in sorted((self.sd / "news").glob("*.md")):
             m = re.match(r"^(\d{4}-\d{2}-\d{2})-([\w-]+)\.(de|en)\.md$", p.name)
             if not m:

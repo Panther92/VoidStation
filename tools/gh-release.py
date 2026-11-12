@@ -25,7 +25,8 @@ SITE = "https://voidstation.de/en/download/"
 
 def changelog(path):
     """Versionen aus CHANGELOG.en.md: {version: {"date":…, "body": Markdown}} in Dateireihenfolge."""
-    entries, cur = {}, None
+    entries: dict = {}
+    cur: dict | None = None
     order = []
     with open(path, encoding="utf-8") as f:
         for line in f:

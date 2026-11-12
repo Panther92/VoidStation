@@ -9,6 +9,7 @@ at the top; `vspub --release` or `vspub --hotfix` assigns the number when releas
 Older versions (up to 0.15.0) still use the old numbering.
 
 ## Testing – 2026-11-12
+- Internal: the launcher, home screen, player, installer and Mullvad helper are now fully checked for type errors (mypy). Nothing changes in how they behave.
 - TV: The filter column (countries and topics) now scrolls when it does not fit on the screen – before, the topics could not be reached at large scaling. A thin bar on the left of scrolling lists shows that there is more and where you are, also in the AppCenter next to the categories and the app list. Scrolling columns now fade out cleanly at the top and bottom
 - **YouTube Light: chapters**: If a video has chapters, the timeline shows them as sections and the overlay shows the current chapter's name. <kbd>LB</kbd>/<kbd>RB</kbd> then jump to the previous or next chapter (like YouTube, first to the start of the current one), without chapters still by one minute. The chapter list opens with <kbd>Start</kbd> → top entry, or with the mouse via the list button at the top right
 - Less load when idle: the home screen and the player no longer poll the controller 60 times a second, the controller mouse no longer 100 times – both only wake up when something actually happens on the controller. This mainly helps older computers; controls and key repeat stay the same

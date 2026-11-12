@@ -40,8 +40,8 @@ CHANNELS = [
     ("ZDFneo", "series", "720p"), ("ZDFinfo", "documentary", "720p"), ("Deutsche Welle", "news", "1080p"),
     ("SWR", "general", "720p"), ("hr-fernsehen", "general", "720p"), ("rbb", "general", "720p"),
 ]
-TV = [{"key": f"k{i:02d}", "name": n, "country": "DE", "cats": [c], "quality": q, "logo": None}
-      for i, (n, c, q) in enumerate(CHANNELS)]
+TV: list[dict[str, Any]] = [{"key": f"k{i:02d}", "name": n, "country": "DE", "cats": [c], "quality": q, "logo": None}
+                            for i, (n, c, q) in enumerate(CHANNELS)]
 TV_FAVS = [TV[0], TV[1], TV[4], TV[6]]
 
 
@@ -50,7 +50,7 @@ def tv_list(q, data=None):
     g = lambda k: q.get(k, [""])[0]
     letter_of = lambda n: (n[:1].upper() if n[:1].isalpha() and n[:1].upper() <= "Z" else "#")
     sel = [c for c in (data or TV) if not g("cat") or g("cat") in c["cats"]]
-    letters = {}
+    letters: dict[str, int] = {}
     for c in sel:
         letters[letter_of(c["name"])] = letters.get(letter_of(c["name"]), 0) + 1
     if g("q"):

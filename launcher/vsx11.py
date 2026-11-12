@@ -15,13 +15,14 @@ import subprocess
 import threading
 import time
 from ctypes import POINTER, Structure, Union, byref, c_char_p, c_int, c_long, c_ubyte, c_uint, c_ulong, c_void_p
+from typing import Any
 
 _lock = threading.RLock()
-_x = None
+_x: Any = None                  # ctypes.CDLL nach _open(); Funktionen nur nach erfolgreichem _open() benutzt
 _dpy = None
 _root = 0
 _tried = False
-_atoms = {}
+_atoms: dict[str, int] = {}
 _ATOM_NONE = 0
 
 
@@ -254,7 +255,7 @@ def wm_state(win, action, *props):
 # sonst), deshalb holt sich die Startseite die Tasten direkt vom X-Server, solange eine Ecke offen ist.
 _KEYSYMS = {0xff51: "left", 0xff52: "up", 0xff53: "right", 0xff54: "down", 0xff0d: "a", 0xff8d: "a", 0xff1b: "b"}
 _MODS = (0, 0x02, 0x10, 0x12)                    # auch mit Feststelltaste und NumLock
-_grabbed = {}
+_grabbed: dict[int, str] = {}
 
 
 def grab_keys(on):
@@ -328,10 +329,12 @@ class _Typer:
     SETTLE = 0.04                 # nach dem Umbelegen eines Tastencodes: Programme lesen die Belegung neu
 
     def __init__(self):
-        self.q = queue.Queue()
-        self.thread = None
-        self.ok = None
-        self.x = self.xt = self.dpy = None
+        self.q: queue.Queue = queue.Queue()
+        self.thread: threading.Thread | None = None
+        self.ok: bool | None = None
+        self.x: Any = None          # libX11, libXtst (ctypes) – gesetzt in _open()
+        self.xt: Any = None
+        self.dpy = None
         self.mine = collections.OrderedDict()      # Tastencode -> Keysym (von uns belegt, zuletzt benutzt hinten)
         self.lo = self.hi = 0
         self.injected = 0.0                        # Zeitpunkt des letzten Tastendrucks (monotonic)
@@ -433,7 +436,8 @@ class _Typer:
 
     def _text(self, text):
         mapping = self._mapping()
-        lvl1, lvl2 = {}, {}                           # Keysym -> erster Tastencode auf Ebene 1 bzw. 2
+        lvl1: dict[int, int] = {}                     # Keysym -> erster Tastencode auf Ebene 1 bzw. 2
+        lvl2: dict[int, int] = {}
         if self._plain_ok():
             for c, (l1, l2, _any) in mapping.items():
                 if c not in self.mine:

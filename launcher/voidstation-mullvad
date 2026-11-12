@@ -217,7 +217,10 @@ def extract(deb, dest, work):
                 continue
             target = dest / name
             target.parent.mkdir(parents=True, exist_ok=True)
-            with t.extractfile(m) as src, open(target, "wb") as f:
+            src = t.extractfile(m)
+            if src is None:                         # kann nach isfile() nicht vorkommen
+                continue
+            with src, open(target, "wb") as f:
                 shutil.copyfileobj(src, f)
             os.chmod(target, TAKE[name])
             found.add(name)

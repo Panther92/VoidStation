@@ -93,7 +93,8 @@ def cmd_next(a):
         die(f"{a.stable}: keine freigegebene Version")
     cal = [v for v in released if vkey(v)]
     month = a.month or date.today().strftime("%Y.%m")
-    if not CALVER.match(month) or CALVER.match(month).group(3):
+    cm = CALVER.match(month)
+    if not cm or cm.group(3):
         die(f"ungueltiger Monat: {month}")
     if a.mode == "hotfix" and cal:
         base = ".".join(cal[0].split(".")[:2])       # Hotfix gehoert zur aktuellen Stable-Version

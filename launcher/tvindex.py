@@ -64,7 +64,7 @@ def fetch(url, dest, max_age, log=print):
 def build_index(ch, st, lg):
     """Senderliste aus channels/streams/logos.json: ein Eintrag je Sender und Feed, sortiert wie die A–Z-Leiste."""
     chans = {c["id"]: c for c in ch if not c.get("is_nsfw") and not c.get("closed")}
-    logos = {}
+    logos: dict = {}
     for l in lg:
         if l.get("channel") and l.get("url") and not l.get("feed"):
             logos.setdefault(l["channel"], l["url"])

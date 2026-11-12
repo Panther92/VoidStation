@@ -39,6 +39,7 @@ import sys
 import threading
 import time
 from pathlib import Path
+from typing import Any
 
 T0 = time.monotonic()
 HERE = Path(__file__).resolve().parent
@@ -517,8 +518,8 @@ class Video(QObject):
         self.engine, self.win = engine, win
         self.ctx, self.dead, self._show = None, False, True
         self._gpa = engine.mpvmod.MpvGlGetProcAddressFn(self._proc_address)
-        self.getint = None
-        self.gl_reset = None
+        self.getint: Any = None                           # glGetIntegerv und GlReset, gesetzt im ersten _render()
+        self.gl_reset: Any = None
         self.frame.connect(win.update, Qt.QueuedConnection)
         win.beforeRenderPassRecording.connect(self._render, Qt.DirectConnection)
         win.frameSwapped.connect(self._swapped, Qt.DirectConnection)
@@ -947,7 +948,7 @@ class PlayerApp:
                 break
         self.vs = Bridge()
         self.vs.app = self
-        self.win = None
+        self.win: Any = None
         self.video = None
         self.lang = self._lang()
         self.vs.setLang(self.lang)
@@ -956,7 +957,7 @@ class PlayerApp:
         self.pad = Gamepad()
         self.pump = PadPump(self.pad, self._pad_active)
         self.vs.attach_pump(self.pump)
-        self.server = None
+        self.server: Any = None
         self.rates = None
 
     @staticmethod

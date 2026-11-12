@@ -16,18 +16,12 @@ exclude = ["dist"]
 [tool.ruff.lint]
 select = ["F", "E9", "PLE"]
 
-[tool.ruff.lint.per-file-ignores]
-# Einziger Altfund: tote Variable mb_off in CoverFetcher.fetch (harmlos).
-# Bei der naechsten Aenderung an launcher.py die Zeile loeschen und diesen
-# Eintrag streichen.
-"launcher/launcher.py" = ["F841"]
-
 # ---------------------------------------------------------------------
-#  mypy: Stufe 1 – nur annotierte Funktionen und Modul-Ebene pruefen.
+#  mypy: alle Funktionen pruefen, auch ohne Annotationen (check_untyped_defs).
 #  Site-Packages bewusst aus: PySide6, evdev usw. gelten als Any, damit das
 #  Ergebnis nicht davon abhaengt, was auf dem Rechner installiert ist.
-#  Dateien mit offenen Funden: MYPY_TODO in tools/check.sh.
-#  Naechste Stufe (spaeter): check_untyped_defs = true
+#  Wo ein Wert erst spaeter gesetzt wird (ctypes-Bibliotheken, Qt-Objekte,
+#  evdev-Geraete), steht Any; Pipes von Popen per assert.
 # ---------------------------------------------------------------------
 [tool.mypy]
 python_version = "3.11"
@@ -36,3 +30,4 @@ follow_imports = "silent"
 no_site_packages = true
 scripts_are_modules = true
 warn_unused_configs = true
+check_untyped_defs = true

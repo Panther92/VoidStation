@@ -7,7 +7,7 @@
 #    tools/check.sh
 #
 #  Prueft: Shell-Skripte (shellcheck, falls installiert, sonst bash -n / sh -n),
-#  Python-Syntax, Python-Fehlerklassen (ruff) und Typen (mypy, schrittweise),
+#  Python-Syntax, Python-Fehlerklassen (ruff) und Typen (mypy),
 #  JSON-Dateien, Bau (build.sh: i18n vollstaendig, CHANGELOG de + en,
 #  ISO-Teile) und den Bau der Webseite.
 #
@@ -75,14 +75,6 @@ PYEOF
 # Feste Versionen fuer die CI, damit ein neues Release dort nichts rot faerbt.
 RUFF_VERSION=0.16.9
 MYPY_VERSION=2.3.1
-# Dateien mit offenen mypy-Funden (Stufe 1). Beim naechsten Anfassen der
-# Datei die Funde beheben und den Eintrag streichen; neue Dateien kommen
-# automatisch in die Pruefung.
-MYPY_TODO=(
-  launcher/launcher.py              # 10: Annotationen fuer leere dict/set, wiederverwendetes e
-  launcher/vsx11.py                 # 2: Annotationen _atoms, _grabbed
-  launcher/voidstation-installer    # 1: Annotation SECRETS
-)
 RUFF=(); MYPY=()
 command -v ruff >/dev/null 2>&1 && RUFF=(ruff)
 command -v mypy >/dev/null 2>&1 && MYPY=(mypy)
@@ -106,16 +98,9 @@ else
   echo "(ruff nicht installiert – uebersprungen)"
 fi
 
-step "Python: Typen (mypy, Stufe 1)"
+step "Python: Typen (mypy)"
 if [ ${#MYPY[@]} -gt 0 ]; then
-  mypy_files=()
-  for f in "${py_files[@]}"; do
-    skip=0
-    for t in "${MYPY_TODO[@]}"; do [ "$f" = "$t" ] && skip=1 && break; done
-    [ "$skip" = 0 ] && mypy_files+=("$f")
-  done
-  "${MYPY[@]}" --no-incremental --cache-dir=/dev/null "${mypy_files[@]}" || bad "mypy"
-  echo "(noch ausgenommen: ${MYPY_TODO[*]})"
+  "${MYPY[@]}" --no-incremental --cache-dir=/dev/null "${py_files[@]}" || bad "mypy"
 else
   echo "(mypy nicht installiert – uebersprungen)"
 fi

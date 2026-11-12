@@ -35,6 +35,7 @@ import sys
 import time
 import uuid
 from pathlib import Path
+from typing import Any
 
 RUNDIR = Path("/run/voidstation-installer")
 STATE = RUNDIR / "state.json"
@@ -88,7 +89,14 @@ class Fail(Exception):
 # ---------------------------------------------------------------------------
 #  Grundfunktionen
 # ---------------------------------------------------------------------------
-SECRETS = []                                          # Passwoerter: nie ins Protokoll
+SECRETS: list[str] = []                               # Passwoerter: nie ins Protokoll
+
+
+def must_match(m: "re.Match[str] | None") -> "re.Match[str]":
+    """Treffer, der da sein muss. Fehlt er, scheitert es wie bisher mit AttributeError."""
+    if m is None:
+        raise AttributeError("kein Treffer")
+    return m
 
 
 def log(*a):
@@ -326,7 +334,7 @@ def os_release_name(root):
 
 def esp_loaders(root):
     """Bekannte EFI-Lader auf einer EFI-Partition (Pfade relativ zur Partition)."""
-    found = []
+    found: list[dict] = []
     efi = next((d for d in root.iterdir() if d.name.lower() == "efi" and d.is_dir()), None) if root.is_dir() else None
     if not efi:
         return found
@@ -374,7 +382,7 @@ def ntfs_info(dev):
     """Mindestgroesse und Zustand einer NTFS-Partition ueber ntfsresize --info (liest nur)."""
     r = sh(["ntfsresize", "--info", "--no-progress-bar", dev], check=False, quiet=True)
     out = r.stdout + r.stderr
-    info = {"hibernated": bool(re.search(r"hibernat", out, re.I)), "dirty": bool(re.search(r"inconsistent|chkdsk|scheduled for check", out, re.I))}
+    info: dict[str, Any] = {"hibernated": bool(re.search(r"hibernat", out, re.I)), "dirty": bool(re.search(r"inconsistent|chkdsk|scheduled for check", out, re.I))}
     m = re.search(r"You might resize at (\d+) bytes", out)
     if m:
         info["min"] = int(m.group(1))
@@ -387,7 +395,7 @@ def ntfs_info(dev):
 def ext_info(dev):
     info = {}
     d = sh(["dumpe2fs", "-h", dev], check=False, quiet=True).stdout
-    bs = int(re.search(r"Block size:\s*(\d+)", d).group(1)) if "Block size" in d else 4096
+    bs = int(must_match(re.search(r"Block size:\s*(\d+)", d)).group(1)) if "Block size" in d else 4096
     bc = re.search(r"Block count:\s*(\d+)", d)
     fb = re.search(r"Free blocks:\s*(\d+)", d)
     if bc and fb:
@@ -466,7 +474,7 @@ def probe():
            "disks": [], "windows": False, "hibernated": False, "bitlocker": False, "min_root": MIN_ROOT, "esp_size": ESP_SIZE,
            "users": sorted({l.split(":", 1)[0] for l in open("/etc/passwd", encoding="utf-8") if ":" in l})}
     try:
-        res["ram"] = int(re.search(r"MemTotal:\s+(\d+)", open("/proc/meminfo").read()).group(1)) * 1024
+        res["ram"] = int(must_match(re.search(r"MemTotal:\s+(\d+)", open("/proc/meminfo").read())).group(1)) * 1024
     except (OSError, AttributeError):
         pass
     for d in lsb.get("blockdevices", []):
@@ -490,7 +498,7 @@ def probe():
             c = byname.get(p["node"], {})
             ptype = (p.get("type") or "").lower()
             fs = c.get("fstype") or blkid(p["node"], "TYPE")          # lsblk kennt es nur mit laufendem udev
-            part = {"path": p["node"], "num": int(re.search(r"(\d+)$", p["node"]).group(1)), "start": p["start"],
+            part = {"path": p["node"], "num": int(must_match(re.search(r"(\d+)$", p["node"])).group(1)), "start": p["start"],
                     "sectors": p["size"], "size": p["size"] * disk.get("sectorsize", 512), "type": ptype,
                     "fstype": fs, "label": c.get("label") or blkid(p["node"], "LABEL") or p.get("name") or "",
                     "uuid": c.get("uuid") or blkid(p["node"], "UUID"),
@@ -843,7 +851,7 @@ class Run:
             new_part_bytes = (old_bytes - int(c["new_size"]) - esp_need) // MiB * MiB
             if new_part_bytes <= 0:
                 raise Fail("bad_size")
-            plan = {"num": int(re.search(r"(\d+)$", p).group(1)), "pu": partuuid(p), "start": me["start"], "ss": ss,
+            plan = {"num": int(must_match(re.search(r"(\d+)$", p)).group(1)), "pu": partuuid(p), "start": me["start"], "ss": ss,
                     "old_sectors": me["size"], "new_sectors": new_part_bytes // ss, "fs": blkid(p, "TYPE"),
                     "fs_bytes": new_part_bytes - MiB}           # Dateisystem etwas kleiner als die Partition
             self.st["shrink_plan"] = plan; save_state(self.st)
@@ -1039,6 +1047,7 @@ class Run:
         errs = [open(RUNDIR / f"tar-{n}.err", "w+b") for n in ("c", "x")]   # Meldungen in Dateien: Pipe laeuft nie voll
         pc = subprocess.Popen(tar_c, stdout=subprocess.PIPE, stderr=errs[0])
         px = subprocess.Popen(tar_x, stdin=subprocess.PIPE, stderr=errs[1])
+        assert pc.stdout is not None and px.stdin is not None    # PIPE gesetzt
         done, last, t0 = 0, 0.0, time.time()
         try:
             while True:
@@ -1056,10 +1065,10 @@ class Run:
         except (BrokenPipeError, OSError):
             pc.kill()
         rc_c, rc_x = pc.wait(), px.wait()
-        err = b""
+        raw = b""
         for e in errs:
-            e.seek(0); err += e.read()[-4000:]; e.close()
-        err = err.decode("utf-8", "replace")
+            e.seek(0); raw += e.read()[-4000:]; e.close()
+        err = raw.decode("utf-8", "replace")
         if err.strip():
             log(err[-3000:])
         if rc_c not in (0, 1) or rc_x != 0:                 # tar-Rueckgabe 1 = Dateien waehrend des Lesens geaendert
@@ -1155,7 +1164,7 @@ class Run:
                  f"UUID={ru}  /          ext4   defaults,noatime  0 1",
                  f"UUID={eu}  /boot/efi  vfat   defaults,umask=0077  0 2",
                  "tmpfs  /tmp  tmpfs  defaults,nosuid,nodev  0 0"]
-        ram_mb = int(re.search(r"MemTotal:\s+(\d+)", open("/proc/meminfo").read()).group(1)) // 1024
+        ram_mb = int(must_match(re.search(r"MemTotal:\s+(\d+)", open("/proc/meminfo").read())).group(1)) // 1024
         if ram_mb < 7800 and not (T / "swapfile").exists() and shutil.disk_usage(T).free > 6 * GiB:
             sh(["fallocate", "-l", "2G", str(T / "swapfile")])
             os.chmod(T / "swapfile", 0o600)
@@ -1186,8 +1195,8 @@ class Run:
         pwf = T / "root/.voidstation-smbpass"                # Passwort per Datei, nicht in der Befehlszeile
         pwf.parent.mkdir(exist_ok=True)
         fd = os.open(pwf, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, "w") as f:
-            f.write(u["password"])
+        with os.fdopen(fd, "w") as pw:
+            pw.write(u["password"])
         env = ["env", f"VSUSER={login}", f"VSNAME={u['name']}", "SMBPASS_FILE=/root/.voidstation-smbpass",
                "SVDIR=/etc/runit/runsvdir/default", "VOIDSTATION_CHROOT=1", "VOIDSTATION_OFFLINE=1",
                "VOIDSTATION_NONINTERACTIVE=1", "VOIDSTATION_NOSSH=1", "HOME=/root", "TERM=dumb"]
@@ -1234,10 +1243,10 @@ class Run:
             if src.is_dir():
                 dst.mkdir(parents=True, exist_ok=True)
                 os.chmod(dst, 0o700)
-                for f in src.iterdir():
-                    if f.is_file():
-                        shutil.copy2(f, dst / f.name)
-                        os.chmod(dst / f.name, 0o600)
+                for cf in src.iterdir():
+                    if cf.is_file():
+                        shutil.copy2(cf, dst / cf.name)
+                        os.chmod(dst / cf.name, 0o600)
         ch = T / "usr/local/share/voidstation/channel"
         ch.parent.mkdir(parents=True, exist_ok=True)
         ch.write_text("stable\n")              # seit 2026.11 immer Stable; Testing nur noch per "vsctl channel testing"

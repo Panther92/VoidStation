@@ -41,6 +41,7 @@ import zlib
 from html import escape as html_escape, unescape as html_unescape
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 import tvindex
 import vsx11
@@ -70,6 +71,13 @@ POWER = {
     "reboot": ["sudo", "-n", "/usr/bin/reboot"],
     "suspend": ["sudo", "-n", "/usr/local/sbin/voidstation-pkg", "suspend"],
 }
+
+
+def must_match(m: "re.Match[str] | None") -> "re.Match[str]":
+    """Treffer, der da sein muss. Fehlt er, scheitert es wie bisher mit AttributeError."""
+    if m is None:
+        raise AttributeError("kein Treffer")
+    return m
 
 
 def log(*a):
@@ -206,7 +214,7 @@ class AppManager:
             with self.lock:
                 proc = self.procs.get(tid)
                 skip = not proc or tid in self.paused or tid not in self.shown
-            if skip or not app_suspendable(tid):
+            if skip or proc is None or not app_suspendable(tid):
                 continue
             pids = session_pids(proc.pid)
             self._kill_all(pids, signal.SIGSTOP)
@@ -551,7 +559,7 @@ class PlayerManager:
 
 
 PLAYERS = PlayerManager()
-MEDIA_NOW = {}                                         # was "Videos & Musik" gerade spielt (Kachel der Startseite)
+MEDIA_NOW: dict = {}                                   # was "Videos & Musik" gerade spielt (Kachel der Startseite)
 
 
 # ---------------------------------------------------------------------------
@@ -717,7 +725,7 @@ def radio_search(query):
 
 
 
-_POPULAR = {}                                   # Land -> (Zeitpunkt, Sender); 6 h zwischenspeichern
+_POPULAR: dict = {}                             # Land -> (Zeitpunkt, Sender); 6 h zwischenspeichern
 
 
 def radio_popular(cc, limit=24):
@@ -796,7 +804,7 @@ def volume_set(action):
 #  Einstellungen (Skalierung, Aufloesung, Audioausgang, Netzwerk)
 # ---------------------------------------------------------------------------
 SETTINGS = BASE / "settings.json"
-DEFAULTS = {"scale": 1.75, "resolution": None, "cursor_theme": "Bibata-Modern-Ice", "cursor_size": 48, "lang": None, "theme": "default-dark",
+DEFAULTS: dict[str, Any] = {"scale": 1.75, "resolution": None, "cursor_theme": "Bibata-Modern-Ice", "cursor_size": 48, "lang": None, "theme": "default-dark",
             "sysupd_days": 90, "padmouse": True, "covers_auto": True, "covers_embed": False, "audio_auto": True,
             "emu_fullscreen": True, "save_backup": True, "rom_covers": True,
             "rate": None, "match_rate": False, "osk_layout": None, "osk_mode": "auto"}
@@ -913,7 +921,7 @@ def tz_current():
     return t.split("zoneinfo/", 1)[1] if "zoneinfo/" in t else ""
 
 
-_TZ_CC = None
+_TZ_CC: dict | None = None
 
 
 def tz_country(tz):
@@ -1276,7 +1284,7 @@ def dosbox_game_conf(game):
     """Optionen nur fuer dieses Spiel (Spieleliste): Abschnitte fuer die Datei, die VoidStation vor jedem Start schreibt."""
     if not game:
         return ""
-    sections = {}
+    sections: dict = {}
     try:
         for section, values in emu_opts_game_writes("dosbox", game.name):
             sections.setdefault(section, {}).update(values)
@@ -1710,7 +1718,7 @@ def restart_home_later(delay=0.8):
 def xrandr_info():
     """Angeschlossene Ausgaenge mit Modi und Bildraten (aus xrandr --query)."""
     r = run(["xrandr", "--query"])
-    outs = []
+    outs: list = []
     if not r or r.returncode != 0:
         return outs
     cur = None
@@ -1978,7 +1986,7 @@ def _audio_sink_of(card, sinks):
 
 def audio_devices(cards, sinks, default_sink):
     """Geraeteliste aus pactl (list cards / list sinks / get-default-sink). Rein rechnend – testbar ohne PipeWire."""
-    devs = {}
+    devs: dict = {}
     for c in cards or []:
         card, kind = c.get("name", ""), _audio_card_kind(c)
         props = c.get("properties") or {}
@@ -2210,6 +2218,7 @@ class AudioWatch:
         while True:
             try:
                 p = subprocess.Popen(["pactl", "subscribe"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
+                assert p.stdout is not None
             except OSError:
                 return
             for line in p.stdout:
@@ -2404,7 +2413,7 @@ def wifi_scan():
         raise RuntimeError("WLAN-Suche dauert zu lange – ist ein WLAN-Adapter angeschlossen?")
     if r.returncode != 0:
         raise RuntimeError(r.stderr.strip() or "WLAN-Suche fehlgeschlagen")
-    nets = {}
+    nets: dict = {}
     for line in r.stdout.splitlines():
         use, ssid, sig, sec = (nm_split(line) + ["", "", "", ""])[:4]
         if not ssid:
@@ -2436,7 +2445,7 @@ def wifi_saved():
         if g and g.returncode == 0 and g.stdout.strip():
             # -g maskiert Doppelpunkte und Backslashes
             found.append((int(ts) if ts.isdigit() else 0, uuid, ":".join(nm_split(g.stdout.strip()))))
-    out = {}
+    out: dict = {}
     for _, uuid, ssid in sorted(found, key=lambda f: -f[0]):
         out.setdefault(ssid, []).append(uuid)
     return out
@@ -2894,7 +2903,7 @@ class EPGManager:
             is_gz = (magic == b"\x1f\x8b")
 
             f = gzip.open(source_file, "rb") if is_gz else open(source_file, "rb")
-            data = {}
+            data: dict = {}
             name_map = {}
             now_ts = time.time()
             cutoff_past = now_ts - 7200       # 2 Stunden Puffer in die Vergangenheit
@@ -3704,6 +3713,7 @@ class MediaLib:
             st = p.stat()
         except OSError:
             return None
+        kind: str | None
         if p.is_dir():
             kind = "dir"
         else:
@@ -3757,6 +3767,8 @@ class MediaLib:
             else:
                 raise FileNotFoundError(str(p))
         res = self.resume_load()
+        dirs: list
+        files: list
         dirs, files = [], []
         try:
             names = sorted(os.listdir(p), key=natural_key)
@@ -3765,10 +3777,10 @@ class MediaLib:
         for n in names[:3000]:
             if n.startswith("."):
                 continue
-            e = self.entry(p / n, res)
-            if not e:
+            ent = self.entry(p / n, res)
+            if not ent:
                 continue
-            (dirs if e["kind"] == "dir" else files).append(e)
+            (dirs if ent["kind"] == "dir" else files).append(ent)
         roots = self.allowed_roots()
         parent = "" if p in roots or p.parent in (Path("/run/media"), Path("/media")) else str(p.parent)
         if p.parent == self.share().resolve():
@@ -4090,7 +4102,6 @@ class CoverFetcher:
             img = self._online(artist, album) if album else None
             source = f"MusicBrainz ({artist} – {album})"
             if not img and album:
-                mb_off = self.offline
                 img, _meta = self._itunes(artist, "", album)
                 source = f"iTunes ({artist} – {album})"
                 self.offline = self.offline and not img
@@ -4444,7 +4455,8 @@ class CoverFetcher:
                 self.offline = True
                 return None, None
         sim = lambda x, y: difflib.SequenceMatcher(None, self._fold(x), self._fold(y)).ratio()    # noqa: E731
-        best, best_score = None, 0.0
+        best: Any = None                               # Treffer (dict) aus der iTunes-Suche
+        best_score = 0.0
         for r in d.get("results") or []:
             got = r.get("trackName") if title else r.get("collectionName")
             sn = max(sim(name, got), sim(name, self._clean(got or "")))
@@ -4543,8 +4555,8 @@ class CoverFetcher:
             va = any((a.get("name") or "").casefold() in ("various artists", "verschiedene interpreten")
                      for a in r.get("artist-credit") or [])
             return (0 if r.get("status") == "Official" else 1, 1 if (rg.get("secondary-types") or va) else 0,
-                    {"Album": 0, "Single": 1, "EP": 2}.get(rg.get("primary-type"), 3), r.get("date") or "9999", -score)
-        best = {}
+                    {"Album": 0, "Single": 1, "EP": 2}.get(rg.get("primary-type") or "", 3), r.get("date") or "9999", -score)
+        best: dict = {}
         for rec in (d.get("recordings") or [])[:8]:
             score = int(rec.get("score") or 0)
             if score < 90:
@@ -4794,7 +4806,7 @@ class MusicDL:
                     self.worker = None
                     return
                 job["state"] = "running"
-                it = self.results.get(job["key"])
+                it: Any = self.results.get(job["key"])
             try:
                 path = self._album(it) if it["kind"] == "album" else self._track(it)
                 rel = str(Path(path).relative_to(MEDIA.share())) if str(path).startswith(str(MEDIA.share())) else str(path)
@@ -4830,7 +4842,7 @@ class MusicDL:
         tracks = pick("VBR MP3") or pick("MP3") or pick("128Kbps MP3") or pick("Ogg Vorbis") or pick("Flac")
         if not tracks:
             raise RuntimeError("keine Musikdateien in diesem Eintrag")
-        tracks.sort(key=lambda f: (int(re.match(r"\d+", str(f.get("track") or "999")).group(0)) if re.match(r"\d+", str(f.get("track") or "")) else 999,
+        tracks.sort(key=lambda f: (int(must_match(re.match(r"\d+", str(f.get("track") or "999"))).group(0)) if re.match(r"\d+", str(f.get("track") or "")) else 999,
                                    natural_key(f["name"])))
         md = meta.get("metadata") or {}
         artist = md.get("creator") or it["artist"]
@@ -4901,6 +4913,7 @@ class MusicDL:
             p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, errors="replace",
                                  stdin=subprocess.DEVNULL)
             last = ""
+            assert p.stdout is not None
             for line in p.stdout:
                 m = re.search(r"\[download\]\s+([\d.]+)%", line)
                 if m:
@@ -5255,7 +5268,7 @@ class Jobs:
 
     def __init__(self):
         self.lock = threading.Lock()
-        self.job = None
+        self.job: Any = None                       # laufender bzw. letzter Auftrag (dict)
         self._rate = None
         self._logf = None
 
@@ -5366,6 +5379,7 @@ class Jobs:
         p = subprocess.Popen(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                              stdin=subprocess.DEVNULL, cwd=cwd, bufsize=1, errors="replace",
                              start_new_session=True)
+        assert p.stdout is not None
         for line in p.stdout:
             for part in line.replace("\r", "\n").split("\n"):
                 self._log(part)
@@ -5668,7 +5682,7 @@ class Jobs:
             self._detail("unpack")
             with tarfile.open(tmp) as t:
                 tops = sorted({m.name.split("/", 1)[0] for m in t.getmembers() if m.name and not m.name.startswith("/")})
-                kw = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
+                kw: dict[str, Any] = {"filter": "data"} if hasattr(tarfile, "data_filter") else {}
                 t.extractall(PROTON_DIR, **kw)
             tmp.unlink(missing_ok=True)
             top = next((d for d in tops if (PROTON_DIR / d / "compatibilitytool.vdf").exists()), tops[0] if tops else tag)
@@ -5873,7 +5887,7 @@ URLFILE = Path("/usr/local/share/voidstation/update-url")
 CHANNELFILE = Path("/usr/local/share/voidstation/channel")
 CHANNELS = {"stable": "Stable", "main": "Testing"}
 OPTINFILE = Path("/usr/local/share/voidstation/testing-optin")   # Testing bewusst gewaehlt (vsctl channel testing)
-_VCACHE = {"t": 0.0, "remote": None, "error": None, "key": None}
+_VCACHE: dict[str, Any] = {"t": 0.0, "remote": None, "error": None, "key": None}
 
 
 def vs_channel():
@@ -6043,7 +6057,7 @@ SYS_LOCK = threading.Lock()                 # Pruefung und Auftraege nie gleichz
 XBPS_DB = Path("/var/db/xbps")
 PKG_LINE = re.compile(r"^(\S+)-([^-\s]+_\d+)\s+(install|update|remove|reinstall|configure|download|hold)\b")
 KERNEL_PKG = re.compile(r"^linux(\d+\.\d+)?$")
-_SCACHE = {"t": 0.0, "pkgs": [], "flatpak": [], "appimage": [], "proton": None, "error": None,
+_SCACHE: dict[str, Any] = {"t": 0.0, "pkgs": [], "flatpak": [], "appimage": [], "proton": None, "error": None,
            "db": None, "retry": 0.0}
 BOOT_BUILD = None                           # VoidStation-Stand beim Start der Oberflaeche (main)
 SYS_STAMP = BASE / "sysupdate.json"         # {"current": <Zeitpunkt, an dem zuletzt keine Void-Pakete ausstanden>}
@@ -6105,7 +6119,7 @@ def reboot_needed():
     hilft dann nicht, also kein Dauerhinweis "Neustart noetig" ({"version", "running"} oder None);
     voidstation: Oberflaeche seit dem Start aktualisiert.
     Als Kernel zaehlt nur, was Module UND /boot/vmlinuz-<version> hat (Reste in /usr/lib/modules nicht)."""
-    out = {"kernel": False, "kernel_stuck": None, "voidstation": False}
+    out: dict[str, Any] = {"kernel": False, "kernel_stuck": None, "voidstation": False}
     if LIVE:
         return out
     running = os.uname().release
@@ -6141,7 +6155,7 @@ def appimage_stampfile(a):
     return APPDIR / f".{a['id']}.stamp"
 
 
-_AI_URL = {}                                           # App -> (Zeitpunkt, Ausgabe: Adresse, Vergleichswert, SHA256)
+_AI_URL: dict = {}                                     # App -> (Zeitpunkt, Ausgabe: Adresse, Vergleichswert, SHA256)
 
 
 def _http_get(url, timeout=20, head=False):
@@ -6359,6 +6373,7 @@ def _extract_deb(path, work):
                 try:
                     if name.endswith(".zst"):          # Pythons tarfile kann (noch) kein zstd
                         p = subprocess.Popen(["zstd", "-dcq", str(part)], stdout=subprocess.PIPE)
+                        assert p.stdout is not None
                         try:
                             _extract_tar(p.stdout, work, stream=True)
                         finally:
@@ -6458,7 +6473,7 @@ def _sys_check(sync, logf=None):
     sync=False: nur Void-Pakete gegen die vorhandenen Paketlisten (schnell, ohne Netz)."""
     if LIVE:
         return
-    res = {"pkgs": [], "error": None}
+    res: dict[str, Any] = {"pkgs": [], "error": None}
     # Der Helfer begrenzt das Laden der Paketlisten selbst (90 s je Versuch, dazwischen Mirror-Wahl) – sudo hier
     # abzuschiessen wuerde xbps darunter weiterlaufen lassen ("xbps beschaeftigt" beim naechsten Mal)
     r = run(["sudo", "-n", PKG_HELPER, "check"] + ([] if sync else ["--nosync"]), timeout=240)
@@ -6674,6 +6689,8 @@ def _desktop_entry(path):
         txt = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return None
+    e: dict
+    sect: str | None
     e, sect = {}, None
     for line in txt.splitlines():
         line = line.strip()
@@ -6939,7 +6956,7 @@ class Installer:
     def __init__(self):
         self.lock = threading.RLock()                   # start() ruft status() unter derselben Sperre auf
         self.proc = None
-        self.state = None
+        self.state: Any = None
         self.autostart = LIVE and cmdline_flag("voidstation.install")
         self.probe_cache = None
 
@@ -6988,6 +7005,7 @@ class Installer:
             self.proc = subprocess.Popen(["sudo", "-n", INSTALLER] + args, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                          stderr=subprocess.DEVNULL, text=True, start_new_session=True)
             try:
+                assert self.proc.stdin is not None
                 self.proc.stdin.write(json.dumps(cfg) if not resume else "")
                 self.proc.stdin.close()
             except OSError:
@@ -7326,6 +7344,8 @@ ROMS = ROMManager()
 # ---------------------------------------------------------------------------
 def ini_read(path):
     """Einfache INI-Datei -> {abschnitt: {schluessel: wert}} (Gross-/Kleinschreibung bleibt, keine Interpolation)."""
+    out: dict
+    sec: str | None
     out, sec = {}, None
     try:
         lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -7646,7 +7666,7 @@ PAD_ROLES = ["south", "east", "west", "north", "l1", "r1", "l2", "r2", "select",
 # erledigt VoidStation selbst (Taste an den Emulator, EMU_KEYS); wo die Konsole alle Tasten des Controllers braucht,
 # sind sie anfangs frei. "notes": Hinweise der Oberflaeche (keymap.note.*). Analogsticks belegt VoidStation fest mit.
 _DPAD = [("Up", "up"), ("Down", "down"), ("Left", "left"), ("Right", "right")]
-EMU_LAYOUTS = {
+EMU_LAYOUTS: dict[str, Any] = {
     "gba": {"name": "mGBA", "sub": "Game Boy / Color / Advance", "console": "gba", "buttons": [
         ("A", "east"), ("B", "south"), ("L", "l1"), ("R", "r1"), ("Start", "start"), ("Select", "select"),
         *_DPAD, ("save", "north"), ("load", "west"), ("rewind", "l2"), ("ff", "r2")]},
@@ -7809,7 +7829,7 @@ def emu_binds(emu, pad, probe=None, roles=None):
     if roles is None:
         roles = pad_roles(pad, probe)[0]
     ent = (emu_pads_load()["emus"].get(emu) or {}).get(pad["id"])
-    own = ent.get("map") if isinstance(ent, dict) and isinstance(ent.get("map"), dict) else {}
+    own: Any = ent.get("map") if isinstance(ent, dict) and isinstance(ent.get("map"), dict) else {}
     out = {}
     for btn, role in lay["buttons"]:
         out[btn] = valid_bind(own[btn]) if btn in own else roles.get(role)   # null bzw. Unbrauchbares: frei
@@ -8887,7 +8907,7 @@ def bios_migrate():
             pass
 
 
-_I18N = {}
+_I18N: dict = {}
 
 
 def i18n_text(key, lang):
@@ -9303,9 +9323,9 @@ def cemu_prepare(ctx):
     wanted = cemu_mapping(ctx)
     cur = {}
     if ctl is not None:
-        for e in ctl.findall("mappings/entry"):
+        for ent in ctl.findall("mappings/entry"):
             try:
-                cur[int(e.findtext("mapping"))] = int(e.findtext("button"))
+                cur[int(ent.findtext("mapping"))] = int(ent.findtext("button"))  # type: ignore[arg-type]  # None -> TypeError
             except (TypeError, ValueError):
                 pass
     stock = {1: 1, 2: 0, 3: 3, 4: 2, 5: 9, 6: 10, 7: 42, 8: 43, 9: 6, 10: 4, 11: 11, 12: 12, 13: 13, 14: 14, 15: 7, 16: 8,
@@ -9333,9 +9353,9 @@ def cemu_prepare(ctx):
         ctl.remove(old)
     maps = ET.SubElement(ctl, "mappings")
     for vp, btn in sorted(wanted.items()):
-        e = ET.SubElement(maps, "entry")
-        ET.SubElement(e, "mapping").text = str(vp)
-        ET.SubElement(e, "button").text = str(btn)
+        ent = ET.SubElement(maps, "entry")
+        ET.SubElement(ent, "mapping").text = str(vp)
+        ET.SubElement(ent, "button").text = str(btn)
     ET.indent(root, space="\t")
     CEMU_PROFILE.parent.mkdir(parents=True, exist_ok=True)
     tmp = CEMU_PROFILE.with_suffix(".vs-tmp")
@@ -9368,7 +9388,8 @@ def mame_items(sdl):
     SLIDER1/2 (gedrueckt negativ)."""
     btns, axes = (sdl or {}).get("buttons"), (sdl or {}).get("axes") or {}
     have = (lambda n: btns.get(n) is not None) if isinstance(btns, dict) else (lambda n: True)
-    out, n = {}, 1
+    out: dict[str, str] = {}
+    n = 1
     for name in ("a", "b", "x", "y", "lb", "rb", "lt", "rt", "l3", "r3"):
         if name in ("lt", "rt"):
             b = axes.get(name)
@@ -9587,7 +9608,7 @@ RETROARCH_PREFER = ["mgba", "snes9x", "nestopia", "genesis_plus_gx", "picodrive"
 def retroarch_cores():
     """Installierte Kerne -> Endungen aus ihren .info-Dateien (supported_extensions)."""
     cores, infos = retroarch_dirs()
-    out = {}
+    out: dict = {}
     for d in cores:
         try:
             for so in sorted(d.glob("*_libretro.so")):
@@ -9774,7 +9795,7 @@ def _opt_cycles(real, protected):
     return {"cpu_cycles": real, "cpu_cycles_protected": protected}
 
 
-EMU_OPTS = {
+EMU_OPTS: dict[str, Any] = {
     "pcsx2": {"file": lambda: PCSX2_INI, "groups": [
         ("picture", [
             _opt("res", "EmuCore/GS", "upscale_multiplier", _opt_res([2, 3, 4]), "1"),
@@ -10095,7 +10116,7 @@ def _opts_apply_game(tile, game, st):
     """Optionen eines Spiels vor dem Start in die Haupteinstellung schreiben und den alten Wert merken (s. oben)."""
     path = EMU_OPTS[tile]["file"]()
     ini = ini_read(path)
-    rec = {}
+    rec: dict = {}
     for sec, vals in emu_opts_game_writes(tile, game):
         for k, v in vals.items():
             rec.setdefault(sec, {})[k] = [ini.get(sec, {}).get(k), v]
@@ -10264,7 +10285,7 @@ def emu_front(tile):
     return bool(proc and act and any(int(w[0], 16) == act for w in APPS._windows_of(tile, proc)))
 
 
-EMU_HELD = set()                              # gerade gehaltene Tasten (keydown bzw. Umschalter an), werden sicher geloest
+EMU_HELD: set = set()                         # gerade gehaltene Tasten (keydown bzw. Umschalter an), werden sicher geloest
 
 
 def emu_action(action, down):
@@ -10299,11 +10320,11 @@ def emu_action(action, down):
 # ---- Vollbild ------------------------------------------------------------------------------------------------
 # Programm -> (Startoption, Taste zum Umschalten). Beide aus dem Quelltext der Programme: mGBA (commandline.c "-f",
 # Window.cpp Strg+F), DuckStation (qthost.cpp "-fullscreen", hotkeys.cpp F11).
-EMU_FULLSCREEN = {"mgba-qt": ("-f", "ctrl+f"), "duckstation": ("-fullscreen", "F11")}
+EMU_FULLSCREEN: dict[str, tuple] = {"mgba-qt": ("-f", "ctrl+f"), "duckstation": ("-fullscreen", "F11")}
 # Dasselbe je Kachel fuer Flatpaks (Programm ist dort "flatpak"): PCSX2 (QtHost.cpp "-fullscreen", Alt+Enter),
 # RMG (main.cpp "-f", Alt+Enter), xemu (QEMU "-full-screen", F11), Azahar (citra_qt.cpp "-f", F11), Cemu
 # (LaunchSettings.cpp "-f", MainWindow.cpp F11). Die Option steht vor der Spieldatei (und ROM_ARGS).
-EMU_FULLSCREEN_TILE = {"pcsx2": ("-fullscreen", "alt+Return"), "rmg": ("-f", "alt+Return"), "xemu": ("-full-screen", "F11"),
+EMU_FULLSCREEN_TILE: dict[str, tuple] = {"pcsx2": ("-fullscreen", "alt+Return"), "rmg": ("-f", "alt+Return"), "xemu": ("-full-screen", "F11"),
                        "azahar": ("-f", "F11"), "cemu": ("-f", "F11")}
 # Emulatoren mit einem einzigen Fenster ohne eigene Vollbild-Startoption: Vollbild ueber den Fenstermanager
 EMU_WM_FULLSCREEN = {"snes9x", "nestopia", "melonds", "stella", "vice", "retroarch"}
@@ -10689,7 +10710,7 @@ class SaveBackup:
     def watcher(self):
         """Hintergrund-Thread: alle 30 Minuten, und 10 s nachdem ein Emulator beendet wurde."""
         time.sleep(180)
-        emus_before = set()
+        emus_before: set = set()
         due_at = 0.0
         while True:
             try:
@@ -10831,7 +10852,7 @@ class RomCovers:
                     except (OSError, ValueError):
                         self.list_fail[system] = time.time()
                         return None
-            by_key = {}
+            by_key: dict = {}
             for n in names:
                 by_key.setdefault(self.key(n), []).append(n)
             self.lists[system] = {"names": set(names), "by_key": by_key}
@@ -11041,7 +11062,8 @@ class BluetoothManager:
     def __init__(self):
         self.lock = threading.Lock()
         self.bus = None
-        self.Gio = self.GLib = None
+        self.Gio: Any = None                           # gi.repository, geladen im Agent-Thread
+        self.GLib: Any = None
         self._agent_ok = False
         self._started = False
         self._scanning = False
@@ -11103,7 +11125,7 @@ class BluetoothManager:
         self._agent_ok = False
         self._adapter_path = None
         if new:                                         # bluetoothd (neu) gestartet
-            threading.Thread(target=lambda: (time.sleep(1), self._register_agent()), daemon=True).start()
+            threading.Thread(target=lambda: (time.sleep(1), self._register_agent()), daemon=True).start()  # type: ignore[func-returns-value]
 
     def _register_agent(self):
         if not self.bus:
@@ -11277,7 +11299,7 @@ class BluetoothManager:
         return "other"
 
     def _devices(self, objs, adapter):
-        out = []
+        out: list[dict[str, Any]] = []
         for path, o in objs.items():
             d = o.get("org.bluez.Device1")
             if not d or not path.startswith(adapter + "/"):
@@ -11686,8 +11708,8 @@ class YtLight:
     def __init__(self):
         self.lock = threading.Lock()
         self.cache = {}                                  # (art, schluessel) -> (zeit, daten)
-        self.feed = {"items": [], "t": 0, "refreshing": False, "errors": 0}
-        self.upd = {"state": "idle", "msg": "", "t": 0}
+        self.feed: dict[str, Any] = {"items": [], "t": 0, "refreshing": False, "errors": 0}
+        self.upd: dict[str, Any] = {"state": "idle", "msg": "", "t": 0}
         self.ver = ("", 0.0)
         self.avatar_busy = False
 
@@ -11973,7 +11995,7 @@ class YtLight:
         """Kapitel aus yt-dlp (aus der Beschreibung bzw. von YouTube): [{"t": Start in s, "title"}], aufsteigend, ab 0.
         Weniger als zwei Kapitel = keine (ein einzelnes "Kapitel" ist das ganze Video)."""
         dur = float(d.get("duration") or 0)
-        out = []
+        out: list[dict[str, Any]] = []
         for c in d.get("chapters") or []:
             if not isinstance(c, dict):
                 continue
@@ -11986,7 +12008,7 @@ class YtLight:
             title = " ".join(str(c.get("title") or "").split())[:120]
             out.append({"t": round(t, 1), "title": title})
         out.sort(key=lambda c: c["t"])
-        uniq = []
+        uniq: list = []
         for c in out:                                   # gleiche Startzeit: das erste zaehlt
             if not uniq or c["t"] - uniq[-1]["t"] >= 1:
                 uniq.append(c)
@@ -12184,6 +12206,8 @@ class YtLight:
         (newpipe_subscriptions*.json), FreeTube (profiles.db / *subscriptions*.db). Gesucht wird in ~/share und auf
         USB-Laufwerken; vorhandene Abos bleiben."""
         import zipfile
+        found: list
+        chans: dict
         found, chans = [], {}
 
         def take(text, name):
@@ -12339,7 +12363,7 @@ class YtLight:
             items = list(self.feed["items"][:limit])
             state = {"refreshing": self.feed["refreshing"], "errors": self.feed["errors"], "t": int(self.feed["t"])}
         if not items and not self.feed["t"]:                # gleich nach dem Start: letzter Stand aus den Dateien
-            allv = []
+            allv: list = []
             for x in self._load(self.SUBS, []):
                 if isinstance(x, dict) and x.get("id"):
                     allv += self._load(self.CACHE / "feeds" / f"{x['id']}.json", {}).get("items") or []
@@ -12514,9 +12538,9 @@ class Vpn:
         self.daemon = False
         self.seq = 0
         self.watching = False
-        self._acct = {"t": 0.0, "v": None}
-        self._relays = {"t": 0.0, "v": None}
-        self._latest = {"t": 0.0, "v": None}
+        self._acct: dict[str, Any] = {"t": 0.0, "v": None}
+        self._relays: dict[str, Any] = {"t": 0.0, "v": None}
+        self._latest: dict[str, Any] = {"t": 0.0, "v": None}
 
     # ---- installiert? ------------------------------------------------------------------------------------------
     def installed(self):
@@ -12553,6 +12577,7 @@ class Vpn:
                 except OSError:
                     time.sleep(10)
                     continue
+                assert p.stdout is not None
                 for line in p.stdout:
                     line = line.strip()
                     if not line.startswith("{"):
@@ -12697,7 +12722,9 @@ class Vpn:
             if not force and self._relays["v"] is not None and time.time() - self._relays["t"] < 600:
                 return self._relays["v"]
         out = self.cli("relay", "list", timeout=25)
-        countries, cur, city = [], None, None
+        countries: list[dict[str, Any]] = []
+        cur: dict[str, Any] | None = None
+        city: dict[str, Any] | None = None
         rx_c = re.compile(r"^(.+?) \(([a-z]{2})\)$")
         rx_city = re.compile(r"^(.+?) \(([a-z0-9]+)\) @ (-?[\d.]+)°N, (-?[\d.]+)°W$")
         for raw in out.splitlines():
@@ -13290,10 +13317,10 @@ class Handler(BaseHTTPRequestHandler):
                 key = str(self._body().get("key", ""))
                 favs = [f for f in tvfavs_load() if f.get("key") != key]
                 if parts[2] == "fav":
-                    e = TV.entry(key)
-                    if not e:
+                    ent = TV.entry(key)
+                    if not ent:
                         return self._json(404, {"error": "Sender unbekannt"})
-                    favs.append(e)
+                    favs.append(ent)
                 tvfavs_save(favs)
                 return self._json(200, [IPTV.public(f) for f in favs])
             if parts[:2] == ["api", "install"] and len(parts) == 3:
@@ -13429,8 +13456,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, settings_payload())
             if parts == ["api", "settings", "resolution"]:
                 b = self._body()
-                res = str(b.get("mode", ""))
-                outs = [o for o in xrandr_info() if res in o["modes"]]
+                mode = str(b.get("mode", ""))
+                outs = [o for o in xrandr_info() if mode in o["modes"]]
                 if not outs:
                     return self._json(400, {"error": "Aufloesung nicht verfuegbar"})
                 rate = None                                 # ohne Angabe: wieder automatisch (~60 Hz)
@@ -13439,12 +13466,12 @@ class Handler(BaseHTTPRequestHandler):
                         rate = round(float(b["rate"]), 2)
                     except (TypeError, ValueError):
                         return self._json(400, {"error": "ungueltige Bildrate"})
-                    if not any(abs(r - rate) < 0.005 for o in outs for r in o["rates"].get(res, [])):
+                    if not any(abs(r - rate) < 0.005 for o in outs for r in o["rates"].get(mode, [])):
                         return self._json(400, {"error": "Bildrate nicht verfuegbar"})
                 with DISPLAY_RATE.lock:
                     DISPLAY_RATE.base = {}                  # die neue Wahl gilt als Desktop-Rate
-                    apply_resolution(res, rate)
-                s = settings_load(); s["resolution"] = res; s["rate"] = rate; settings_save(s)
+                    apply_resolution(mode, rate)
+                s = settings_load(); s["resolution"] = mode; s["rate"] = rate; settings_save(s)
                 return self._json(200, settings_payload())
             if parts == ["api", "settings", "matchrate"]:
                 on = bool(self._body().get("on"))
@@ -13604,10 +13631,10 @@ def gamepad_watcher():
         log("python3-evdev fehlt, Gamepad-Home-Taste deaktiviert")
         return
     sel = selectors.DefaultSelector()
-    known = {}                                     # Pfad -> Geraet
+    known: dict = {}                               # Pfad -> Geraet
     acts = {}                                      # Pfad -> [(Bindung, Aktion)]
     rests = {}                                     # Pfad -> {Achse: (Ruhe, min, max)}
-    state = {}                                     # (Pfad, Aktion) -> gedrueckt
+    state: dict = {}                               # (Pfad, Aktion) -> gedrueckt
     stamp = [None]                                 # Stand von emu-pads.json (Aenderung -> neu zuordnen)
 
     def actions_for(pad, probe):
@@ -13678,8 +13705,9 @@ def gamepad_watcher():
             threading.Thread(target=emu_action, args=(action, on), daemon=True).start()
 
     last_scan = 0.0
-    hold_since = {}                                # Halte-Aktionen (HOLD_ACTIONS): seit wann gehalten
+    hold_since: dict = {}                          # Halte-Aktionen (HOLD_ACTIONS): seit wann gehalten
     done = set()                                   # langes Halten hat schon ausgeloest (einmal je Druck)
+    dev: Any                                       # evdev.InputDevice (key.fileobj)
     while True:
         if time.time() - last_scan > 5:
             st_now = pads_stamp()

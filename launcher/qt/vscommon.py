@@ -21,6 +21,7 @@ import urllib.error
 import urllib.request
 import weakref
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import Property, QEvent, QObject, Qt, QTimer, Signal, Slot
 from PySide6.QtGui import QFont, QFontDatabase, QGuiApplication
@@ -409,6 +410,7 @@ class Gamepad:
         sel = selectors.DefaultSelector()
         known = self.devs
         last = 0.0
+        dev: Any                                       # evdev.InputDevice (auch key.fileobj unten)
         while True:
             if time.monotonic() - last > 3:
                 last = time.monotonic()
@@ -649,7 +651,7 @@ class VsBase(QObject):
         self._set_lang("de")
         self._icons = {}
         self._glyphs = {}
-        self.pad = None
+        self.pad: Any = None         # Gamepad, sobald die App ihn anlegt
         self._pad_style = ""         # Bauart des zuletzt benutzten Controllers, "" = keiner angeschlossen
         self._force_style = os.environ.get("VS_PAD_STYLE", "")   # Tests: so tun, als steckte dieser Controller
         if self._force_style in PAD_STYLES:
