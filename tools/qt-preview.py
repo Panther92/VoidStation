@@ -83,10 +83,10 @@ EMUOPT_LIST: list[tuple[str, list[tuple[str, bool, list[dict[str, Any]]]]]] = [(
     ("pgxp", False, EMUOPT_TF),
     ("texfilter", True, [{"v": "auto", "k": "emuopt.v.auto", "auto": True}, {"v": "on", "k": "common.on"}, {"v": "off", "k": "common.off"}]),
     ("aniso", False, [{"v": "0", "k": "common.off"}, {"v": "4", "t": "4\u00d7"}, {"v": "8", "t": "8\u00d7"}, {"v": "16", "t": "16\u00d7"}]),
-    ("renderer", False, [{"v": "auto", "k": "emuopt.v.auto"}, {"v": "vk", "t": "Vulkan"}, {"v": "gl", "t": "OpenGL"}, {"v": "sw", "t": "Software"}]),
 ]), ("play", [
     ("fastBoot", False, EMUOPT_TF),
     ("resume", False, EMUOPT_TF),
+    ("renderer", False, [{"v": "auto", "k": "emuopt.v.auto"}, {"v": "vk", "t": "Vulkan"}, {"v": "gl", "t": "OpenGL"}, {"v": "sw", "t": "Software"}]),
     ("mute", False, EMUOPT_TF),
     ("speed", True, [{"v": "std", "k": "emuopt.v.standard"}, {"v": "xt", "t": "XT"}, {"v": "286", "t": "286"}, {"v": "386", "t": "386"}, {"v": "486", "t": "486"}, {"v": "pentium", "t": "Pentium"}, {"v": "max", "t": "Max"}]),
     ("soundCard", True, [{"v": "sb16", "t": "Sound Blaster 16"}, {"v": "sbpro2", "t": "Sound Blaster Pro 2"}, {"v": "sb1", "t": "Sound Blaster 1.0"}]),
@@ -96,15 +96,23 @@ EMUOPT_LIST: list[tuple[str, list[tuple[str, bool, list[dict[str, Any]]]]]] = [(
 def emuopts_payload(emu, game):
     own = EMUOPTS_GAME.get(game, {})
     only = [x for x in os.environ.get("VS_OPTS", "").split(",") if x]      # VS_OPTS=res,aspect,…: nur diese Optionen zeigen
+    mode = None if game else EMUOPTS.setdefault("mode", os.environ.get("VS_OPTS_MODE", "vs"))
     groups, values = [], {}
-    for gid, opts in EMUOPT_LIST:
-        shown = [o for o in opts if (o[1] if game else True) and (not only or o[0] in only)]
-        if shown:                                   # "Automatik" gibt es nur allgemein, nicht je Spiel (wie launcher.py)
-            groups.append({"id": gid, "opts": [{"id": o[0], "choices": [
-                {k: v for k, v in c.items() if k != "auto"} for c in o[2] if not (game and c.get("auto"))]} for o in shown]})
+    # wie launcher.py emu_opts_payload: allgemein links "Allgemein" (Schalter VoidStation-Einstellungen | Anpassen, die
+    # uebrigen Zeilen erst mit "Anpassen"), rechts "Bild"; je Spiel Bild, dann Spiel, ohne "Automatik"
+    for gid, opts in (EMUOPT_LIST if game else EMUOPT_LIST[::-1]):
+        shown = [o for o in opts if (o[1] if game else mode == "custom" and o[0] != "mute") and (not only or o[0] in only)]
+        rows = [{"id": o[0], "choices": [{k: v for k, v in c.items() if k != "auto"} for c in o[2] if not (game and c.get("auto"))]}
+                for o in shown]
         for o in shown:
             values[o[0]] = own.get(o[0]) if game else EMUOPTS.get(o[0], o[2][0]["v"])
-    return {"emu": emu, "name": emu, "game": game or None, "groups": groups, "values": values}
+        if not game and gid == "play":
+            rows.insert(0, {"id": "mode", "choices": [{"v": "vs", "k": "emuopt.v.vs"}, {"v": "custom", "k": "emuopt.v.custom"}]})
+            rows.insert(1, {"id": "mute", "choices": EMUOPT_TF})
+            values["mode"], values["mute"] = mode, EMUOPTS.get("mute", "false")
+        if rows:
+            groups.append({"id": "general" if gid == "play" and not game else gid, "opts": rows})
+    return {"emu": emu, "name": emu, "game": game or None, "mode": mode, "groups": groups, "values": values}
 
 
 def keymap_payload(emu="gba"):
