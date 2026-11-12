@@ -33,13 +33,15 @@ before the monthly release train takes them to *Stable* – see [RELEASING.md](R
 
 1. Fork the repository and create a branch from `main`.
 2. Make your change. Keep a pull request to one topic – several small PRs are easier to review than one big one.
-3. Run the checks (needs Python 3, `shellcheck` is optional but recommended):
+3. Run the checks (needs Python 3; `shellcheck`, `ruff` and `mypy` are optional but recommended):
 
    ```sh
    tools/check.sh
    ```
 
-   They run automatically on every pull request as well.
+   They run automatically on every pull request as well. `ruff` only looks for real errors, not style;
+   `mypy` checks types step by step. Both read their settings from `pyproject.toml`.
+   `VS_CHECK_INSTALL=1 tools/check.sh` fetches the pinned versions into a throwaway venv.
 4. Try it out:
    - Qt interface without a Void system: `python3 tools/qt-preview.py` (needs `pip install PySide6-Essentials`),
      installer with `--live` (plus `--fail` for the error page, `--bios` for BIOS mode).

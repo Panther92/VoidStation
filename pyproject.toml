@@ -1,0 +1,38 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+# Nur Werkzeug-Einstellungen fuer ruff und mypy (tools/check.sh, Editoren).
+# VoidStation ist kein Python-Paket; diese Datei kommt nicht auf die Geraete.
+
+# ---------------------------------------------------------------------
+#  ruff: nur Fehlerklassen, keine Stilregeln
+#    F    pyflakes (undefinierte Namen, ungenutzte Variablen/Imports, ...)
+#    E9   Syntax- und Einlesefehler
+#    PLE  pylint-Fehler (z. B. falsche Argumente fuer print/format)
+# ---------------------------------------------------------------------
+[tool.ruff]
+target-version = "py311"
+extend-include = ["launcher/voidstation-installer", "launcher/voidstation-mullvad"]
+exclude = ["dist"]
+
+[tool.ruff.lint]
+select = ["F", "E9", "PLE"]
+
+[tool.ruff.lint.per-file-ignores]
+# Einziger Altfund: tote Variable mb_off in CoverFetcher.fetch (harmlos).
+# Bei der naechsten Aenderung an launcher.py die Zeile loeschen und diesen
+# Eintrag streichen.
+"launcher/launcher.py" = ["F841"]
+
+# ---------------------------------------------------------------------
+#  mypy: Stufe 1 – nur annotierte Funktionen und Modul-Ebene pruefen.
+#  Site-Packages bewusst aus: PySide6, evdev usw. gelten als Any, damit das
+#  Ergebnis nicht davon abhaengt, was auf dem Rechner installiert ist.
+#  Dateien mit offenen Funden: MYPY_TODO in tools/check.sh.
+#  Naechste Stufe (spaeter): check_untyped_defs = true
+# ---------------------------------------------------------------------
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+follow_imports = "silent"
+no_site_packages = true
+scripts_are_modules = true
+warn_unused_configs = true

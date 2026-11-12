@@ -7,6 +7,7 @@ Frueher tools/screenshots.py (Screenshots der Web-Oberflaeche, mit ihr 2026.12 e
 import json
 import os
 import re
+from typing import Any
 from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
@@ -62,7 +63,7 @@ def tv_list(q, data=None):
 COUNTRIES = [{"code": c, "n": n} for c, n in [("DE", 212), ("AT", 48), ("CH", 61), ("FR", 190), ("IT", 240),
                                               ("GB", 150), ("US", 1400), ("ES", 260), ("NL", 90), ("PL", 120)]]
 
-SETTINGS = {
+SETTINGS: dict[str, Any] = {
     "lang": LANG, "langs": LANGS,
     "scale": float(os.environ.get("SCALE", "1.25")), "scales": [1, 1.25, 1.5, 1.75, 2, 2.25],
     "theme": "default-dark", "themes": ["default-dark", "default-light", "high-contrast", "nord"],

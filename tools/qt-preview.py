@@ -22,6 +22,7 @@ import threading
 import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 from urllib.parse import parse_qs, urlparse
 
 REPO = Path(__file__).resolve().parent.parent
@@ -29,7 +30,7 @@ sys.path.insert(0, str(REPO / "tools"))
 import sampledata as S  # noqa: E402  (Beispieldaten und Grundrouten der API)
 
 PORT = 8766
-BT = {"pairing": None, "prompt": None, "names": {}}   # Bluetooth-Kopplung, eigene Geraetenamen (Vorschau)
+BT: dict[str, Any] = {"pairing": None, "prompt": None, "names": {}}   # Bluetooth-Kopplung, eigene Geraetenamen (Vorschau)
 BT_DEVICES = [{"mac": "11:22:33:44:55:66", "name": "Wireless Controller", "paired": True, "connected": True,
                "kind": "gamepad", "battery": 80},
               {"mac": "AA:BB:CC:DD:EE:01", "name": "AirPods", "paired": False, "kind": "audio", "battery": None},
@@ -57,7 +58,7 @@ ROM_COVERS = Path(os.environ["VS_ROM_COVERS"]) if os.environ.get("VS_ROM_COVERS"
 # Tastenbelegung: Beispiel-Controller (PS4) und mGBA-Belegung wie im Launcher (EMU_LAYOUTS, keymap_payload)
 # Layouts wie im Launcher (EMU_LAYOUTS, dort gepflegt – hier nur ausgelesen, damit die Vorschau nicht abweicht)
 _src = (REPO / "launcher" / "launcher.py").read_text(encoding="utf-8")
-_ns = {}
+_ns: dict[str, Any] = {}
 exec(_src[_src.index("_DPAD = ["):_src.index("EMU_ACTIONS = {")], _ns)
 EMU_LAYOUTS = _ns["EMU_LAYOUTS"]
 PS_TEXT = {"south": "✕", "east": "○", "west": "□", "north": "△", "l1": "L1", "r1": "R1", "l2": "L2", "r2": "R2",
@@ -70,7 +71,7 @@ CAPTURE_ROLES = ["south", "east", "west", "north", "l1", "r1", "l2", "r2", "star
 KEYMAP = {"own": {}, "step": 0, "nopad": os.environ.get("VS_NO_PAD") == "1"}
 # Optionen der Spieleliste (Attrappe; die echten stehen in launcher.py EMU_OPTS)
 EMUOPTS = {"res": "2", "aspect": "Auto", "widescreen": "false", "renderer": "auto", "speed": "std"}
-EMUOPTS_GAME = {}
+EMUOPTS_GAME: dict[str, Any] = {}
 # VS_GAME_DISC=1: Spieleliste mit eingelegter PlayStation-Disc
 PREVIEW_DISC = {"dev": "/dev/sr0", "name": "sr0", "label": "Beispielspiel", "serial": "SLUS-20946", "opts": True} \
     if os.environ.get("VS_GAME_DISC") == "1" else None
@@ -127,7 +128,7 @@ TILES["groups"].insert(1, {"name": "Spiele", "tiles": [
 # VS_PREVIEW_EMUS=pcsx2,rmg …: nur diese Emulator-Kacheln (fuer Bildschirmfotos der Tastenbelegung)
 
 
-JOB = {}
+JOB: dict[str, Any] = {}
 # Mullvad VPN (VS_VPN=login | off | on | locked | nodaemon): Kachel in "System", Symbol oben rechts, Seite mit Attrappe
 VPNM = {"mode": os.environ.get("VS_VPN", ""), "loc": ["se", "sto"], "recent": [{"cc": "de", "city": "fra"},
         {"cc": "nl", "city": "ams"}, {"cc": "ch", "city": "zrh"}],
@@ -188,7 +189,7 @@ if VPNM["mode"]:
             _g["tiles"].insert(1, {"id": "mullvad", "label": "Mullvad VPN", "size": "wide", "color": "#2b4a6b", "icon": "shield",
                                    "sub": "VPN", "type": "vpn", "app": True})
 # Player (--player): Teststream, zuletzt gesehen, Mediathek ueber den echten Launcher-Code (MediaLib) in --home
-PLAYER = {"stream": "av://lavfi:testsrc2=size=1280x720:rate=25", "recent": [], "media": None, "tmp": None}
+PLAYER: dict[str, Any] = {"stream": "av://lavfi:testsrc2=size=1280x720:rate=25", "recent": [], "media": None, "tmp": None}
 
 
 def media():
@@ -223,7 +224,7 @@ def media_list(q):
         return {"error": str(e)}
 # YouTube Light (--player yt): echter Launcher-Code (YtLight), Daten im Wegwerf-Ordner; yt-dlp ist tools/yt-dlp-mock.py,
 # RSS-Feeds, Bilder und das Testvideo liefert dieser Server (/yt-rss, /yt-media/…). --yt-demo: Abos, Verlauf, Spaeter.
-YTP = {}
+YTP: dict[str, Any] = {}
 
 
 def yt():
@@ -300,7 +301,7 @@ def yt_media(name):
 
 
 # VS_TVDATA=<Ordner mit channels.json, streams.json, logos.json von iptv-org>: echte Senderliste statt Beispieldaten
-TVREAL = {}
+TVREAL: dict[str, Any] = {}
 
 
 def tv_list(q):
@@ -409,7 +410,7 @@ PROBE = {"uefi": True, "secureboot": False, "arch": "x86_64", "ram": 3.7 * GiB, 
               "free": [{"start": 777534528, "sectors": 199000000, "bytes": 101888000000}],
               "options": {"whole": True, "free": [{"start": 777534528, "sectors": 199000000, "bytes": 101888000000}]}}]}
 # Sprachen, Tastaturen und Vorgaben wie im Launcher (probe: langs, kbs, kb, lang)
-_li = {}
+_li: dict[str, Any] = {}
 exec(_src[_src.index("LANG_TABLE = ["):_src.index("LANGS = [")], _li)
 exec(_src[_src.index("_GRP = ["):_src.index("# ----", _src.index("_GRP = ["))], _li)
 PROBE["langs"] = [{"id": i, "label": n, "kb": _li["INSTALL_DEFAULTS"][i][0], "tz": _li["INSTALL_DEFAULTS"][i][1]}

@@ -7,8 +7,14 @@
 #    tools/check.sh
 #
 #  Prueft: Shell-Skripte (shellcheck, falls installiert, sonst bash -n / sh -n),
-#  Python-Syntax, JSON-Dateien, Bau (build.sh: i18n vollstaendig, CHANGELOG
-#  de + en, ISO-Teile) und den Bau der Webseite.
+#  Python-Syntax, Python-Fehlerklassen (ruff) und Typen (mypy, schrittweise),
+#  JSON-Dateien, Bau (build.sh: i18n vollstaendig, CHANGELOG de + en,
+#  ISO-Teile) und den Bau der Webseite.
+#
+#  ruff und mypy: Einstellungen in pyproject.toml. Fehlen sie, wird der
+#  Schritt uebersprungen (wie bei shellcheck). In der CI (CI=true) oder mit
+#  VS_CHECK_INSTALL=1 holt das Skript die festen Versionen unten in ein
+#  Wegwerf-venv – am System aendert sich nichts.
 # =====================================================================
 set -uo pipefail
 cd "$(dirname "$0")/.." || exit 1
@@ -65,6 +71,54 @@ for fn in sys.argv[1:]:
 print(f"{len(sys.argv) - 1} Dateien geprueft")
 sys.exit(bad)
 PYEOF
+
+# Feste Versionen fuer die CI, damit ein neues Release dort nichts rot faerbt.
+RUFF_VERSION=0.16.9
+MYPY_VERSION=2.3.1
+# Dateien mit offenen mypy-Funden (Stufe 1). Beim naechsten Anfassen der
+# Datei die Funde beheben und den Eintrag streichen; neue Dateien kommen
+# automatisch in die Pruefung.
+MYPY_TODO=(
+  launcher/launcher.py              # 10: Annotationen fuer leere dict/set, wiederverwendetes e
+  launcher/vsx11.py                 # 2: Annotationen _atoms, _grabbed
+  launcher/voidstation-installer    # 1: Annotation SECRETS
+)
+RUFF=(); MYPY=()
+command -v ruff >/dev/null 2>&1 && RUFF=(ruff)
+command -v mypy >/dev/null 2>&1 && MYPY=(mypy)
+if { [ ${#RUFF[@]} -eq 0 ] || [ ${#MYPY[@]} -eq 0 ]; } \
+   && { [ "${CI:-}" = true ] || [ "${VS_CHECK_INSTALL:-}" = 1 ]; }; then
+  echo "(ruff/mypy fehlen – installiere ruff $RUFF_VERSION, mypy $MYPY_VERSION in ein venv)"
+  if python3 -m venv "$tmp/venv" \
+     && "$tmp/venv/bin/pip" install -q --disable-pip-version-check \
+          "ruff==$RUFF_VERSION" "mypy==$MYPY_VERSION"; then
+    RUFF=("$tmp/venv/bin/ruff"); MYPY=("$tmp/venv/bin/mypy")
+  else
+    bad "ruff/mypy liessen sich nicht installieren"
+  fi
+fi
+
+step "Python: Fehlerklassen (ruff)"
+if [ ${#RUFF[@]} -gt 0 ]; then
+  "${RUFF[@]}" check --no-cache --quiet "${py_files[@]}" || bad "ruff"
+  echo "${#py_files[@]} Dateien geprueft ($("${RUFF[@]}" --version))"
+else
+  echo "(ruff nicht installiert – uebersprungen)"
+fi
+
+step "Python: Typen (mypy, Stufe 1)"
+if [ ${#MYPY[@]} -gt 0 ]; then
+  mypy_files=()
+  for f in "${py_files[@]}"; do
+    skip=0
+    for t in "${MYPY_TODO[@]}"; do [ "$f" = "$t" ] && skip=1 && break; done
+    [ "$skip" = 0 ] && mypy_files+=("$f")
+  done
+  "${MYPY[@]}" --no-incremental --cache-dir=/dev/null "${mypy_files[@]}" || bad "mypy"
+  echo "(noch ausgenommen: ${MYPY_TODO[*]})"
+else
+  echo "(mypy nicht installiert – uebersprungen)"
+fi
 
 step "JSON"
 json_files=()
