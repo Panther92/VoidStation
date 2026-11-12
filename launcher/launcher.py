@@ -7239,17 +7239,86 @@ class ROMManager:
         self.rom_dir = Path.home() / "share" / "ROMs"
         self.games: dict = {}                     # Kachel -> (Popen, Spielname) des aus der Spieleliste gestarteten Spiels
 
-    @staticmethod
-    def clean_name(name):
-        """Spielname ohne Zusaetze in Klammern ("Spiel (Europe) [!]" -> "Spiel"), wie in der Spieleliste."""
-        return re.sub(r"\s*[\(\[][^()\[\]]*[\)\]]", "", name).strip() or name
+    _DISC_TAG = re.compile(r"[\(\[]\s*(?:disc|disk|cd)\s*([0-9]{1,2}|[a-d])\b[^()\[\]]*[\)\]]", re.I)
 
-    def title_of(self, canon, target):
-        """Name des Spiels wie in der Spieleliste (MAME: voller Name des ROM-Sets, DOS/ScummVM: Ordner)."""
+    @classmethod
+    def clean_name(cls, name):
+        """Spielname ohne Zusaetze in Klammern ("Spiel (Europe) [!]" -> "Spiel"), wie in der Spieleliste. Die Nummer
+        der CD bleibt ("Spiel (Europe) (Disc 2)" -> "Spiel (Disc 2)"), sonst hiessen alle CDs eines Spiels gleich."""
+        disc = cls._DISC_TAG.search(name)
+        base = re.sub(r"\s*[\(\[][^()\[\]]*[\)\]]", "", name).strip() or name
+        return f"{base} (Disc {disc.group(1).upper()})" if disc and base != name else base
+
+    # Unterordner: Spiele duerfen in eigenen Ordnern liegen (bin/cue mit mehreren Dateien, mehrere CDs, eigene Ordnung).
+    SCAN_DEPTH = 3                                # so viele Ordner-Ebenen unter ROMs/<system>
+    SCAN_SKIP = {"bios", "cover", "covers", "textures", "saves", "savestates"}    # keine Spiele (klein verglichen)
+    FLAT_SYSTEMS = {"mame"}                       # MAME sucht ROM-Sets nur direkt im Ordner (rompath)
+
+    def scan(self, sys_dir, valid_exts, deep=True):
+        """Spieldateien unter sys_dir, auch in Unterordnern. Ohne versteckte Ordner und SCAN_SKIP."""
+        out = []
+
+        def walk(d, depth):
+            try:
+                entries = sorted(d.iterdir(), key=lambda q: q.name.casefold())
+            except OSError as e:
+                log(f"{d} nicht lesbar:", e)
+                return
+            for item in entries:
+                if item.name.startswith("."):
+                    continue
+                if item.is_dir():
+                    if deep and depth < self.SCAN_DEPTH and item.name.casefold() not in self.SCAN_SKIP:
+                        walk(item, depth + 1)
+                elif item.is_file() and item.suffix.lower() in valid_exts:
+                    out.append(item)
+        walk(sys_dir, 0)
+        return out
+
+    @staticmethod
+    def cue_tracks(cue):
+        """Dateien, auf die ein .cue-Blatt verweist (FILE "Track 01.bin" BINARY), als Pfade neben dem Blatt.
+        Gross-/Kleinschreibung wie auf der Platte, falls das Blatt unter Windows entstand."""
+        try:
+            txt = cue.read_bytes()[:65536].decode("utf-8", "replace")
+        except OSError:
+            return []
+        names = re.findall(r'^\s*FILE\s+(?:"([^"]+)"|(\S+))', txt, re.M | re.I)
+        try:
+            real = {q.name.casefold(): q for q in cue.parent.iterdir()}
+        except OSError:
+            real = {}
+        out = []
+        for quoted, bare in names:
+            n = os.path.basename((quoted or bare).replace("\\", "/"))
+            q = real.get(n.casefold())
+            if q is not None and q.is_file():
+                out.append(q)
+        return out
+
+    def rom_file(self, folder, filename):
+        """Spieldatei bzw. -ordner aus dem Namen der Spieleliste (relativ zu ROMs/<folder>, auch "Ordner/Spiel.cue")
+        -> Pfad oder None. Nie ausserhalb des Ordners."""
+        rel = Path(str(filename))
+        if not str(filename) or rel.is_absolute() or ".." in rel.parts:
+            return None
+        sys_dir = (self.rom_dir / folder).resolve()
+        t = (sys_dir / rel).resolve()
+        if t == sys_dir or not t.is_relative_to(sys_dir):
+            return None
+        return t if t.is_file() or (folder in self.DIR_SYSTEMS and t.is_dir()) else None
+
+    def title_of(self, canon, target, names=None):
+        """Name des Spiels wie in der Spieleliste (MAME: voller Name des ROM-Sets, DOS/ScummVM: Ordner).
+        Wii U entpackt: Die Datei heisst immer aehnlich (<Spiel>/code/….rpx) – dort zaehlt der Ordner des Spiels."""
         if target.is_dir():
             return target.name
-        name = (mame_names([target.stem]).get(target.stem) if canon == "mame" else None) or target.stem
-        return self.clean_name(name)
+        if target.suffix.lower() == ".rpx" and target.parent.name.casefold() == "code":
+            return self.clean_name(target.parent.parent.name)
+        if canon == "mame":
+            names = names if names is not None else mame_names([target.stem])
+            return self.clean_name(names.get(target.stem) or target.stem)
+        return self.clean_name(target.stem)
 
     def playing(self, key):
         """Name des Spiels, das unter der Kachel `key` gerade laeuft ("" = unbekannt, z. B. im Emulator selbst geoeffnet)."""
@@ -7273,29 +7342,38 @@ class ROMManager:
         if folder == "retroarch":
             valid_exts |= retroarch_exts()
         dirs = folder in self.DIR_SYSTEMS
-        names = mame_names([i.stem for i in sys_dir.iterdir() if i.is_file()]) if folder == "mame" else {}
         roms = []
         try:
-            for item in sorted(sys_dir.iterdir()):
-                if dirs and item.is_dir() and not item.name.startswith(".") and item.name.casefold() not in ("bios", "cover"):
-                    roms.append({"id": hashlib.sha1(str(item).encode()).hexdigest()[:10], "name": item.name,
-                                 "filename": item.name, "system": folder, "folder": folder, "size": "", "bytes": 0,
-                                 "dir": True})
+            if dirs:                              # DOS, ScummVM: jeder Unterordner ist ein Spiel
+                for item in sorted(sys_dir.iterdir()):
+                    if item.is_dir() and not item.name.startswith(".") and item.name.casefold() not in ("bios", "cover"):
+                        roms.append({"id": hashlib.sha1(str(item).encode()).hexdigest()[:10], "name": item.name,
+                                     "filename": item.name, "system": folder, "folder": folder, "size": "", "bytes": 0,
+                                     "dir": True})
+            files = self.scan(sys_dir, valid_exts, deep=not dirs and folder not in self.FLAT_SYSTEMS)
+            # bin/cue: Das Blatt (.cue) ist das Spiel, seine .bin-Dateien sind nur die Spuren – nicht eigens zeigen
+            tracks: dict = {}
+            for f in files:
+                if f.suffix.lower() == ".cue":
+                    tracks[f] = self.cue_tracks(f)
+            hidden = {t for ts in tracks.values() for t in ts}
+            names = mame_names([f.stem for f in files]) if folder == "mame" else {}
+            for item in files:
+                if item in hidden:
                     continue
-                if item.is_file() and item.suffix.lower() in valid_exts:
-                    clean_name = self.clean_name(names.get(item.stem) or item.stem)
-                    size_bytes = item.stat().st_size
-                    size_mb = round(size_bytes / (1024 * 1024), 1)
-                    size_str = f"{size_mb} MB" if size_mb >= 1 else f"{round(size_bytes / 1024)} KB"
-                    roms.append({
-                        "id": hashlib.sha1(str(item).encode()).hexdigest()[:10],
-                        "name": clean_name,
-                        "filename": item.name,
-                        "system": folder,
-                        "folder": folder,
-                        "size": size_str,
-                        "bytes": size_bytes,
-                    })
+                size_bytes = item.stat().st_size + sum(t.stat().st_size for t in tracks.get(item, []))
+                size_mb = round(size_bytes / (1024 * 1024), 1)
+                size_str = f"{size_mb} MB" if size_mb >= 1 else f"{round(size_bytes / 1024)} KB"
+                roms.append({
+                    "id": hashlib.sha1(str(item).encode()).hexdigest()[:10],
+                    "name": self.title_of(folder, item, names),
+                    "filename": item.relative_to(sys_dir).as_posix(),      # mit Unterordner: "Tekken 3/Tekken 3.cue"
+                    "system": folder,
+                    "folder": folder,
+                    "size": size_str,
+                    "bytes": size_bytes,
+                })
+            roms.sort(key=lambda r: (r["name"].casefold(), r["filename"].casefold()))
         except OSError as e:
             log(f"ROMs fuer {folder} nicht lesbar:", e)
         return roms
@@ -7312,16 +7390,13 @@ class ROMManager:
 
     def launch(self, system, filename, folder=None):
         canon = self.canonical_system(system)
-        safe_name = os.path.basename(filename)
         # Ordner: der vom Spiel mitgeschickte (falls er zur Kachel gehoert), sonst alle der Kachel der Reihe nach
         allowed = self.folders(system)
         cands = [folder] if folder in allowed else allowed
         target = None
         for f in cands:
-            sys_dir = (self.rom_dir / f).resolve()
-            t = (sys_dir / safe_name).resolve()
-            if (t.is_file() or (canon in self.DIR_SYSTEMS and t.is_dir())) and t.is_relative_to(sys_dir) and t != sys_dir:
-                target = t
+            target = self.rom_file(f, filename)
+            if target:
                 break
         if not target:
             raise ValueError("Spieldatei nicht gefunden")
@@ -10039,9 +10114,12 @@ def _disc_id(tile, path):
 
 
 def emu_rom_path(tile, name):
-    """Spieldatei einer Kachel aus ihrem Namen -> Pfad oder None."""
-    safe = os.path.basename(name)
-    return next((ROMS.rom_dir / f / safe for f in ROMS.folders(tile) if (ROMS.rom_dir / f / safe).is_file()), None)
+    """Spieldatei einer Kachel aus ihrem Namen in der Spieleliste (auch "Ordner/Spiel.cue") -> Pfad oder None."""
+    for f in ROMS.folders(tile):
+        p = ROMS.rom_file(f, name)
+        if p and p.is_file():
+            return p
+    return None
 
 
 def emu_game_ini(tile, game):
@@ -10829,13 +10907,16 @@ class RomCovers:
     def own_image(self, folder, filename):
         stem = Path(filename).stem
         base = ROMS.rom_dir / folder
-        for d in (base / "Cover", base):
+        game = base / filename
+        own_dir = [game.parent] if game.parent != base else []      # Spiel im Unterordner: Bild auch dort
+        for d in (base / "Cover", base, *own_dir):
             for ext in self.IMG_EXT:
                 p = d / (stem + ext)
                 if p.is_file():
                     return p
-        game = base / filename                    # DOS/ScummVM: Spiel = Ordner – Bild auch darin (cover.jpg …)
-        if folder in ROMS.DIR_SYSTEMS and game.is_dir():
+        # DOS/ScummVM: Spiel = Ordner – Bild auch darin (cover.jpg …); ebenso im eigenen Ordner eines Spiels
+        game = game if folder in ROMS.DIR_SYSTEMS else (own_dir[0] if own_dir else game)
+        if (folder in ROMS.DIR_SYSTEMS or own_dir) and game.is_dir():
             for n in ("cover", "folder", "box", "boxart", "front"):
                 for ext in self.IMG_EXT:
                     for cand in (n + ext, n.upper() + ext.upper()):
@@ -10997,10 +11078,7 @@ class RomCovers:
 
     def get(self, folder, filename):
         """Pfad zum Bild des Spiels oder None (holt es bei Bedarf aus dem Netz – kann einige Sekunden dauern)."""
-        if folder not in ROMS.EXTENSIONS or os.path.basename(filename) != filename:
-            return None
-        rom = (ROMS.rom_dir / folder / filename)
-        if not (rom.is_file() or (folder in ROMS.DIR_SYSTEMS and rom.is_dir())):
+        if folder not in ROMS.EXTENSIONS or not ROMS.rom_file(folder, filename):
             return None
         own = self.own_image(folder, filename)
         if own or not self.enabled():
