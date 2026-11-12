@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Qt-Startseite ohne Void-Geraet ausprobieren: Beispieldaten wie tools/screenshots.py, eigener Port 8766.
+Qt-Startseite ohne Void-Geraet ausprobieren: Beispieldaten aus tools/sampledata.py, eigener Port 8766.
 Benoetigt: pip install PySide6-Essentials (gleiche Version wie python3-pyside6 in Void)
 Aufruf:    python3 tools/qt-preview.py                         -> Fenster 1280×720 auf dem Bildschirm
            python3 tools/qt-preview.py --size 1920x1080
@@ -26,7 +26,7 @@ from urllib.parse import parse_qs, urlparse
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "tools"))
-import screenshots as S  # noqa: E402  (Beispieldaten und Web-Auslieferung)
+import sampledata as S  # noqa: E402  (Beispieldaten und Grundrouten der API)
 
 PORT = 8766
 BT = {"pairing": None, "prompt": None, "names": {}}   # Bluetooth-Kopplung, eigene Geraetenamen (Vorschau)
@@ -381,7 +381,7 @@ def job():
 def settings():
     return dict(S.SETTINGS, volume=STATE["volume"], version={"version": "0.12.1", "build": "abc123"}, ssh=True, live=LIVE["on"],
                 standby=not LIVE["on"],
-                sysupd_days=90, sysupd_choices=[30, 60, 90], frontend=STATE.get("frontend", "qt"), frontends=["qt", "web"],
+                sysupd_days=90, sysupd_choices=[30, 60, 90],
                 padmouse=STATE.get("padmouse", True),
                 osk=S.SETTINGS.get("osk") or {"choice": os.environ.get("VS_OSK_LAYOUT", "auto"), "mode": os.environ.get("VS_OSK_MODE", "auto")})
 
@@ -841,7 +841,7 @@ class H(S.H):
             tid = p.rsplit("/", 1)[1]
             st["running"] = [t for t in st["running"] if t != tid]
             return self.j({"running": st["running"]})
-        if p.startswith("/api/audio/"):          # Ton: Beispielgeraete aus screenshots.py umschalten
+        if p.startswith("/api/audio/"):          # Ton: Beispielgeraete aus sampledata.py umschalten
             a = S.SETTINGS["audio"]
             d = next((x for x in a["devices"] if x["key"] == body.get("key")), None)
             if p.endswith("/device") and d:
@@ -902,8 +902,6 @@ class H(S.H):
                                                    default=max(d["rates"].get(d["current"], [60.0])))
             if p.endswith("/matchrate"):
                 S.SETTINGS["match_rate"] = bool(body.get("on"))
-            if p.endswith("/frontend"):
-                STATE["frontend"] = body.get("frontend")
             return self.j(settings())
         return self.j({})
 

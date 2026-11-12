@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Aufrufe an den Launcher (dieselbe API wie die Web-Oberflaeche). Antworten kommen als Rueckruf:
+// Aufrufe an den Launcher (HTTP-API auf 127.0.0.1). Antworten kommen als Rueckruf:
 //   Api.get("/api/status", function (j) { … }, function (fehler) { … })
 //   Api.post("/api/volume/up", null, ok, err)
 pragma Singleton

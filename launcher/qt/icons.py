@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Symbole der Qt-Oberflaeche – dieselben wie in der Web-Oberflaeche (web/index.html: ICONS, IICON).
+"""Symbole der Qt-Oberflaeche (Strichsymbole, dieselben wie auf der Webseite: tools/build-site.py).
 Strichfarbe "currentColor" wird beim Zeichnen durch die Textfarbe ersetzt."""
 
 ICONS = {

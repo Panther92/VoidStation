@@ -491,10 +491,6 @@ Layer {
             if (Date.now() - btPairPoll.t0 > 150000) btPairPoll.stop()   // sonst beendet btCall die Abfrage
         }, function () { btPairPoll.stop() })
     }
-    function setFrontend(fe) {
-        if (sett.frontend === fe) return
-        Api.post("/api/settings/frontend", { frontend: fe }, function (j) { update(function () { sett = j }); app.toast(Ui.t("settings.frontendToast")) }, fail)
-    }
     function setPadMouse(on) {
         if (!!sett.padmouse === on) return
         Api.post("/api/settings/padmouse", { on: on }, function (j) {
@@ -945,16 +941,6 @@ Layer {
                 }
             }
             Info { html: Ui.keys(Ui.t("settings.padMouseHint"), Ui.c.textPrimary, 16 * Ui.f) }
-        }
-        SetGroup {
-            visible: s.cat === "system" && !!s.sett && (s.sett.frontends || []).length > 1; availH: s.colH; title: Ui.t("settings.frontend")
-            SetRow {
-                Repeater {
-                    model: s.sett ? (s.sett.frontends || []) : []
-                    Pill { property string key: "fe" + modelData; text: Ui.t("frontend." + modelData, null, modelData); on: s.sett.frontend === modelData; onTriggered: s.setFrontend(modelData) }
-                }
-            }
-            Info { html: Ui.esc(Ui.t("settings.frontendHint")) }
         }
         SetGroup {
             visible: s.cat === "system" && !!s.sett && s.sett.ssh !== undefined; availH: s.colH; title: Ui.t("settings.ssh")

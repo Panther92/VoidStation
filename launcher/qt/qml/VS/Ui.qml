@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Gemeinsame Werte der Oberflaeche: Farben (aus web/themes), Texte (aus web/i18n), Masse.
-// Alle Masse haengen an f (= Skalierung × Bildschirmhoehe/768) und u (Kachelgroesse) – wie in der Web-Oberflaeche.
+// Alle Masse haengen an f (= Skalierung × Bildschirmhoehe/768) und u (Kachelgroesse).
 pragma Singleton
 import QtQuick
 

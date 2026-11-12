@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Installer (nur im Live-System). Gleicher Ablauf wie zuvor in der Web-Oberflaeche:
+// Installer (nur im Live-System). Ablauf:
 //   welcome → disk (+ beside | free | manual) → account → device (→ host | lang) → confirm → progress → done | error
 // Die ganze Arbeit macht voidstation-installer (root, ueber den Launcher); hier nur Auswahl, Anzeige und Tastatur.
 // Kacheln sind Beschreibungen ({ kind, size, act, … }), act() fuehrt sie aus.

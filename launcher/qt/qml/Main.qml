@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// VoidStation-Startseite (Qt). Aufbau und Verhalten wie web/index.html:
+// VoidStation-Startseite (Qt):
 // Startseite mit Kachelgruppen, darueber Ebenen (Radio, Fernsehen, Spiele, AppCenter, Einstellungen),
 // Dialoge, Bildschirmtastatur, Startbildschirm beim Programmstart, Hinweiszeile, Meldungen.
 import QtQuick

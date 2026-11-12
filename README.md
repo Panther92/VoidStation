@@ -6,7 +6,7 @@ English · **[Deutsch](README.de.md)** · [voidstation.de](https://voidstation.d
 
 Void Linux as a TV station: a dark tile interface in the style of Windows 8, controlled with a gamepad, remote, mouse or keyboard.
 It runs on Openbox; the start screen is a dedicated Python + Qt 6 program that draws straight on the GPU.
-The installer in the live system is Qt as well. The previous web interface (WebKitGTK) remains available as a fallback (Settings → System → Interface).
+The installer in the live system is Qt as well. The former web interface (WebKitGTK) was removed in 2026.12.
 
 **Features:** YouTube (Firefox in kiosk mode), radio with search and favorites, TV channels from around the world (iptv-org) in its own player
 (switch channels in the picture, channel list, program info), **Videos & Music** (library for the share and USB drives with covers,
@@ -218,8 +218,7 @@ VoidStation picks up new CSS files in the theme folder automatically and offers 
 
 - Customize tiles: `~/.local/share/voidstation/tiles.json`
 - Logs: `~/.local/share/voidstation/logs/`
-- Switch the interface: Settings → System → Interface (or via SSH: `echo web > ~/.local/share/voidstation/frontend; pkill -f voidstation-home.py`)
-- Web interface in Firefox instead of WebKit: `touch ~/.local/share/voidstation/use-firefox`
+- Restart the start screen (via SSH): `pkill -f voidstation-home.py` – `home.sh` brings it straight back
 
 ## Repository layout
 
@@ -227,11 +226,9 @@ VoidStation picks up new CSS files in the theme folder automatically and offers 
 |---|---|
 | `launcher/launcher.py` | Backend: HTTP API on 127.0.0.1:8765, starting/switching apps, radio, TV, AppCenter, settings |
 | `launcher/qt/` | Start screen, player and installer (Python + Qt 6): `voidstation-home.py` (window, gamepad, texts, colors), `voidstation-player.py` (TV, Videos & Music via libmpv), `vscommon.py` (shared code), `qml/` (interface), `icons.py` |
-| `launcher/web/index.html` | Web interface (tiles, radio, TV, AppCenter, settings, installer) – fallback if Qt doesn't start |
-| `launcher/web/themes/` | Themes as modular CSS files (`default-dark`, `default-light`, `high-contrast`, `nord`) – apply to both interfaces |
-| `launcher/web/i18n/` | Texts of both interfaces, one file per language (`de.json`, `en.json`, …) |
-| `launcher/voidstation-shell.py` | Full-screen window (WebKitGTK) for the web interface; Firefox as fallback |
-| `launcher/home.sh` | picks the interface (file `frontend`: `qt` or `web`) and keeps it alive |
+| `launcher/web/themes/` | Themes as modular CSS files (`default-dark`, `default-light`, `high-contrast`, `nord`) – also read by the launcher (Openbox, GTK, Firefox) and the player |
+| `launcher/web/i18n/` | Interface texts, one file per language (`de.json`, `en.json`, …); plus `web/logo.png` for the loading screen |
+| `launcher/home.sh` | starts the start screen and keeps it alive (log: `logs/frontend.log`, `logs/home.log`) |
 | `launcher/tiles.json` | Default tiles |
 | `launcher/catalog.json` | App catalog for the AppCenter |
 | `launcher/voidstation-pkg` | root helper, installs only approved packages |
@@ -242,7 +239,7 @@ VoidStation picks up new CSS files in the theme folder automatically and offers 
 | `docs/screenshots/` | Screenshots (German, `en/` English) |
 | `site/`, `tools/build-site.py` | Website voidstation.de (sources and build), published by `.github/workflows/pages.yml` |
 | `.github/` | Workflows (website, checks, releases), issue forms, pull request template |
-| `tools/` | `publish.sh` (publishing), `changelog.py` (changelog helper for publishing), `check.sh` (checks before a pull request), `gh-release.py` (GitHub releases), `qt-preview.py` (Qt interface with sample data), `qt-screenshots.py` (screenshots), `screenshots.py` (screenshots of the web interface), `boot-art.py` (artwork for boot menu and splash → `iso/art/`) |
+| `tools/` | `publish.sh` (publishing), `changelog.py` (changelog helper for publishing), `check.sh` (checks before a pull request), `gh-release.py` (GitHub releases), `qt-preview.py` (Qt interface with sample data), `qt-screenshots.py` (screenshots), `sampledata.py` (sample data for both), `boot-art.py` (artwork for boot menu and splash → `iso/art/`) |
 | `update-url` | Update source of the devices (`{channel}` = stable/main) |
 | `CHANGELOG.md`, `CHANGELOG.en.md` | Version number and changes, German and English (shown in the update dialog) |
 | `RELEASING.md` | Version numbers, release train, hotfixes, ISO schedule |

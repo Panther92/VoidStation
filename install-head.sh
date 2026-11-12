@@ -67,7 +67,7 @@ if [ "$(xbps-uhelper arch 2>/dev/null)" = i686 ]; then
 fi
 PKGS="xinit xauth xset xrandr xprop setxkbmap $GPU_PKGS \
   openbox dbus elogind xrdb pulseaudio-utils curl python3 python3-evdev wmctrl xdotool unclutter-xfixes \
-  firefox mpv python3-mpv ffmpegthumbnailer ffmpeg yt-dlp nodejs lsdvd samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 pcmanfm gvfs xterm \
+  firefox mpv python3-mpv ffmpegthumbnailer ffmpeg yt-dlp nodejs lsdvd samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject pcmanfm gvfs xterm \
   python3-pyside6-declarative qt6-svg qt6-imageformats qt6-plugin-tls-openssl \
   pipewire wireplumber alsa-utils bluez libspa-bluetooth \
   noto-fonts-ttf noto-fonts-emoji noto-fonts-cjk dejavu-fonts-ttf \
@@ -116,7 +116,7 @@ say "3/8  Dateien entpacken nach $TV"
 mkdir -p "$TV"
 [ -f "$TV/tiles.json" ] && cp "$TV/tiles.json" /tmp/tiles.json.keep
 sed -n '/^__PAYLOAD_BELOW__$/,$p' "$0" | tail -n +2 | base64 -d | tar -xz -C "$TV"
-chmod +x "$TV/launcher.py" "$TV/launcher-start.py" "$TV/home.sh" "$TV/vsctl" "$TV/voidstation-shell.py" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/qt/voidstation-player.py" "$TV/sysfix.sh"
+chmod +x "$TV/launcher.py" "$TV/launcher-start.py" "$TV/home.sh" "$TV/vsctl" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/qt/voidstation-player.py" "$TV/sysfix.sh"
 # Python-Bytecode mit Pruefsumme statt Dateizeit: build.sh setzt feste Dateizeiten, ein gleich grosser neuer Stand
 # saehe fuer Python sonst unveraendert aus. Scheitert es, uebersetzt Python beim naechsten Start selbst.
 rm -rf "$TV/__pycache__" "$TV/qt/__pycache__"
@@ -217,11 +217,9 @@ done
 # Bluetooth & Controller (BlueZ-Einstellungen, udev-Regeln, uinput): sysfix.sh
 
 # ---------------------------------------------------------------------
-say "5/8  Firefox-Profile (Startseite + YouTube)"
-for p in home youtube; do
-  install -d "$TV/profiles/$p"
-  cp "$TV/firefox/user-common.js" "$TV/profiles/$p/user.js"
-done
+say "5/8  Firefox-Profil (YouTube)"
+install -d "$TV/profiles/youtube"
+cp "$TV/firefox/user-common.js" "$TV/profiles/youtube/user.js"
 cat "$TV/firefox/user-youtube.js" >> "$TV/profiles/youtube/user.js"
 install -d /etc/firefox/policies /usr/local/share/voidstation
 cp "$TV/firefox/policies.json" /etc/firefox/policies/policies.json

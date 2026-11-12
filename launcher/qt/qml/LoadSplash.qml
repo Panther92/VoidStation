@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Ladebild bis die Kacheln stehen: Logo mittig, drei pulsierende Punkte darunter – wie das Startbild
-// beim Hochfahren (Plymouth) und die WebKit-Shell, damit der Bildschirm nie leer ist. Feste Farben, kein Theme.
+// beim Hochfahren (Plymouth), damit der Bildschirm nie leer ist. Feste Farben, kein Theme.
 import QtQuick
 
 Rectangle {

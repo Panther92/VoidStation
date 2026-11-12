@@ -57,7 +57,7 @@ def warn(msg):
 
 
 # ===================================================================== Symbole
-# dieselben Strichsymbole wie auf der Startseite der Geraete (launcher/web/index.html)
+# dieselben Strichsymbole wie auf der Startseite der Geraete (launcher/qt/icons.py)
 ICONS = {
     "download": '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M24 7v23M14 21l10 10 10-10M8 35v4a2 2 0 0 0 2 2h28a2 2 0 0 0 2-2v-4"/></svg>',
     "play":     '<svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linejoin="round"><rect x="5" y="10" width="38" height="28" rx="7"/><path d="M20 17.5v13l11-6.5z" fill="currentColor"/></svg>',

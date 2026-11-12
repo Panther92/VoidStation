@@ -92,6 +92,6 @@ Native Void packages come first; where there is none, VoidStation downloads the 
 
 - [Void Linux](https://voidlinux.org) (glibc, rolling release) with runit, Openbox and PipeWire
 - [XLibre](https://github.com/X11Libre/xserver) display server; if the interface fails to start twice, VoidStation repairs itself, then offers a rescue console
-- Start screen and player are programs of their own in Python + Qt 6 that draw straight on the graphics card; playback uses [mpv](https://mpv.io). The web interface (WebKitGTK) stays as a fallback
+- Start screen and player are programs of their own in Python + Qt 6 that draw straight on the graphics card; playback uses [mpv](https://mpv.io)
 - Windows share `\\<hostname>\share` for movies, music and ROMs; remote access via SSH if you want it
 - Live ISO with an installer in the same tile design: whole SSD, next to Windows or Linux, into free space or manual partitioning

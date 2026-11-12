@@ -82,7 +82,7 @@ def main():
         # Startbild (Plymouth): Logo gross, das Skript skaliert passend zum Bildschirm
         shot(pg, logo_html(960, 172), 960, 172, OUT / "plymouth/logo.png", transparent=True)
         opt(OUT / "plymouth/logo.png", "RGBA")
-        # dasselbe Logo fuer das Ladebild der Startseite (voidstation-shell.py)
+        # dasselbe Logo fuer das Ladebild von Startseite und Player (LoadSplash.qml)
         (REPO / "launcher/web/logo.png").write_bytes((OUT / "plymouth/logo.png").read_bytes())
         b.close()
     box(OUT / "grub/item", CARD, CARD, 1)

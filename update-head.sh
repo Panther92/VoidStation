@@ -2,7 +2,7 @@
 # =====================================================================
 #  VoidStation Update – fuer eine bestehende Installation
 #  Aufruf (per SSH als paul):   sudo bash update.sh
-#  Neu: schlanke Startseite (WebKit statt Firefox), Fernsehen, AppCenter,
+#  Neu: Startseite (Qt), Fernsehen, AppCenter,
 #       Freigabe-Ordner (Samba), dunkles Theme, grosser Mauszeiger
 #  Optional: Freigabe-Passwort vorgeben mit  sudo SMBPASS='geheim' bash update.sh
 # =====================================================================
@@ -44,14 +44,18 @@ fi
 
 [ -d "$TV" ] || { echo "Keine VoidStation-Installation unter $TV gefunden."; exit 1; }
 
-# Alte WebKit-Ordner der Startseite (lagen lose in ~/.local/share und ~/.cache), jetzt unter .../voidstation/webkit
+# Web-Oberflaeche entfernt (2026.12, nur noch die Qt-Startseite): Shell, HTML, Umschalter, Firefox-Profil und
+# WebKit-Daten der alten Startseite (auch die ganz alten Orte lose in ~/.local/share und ~/.cache).
 for d in tvstart-shell.py voidstation-shell.py; do
   rm -rf "$HOMEDIR/.local/share/$d" "$HOMEDIR/.cache/$d"
 done
+rm -f "$TV/voidstation-shell.py" "$TV/web/index.html" "$TV/frontend" "$TV/use-firefox" "$TV/use-webkit" \
+      "$TV/logs/shell.log" "$TV/logs/home-fallback.log"
+rm -rf "$TV/profiles/home" "$TV/webkit" "$HOMEDIR/.cache/voidstation/webkit"
 
 say "1/8  Pakete"
 MISSING=""
-for p in curl elogind xrdb pulseaudio-utils xdotool mpv python3-mpv ffmpegthumbnailer ffmpeg yt-dlp nodejs lsdvd samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf xprop adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject libwebkit2gtk41 \
+for p in curl elogind xrdb pulseaudio-utils xdotool mpv python3-mpv ffmpegthumbnailer ffmpeg yt-dlp nodejs lsdvd samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf xprop adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject \
          bluez libspa-bluetooth htop nano fastfetch mousepad python3-pyside6-declarative qt6-svg qt6-imageformats qt6-plugin-tls-openssl \
          wireless-regdb bash-completion; do
   xbps-query "$p" >/dev/null 2>&1 || MISSING="$MISSING $p"
@@ -59,6 +63,17 @@ done
 # Startbild beim Hochfahren (s. voidstation-splash) – nur 64 Bit
 [ "$(xbps-uhelper arch 2>/dev/null)" = x86_64 ] && ! xbps-query plymouth >/dev/null 2>&1 && MISSING="$MISSING plymouth"
 if [ -n "$MISSING" ]; then xbps-install -Sy $MISSING || warn "Paketinstallation fehlgeschlagen"; else echo "alles da"; fi
+# WebKitGTK brauchte nur die alte Web-Oberflaeche. Entfernen samt Abhaengigkeiten, die sonst niemand braucht (-R nimmt
+# nur automatisch installierte). Haengt ein anderes Paket daran, bleibt es – nur als Abhaengigkeit markiert, damit es
+# mit diesem Paket verschwindet.
+if xbps-query libwebkit2gtk41 >/dev/null 2>&1; then
+  if [ -z "$(xbps-query -X libwebkit2gtk41 2>/dev/null)" ]; then
+    xbps-remove -Ry libwebkit2gtk41 >/dev/null 2>&1 && echo "WebKitGTK entfernt (alte Web-Oberflaeche)" \
+      || warn "WebKitGTK konnte nicht entfernt werden"
+  else
+    xbps-pkgdb -m auto libwebkit2gtk41 >/dev/null 2>&1 || true
+  fi
+fi
 # 32-Bit-Rechner (experimentell): 2D-Treiber fuer die alte Grafik nachholen (Xv fuer den Player, s. install.sh)
 if [ "$(xbps-uhelper arch 2>/dev/null)" = i686 ]; then
   DDX=""
@@ -108,7 +123,7 @@ for f in tiles.json radio.json tvfavs.json settings.json; do [ -f "$TV/$f" ] && 
 sed -n '/^__PAYLOAD_BELOW__$/,$p' "$0" | tail -n +2 | base64 -d | tar -xz -C "$TV" || { warn "Entpacken fehlgeschlagen"; exit 1; }
 for f in tiles.json radio.json tvfavs.json settings.json; do [ -f "$KEEP/$f" ] && cp "$KEEP/$f" "$TV/$f"; done
 rm -rf "$KEEP"
-chmod +x "$TV/launcher.py" "$TV/launcher-start.py" "$TV/home.sh" "$TV/vsctl" "$TV/voidstation-shell.py" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/qt/voidstation-player.py" "$TV/sysfix.sh"
+chmod +x "$TV/launcher.py" "$TV/launcher-start.py" "$TV/home.sh" "$TV/vsctl" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/qt/voidstation-player.py" "$TV/sysfix.sh"
 # Python-Bytecode mit Pruefsumme statt Dateizeit: build.sh setzt feste Dateizeiten, ein gleich grosser neuer Stand
 # saehe fuer Python sonst unveraendert aus. Scheitert es, uebersetzt Python beim naechsten Start selbst.
 rm -rf "$TV/__pycache__" "$TV/qt/__pycache__"

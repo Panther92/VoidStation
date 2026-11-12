@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
 """
-README-Screenshots neu erzeugen: echte Oberflaeche, Beispieldaten (kein Void noetig).
-Benoetigt: pip install playwright pillow && playwright install chromium
-Aufruf:    python3 tools/screenshots.py              -> docs/screenshots/*.webp
-           VS_LANG=en python3 tools/screenshots.py   -> docs/screenshots/en/*.webp (englische Oberflaeche)
+Beispieldaten fuer tools/qt-preview.py und tools/qt-screenshots.py (kein Void noetig): Kacheln, Sender,
+Einstellungen, AppCenter – und ein kleiner HTTP-Handler mit den Grundrouten der Launcher-API.
+Frueher tools/screenshots.py (Screenshots der Web-Oberflaeche, mit ihr 2026.12 entfernt).
 """
 import json
 import os
 import re
-from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
 REPO = Path(__file__).resolve().parent.parent
-WEB = REPO / "launcher" / "web"
 TILES = json.loads((REPO / "launcher" / "tiles.json").read_text(encoding="utf-8"))
 TILES["user"] = "Paul"
 CAT = json.loads((REPO / "launcher" / "catalog.json").read_text(encoding="utf-8"))
@@ -105,10 +103,7 @@ def apps():
     return {"categories": CAT["categories"], "local_cat": "Auf diesem Gerät", "apps": out, "job": None}
 
 
-class H(SimpleHTTPRequestHandler):
-    def __init__(self, *a, **k):
-        super().__init__(*a, directory=str(WEB), **k)
-
+class H(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
@@ -138,51 +133,9 @@ class H(SimpleHTTPRequestHandler):
         }
         if p in routes:
             return self.j(routes[p]())
-        return super().do_GET()
+        self.send_response(404)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
 
     def do_POST(self):
         return self.j({})
-
-
-FAKE_DATE = """(() => { const F = new Date(2026, 9, 2, 20, 15, 0).getTime(), T0 = Date.now(), D = Date;
-  class FD extends D { constructor(...a) { if (a.length) super(...a); else super(F + (D.now() - T0)); }
-    static now() { return F + (D.now() - T0); } }
-  window.Date = FD; })();"""
-
-
-def shoot(out):
-    import io
-    import threading
-    import time
-    from PIL import Image
-    from playwright.sync_api import sync_playwright
-    srv = ThreadingHTTPServer(("127.0.0.1", 8765), H)
-    threading.Thread(target=srv.serve_forever, daemon=True).start()
-    out.mkdir(parents=True, exist_ok=True)
-
-    def save(pg, name):
-        png = pg.screenshot()
-        Image.open(io.BytesIO(png)).convert("RGB").resize((1600, 900), Image.LANCZOS) \
-            .save(out / f"{name}.webp", quality=90, method=6)
-        print("gespeichert:", out / f"{name}.webp")
-
-    def open_tile(pg, tid):
-        pg.evaluate("t => setFocus(document.querySelector('[data-id=' + JSON.stringify(t) + ']'))", tid)
-        pg.keyboard.press("Enter"); time.sleep(2)
-
-    with sync_playwright() as p:
-        b = p.chromium.launch()
-        pg = b.new_page(viewport={"width": 1920, "height": 1080}, locale={"de": "de-DE", "en": "en-US"}.get(LANG, "de-DE"))
-        pg.add_init_script(FAKE_DATE)
-        pg.goto("http://127.0.0.1:8765/"); time.sleep(3)
-        pg.evaluate("setFocus(document.querySelector('[data-id=youtube]'), true)"); time.sleep(0.5)
-        save(pg, "1-start")
-        for tid, name in ([("tv", "2-fernsehen"), ("appcenter", "3-appcenter"), ("radio", "4-radio")]):
-            open_tile(pg, tid); save(pg, name)
-            pg.keyboard.press("Escape"); time.sleep(0.8)
-        b.close()
-    srv.shutdown()
-
-
-if __name__ == "__main__":
-    shoot(REPO / "docs" / "screenshots" / ("" if LANG == "de" else LANG))

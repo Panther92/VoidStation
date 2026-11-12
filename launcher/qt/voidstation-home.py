@@ -3,13 +3,12 @@
 """
 VoidStation Home (Qt)
 ---------------------
-Startseite als natives Programm: Python + Qt 6 (PySide6, QML). Ersetzt die WebKit-Shell fuer
-die Kacheloberflaeche; der Installer im Live-System bleibt vorerst die Web-Oberflaeche.
+Startseite als natives Programm: Python + Qt 6 (PySide6, QML), im Live-System mit Installer.
 
 Aufgaben dieses Programms (alles andere steht in qml/):
   * Fenster im Vollbild, Fenstertitel "VoidStation" (danach sucht der Launcher)
-  * Verbindung zum Launcher (http://127.0.0.1:8765, dieselbe API wie die Web-Oberflaeche)
-  * Texte aus web/i18n/*.json und Farben aus web/themes/*.css – eine Quelle fuer beide Oberflaechen
+  * Verbindung zum Launcher (HTTP-API auf http://127.0.0.1:8765)
+  * Texte aus web/i18n/*.json und Farben aus web/themes/*.css (auch Launcher und Player lesen sie)
   * Gamepad ueber evdev (python3-evdev), Symbole als SVG
   * Controller als Maus in Programmen (uinput): rechter Stick Zeiger, A/B (✕/○) Klicks, linker Stick scrollt, R3 umschalten
   * Bildschirmtastatur ueber Programmen (L2 oder L3 oder Eingabefeld im Browser): tippt per XTest, s. vsx11.type_text

@@ -6,7 +6,7 @@
 
 Void Linux als TV-Station: Kacheloberfläche im Stil von Windows 8, dunkel, bedienbar mit Gamepad, Fernbedienung, Maus und Tastatur.
 Läuft auf Openbox; die Startseite ist ein eigenes Programm in Python + Qt 6, das direkt auf der Grafikkarte zeichnet.
-Auch der Installer im Live-System ist Qt. Die bisherige Web-Oberfläche (WebKitGTK) bleibt als Rückfall umschaltbar (Einstellungen → System → Oberfläche).
+Auch der Installer im Live-System ist Qt. Die frühere Web-Oberfläche (WebKitGTK) ist seit 2026.12 entfernt.
 
 **Funktionen:** YouTube (Firefox im Kiosk-Modus), Radio mit Suche und Favoriten, TV-Sender aus aller Welt (iptv-org) im eigenen Player
 (umschalten im Bild, Senderliste, Programminfo), **Videos & Musik** (Mediathek für Freigabe und USB-Laufwerke mit Covern,
@@ -219,8 +219,7 @@ VoidStation erkennt neue CSS-Dateien im Theme-Ordner automatisch und bietet sie 
 
 - Kacheln anpassen: `~/.local/share/voidstation/tiles.json`
 - Logs: `~/.local/share/voidstation/logs/`
-- Oberfläche wechseln: Einstellungen → System → Oberfläche (oder per SSH: `echo web > ~/.local/share/voidstation/frontend; pkill -f voidstation-home.py`)
-- Web-Oberfläche über Firefox statt WebKit: `touch ~/.local/share/voidstation/use-firefox`
+- Startseite neu starten (per SSH): `pkill -f voidstation-home.py` – `home.sh` startet sie sofort wieder
 
 ## Aufbau
 
@@ -228,11 +227,9 @@ VoidStation erkennt neue CSS-Dateien im Theme-Ordner automatisch und bietet sie 
 |---|---|
 | `launcher/launcher.py` | Backend: HTTP-API auf 127.0.0.1:8765, Apps starten/umschalten, Radio, TV, AppCenter, Einstellungen |
 | `launcher/qt/` | Startseite, Player und Installer (Python + Qt 6): `voidstation-home.py` (Fenster, Gamepad, Texte, Farben), `voidstation-player.py` (Fernsehen, Videos & Musik über libmpv), `vscommon.py` (Gemeinsames), `qml/` (Oberfläche), `icons.py` |
-| `launcher/web/index.html` | Web-Oberfläche (Kacheln, Radio, TV, AppCenter, Einstellungen, Installer) – Rückfall, falls Qt nicht startet |
-| `launcher/web/themes/` | Themes als modulare CSS-Dateien (`default-dark`, `default-light`, `high-contrast`, `nord`) – gelten für beide Oberflächen |
-| `launcher/web/i18n/` | Texte beider Oberflächen, eine Datei je Sprache (`de.json`, `en.json`, …) |
-| `launcher/voidstation-shell.py` | Vollbild-Fenster (WebKitGTK) für die Web-Oberfläche; Firefox als Rückfall |
-| `launcher/home.sh` | wählt die Oberfläche (Datei `frontend`: `qt` oder `web`) und hält sie am Leben |
+| `launcher/web/themes/` | Themes als modulare CSS-Dateien (`default-dark`, `default-light`, `high-contrast`, `nord`) – auch Launcher (Openbox, GTK, Firefox) und Player lesen sie |
+| `launcher/web/i18n/` | Texte der Oberfläche, eine Datei je Sprache (`de.json`, `en.json`, …); dazu `web/logo.png` fürs Ladebild |
+| `launcher/home.sh` | startet die Startseite und hält sie am Leben (Protokoll: `logs/frontend.log`, `logs/home.log`) |
 | `launcher/tiles.json` | Standard-Kacheln |
 | `launcher/catalog.json` | App-Katalog für das AppCenter |
 | `launcher/voidstation-pkg` | root-Helfer, installiert nur freigegebene Pakete |
@@ -243,7 +240,7 @@ VoidStation erkennt neue CSS-Dateien im Theme-Ordner automatisch und bietet sie 
 | `docs/screenshots/` | Screenshots (deutsch, `en/` englisch) |
 | `site/`, `tools/build-site.py` | Webseite voidstation.de (Quellen und Bau), veröffentlicht von `.github/workflows/pages.yml` |
 | `.github/` | Workflows (Webseite, Prüfungen, Releases), Issue-Formulare, Vorlage für Pull Requests |
-| `tools/` | `publish.sh` (veröffentlichen), `changelog.py` (Changelog-Helfer fürs Veröffentlichen), `check.sh` (Prüfungen vor einem Pull Request), `gh-release.py` (GitHub-Releases), `qt-preview.py` (Qt-Oberfläche mit Beispieldaten), `qt-screenshots.py` (Screenshots), `screenshots.py` (Screenshots der Web-Oberfläche), `boot-art.py` (Grafiken für Startmenü und Startbild → `iso/art/`) |
+| `tools/` | `publish.sh` (veröffentlichen), `changelog.py` (Changelog-Helfer fürs Veröffentlichen), `check.sh` (Prüfungen vor einem Pull Request), `gh-release.py` (GitHub-Releases), `qt-preview.py` (Qt-Oberfläche mit Beispieldaten), `qt-screenshots.py` (Screenshots), `sampledata.py` (Beispieldaten für beide), `boot-art.py` (Grafiken für Startmenü und Startbild → `iso/art/`) |
 | `update-url` | Update-Quelle der Geräte (`{channel}` = stable/main) |
 | `CHANGELOG.md`, `CHANGELOG.en.md` | Versionsnummer und Änderungen, deutsch und englisch (erscheinen im Update-Dialog) |
 | `RELEASING.md` | Versionsnummern, Release-Zug, Hotfixes, ISO-Rhythmus |

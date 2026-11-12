@@ -4,7 +4,7 @@
 VoidStation Launcher
 -----------------
 Kleiner lokaler Dienst fuer die Kacheloberflaeche:
-  * liefert die Startseite (web/, tiles.json) aus
+  * liefert der Startseite (Qt) Kacheln, Texte und Zustand ueber eine HTTP-API
   * startet Programme aus tiles.json (nur diese, keine freien Befehle)
   * mehrere Programme parallel; erneutes Oeffnen holt ein laufendes nach vorn
   * "Home" holt die Startseite nach vorn, ohne etwas zu beenden
@@ -49,7 +49,7 @@ from tvindex import TV_LETTERS, TV_PAGE, tv_fold, tv_letter  # noqa: F401
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("VOIDSTATION_PORT", "8765"))
 BASE = Path(__file__).resolve().parent
-WEB = BASE / "web"
+WEB = BASE / "web"                                     # Texte (i18n/), Themes (themes/), Logo – kein HTML mehr
 CONFIG = Path(os.environ.get("VOIDSTATION_CONFIG", BASE / "tiles.json"))
 FAVS = BASE / "radio.json"
 MPV_SOCK = str(BASE / "mpv.sock")
@@ -1700,36 +1700,11 @@ def apply_openbox_theme(theme, dark):
 
 
 def restart_home_later(delay=0.8):
-    """Startseite neu starten, z. B. fuer den neuen Mauszeiger oder die andere Oberflaeche (home.sh startet sie neu)."""
+    """Startseite neu starten, z. B. fuer den neuen Mauszeiger (home.sh startet sie neu)."""
     def _go():
         time.sleep(delay)
-        run(["pkill", "-f", "voidstation-shell.py|voidstation-home.py|profiles/home"])
+        run(["pkill", "-f", "voidstation-home.py"])
     threading.Thread(target=_go, daemon=True).start()
-
-
-# Oberflaeche der Startseite: "qt" (Python + Qt 6, Standard, auch mit Installer im Live-System)
-# oder "web" (WebKit-Shell / Firefox, Rueckfall). home.sh liest die Datei "frontend".
-FRONTEND_FILE = BASE / "frontend"
-
-
-def qt_available():
-    try:
-        import importlib.util
-        return importlib.util.find_spec("PySide6") is not None and (BASE / "qt" / "voidstation-home.py").exists()
-    except (ImportError, ValueError):
-        return False
-
-
-def frontends():
-    return ["qt", "web"] if qt_available() else ["web"]
-
-
-def frontend():
-    try:
-        f = FRONTEND_FILE.read_text(encoding="utf-8").strip()
-    except OSError:
-        f = "qt"
-    return f if f in frontends() else frontends()[0]
 
 
 def xrandr_info():
@@ -6938,7 +6913,7 @@ def settings_payload():
                        "sizes": CURSOR_SIZES}, "displays": xrandr_info(),
             "audio": audio_info(), "volume": volume_get(), "net": net_info(), "share": share_info(),
             "sysupd_days": sysupd_days(s), "sysupd_choices": SYSUPD_DAYS, "music_volume": music_volume(),
-            "frontend": frontend(), "frontends": frontends(), "padmouse": bool(s.get("padmouse", True)),
+            "padmouse": bool(s.get("padmouse", True)),
             "rate": s.get("rate"), "match_rate": bool(s.get("match_rate")), "region": region(s),
             "osk": {"choice": s.get("osk_layout") if s.get("osk_layout") in OSK_LAYOUTS else "auto",
                     "mode": s.get("osk_mode") if s.get("osk_mode") in OSK_MODES else "auto"}}
@@ -13143,12 +13118,7 @@ class Handler(BaseHTTPRequestHandler):
                     if t.get("id") in hints and not t.get("start_hint"):
                         t["start_hint"] = hints[t["id"]]
             return self._json(200, c)
-        if path == "/":
-            path = "/index.html"
-        target = (WEB / path.lstrip("/")).resolve()
-        if WEB.resolve() not in target.parents or not target.is_file():
-            return self._send(404)
-        self._send(200, target.read_bytes(), MIME.get(target.suffix, "application/octet-stream"))
+        self._send(404)
 
     def do_POST(self):
         # Eigener Header erzwingt bei fremden Webseiten einen CORS-Preflight,
@@ -13406,14 +13376,6 @@ class Handler(BaseHTTPRequestHandler):
                 on = bool(self._body().get("on"))
                 s = settings_load(); s["padmouse"] = on; settings_save(s)
                 log("Controller-Maus:", "an" if on else "aus")
-                return self._json(200, settings_payload())
-            if parts == ["api", "settings", "frontend"]:
-                fe = str(self._body().get("frontend", ""))
-                if fe not in frontends():
-                    return self._json(400, {"error": "unbekannte Oberflaeche"})
-                FRONTEND_FILE.write_text(fe + "\n", encoding="utf-8")
-                log("Oberflaeche:", fe)
-                restart_home_later(0.6)
                 return self._json(200, settings_payload())
             if parts == ["api", "settings", "cursor"]:
                 b = self._body()

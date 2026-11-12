@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Fokus und Pfeil-Navigation wie in der Web-Oberflaeche: das naechste Element in Pfeilrichtung
+// Fokus und Pfeil-Navigation: das naechste Element in Pfeilrichtung
 // nach Bildschirmposition (Hauptrichtung + 2,2 × Seitenabstand). Fokussierbar ist jedes sichtbare
 // Element mit navigable: true; Container mit ensureVisible(item, instant) scrollen es ins Bild.
 pragma Singleton
