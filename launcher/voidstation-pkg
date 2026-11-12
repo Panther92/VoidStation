@@ -497,6 +497,17 @@ main() {
     kernelpurge)                            # alte Kernel weg, wenn der neueste laeuft
       kernel_purge
       ;;
+    mullvad)                                # Mullvad VPN aus der signierten .deb: install | update | remove | status | latest
+      case "$1" in
+        install|update|remove|status|latest) ;;
+        *) echo "mullvad: install | update | remove | status | latest"; return 2 ;;
+      esac
+      [ -x /usr/local/sbin/voidstation-mullvad ] || { echo "voidstation-mullvad fehlt (VoidStation aktualisieren)"; return 1; }
+      if [ "$1" = install ] || [ "$1" = update ]; then
+        command -v gpg >/dev/null 2>&1 || { mirror_auto; xbps-install -Sy gnupg || return 1; }
+      fi
+      /usr/local/sbin/voidstation-mullvad "$1"
+      ;;
     channel)
       # Update-Kanal: stable (Standard) | main (Testing = Entwicklerstand, seit 2026.11 nur noch auf Wunsch
       # per "vsctl channel testing", mit Markierung) | auto (Launcher: Geraete, die Testing frueher im
@@ -519,7 +530,7 @@ main() {
       esac
       ;;
     *)
-      echo "Benutzung: voidstation-pkg install|remove|markauto <paket>... | sync | update | check [--nosync] | mirror status|auto | selfupdate [--markers] | gpu32 [--nosync] | kernelpurge | channel stable|main|auto | xserver ensure|repair|status | ssh on|off|status | bluetooth on|off|status | suspend"
+      echo "Benutzung: voidstation-pkg install|remove|markauto <paket>... | sync | update | check [--nosync] | mirror status|auto | selfupdate [--markers] | gpu32 [--nosync] | kernelpurge | mullvad install|update|remove|status|latest | channel stable|main|auto | xserver ensure|repair|status | ssh on|off|status | bluetooth on|off|status | suspend"
       return 2
       ;;
   esac

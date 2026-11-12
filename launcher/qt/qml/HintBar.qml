@@ -18,12 +18,14 @@ Item {
     }
     function hintsFor(l) {
         var T = Ui.t, h
-        Nav.serial; inst.step; keymap.mode
-        if (l === "home") h = [T("hint.open"), T("hint.close"), T("hint.home")]
+        Nav.serial; inst.step; keymap.mode; vpnLayer.view
+        if (l === "home") h = Nav.current && (Nav.current.isVpnIcon || (Nav.current.t && Nav.current.t.type === "vpn"))
+                              ? [T("hint.open"), T("hint.vpnToggle"), T("hint.home")] : [T("hint.open"), T("hint.close"), T("hint.home")]
         else if (l === "radio") h = [T("hint.play"), T("hint.fav"), T("hint.volume"), T("hint.back")]
         else if (l === "settings") h = [settings.cat ? T("hint.select") : T("hint.open"), T("hint.back")]
         else if (l === "roms") h = roms.gameOpts && Nav.current && Nav.current.rom && !Nav.current.rom.noOpts ? [T("hint.romLaunch"), T("hint.romOpts"), T("hint.back")] : [T("hint.romLaunch"), T("hint.back")]
         else if (l === "emuopts") h = [T("hint.select"), T("hint.back")]
+        else if (l === "vpn") h = vpnLayer.hints().slice()
         else if (l === "keymap") h = keymap.mode ? [T("hint.keymapGrab")] : [T("hint.select"), T("hint.back")]
         else if (l === "tv") h = [T("hint.tvOn"), T("hint.fav"), T("hint.homeShort"), T("hint.back")]
         else if (l === "apps") h = [Nav.current && Nav.current.isCat ? T("hint.appCat") : T("hint.appInstall"), T("hint.appCats"), T("hint.back")]

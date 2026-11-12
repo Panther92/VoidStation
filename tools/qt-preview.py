@@ -128,6 +128,65 @@ TILES["groups"].insert(1, {"name": "Spiele", "tiles": [
 
 
 JOB = {}
+# Mullvad VPN (VS_VPN=login | off | on | locked | nodaemon): Kachel in "System", Symbol oben rechts, Seite mit Attrappe
+VPNM = {"mode": os.environ.get("VS_VPN", ""), "loc": ["se", "sto"], "recent": [{"cc": "de", "city": "fra"},
+        {"cc": "nl", "city": "ams"}, {"cc": "ch", "city": "zrh"}],
+        "opt": {"lockdown": True, "autoconnect": True, "lan": True, "customDns": False,
+                "dns": {"ads": True, "trackers": True, "malware": True, "gambling": False, "adult_content": False, "social_media": False}}}
+VPN_RELAYS = [  # Beispieldaten im Format von launcher.py Vpn.relays()
+    ("au", "Australia", [("syd", "Sydney", -33.87, 151.21, 6), ("mel", "Melbourne", -37.81, 144.96, 3)]),
+    ("at", "Austria", [("vie", "Vienna", 48.21, 16.37, 4)]),
+    ("br", "Brazil", [("sao", "Sao Paulo", -23.55, -46.63, 3)]),
+    ("ca", "Canada", [("tor", "Toronto", 43.65, -79.38, 8), ("van", "Vancouver", 49.28, -123.12, 4)]),
+    ("de", "Germany", [("ber", "Berlin", 52.52, 13.40, 6), ("dus", "Dusseldorf", 51.23, 6.78, 4), ("fra", "Frankfurt", 50.11, 8.68, 28)]),
+    ("fi", "Finland", [("hel", "Helsinki", 60.17, 24.94, 5)]),
+    ("gb", "UK", [("lon", "London", 51.51, -0.13, 18), ("man", "Manchester", 53.48, -2.24, 4)]),
+    ("jp", "Japan", [("tyo", "Tokyo", 35.68, 139.69, 8), ("osa", "Osaka", 34.69, 135.50, 3)]),
+    ("nl", "Netherlands", [("ams", "Amsterdam", 52.37, 4.90, 20)]),
+    ("se", "Sweden", [("got", "Gothenburg", 57.71, 11.97, 12), ("hel", "Helsingborg", 56.05, 12.69, 4),
+                      ("mma", "Malmo", 55.60, 13.00, 16), ("sto", "Stockholm", 59.33, 18.07, 22)]),
+    ("ch", "Switzerland", [("zrh", "Zurich", 47.37, 8.54, 10)]),
+    ("sg", "Singapore", [("sin", "Singapore", 1.35, 103.82, 6)]),
+    ("za", "South Africa", [("jnb", "Johannesburg", -26.20, 28.05, 2)]),
+    ("es", "Spain", [("mad", "Madrid", 40.42, -3.70, 6)]),
+    ("us", "USA", [("lax", "Los Angeles, CA", 34.05, -118.24, 30), ("nyc", "New York, NY", 40.71, -74.01, 34),
+                   ("dal", "Dallas, TX", 32.78, -96.80, 20), ("chi", "Chicago, IL", 41.88, -87.63, 18)]),
+]
+VPN_CITY = {cc: (name, {c[0]: c for c in cities}) for cc, name, cities in VPN_RELAYS}
+
+
+def vpn_summary():
+    m = VPNM["mode"]
+    if not m:
+        return {"installed": False}
+    if m == "nodaemon":
+        return {"installed": True, "state": "nodaemon"}
+    if m == "on":
+        cc, city = VPNM["loc"]
+        cname, cities = VPN_CITY[cc]
+        c = cities.get(city) or next(iter(cities.values()))
+        return {"installed": True, "state": "connected", "country": cname, "city": c[1], "cc": cc, "cityCode": c[0],
+                "host": f"{cc}-{c[0]}-wg-007", "ip": "185.65.135.12", "mullvadIp": True, "lat": c[2], "lon": c[3]}
+    return {"installed": True, "state": "disconnected", "locked": m == "locked", "country": "Germany", "city": "Magdeburg",
+            "cc": "", "cityCode": "", "host": "", "ip": "93.104.1.2", "mullvadIp": False, "lat": 52.13, "lon": 11.63}
+
+
+def vpn_page():
+    out = {"installed": bool(VPNM["mode"]), "status": vpn_summary(), "recent": VPNM["recent"], "version": "2026.5"}
+    if VPNM["mode"] in ("", "nodaemon"):
+        return out
+    out["account"] = {"loggedIn": False} if VPNM["mode"] == "login" else \
+        {"loggedIn": True, "last4": "5521", "expires": "2026-12-05", "device": "Witty Owl"}
+    if VPNM["mode"] != "login":
+        out["settings"] = VPNM["opt"]
+    return out
+
+
+if VPNM["mode"]:
+    for _g in TILES["groups"]:
+        if _g.get("name") == "System":
+            _g["tiles"].insert(1, {"id": "mullvad", "label": "Mullvad VPN", "size": "wide", "color": "#2b4a6b", "icon": "shield",
+                                   "sub": "VPN", "type": "vpn", "app": True})
 # Player (--player): Teststream, zuletzt gesehen, Mediathek ueber den echten Launcher-Code (MediaLib) in --home
 PLAYER = {"stream": "av://lavfi:testsrc2=size=1280x720:rate=25", "recent": [], "media": None, "tmp": None}
 
@@ -442,6 +501,14 @@ class H(S.H):
         u = urlparse(self.path)
         p, q = u.path, parse_qs(u.query)
         st = STATE
+        if p == "/api/vpn/map":
+            data = (REPO / "launcher/qt/qml/vpn/worldmap.json").read_bytes()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return None
         if p == "/api/osk/wait":
             try:
                 return self.j(osk_wait(int(q.get("seq", ["-1"])[0])))
@@ -450,7 +517,12 @@ class H(S.H):
         routes = {
             "/tiles.json": lambda: TILES,
             "/api/status": lambda: {"running": st["running"], "starting": [], "radio": st["radio"], "tv": st["tv"],
-                                    "update": st["update"] if not LIVE["on"] else {"available": False}, "live": LIVE["on"]},
+                                    "update": st["update"] if not LIVE["on"] else {"available": False}, "live": LIVE["on"],
+                                    "vpn": vpn_summary()},
+            "/api/vpn": vpn_page,
+            "/api/vpn/relays": lambda: {"countries": [{"cc": cc, "name": n, "cities": [
+                {"code": c[0], "name": c[1], "lat": c[2], "lon": c[3], "n": c[4]} for c in cities]} for cc, n, cities in VPN_RELAYS],
+                "nearest": "de"},
             "/api/front": lambda: {"id": st["running"][0] if st["running"] else None, "mouse": True,
                                    "padmouse": STATE.get("padmouse", True)},
             "/api/volume": lambda: st["volume"],
@@ -579,6 +651,34 @@ class H(S.H):
                 OSKF["cv"].notify_all()
             print("[vorschau] Eingabefeld:", OSKF["state"], flush=True)
             return self.j({"ok": True})
+        if p.startswith("/api/vpn/"):
+            act = p.rsplit("/", 1)[-1]
+            print("[vorschau] VPN:", act, body, flush=True)
+            if act == "login":
+                if len(str(body.get("account", ""))) != 16:
+                    return self.j({"ok": False, "error": "format"})
+                if str(body.get("account")).startswith("0000"):
+                    return self.j({"ok": False, "error": "invalid", "msg": "InvalidAccount"})
+                VPNM["mode"] = "off"
+                return self.j({"ok": True})
+            if act == "logout":
+                VPNM["mode"] = "login"
+            elif act == "connect":
+                if body.get("cc"):
+                    VPNM["loc"] = [body["cc"], body.get("city") or next(iter(VPN_CITY[body["cc"]][1]))]
+                VPNM["mode"] = "on"
+            elif act in ("disconnect",):
+                VPNM["mode"] = "off"
+            elif act == "toggle":
+                VPNM["mode"] = "off" if VPNM["mode"] == "on" else "on"
+            elif act == "set":
+                k, v = str(body.get("key", "")), bool(body.get("value"))
+                if k.startswith("dns."):
+                    VPNM["opt"]["dns"][k[4:]] = v
+                else:
+                    VPNM["opt"][k] = v
+                return self.j(VPNM["opt"])
+            return self.j(vpn_summary())
         if p == "/api/nowplaying/control":          # heisse Ecke oben links
             a = body.get("action")
             print("[vorschau] Musik:", a, flush=True)

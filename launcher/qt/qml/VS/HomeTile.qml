@@ -6,7 +6,10 @@ import QtQuick
 Tile {
     id: ht
     property var t: ({})
-    property string kind: t.type === "clock" ? "clock" : (t.type === "radio" || t.type === "tv" || t.id === "media") ? "media" : "app"
+    property string kind: t.type === "clock" ? "clock" : (t.type === "radio" || t.type === "tv" || t.id === "media") ? "media"
+                        : t.type === "vpn" ? "vpn" : "app"
+    property var vpn: null                       // Mullvad VPN: Zustand fuer die Kachel (app.vpn)
+    readonly property bool vpnOn: kind === "vpn" && !!vpn && (vpn.state === "connected" || vpn.state === "connecting")
     property bool running: false
     property bool playing: false
     property string nowMain: ""
@@ -29,7 +32,7 @@ Tile {
         asynchronous: true
     }
     Glyph {
-        visible: !ht.t.image && ht.kind !== "clock" && !(ht.kind === "media" && ht.playing)
+        visible: !ht.t.image && ht.kind !== "clock" && !(ht.kind === "media" && ht.playing) && !ht.vpnOn
         name: ht.t.icon || "globe"
         color: ht.fg
         opacity: 0.95
@@ -78,6 +81,23 @@ Tile {
         spacing: 4
         Txt { width: parent.width; text: ht.nowMain; font.pixelSize: ht.s * 0.14; color: ht.fg }
         Txt { width: parent.width; text: ht.nowSub; font.pixelSize: ht.s * 0.095; color: Ui.c.light ? "#ccffffff" : Ui.c.textDim }
+    }
+    // Mullvad VPN: Ort und Zustand, unten rechts das Schild in der Farbe des Zustands
+    Column {
+        visible: ht.vpnOn
+        x: parent.width * 0.07; width: parent.width * 0.86 - (ht.wide ? ht.s * 0.25 : 0); y: parent.height * 0.14
+        spacing: 4
+        Txt { width: parent.width; text: ht.vpn ? (ht.vpn.city || ht.vpn.country || "") : ""; font.pixelSize: ht.s * 0.14; color: ht.fg }
+        Txt { width: parent.width; text: ht.vpn ? Ui.app.vpnInfo(ht.vpn).text : ""; font.pixelSize: ht.s * 0.095
+              color: Ui.c.light ? "#ccffffff" : Ui.c.textDim }
+    }
+    Glyph {
+        visible: ht.kind === "vpn" && !!ht.vpn
+        name: ht.vpn ? Ui.app.vpnInfo(ht.vpn).icon : "shield"
+        color: ht.vpn && ht.vpn.state === "disconnected" && !ht.vpn.locked ? ht.fg : (ht.vpn ? Ui.app.vpnInfo(ht.vpn).color : ht.fg)
+        width: ht.s * 0.17; height: width
+        anchors.right: parent.right; anchors.rightMargin: parent.width * 0.06
+        anchors.bottom: parent.bottom; anchors.bottomMargin: parent.height * 0.07
     }
     Eq {
         visible: ht.kind === "media" && ht.playing

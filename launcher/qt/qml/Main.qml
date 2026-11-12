@@ -32,6 +32,7 @@ Window {
         property var radioState: ({ station: null, title: null })
         property var tvNow: null
         property var mediaNow: null
+        property var vpn: null                    // Mullvad VPN (/api/status "vpn"): installed, state, cc, city …
         property real tvFailedT: 0
         property var updInfo: null
         property string updToasted: ""
@@ -85,7 +86,7 @@ Window {
         Connections { target: hint; function onHeightChanged() { Qt.callLater(app.layout) } }
 
         // ------------------------------------------------------------ Ebenen
-        readonly property var layerOrder: [osk, adlg, powerDlg, keymap, emuopts, roms, tv, apps, radio, settings, inst]
+        readonly property var layerOrder: [osk, adlg, powerDlg, keymap, emuopts, roms, tv, vpnLayer, apps, radio, settings, inst]
         property string layerName: "home"
         property Item layerRoot: homeView
         function updateLayer() {
@@ -98,6 +99,7 @@ Window {
             else if (emuopts.open) { n = "emuopts"; r = emuopts }
             else if (roms.open) { n = "roms"; r = roms }
             else if (tv.open) { n = "tv"; r = tv }
+            else if (vpnLayer.open) { n = "vpn"; r = vpnLayer }
             else if (apps.open) { n = "apps"; r = apps }
             else if (radio.open) { n = "radio"; r = radio }
             else if (settings.open) { n = "settings"; r = settings }
@@ -107,7 +109,7 @@ Window {
             if (relayout) layout()
         }
         function curTrack() {
-            return ({ home: homeTrack, radio: radio.track, tv: tv.track, apps: null, settings: settings.track, roms: roms.track, keymap: keymap.track, emuopts: emuopts.track, inst: inst.track })[layerName] || null
+            return ({ home: homeTrack, radio: radio.track, tv: tv.track, apps: null, settings: settings.track, roms: roms.track, keymap: keymap.track, emuopts: emuopts.track, vpn: vpnLayer.track, inst: inst.track })[layerName] || null
         }
         function navItems() { return Nav.collect(layerRoot) }
         function setFocus(item, instant) { Nav.setFocus(item, instant, layerName) }
@@ -168,6 +170,10 @@ Window {
         }
         function secondary() {
             if (layerName === "osk") return osk.backspace()
+            if (layerName === "home" && Nav.current && (Nav.current.isVpnIcon || (Nav.current.t && Nav.current.t.type === "vpn"))) {
+                if (vpn && vpn.state !== "nodaemon") vpnToggle()
+                return
+            }
             if (layerName === "home" && Nav.current && Nav.current.t) {
                 var t = Nav.current.t
                 if (running.indexOf(t.id) >= 0) closeApp(t)
@@ -378,6 +384,7 @@ Window {
                 setRadio(s.radio || {})
                 setTvNow(s.tv)
                 mediaNow = s.media || null
+                vpn = s.vpn && s.vpn.installed ? s.vpn : null
                 if (s.tvFailed && s.tvFailed.t !== tvFailedT) {        // Rueckfall ohne Player: Sender scheiterte
                     if (tvFailedT) toast(Ui.t("tv.failed", { name: s.tvFailed.name }), true)
                     tvFailedT = s.tvFailed.t
@@ -402,6 +409,7 @@ Window {
             if (t.type === "settings") return openLayer(settings)
             if (t.type === "tv") return openLayer(tv)
             if (t.type === "apps") return openLayer(apps)
+            if (t.type === "vpn") return vpnLayer.openVpn()
             if (t.type === "roms") return roms.openFor(t)
             if (t.type === "install") return inst.openInst()
             // Emulator laeuft schon (auch mit Spiel aus der Liste): zurueck dorthin statt Spieleliste / neuer Instanz
@@ -542,6 +550,22 @@ Window {
             Api.post("/api/power/" + action, null, null, function () { toast(Ui.t("common.failed"), true) })
         }
         function toast(msg, err) { toastBox.show(String(msg), !!err) }
+        // Mullvad VPN: Beschriftung, Symbol und Farbe je Zustand (Symbol oben rechts, Kachel, Seite)
+        function vpnInfo(v) {
+            var st = v ? v.state : "", c = Ui.c
+            if (st === "connected") return { text: Ui.t("vpn.state.connected"), icon: "shieldok", color: c.statusOkText }
+            if (st === "connecting" || st === "disconnecting")
+                return { text: Ui.t("vpn.state." + st), icon: "shieldwait", color: c.statusWarnText }
+            if ((st === "disconnected" || st === "error") && v.locked) return { text: Ui.t("vpn.state.locked"), icon: "shieldlock", color: c.statusDangerText }
+            if (st === "error") return { text: Ui.t("vpn.state.error"), icon: "shieldlock", color: c.statusDangerText }
+            if (st === "disconnected") return { text: Ui.t("vpn.state.disconnected"), icon: "shieldoff", color: c.textDim }
+            return { text: Ui.t("vpn.state.nodaemon"), icon: "shieldoff", color: c.textFaint }
+        }
+        function vpnToggle() {
+            var on = vpn && (vpn.state === "connected" || vpn.state === "connecting")
+            Api.post(on ? "/api/vpn/disconnect" : "/api/vpn/connect", on ? null : {},
+                     function () { poll() }, function (e) { toast(Ui.t("common.failedMsg", { msg: e }), true) })
+        }
 
         // Update verfuegbar: gelber Hinweis unten rechts (U / Select)
         function updNoteText(u) {
@@ -609,6 +633,31 @@ Window {
                     spacing: 16 * Ui.f
                     ScrollInd { track: homeTrack; anchors.verticalCenter: parent.verticalCenter }
                     Item { width: 2 * Ui.screenW * 0.01 - 16 * Ui.f; height: 1; visible: homeTrack.scrollable }
+                    Focusable {                       // Mullvad VPN: Zustand, A oeffnet die Seite, X schaltet an/aus
+                        id: vpnIcon
+                        readonly property bool isVpnIcon: true
+                        readonly property var info: app.vpnInfo(app.vpn)
+                        visible: !!app.vpn
+                        navOnlyUp: true
+                        width: 44 * Ui.f; height: width
+                        anchors.verticalCenter: parent.verticalCenter
+                        onTriggered: vpnLayer.openVpn()
+                        Rectangle {
+                            anchors.fill: parent
+                            radius: width / 2
+                            color: Ui.alpha(vpnIcon.info.color, vpnIcon.info.icon === "shieldoff" ? 0 : 0.16)
+                            border.width: vpnIcon.focused ? 2 : 1
+                            border.color: vpnIcon.focused ? Ui.c.borderFocus : Ui.alpha(vpnIcon.info.color, vpnIcon.info.icon === "shieldoff" ? 0.45 : 0.6)
+                        }
+                        Glyph { anchors.centerIn: parent; width: parent.width * 0.52; height: width; name: vpnIcon.info.icon; color: vpnIcon.info.color }
+                        SequentialAnimation on opacity {      // verbindet: sanft pulsieren
+                            running: !!app.vpn && (app.vpn.state === "connecting" || app.vpn.state === "disconnecting")
+                            loops: Animation.Infinite
+                            onRunningChanged: if (!running) vpnIcon.opacity = 1
+                            NumberAnimation { to: 0.45; duration: 700; easing.type: Easing.InOutQuad }
+                            NumberAnimation { to: 1; duration: 700; easing.type: Easing.InOutQuad }
+                        }
+                    }
                     Column {
                         anchors.verticalCenter: parent.verticalCenter
                         Txt { anchors.right: parent.right; text: app.cfg ? Ui.l(app.cfg.user) : ""; font.pixelSize: 21 * Ui.f; font.weight: Font.Light }
@@ -655,6 +704,7 @@ Window {
                                     nowSub: tile.type === "radio" ? (app.radioState.station ? (app.radioState.title || Ui.t("common.live")) : "")
                                           : tile.type === "tv" && app.tvNow ? (app.tvNow.country ? Ui.regionName(app.tvNow.country) : Ui.t("common.live"))
                                           : tile.id === "media" && app.mediaNow ? (app.mediaNow.sub || "") : ""
+                                    vpn: tile.type === "vpn" ? app.vpn : null
                                     clockMain: app.clockMain
                                     clockAp: app.clockAp
                                     clockDate: app.clockDate
@@ -673,6 +723,7 @@ Window {
         SettingsLayer { id: settings; anchors.fill: parent }
         AppsLayer { id: apps; anchors.fill: parent }
         TvLayer { id: tv; anchors.fill: parent }
+        VpnLayer { id: vpnLayer; anchors.fill: parent }
         RomsLayer { id: roms; anchors.fill: parent }
         KeymapLayer { id: keymap; anchors.fill: parent }
         EmuOptsLayer { id: emuopts; anchors.fill: parent }

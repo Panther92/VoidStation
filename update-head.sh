@@ -397,6 +397,9 @@ fi
 install -o root -g root -m 755 "$TV/voidstation-efistub" /usr/local/sbin/voidstation-efistub
 install -o root -g root -m 755 "$TV/voidstation-splash" /usr/local/sbin/voidstation-splash
 install -o root -g root -m 755 "$TV/voidstation-zram" /usr/local/sbin/voidstation-zram
+install -o root -g root -m 755 "$TV/voidstation-mullvad" /usr/local/sbin/voidstation-mullvad
+install -d -o root -g root -m 755 /usr/local/share/voidstation
+install -o root -g root -m 644 "$TV/mullvad-signing.asc" /usr/local/share/voidstation/mullvad-signing.asc
 install -o root -g root -m 644 "$TV/dracut-voidstation.conf" /usr/local/share/voidstation/dracut-voidstation.conf
 KCHANGED=0
 # Initramfs-Vorgabe von VoidStation (vom Installer bzw. aus 0.14.2) auf den neuen Stand bringen:

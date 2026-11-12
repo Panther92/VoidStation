@@ -1526,6 +1526,26 @@
       }
     },
     {
+      "id": "mullvad",
+      "name": "Mullvad VPN",
+      "cat": "Werkzeuge",
+      "desc": "VPN ohne E-Mail, nur mit Kontonummer: Weltkarte, Ortswahl, Kill-Switch und Lockdown, ganz mit dem Controller. VoidStation lädt die offizielle Linux-Fassung von Mullvad, prüft ihre Signatur und richtet nur den Dienst ein – die Bedienung übernimmt die Startseite. Ein Konto gibt es bei mullvad.net.",
+      "source": {
+        "type": "mullvad"
+      },
+      "arch": [
+        "x86_64"
+      ],
+      "tile": {
+        "group": "System",
+        "size": "wide",
+        "color": "#2b4a6b",
+        "icon": "shield",
+        "sub": "VPN",
+        "type": "vpn"
+      }
+    },
+    {
       "id": "localsend",
       "name": "LocalSend",
       "cat": "Werkzeuge",

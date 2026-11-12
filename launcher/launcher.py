@@ -5131,6 +5131,8 @@ def app_installed_in(a, pkgs, fps, tiles):
         return (APPDIR / a["id"] / "AppRun").exists() or bool(s.get("was_flatpak") and s["was_flatpak"] in fps)
     if s["type"] in ("web", "builtin"):                    # builtin: im Player eingebaut (YouTube Light) – nur die Kachel
         return a["id"] in tiles
+    if s["type"] == "mullvad":                             # eigenes xbps-Paket aus der .deb (voidstation-mullvad)
+        return Vpn.PKG in pkgs
     return False
 
 
@@ -5146,6 +5148,8 @@ def app_installed(a):
         return (APPDIR / a["id"] / "AppRun").exists() or legacy_flatpak(a)
     if s["type"] in ("web", "builtin"):
         return a["id"] in tile_ids()
+    if s["type"] == "mullvad":
+        return xbps_installed(Vpn.PKG)
     return False
 
 
@@ -5178,7 +5182,7 @@ def app_cmd(a):
         kiosk = ["--kiosk"] if s.get("kiosk", True) else []      # "kiosk": false -> normaler Browser mit Leisten
         return ["firefox", *kiosk, "--no-remote", "--profile",
                 f"~/.local/share/voidstation/profiles/{a['id']}", s["url"]]
-    return a["cmd"]
+    return a.get("cmd")                                  # None: Kachel mit eigener Seite (Mullvad VPN)
 
 
 def config_save(c):
@@ -5196,8 +5200,12 @@ def tile_add(a):
     tile = {"id": a["id"], "label": t.pop("label", a["name"]), "size": t.get("size", "medium"),
             "color": t.get("color", "#2f3238"), "icon": t.get("icon", "globe"),
             "cmd": app_cmd(a), "app": True}
+    if not tile["cmd"]:
+        del tile["cmd"]
     if t.get("sub"):
         tile["sub"] = t["sub"]
+    if t.get("type"):                                  # eigene Seite statt Programm (Mullvad VPN: "vpn")
+        tile["type"] = t["type"]
     grp = next((g for g in c["groups"] if g.get("name") == gname), None)
     if grp is None:
         grp = {"name": gname, "tiles": []}
@@ -5509,7 +5517,7 @@ class Jobs:
             for app in imgs:
                 self._log(f"== {app['name']} ({'Wechsel vom Flatpak' if legacy_flatpak(app) else 'Download'}) ==")
                 self._item("app:" + app["id"], "run")
-                res = self._appimage(app)
+                res = self._app_update(app)
                 self._item("app:" + app["id"], "done" if res else "fail")
                 ok_apps = res and ok_apps
             if s["proton"]:
@@ -5569,6 +5577,8 @@ class Jobs:
             return True
         if s["type"] == "appimage":
             return self._appimage(a)
+        if s["type"] == "mullvad":
+            return self._mullvad("install")
         if s["type"] == "builtin":                     # Teil von VoidStation: nur fehlende Pakete nachholen, dann Kachel
             for pkg in s.get("pkgs", []):
                 if not xbps_installed(pkg) and self._run(["sudo", "-n", PKG_HELPER, "install", pkg]) != 0:
@@ -5722,6 +5732,8 @@ class Jobs:
             return ok
         if s["type"] == "builtin":                     # nur die Kachel; Abos und Verlauf bleiben fuer spaeter
             return True
+        if s["type"] == "mullvad":
+            return self._mullvad("remove")
         if s["type"] in ("appimage", "web"):
             target = APPDIR / a["id"] if s["type"] == "appimage" else BASE / "profiles" / a["id"]
             rm_path(target)
@@ -5730,6 +5742,18 @@ class Jobs:
                 self._run(["flatpak", "uninstall", "--user", "-y", "--noninteractive", s["was_flatpak"]])
             return True
         return False
+
+    def _mullvad(self, action):
+        """Mullvad VPN: Root-Helfer laedt die .deb, prueft die Signatur, baut das Paket, richtet den Dienst ein."""
+        ok = self._run(["sudo", "-n", PKG_HELPER, "mullvad", action]) == 0
+        VPN.ensure()
+        return ok
+
+    def _app_update(self, a):
+        """Ein Programm aus der Update-Liste (_SCACHE["appimage"]) aktualisieren."""
+        if a["source"]["type"] == "mullvad":
+            return self._mullvad("update")
+        return self._appimage(a)
 
     def _appimage(self, a):
         """Programm herunterladen und unter apps/<id> entpacken – AppImage, ZIP, Tarball oder .deb (app_release).
@@ -6482,6 +6506,10 @@ def _sys_check(sync, logf=None):
                 res["flatpak"] = [x.strip() for x in f.stdout.splitlines() if x.strip()]
         apps = catalog()["apps"]
         for a in apps:
+            if a["source"]["type"] == "mullvad":
+                if VPN.outdated():
+                    res["appimage"].append(a["id"])
+                continue
             if a["source"]["type"] != "appimage":
                 continue
             if (APPDIR / a["id"] / "AppRun").exists():
@@ -12455,6 +12483,378 @@ class OskField:
 
 
 OSK_FIELD = OskField()
+
+
+# ---------------------------------------------------------------------------
+#  Mullvad VPN (AppCenter-Eintrag "mullvad", Quelle "mullvad": voidstation-mullvad baut Daemon + CLI aus der
+#  signierten .deb). Die Startseite bedient alles ueber die mullvad-CLI – kein Electron, kein Root:
+#  der Daemon nimmt Befehle von jedem lokalen Benutzer an. Zustand ueber "mullvad status listen -j" (ein Prozess,
+#  meldet nur Aenderungen), Rest bei Bedarf mit kurzen Aufrufen.
+# ---------------------------------------------------------------------------
+class Vpn:
+    PKG = "mullvad-vpn-voidstation"
+    BIN = "/usr/bin/mullvad"
+    STATE = BASE / "vpn.json"                       # zuletzt verbundene Orte (Startseite: "Zuletzt verbunden")
+    MAP = BASE / "qt" / "qml" / "vpn" / "worldmap.json"
+    ACCT = re.compile(r"^\d{16}$")
+    DNS_KEYS = ("ads", "trackers", "malware", "gambling", "adult_content", "social_media")
+    LATEST_API = "https://api.github.com/repos/mullvad/mullvadvpn-app/releases/latest"
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.cv = threading.Condition(self.lock)
+        self.tunnel = None                          # letzte TunnelState-Meldung (JSON des Daemons)
+        self.daemon = False
+        self.seq = 0
+        self.watching = False
+        self._acct = {"t": 0.0, "v": None}
+        self._relays = {"t": 0.0, "v": None}
+        self._latest = {"t": 0.0, "v": None}
+
+    # ---- installiert? ------------------------------------------------------------------------------------------
+    def installed(self):
+        return os.path.exists(self.BIN)
+
+    def ensure(self):
+        """Beobachter starten, sobald Mullvad installiert ist (Startseite fragt /api/status alle 1,5 s ab)."""
+        if self.watching or not self.installed():
+            return
+        with self.lock:
+            if self.watching:
+                return
+            self.watching = True
+        threading.Thread(target=self._watch, daemon=True).start()
+
+    def _set(self, tunnel=None, daemon=None):
+        with self.cv:
+            if tunnel is not None:
+                self.tunnel = tunnel
+            if daemon is not None:
+                self.daemon = daemon
+            self.seq += 1
+            self.cv.notify_all()
+
+    def _watch(self):
+        """"mullvad status listen -j": erst der aktuelle Zustand, dann jede Aenderung als JSON-Zeile. Neben dem
+        Tunnel kommen auch Einstellungen, Serverliste usw. – Tunnel-Meldungen erkennt man am Schluessel "state".
+        Faellt der Daemon weg (Update, Neustart), endet der Prozess: nach einer Pause neu verbinden."""
+        try:
+            while self.installed():
+                try:
+                    p = subprocess.Popen([self.BIN, "status", "-j", "listen"], stdout=subprocess.PIPE,
+                                         stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, text=True, bufsize=1)
+                except OSError:
+                    time.sleep(10)
+                    continue
+                for line in p.stdout:
+                    line = line.strip()
+                    if not line.startswith("{"):
+                        continue
+                    try:
+                        j = json.loads(line)
+                    except ValueError:
+                        continue
+                    if isinstance(j, dict) and "state" in j:
+                        self._set(tunnel=j, daemon=True)
+                        with self.lock:
+                            self._acct["t"] = 0.0           # Konto (Ablauf) nach Zustandswechsel neu lesen
+                rc = p.wait()
+                self._set(daemon=False)
+                time.sleep(3 if rc == 0 else 6)
+        finally:
+            with self.lock:
+                self.watching = False
+                self.tunnel = None
+            self._set(daemon=False)
+
+    # ---- Zustand ---------------------------------------------------------------------------------------------
+    @staticmethod
+    def _loc(d):
+        """TunnelState-Ort -> kompakte Form fuer die Oberflaeche."""
+        loc = (d or {}).get("location") or {}
+        cc = city = host = ""
+        c = loc.get("location") or {}
+        for kind in ("hostname", "city", "country"):
+            v = c.get(kind)
+            if v:
+                v = v if isinstance(v, list) else [v]
+                cc = str(v[0]).lower()
+                city = str(v[1]) if len(v) > 1 else ""
+                host = str(v[2]) if len(v) > 2 else ""
+                break
+        out = {"country": loc.get("country") or "", "city": loc.get("city") or "", "cc": cc, "cityCode": city,
+               "host": host, "ip": loc.get("ipv4") or loc.get("ipv6") or "", "mullvadIp": bool(loc.get("mullvad_exit_ip"))}
+        try:
+            out["lat"], out["lon"] = float(loc["latitude"]), float(loc["longitude"])
+        except (KeyError, TypeError, ValueError):
+            pass
+        return out
+
+    def summary(self):
+        """Kurzfassung fuer /api/status: Symbol oben rechts und Kachel."""
+        if not self.installed():
+            return {"installed": False}
+        self.ensure()
+        with self.lock:
+            t, daemon, seq = self.tunnel, self.daemon, self.seq
+        if not daemon or not t:
+            return {"installed": True, "state": "nodaemon", "seq": seq}
+        st = t.get("state")
+        d = t.get("details") if isinstance(t.get("details"), dict) else {}
+        out = {"installed": True, "state": st if st in ("connected", "connecting", "disconnected", "disconnecting",
+                                                          "error") else "error", "seq": seq}
+        if st == "disconnected":
+            out["locked"] = bool(d.get("locked_down"))
+        if st == "error":                                   # Fehlerzustand blockiert den Verkehr, wenn moeglich
+            out["locked"] = not bool(d.get("block_failure"))
+        if st in ("connected", "connecting", "disconnected"):
+            out.update(self._loc(d))
+        return out
+
+    def wait(self, seq, timeout=25.0):
+        with self.cv:
+            if seq >= 0:
+                self.cv.wait_for(lambda: self.seq != seq, timeout)
+        return self.summary()
+
+    # ---- CLI -------------------------------------------------------------------------------------------------
+    def cli(self, *args, timeout=20):
+        r = run([self.BIN, *args], timeout=timeout)
+        if r is None:
+            raise RuntimeError("timeout")
+        if r.returncode != 0:
+            msg = (r.stderr.strip() or r.stdout.strip() or f"Fehler {r.returncode}").splitlines()
+            raise RuntimeError(msg[-1][:240] if msg else "?")
+        return r.stdout
+
+    @staticmethod
+    def _onoff(out):
+        v = out.strip().rsplit(":", 1)[-1].strip().lower()
+        return v in ("on", "allow", "true", "yes")
+
+    def account(self, force=False):
+        """{"loggedIn", "last4", "expires" (JJJJ-MM-TT), "device"} – "account get" fragt Mullvad im Netz ab,
+        deshalb hoechstens einmal je Minute (nach Zustandswechsel und Anmelden sofort)."""
+        with self.lock:
+            if not force and self._acct["v"] is not None and time.time() - self._acct["t"] < 60:
+                return dict(self._acct["v"])
+        try:
+            out = self.cli("account", "get", timeout=25)
+        except RuntimeError as e:
+            v = {"loggedIn": False, "error": str(e)}
+        else:
+            v = {"loggedIn": False}
+            for line in out.splitlines():
+                k, _, val = line.partition(":")
+                k, val = k.strip().lower(), val.strip()
+                if k == "mullvad account" and val:
+                    num = re.sub(r"\D", "", val)
+                    v["last4"] = num[-4:]
+                    v["loggedIn"] = "revoked" not in out.lower()
+                elif k == "expires at":
+                    v["expires"] = val[:10]
+                elif k == "device name":
+                    v["device"] = val
+            if "revoked" in out.lower():
+                v["revoked"] = True
+        with self.lock:
+            self._acct = {"t": time.time(), "v": v}
+        return dict(v)
+
+    def settings(self):
+        s = {}
+        for key, args in (("lockdown", ("lockdown-mode", "get")), ("autoconnect", ("auto-connect", "get")),
+                          ("lan", ("lan", "get"))):
+            try:
+                s[key] = self._onoff(self.cli(*args))
+            except RuntimeError:
+                s[key] = None
+        dns = {}
+        try:
+            for line in self.cli("dns", "get").splitlines():
+                k, _, val = line.partition(":")
+                k = k.strip().lower()
+                if k.startswith("block "):
+                    dns[k[6:].replace(" ", "_")] = val.strip().lower() == "true"
+                elif k == "custom dns":
+                    s["customDns"] = val.strip().lower() == "yes"
+        except RuntimeError:
+            pass
+        s["dns"] = {k: bool(dns.get(k)) for k in self.DNS_KEYS}
+        return s
+
+    def relays(self, force=False):
+        """Laender und Staedte aus "mullvad relay list" (Text; Breiten-/Laengengrad stehen ungeachtet der Beschriftung
+        °N/°W als Zahl mit Vorzeichen da). Zwischengespeichert fuer 10 Minuten."""
+        with self.lock:
+            if not force and self._relays["v"] is not None and time.time() - self._relays["t"] < 600:
+                return self._relays["v"]
+        out = self.cli("relay", "list", timeout=25)
+        countries, cur, city = [], None, None
+        rx_c = re.compile(r"^(.+?) \(([a-z]{2})\)$")
+        rx_city = re.compile(r"^(.+?) \(([a-z0-9]+)\) @ (-?[\d.]+)°N, (-?[\d.]+)°W$")
+        for raw in out.splitlines():
+            if not raw.strip():
+                continue
+            depth = len(raw) - len(raw.lstrip("\t"))
+            s = raw.strip()
+            if depth == 0:
+                m = rx_c.match(s)
+                cur = {"cc": m[2], "name": m[1], "cities": []} if m else None
+                if cur:
+                    countries.append(cur)
+            elif depth == 1 and cur is not None:
+                m = rx_city.match(s)
+                city = {"code": m[2], "name": m[1], "lat": float(m[3]), "lon": float(m[4]), "n": 0} if m else None
+                if city:
+                    cur["cities"].append(city)
+            elif depth >= 2 and city is not None:
+                city["n"] += 1
+        countries = [c for c in countries if c["cities"]]
+        with self.lock:
+            self._relays = {"t": time.time(), "v": countries}
+        return countries
+
+    def latest(self):
+        """Neueste freigegebene Mullvad-Version (fuer die Update-Pruefung), hoechstens alle 6 Stunden gefragt."""
+        with self.lock:
+            if self._latest["v"] and time.time() - self._latest["t"] < 6 * 3600:
+                return self._latest["v"]
+        req = urllib.request.Request(self.LATEST_API, headers={**UA, "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            tag = json.load(r).get("tag_name", "")
+        if not re.match(r"^20\d\d\.\d{1,2}$", tag):
+            raise RuntimeError(f"Mullvad: unerwartete Version {tag!r}")
+        with self.lock:
+            self._latest = {"t": time.time(), "v": tag}
+        return tag
+
+    def version(self):
+        r = run(["xbps-query", "-p", "pkgver", self.PKG])
+        m = re.match(rf"^{re.escape(self.PKG)}-(.+)_\d+$", r.stdout.strip()) if r and r.returncode == 0 else None
+        return m.group(1) if m else None
+
+    def outdated(self):
+        have = self.version()
+        if not have:
+            return False
+        try:
+            return self.latest() != have
+        except Exception:  # noqa: BLE001 – ohne Netz: kein Update anbieten
+            return False
+
+    # ---- zuletzt verbunden -------------------------------------------------------------------------------------
+    def recent(self):
+        try:
+            v = json.loads(self.STATE.read_text(encoding="utf-8")).get("recent", [])
+            return [x for x in v if isinstance(x, dict) and x.get("cc")][:3]
+        except (OSError, ValueError, AttributeError):
+            return []
+
+    def _remember(self, cc, city):
+        items = [{"cc": cc, "city": city}] + [x for x in self.recent() if (x.get("cc"), x.get("city")) != (cc, city)]
+        tmp = self.STATE.with_suffix(".tmp")
+        tmp.write_text(json.dumps({"recent": items[:3]}), encoding="utf-8")
+        tmp.replace(self.STATE)
+
+    # ---- Seite ---------------------------------------------------------------------------------------------------
+    def page(self):
+        """Alles fuer die Mullvad-Seite (GET /api/vpn)."""
+        if not self.installed():
+            return {"installed": False}
+        out = {"installed": True, "status": self.summary(), "recent": self.recent(), "version": self.version()}
+        if out["status"].get("state") == "nodaemon":
+            return out
+        out["account"] = self.account()
+        if out["account"].get("loggedIn"):
+            out["settings"] = self.settings()
+        return out
+
+    def login(self, number):
+        number = re.sub(r"\s", "", str(number or ""))
+        if not self.ACCT.match(number):
+            return {"ok": False, "error": "format"}
+        try:
+            self.cli("account", "login", number, timeout=40)
+        except RuntimeError as e:
+            m = str(e).lower()
+            code = ("devices" if "too many devices" in m or "max" in m and "device" in m else
+                    "invalid" if "invalid" in m or "not found" in m or "account" in m and "doesn" in m else
+                    "network" if "timeout" in m or "network" in m or "connect" in m else "other")
+            return {"ok": False, "error": code, "msg": str(e)}
+        return {"ok": True, "account": self.account(force=True)}
+
+    def logout(self):
+        try:
+            self.cli("disconnect")
+        except RuntimeError:
+            pass
+        self.cli("account", "logout", timeout=30)
+        with self.lock:
+            self._acct = {"t": 0.0, "v": None}
+        return {"ok": True}
+
+    def connect(self, cc=None, city=None):
+        cc = (cc or "").lower()
+        city = (city or "").lower()
+        if cc:
+            if not re.match(r"^[a-z]{2}$", cc) or (city and not re.match(r"^[a-z0-9]{2,8}$", city)):
+                raise ValueError("ungueltiger Ort")
+            self.cli("relay", "set", "location", cc, *([city] if city else []))
+            self._remember(cc, city)
+        self.cli("connect")
+        return self.summary()
+
+    def nearest(self):
+        """"Automatisch": Land des eigenen Anschlusses, wenn Mullvad dort Server hat (Mullvad selbst kennt keinen
+        "naechsten Ort"), sonst Schweden."""
+        st = self.summary()
+        country = st.get("country", "") if st.get("state") == "disconnected" else ""
+        try:
+            for c in self.relays():
+                if c["name"].lower() == country.lower():
+                    return c["cc"]
+        except RuntimeError:
+            pass
+        return "se"
+
+    def disconnect(self):
+        self.cli("disconnect")
+        return self.summary()
+
+    def toggle(self):
+        st = self.summary().get("state")
+        if st in ("connected", "connecting"):
+            return self.disconnect()
+        return self.connect()
+
+    def set_option(self, key, value):
+        on = bool(value)
+        if key == "lockdown":
+            self.cli("lockdown-mode", "set", "on" if on else "off")
+        elif key == "autoconnect":
+            self.cli("auto-connect", "set", "on" if on else "off")
+        elif key == "lan":
+            self.cli("lan", "set", "allow" if on else "block")
+        elif key.startswith("dns."):
+            want = self.settings()["dns"]
+            k = key[4:]
+            if k not in self.DNS_KEYS:
+                raise ValueError("unbekannter Filter")
+            want[k] = on
+            self.cli("dns", "set", "default", *[f"--block-{n.replace('_', '-')}" for n in self.DNS_KEYS if want[n]])
+        else:
+            raise ValueError("unbekannte Einstellung")
+        return self.settings()
+
+    def map_data(self):
+        try:
+            return self.MAP.read_bytes()
+        except OSError:
+            return b"{}"
+
+
+VPN = Vpn()
 CRX_DIR = Path("/usr/local/share/voidstation/chromium")     # Tastatur-Erweiterung fuer Chromium/Brave, s. crxpack.py
 
 
@@ -12566,7 +12966,8 @@ class Handler(BaseHTTPRequestHandler):
                                     "update": updates_badge() if not LIVE else {"available": False},
                                     "tv": TV.now if "tv" in running else None, "tvFailed": TV.failed, "live": LIVE,
                                     "media": (MEDIA_NOW or None) if "media" in running else None,
-                                    "install": INSTALL.state.get("state") if INSTALL.state else None})
+                                    "install": INSTALL.state.get("state") if INSTALL.state else None,
+                                    "vpn": VPN.summary()})
         if path == "/api/tv/status":
             TV.ensure()
             return self._json(200, TV.status())
@@ -12624,6 +13025,18 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, EPG.get_program(ch_id, ch_name) or {})
         if path == "/api/apps":
             return self._json(200, apps_payload())
+        if path == "/api/vpn":                         # Mullvad-Seite: Zustand, Konto, Optionen, zuletzt verbunden
+            return self._json(200, VPN.page())
+        if path == "/api/vpn/relays":
+            try:
+                return self._json(200, {"countries": VPN.relays(), "nearest": VPN.nearest()})
+            except RuntimeError as e:
+                return self._json(502, {"error": str(e)})
+        if path == "/api/vpn/wait":                    # lange offen, kehrt bei jeder Aenderung des Tunnels zurueck
+            q = urllib.parse.parse_qs(url.query).get("seq", ["-1"])[0]
+            return self._json(200, VPN.wait(int(q) if q.lstrip("-").isdigit() else -1))
+        if path == "/api/vpn/map":                     # Punktraster der Weltkarte (tools/vpn-map.py)
+            return self._send(200, VPN.map_data(), "application/json")
         if path in ("/api/updates", "/api/selfupdate"):
             force = urllib.parse.parse_qs(url.query).get("force", [""])[0] == "1"
             return self._json(200, updates_state(force))
@@ -12758,6 +13171,26 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {"running": APPS.running()})
             if parts == ["api", "osk", "field"]:       # Firefox-Erweiterung: Eingabefeld an/ab
                 return self._json(200 if OSK_FIELD.post(self._body()) else 400, {"ok": True})
+            if parts[:2] == ["api", "vpn"] and len(parts) == 3:
+                b = self._body()
+                try:
+                    act = parts[2]
+                    if act == "login":
+                        return self._json(200, VPN.login(b.get("account")))
+                    if act == "logout":
+                        return self._json(200, VPN.logout())
+                    if act == "connect":
+                        cc = b.get("cc") or (VPN.nearest() if b.get("auto") else None)
+                        return self._json(200, VPN.connect(cc, b.get("city")))
+                    if act == "disconnect":
+                        return self._json(200, VPN.disconnect())
+                    if act == "toggle":
+                        return self._json(200, VPN.toggle())
+                    if act == "set":
+                        return self._json(200, VPN.set_option(str(b.get("key", "")), b.get("value")))
+                except (RuntimeError, ValueError) as e:
+                    return self._json(502, {"error": str(e)})
+                return self._json(404, {"error": "unbekannt"})
             if parts == ["api", "nowplaying", "control"]:
                 return self._json(200, now_control(str(self._body().get("action", ""))))
             if parts == ["api", "radio", "play"]:
