@@ -4,15 +4,25 @@ Damit findet VoidStation die Spiel-Einstellungen von DuckStation und PCSX2. Beid
   DuckStation (core/system.cpp):  BOOT aus SYSTEM.CNF  ->  SLUS_007.00  ->  SLUS-00700
   PCSX2 (CDVD/CDVD.cpp):          BOOT2 aus SYSTEM.CNF ->  dieselbe Umformung, dazu die CRC der ELF-Datei
                                   (Elfheader.cpp: XOR ueber alle 32-Bit-Woerter)
-Komprimierte Abbilder (.chd, .cso, .gz, .pbp) gehen hier nicht: None, der Launcher nimmt dann seinen Rueckfall.
+.chd geht ueber chdman (CHDMAN, vom Launcher gesetzt: launcher/bin/chdman, nur 64 Bit): Es holt nur die noetigen
+Bytebereiche heraus (extractraw), nicht das ganze Abbild. Andere komprimierte Abbilder (.cso, .gz, .pbp) gehen nicht:
+None, der Launcher nimmt dann seinen Rueckfall.
 Geht auch fuer ein Laufwerk (/dev/sr0): identify() sagt, ob eine PlayStation-Disc darin liegt.
 Wird nur bei Bedarf geladen, das spart dem Launcher Speicher."""
+import os
 import re
+import shutil
 import struct
+import subprocess
+import tempfile
 from pathlib import Path
+from typing import Any
 
 SECTOR = 2048
 LAYOUTS = ((2048, 0), (2352, 24), (2352, 16), (2336, 8))         # (Sektorgroesse, Versatz der Nutzdaten)
+# .chd: CD-Abbilder fuehren je Sektor 2352 Byte + 96 Byte Subcode (cdrom.h CD_FRAME_SIZE), DVD-Abbilder 2048 Byte
+CHD_LAYOUTS = ((2448, 24), (2448, 16), (2448, 0), (2048, 0))
+CHDMAN = ""                                                      # Pfad zu chdman; leer = .chd nicht lesbar
 MAX_DIR = 1 << 20
 MAX_FILE = 64 << 20
 
@@ -36,11 +46,66 @@ def _image_of(path):
     return hit[0]
 
 
+class _Chd:
+    """Bytebereiche aus einer .chd, bedient wie eine offene Datei (seek, read, close). Je Stueck ein Aufruf von
+    chdman extractraw; die Stuecke sind so gross, dass Verzeichnis und SYSTEM.CNF meist mit dem ersten da sind."""
+    CHUNK = 2448 * 2048                                  # rund 5 MB, Vielfaches beider Sektorgroessen
+
+    def __init__(self, path):
+        if not CHDMAN:
+            raise ValueError("kein chdman")
+        self.path, self.pos, self.cache = str(path), 0, {}
+        self.tmp = tempfile.mkdtemp(prefix="vs-chd-")
+        try:
+            r = subprocess.run([CHDMAN, "info", "-i", self.path], capture_output=True, text=True, timeout=60)
+            m = re.search(r"^Logical size:\s*([\d,.]+)\s*bytes", r.stdout, re.M)
+            if r.returncode != 0 or not m:
+                raise ValueError("chdman info")
+            self.size = int(re.sub(r"\D", "", m.group(1)))
+        except (OSError, subprocess.SubprocessError, ValueError):
+            self.close()
+            raise ValueError("chd nicht lesbar") from None
+
+    def seek(self, pos):
+        self.pos = pos
+
+    def _chunk(self, base):
+        if base not in self.cache:
+            if len(self.cache) >= 3:
+                self.cache.clear()                       # hoechstens rund 15 MB im Speicher
+            out = os.path.join(self.tmp, "stueck")
+            try:
+                subprocess.run([CHDMAN, "extractraw", "-f", "-i", self.path, "-o", out, "-isb", str(base),
+                                "-ib", str(min(self.CHUNK, self.size - base))],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=120, check=True)
+                with open(out, "rb") as f:
+                    self.cache[base] = f.read()
+            except (OSError, subprocess.SubprocessError):
+                raise ValueError("chd nicht lesbar") from None
+        return self.cache[base]
+
+    def read(self, n):
+        parts = []
+        while n > 0 and self.pos < self.size:
+            base = self.pos // self.CHUNK * self.CHUNK
+            part = self._chunk(base)[self.pos - base:self.pos - base + n]
+            if not part:
+                break
+            parts.append(part)
+            self.pos += len(part)
+            n -= len(part)
+        return b"".join(parts)
+
+    def close(self):
+        shutil.rmtree(self.tmp, ignore_errors=True)
+
+
 class Disc:
     def __init__(self, path):
-        self.f = open(_image_of(path), "rb")
+        chd = Path(path).suffix.lower() == ".chd"
+        self.f: Any = _Chd(path) if chd else open(_image_of(path), "rb")
         try:                                             # Audio-CD im Laufwerk: Lesefehler (OSError)
-            self.size, self.off = next((s for s in LAYOUTS if self._probe(*s)), (0, 0))
+            self.size, self.off = next((s for s in (CHD_LAYOUTS if chd else LAYOUTS) if self._probe(*s)), (0, 0))
             if not self.size:
                 raise ValueError("kein ISO9660")
             pvd = self.read(16, SECTOR)

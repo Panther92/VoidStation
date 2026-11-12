@@ -9959,7 +9959,7 @@ def emu_mute_apply(tile):
 #
 # "game": auch je Spiel waehlbar. DOSBox: kommt in die Datei, die VoidStation vor jedem Start schreibt. PCSX2/DuckStation:
 # in deren eigene Spiel-Einstellungen (gamesettings/<Seriennummer>…ini, s. emu_game_ini; Seriennummer aus dem Abbild, discid.py).
-# Rueckfall, wo sich das Abbild nicht lesen laesst (.chd, .cso, zweite CD bei DuckStation …): Der Wert gilt fuer diesen Start
+# Rueckfall, wo sich das Abbild nicht lesen laesst (.cso, .gz, .pbp, .chd ohne chdman, zweite CD bei DuckStation …): Der Wert gilt fuer diesen Start
 # in der Haupteinstellung, der alte kommt vor dem naechsten Start bzw. Oeffnen der Optionen zurueck (emu_opts_restore; nur, wo
 # der Nutzer in der Zwischenzeit nichts anderes eingestellt hat).
 #
@@ -10363,6 +10363,11 @@ def _game_settings_dir(main_ini, root):
     return root / (ini_read(main_ini).get("Folders", {}).get("GameSettings") or "gamesettings")
 
 
+def _disc_key(tile, path, st):
+    """Schluessel im Merkzettel. ".chd" hat einen eigenen: Bis 11/2026 liess es sich nicht lesen, dort steht noch "nichts"."""
+    return f"{tile}|{path}|{st.st_size}|{st.st_mtime_ns}" + ("|chd" if path.suffix.lower() == ".chd" else "")
+
+
 def _disc_id(tile, path):
     """Seriennummer bzw. (Seriennummer, CRC) eines Abbilds; gemerkt je Datei, Groesse und Zeit. None = nicht lesbar."""
     cache = Path.home() / ".cache/voidstation/disc-ids.json"
@@ -10370,7 +10375,7 @@ def _disc_id(tile, path):
         st = path.stat()
     except OSError:
         return None
-    key = f"{tile}|{path}|{st.st_size}|{st.st_mtime_ns}"
+    key = _disc_key(tile, path, st)
     with _DISC_LOCK:
         try:
             known = json.loads(cache.read_text(encoding="utf-8"))
@@ -10379,6 +10384,7 @@ def _disc_id(tile, path):
         if key in known:
             return known[key]
         import discid                                    # nur bei Bedarf, spart dem Launcher Speicher
+        discid.CHDMAN = CHD.tool()                       # .chd: ueber das mitgelieferte chdman (nur 64 Bit)
         got = discid.ps2_id(path) if tile == "pcsx2" else discid.psx_serial(path)
         known = {k: v for k, v in known.items() if not k.startswith(f"{tile}|{path}|")}
         known[key] = got
@@ -10405,7 +10411,7 @@ def _disc_id_put(tile, path, got):
         except (OSError, ValueError):
             known = {}
         known = {k: v for k, v in known.items() if not k.startswith(f"{tile}|{path}|")}
-        known[f"{tile}|{path}|{st.st_size}|{st.st_mtime_ns}"] = got
+        known[_disc_key(tile, path, st)] = got
         try:
             cache.parent.mkdir(parents=True, exist_ok=True)
             tmp = cache.with_suffix(".tmp")
