@@ -10136,6 +10136,12 @@ def _disc_id_put(tile, path, got):
             log("disc-ids.json:", e)
 
 
+def _game_rel(game):
+    """Name eines Spiels, wie ihn die Spieleliste schickt (auch "Ordner/Spiel.cue") – nie absolut, nie nach oben."""
+    p = Path(str(game))
+    return os.path.basename(str(game)) if p.is_absolute() or ".." in p.parts else str(game)
+
+
 def emu_rom_path(tile, name):
     """Spieldatei einer Kachel aus ihrem Namen in der Spieleliste (auch "Ordner/Spiel.cue") -> Pfad oder None."""
     for f in ROMS.folders(tile):
@@ -10332,9 +10338,10 @@ def emu_opts_payload(tile, game=None):
     spec = EMU_OPTS.get(tile)
     if not spec:
         raise ValueError("Dieser Emulator hat keine Optionen")
+    rel = _game_rel(game) if game else None            # Spiele in Unterordnern: die Datei findet sich nur mit dem Ordner
     game = os.path.basename(game) if game else None
     running = bool(APPS._get(tile))
-    native = emu_game_ini(tile, game) if game else None
+    native = emu_game_ini(tile, rel) if rel else None
     with EMU_LOCK:
         st = emu_state_load()
         if not running and emu_ready(tile) and st.get("opt_game", {}).get(tile):
@@ -10378,13 +10385,13 @@ def emu_opts_set(tile, oid, value, game=None):
     if game:
         if not opt["game"]:
             raise ValueError("Diese Option gilt nicht je Spiel")
-        name = os.path.basename(game)
-        native = emu_game_ini(tile, name)
+        name, rel = os.path.basename(game), _game_rel(game)
+        native = emu_game_ini(tile, rel)
         if native:
             with EMU_LOCK:
                 _game_sync(tile, name, native)
                 _game_ini_write(tile, opt, native, value)
-            return emu_opts_payload(tile, name)
+            return emu_opts_payload(tile, rel)
         if _DISC_NAME.fullmatch(name):
             raise ValueError("Diese Disc hat keine Seriennummer")
         with EMU_LOCK:
@@ -10397,7 +10404,7 @@ def emu_opts_set(tile, oid, value, game=None):
             else:
                 own[oid] = value
             emu_games_save(d)
-        return emu_opts_payload(tile, name)
+        return emu_opts_payload(tile, rel)
     if value is None:
         raise ValueError("Wert fehlt")
     with EMU_LOCK:
