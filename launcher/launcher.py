@@ -7284,6 +7284,31 @@ class ROMManager:
         walk(sys_dir, 0)
         return out
 
+    # .bin ohne .cue-Blatt (so liegen viele PS1-Abbilder vor): "Spiel (Europe) (Track 2).bin" ist Spur 2 von "Spiel (Europe)"
+    _TRACK_TAG = re.compile(r"^(.*?)\s*\(\s*track\s*0*([0-9]{1,2})\s*\)$", re.I)
+
+    @classmethod
+    def bin_base(cls, f):
+        """Name des Spiels einer Spur ohne "(Track n)": "Tekken 3 (Europe) (Track 1).bin" -> "Tekken 3 (Europe)"."""
+        m = cls._TRACK_TAG.match(f.stem)
+        return m.group(1) if m and m.group(1) else f.stem
+
+    def bin_sets(self, files, hidden=()):
+        """.bin ohne Blatt zu Spielen zusammenfassen: {erste Spur: [alle Spuren der Reihe nach]}. Eine einzelne .bin
+        ohne "(Track n)" ist ein Spiel mit nur ihr. .bin, auf die ein .cue verweist (hidden), zaehlen nicht."""
+        groups: dict = {}
+        for f in files:
+            if f.suffix.lower() != ".bin" or f in hidden:
+                continue
+            m = self._TRACK_TAG.match(f.stem)
+            num = int(m.group(2)) if m and m.group(1) else 0
+            groups.setdefault((f.parent, self.bin_base(f).casefold()), []).append((num, f))
+        out = {}
+        for items in groups.values():
+            items.sort(key=lambda x: (x[0], x[1].name.casefold()))
+            out[items[0][1]] = [f for _n, f in items]
+        return out
+
     @staticmethod
     def cue_tracks(cue):
         """Dateien, auf die ein .cue-Blatt verweist (FILE "Track 01.bin" BINARY), als Pfade neben dem Blatt.
@@ -7366,6 +7391,12 @@ class ROMManager:
                 if f.suffix.lower() == ".cue":
                     tracks[f] = self.cue_tracks(f)
             hidden = {t for ts in tracks.values() for t in ts}
+            # .bin ohne Blatt: Spuren eines Spiels ("… (Track 2).bin") stehen nicht eigens in der Liste, die erste Spur
+            # steht fuer das Spiel (Name ohne "(Track 1)", Groesse aller Spuren)
+            for first, ts in self.bin_sets(files, hidden).items():
+                if len(ts) > 1:
+                    tracks[first] = ts[1:]
+                    hidden.update(ts[1:])
             names = mame_names([f.stem for f in files]) if folder == "mame" else {}
             for item in files:
                 if item in hidden:
@@ -11070,16 +11101,24 @@ class RomCovers:
     def system_of(self, folder, filename):
         return self.SYSTEMS.get(self.BY_EXT.get(Path(filename).suffix.lower(), folder))
 
+    @staticmethod
+    def stem_of(filename):
+        """Name des Bildes zu einer Spieldatei: Dateiname ohne Endung, bei Spuren ohne Blatt ohne "(Track n)"
+        ("Tekken 3 (Europe) (Track 1).bin" -> "Tekken 3 (Europe)", passt so auch nach der Umwandlung zur .chd)."""
+        p = Path(filename)
+        return ROMS.bin_base(p) if p.suffix.lower() == ".bin" else p.stem
+
     def own_image(self, folder, filename):
-        stem = Path(filename).stem
+        stems = list(dict.fromkeys((self.stem_of(filename), Path(filename).stem)))
         base = ROMS.rom_dir / folder
         game = base / filename
         own_dir = [game.parent] if game.parent != base else []      # Spiel im Unterordner: Bild auch dort
         for d in (base / "Cover", base, *own_dir):
-            for ext in self.IMG_EXT:
-                p = d / (stem + ext)
-                if p.is_file():
-                    return p
+            for stem in stems:
+                for ext in self.IMG_EXT:
+                    p = d / (stem + ext)
+                    if p.is_file():
+                        return p
         # DOS/ScummVM: Spiel = Ordner – Bild auch darin (cover.jpg …); ebenso im eigenen Ordner eines Spiels
         game = game if folder in ROMS.DIR_SYSTEMS else (own_dir[0] if own_dir else game)
         if (folder in ROMS.DIR_SYSTEMS or own_dir) and game.is_dir():
@@ -11094,7 +11133,7 @@ class RomCovers:
     def lookup_name(self, folder, filename):
         """Name, unter dem das Spiel gesucht wird: Dateiname ohne Endung, Ordnername bei DOS/ScummVM, bei MAME der
         Spieltitel statt des Set-Namens (libretro-thumbnails/MAME ist nach Titeln benannt: "Street Fighter II_ …")."""
-        stem = filename if folder in ROMS.DIR_SYSTEMS else Path(filename).stem
+        stem = filename if folder in ROMS.DIR_SYSTEMS else self.stem_of(filename)
         if folder == "mame":
             stem = mame_names([stem]).get(stem) or stem
         return stem
@@ -11266,7 +11305,7 @@ class RomCovers:
             if not name:                             # nichts Passendes: 14 Tage Ruhe; Downloadfehler: bald wieder
                 self._miss_set(mk, True)
             return None
-        out = ROMS.rom_dir / folder / "Cover" / (Path(filename).stem + ".png")
+        out = ROMS.rom_dir / folder / "Cover" / (self.stem_of(filename) + ".png")
         try:
             out.parent.mkdir(parents=True, exist_ok=True)
             tmp = out.with_name(out.name + ".part")
@@ -11326,25 +11365,99 @@ class ChdConvert:
     def folders(self, system):
         return [f for f in ROMS.folders(system) if f in self.FOLDERS]
 
+    SYNC = b"\x00" + b"\xff" * 10 + b"\x00"         # Anfang jedes rohen CD-Datensektors (2352 Byte)
+    PREGAP = 150                                   # 2 Sekunden Pause vor Musikspuren (Redump: in der Spur-Datei enthalten)
+
+    @classmethod
+    def track_kind(cls, path, first):
+        """Art einer Spur ohne Blatt: "MODE2/2352", "MODE1/2352", "MODE1/2048" (ISO), "AUDIO" oder None (unbekannt)."""
+        try:
+            size = path.stat().st_size
+            with open(path, "rb") as fh:
+                head = fh.read(16)
+                fh.seek(16 * 2048 + 1)
+                iso = fh.read(5) == b"CD001"
+        except OSError:
+            return None
+        if size and size % 2352 == 0 and head[:12] == cls.SYNC:
+            return "MODE2/2352" if head[15] == 2 else "MODE1/2352"
+        if first and iso and size % 2048 == 0:
+            return "MODE1/2048"
+        if not first and size and size % 2352 == 0:
+            return "AUDIO"
+        return None
+
+    @classmethod
+    def sheet(cls, tracks):
+        """Blatt (.cue-Text) fuer .bin-Spuren ohne eigenes Blatt, oder None, wenn die erste Spur keine Daten-Spur ist
+        (dann ist es kein PlayStation-Abbild). Musikspuren nach Daten: Beginnen sie mit 2 Sekunden Stille, ist das
+        die Pause vor der Spur (INDEX 00/01 wie bei Redump), sonst startet die Spur sofort."""
+        lines = []
+        for n, t in enumerate(tracks, 1):
+            kind = cls.track_kind(t, n == 1)
+            if kind is None or (n == 1 and kind == "AUDIO") or '"' in t.name:
+                return None
+            lines += [f'FILE "{t.name}" BINARY', f"  TRACK {n:02d} {kind}"]
+            gap = False
+            if kind == "AUDIO":
+                try:
+                    with open(t, "rb") as fh:
+                        blk = fh.read(cls.PREGAP * 2352)
+                    gap = len(blk) == cls.PREGAP * 2352 and blk.count(0) == len(blk)
+                except OSError:
+                    return None
+            lines += ["    INDEX 00 00:00:00", "    INDEX 01 00:02:00"] if gap else ["    INDEX 01 00:00:00"]
+        return "\n".join(lines) + "\n"
+
     def candidates(self, folder):
-        """Blaetter (.cue) mit vorhandenen Spuren, zu denen es noch keine .chd gibt: [{"cue", "tracks", "bytes", "rel"}]."""
+        """Spiele aus bin/cue, zu denen es noch keine .chd gibt: [{"cue", "sheet", "tracks", "bytes", "rel", "final",
+        "key"}]. Mit Blatt: cue = die .cue. Ohne Blatt (nur .bin, auch mehrere Spuren "… (Track n).bin"): cue = None,
+        sheet = erzeugtes Blatt – das legt die Umwandlung kurz als versteckte Datei neben die Spuren."""
         sys_dir = ROMS.rom_dir / folder
         out: list[dict[str, Any]] = []
         if not sys_dir.is_dir():
             return out
-        for cue in ROMS.scan(sys_dir, {".cue"}):
+
+        def sizes_ok(files):
+            # Abgeschnittene oder fremde Dateien (keine ganzen Sektoren): chdman bleibt daran haengen – gar nicht anbieten
+            try:
+                sizes = [t.stat().st_size for t in files]
+            except OSError:
+                return None
+            if any(n == 0 or all(n % sec for sec in self.SECTORS) for n in sizes):
+                return None
+            return sum(sizes)
+
+        files = ROMS.scan(sys_dir, {".cue", ".bin"})
+        hidden: set = set()
+        for cue in (f for f in files if f.suffix.lower() == ".cue"):
             tracks = ROMS.cue_tracks(cue)
-            if not tracks or cue.with_suffix(".chd").exists():
+            hidden.update(tracks)
+            final = cue.with_suffix(".chd")
+            if not tracks or final.exists():
+                continue
+            size = sizes_ok(tracks)
+            if size is None:
                 continue
             try:
-                sizes = [t.stat().st_size for t in tracks]
-                size = cue.stat().st_size + sum(sizes)
+                size += cue.stat().st_size
             except OSError:
                 continue
-            # Abgeschnittene oder fremde Dateien (keine ganzen Sektoren): chdman bleibt daran haengen – gar nicht anbieten
-            if any(n == 0 or all(n % sec for sec in self.SECTORS) for n in sizes):
+            out.append({"cue": cue, "sheet": None, "tracks": tracks, "bytes": size, "final": final, "key": cue.name,
+                        "rel": cue.relative_to(sys_dir).as_posix()})
+        for first, tracks in ROMS.bin_sets(files, hidden).items():
+            final = first.with_name(ROMS.bin_base(first) + ".chd")
+            if final.exists():
                 continue
-            out.append({"cue": cue, "tracks": tracks, "bytes": size, "rel": cue.relative_to(sys_dir).as_posix()})
+            size = sizes_ok(tracks)
+            if size is None:
+                continue
+            sheet = self.sheet(tracks)
+            if sheet is None:
+                continue
+            out.append({"cue": None, "sheet": sheet, "tracks": tracks, "bytes": size, "final": final, "key": first.name,
+                        "rel": first.relative_to(sys_dir).as_posix()})
+        out.sort(key=lambda c: c["rel"].casefold())
         return out
 
     def _state(self):
@@ -11474,20 +11587,29 @@ class ChdConvert:
                 refs[t] = refs.get(t, 0) + 1
         state, error = "done", ""
         for i, (folder, c) in enumerate(todo, 1):
-            cue, name = c["cue"], ROMS.title_of(folder, c["cue"])
+            cue, final = c["cue"], c["final"]
+            src = cue or c["tracks"][0]                   # ohne Blatt: die erste Spur steht fuer das Spiel
+            name = ROMS.title_of(folder, src)
             self._set(i=i, name=name, step="convert", pct=0.0)
             if self.stop:
                 state = "cancelled"
                 break
-            final = cue.with_suffix(".chd")
-            part = cue.with_name("." + cue.stem + ".chd.part")
+            part = final.with_name("." + final.stem + ".chd.part")
+            sheet = final.with_name("." + final.stem + ".vs.cue")    # erzeugtes Blatt, nur fuer die Dauer der Umwandlung
             try:
-                if shutil.disk_usage(cue.parent).free < c["bytes"] + self.RESERVE:
+                if shutil.disk_usage(final.parent).free < c["bytes"] + self.RESERVE:
                     state, error = "error", "space"       # schlimmstenfalls so gross wie das Original
                     break
-                serial = _disc_id(tile, cue) if tile in ("duckstation", "pcsx2") else None
-                rc = self._chdman([tool, "createcd", "-i", str(cue), "-o", str(part), "-f", "-c", self.CODECS,
-                                   "-np", str(cores)], progress=True)
+                serial = _disc_id(tile, src) if tile in ("duckstation", "pcsx2") else None
+                if c.get("sheet"):
+                    sheet.write_text(c["sheet"], encoding="utf-8")
+                    cue = sheet
+                try:
+                    rc = self._chdman([tool, "createcd", "-i", str(cue), "-o", str(part), "-f", "-c", self.CODECS,
+                                       "-np", str(cores)], progress=True)
+                finally:
+                    if c.get("sheet"):
+                        sheet.unlink(missing_ok=True)
                 if rc == 0 and not self.stop:
                     self._set(step="verify", pct=0.0)
                     rc = self._chdman([tool, "verify", "-i", str(part)], progress=True)
@@ -11517,22 +11639,31 @@ class ChdConvert:
     def _after(self, tile, folder, c, final, serial, delete, refs):
         """Nach gepruefter Umwandlung: Seriennummer merken (aus einer .chd liest VoidStation sie nicht selbst), Optionen
         des Spiels auf den neuen Dateinamen umziehen, Originale loeschen oder nach _umgewandelt verschieben."""
-        cue = c["cue"]
+        cue, key = c["cue"], c["key"]                     # key: Dateiname, unter dem die Spieleliste das Spiel fuehrte
         if serial:
             _disc_id_put(tile, final, serial)
         try:
             d = emu_games_load()
             moved = False
             for games in d.values():
-                if isinstance(games, dict) and cue.name in games and final.name not in games:
-                    games[final.name] = games.pop(cue.name)
+                if isinstance(games, dict) and key in games and final.name not in games:
+                    games[final.name] = games.pop(key)
                     moved = True
             if moved:
                 emu_games_save(d)
         except OSError as e:
             log("emu-games.json:", e)
         sys_dir = ROMS.rom_dir / folder
-        files = [cue]
+        if not cue:                                        # Bild "Spiel (Track 1).png" -> "Spiel.png" (Name der .chd)
+            old = ROM_COVERS.own_image(folder, c["tracks"][0].relative_to(sys_dir).as_posix())
+            if old is not None and old.stem != final.stem and old.parent.name.casefold() == "cover":
+                new = old.with_name(final.stem + old.suffix)
+                if not new.exists():
+                    try:
+                        os.replace(old, new)
+                    except OSError as e:
+                        log("CHD: Bild bleibt:", old.name, e)
+        files = [cue] if cue else []                       # ohne Blatt: nur die Spuren (das erzeugte Blatt ist schon weg)
         for t in c["tracks"]:
             refs[t] = refs.get(t, 1) - 1
             if refs[t] <= 0:                              # eine Spur, die noch ein anderes Blatt braucht, bleibt liegen
