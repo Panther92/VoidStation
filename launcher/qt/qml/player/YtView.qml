@@ -3,8 +3,9 @@
 // "Spaeter ansehen" und den eigenen Kanaelen; Suche (Videos, Kanaele, Playlists), Kanal- und Playlist-Seiten, Verlauf.
 // Alles kommt vom Launcher (/api/yt/…, yt-dlp + RSS-Feeds); abgespielt wird mit mpv wie bei Videos & Musik.
 // Tasten Liste: A oeffnen/abspielen, Y Spaeter ansehen bzw. abonnieren, X Kanal des Videos, Start Suche, B zurueck.
-// Tasten Video: A Pause, ◀▶ 10 s, LB/RB 1 min, ▲▼ Lautstaerke, X naechstes Video (Playlist), Y Spaeter ansehen,
-// Start Menue (Qualitaet, Ton, Untertitel), Select Technik, B Stopp. Guide: Startseite (Video haelt an).
+// Tasten Video: A Pause, ◀▶ 10 s, LB/RB voriges/naechstes Kapitel (ohne Kapitel 1 min), ▲▼ Lautstaerke,
+// X naechstes Video (Playlist), Y Spaeter ansehen, Start Menue (Qualitaet, Ton, Untertitel, Kapitel), Select Technik,
+// B Stopp. Guide: Startseite (Video haelt an).
 import QtQuick
 import VS
 
@@ -37,6 +38,10 @@ Item {
     property bool osdOn: false
     property int loadSeq: 0
     property bool subsAdded: false
+    // Kapitel [{t, title}] aus /api/yt/resolve (yt-dlp), leer ohne Kapitel und bei Livestreams
+    readonly property var chaps: info && info.chapters && !info.live ? info.chapters : []
+    readonly property int chapIdx: chapterAt(st.position || 0)
+    readonly property var chapMarks: st.duration > 0 ? chaps.map(function (c) { return c.t / st.duration }) : []
     readonly property var fit: Ui.fitRows(browser.stage.height - 18 * Ui.f * 1.36 - 14 * Ui.f - 4, Ui.u * 0.86, Ui.gap, 3)
     readonly property real cell: Ui.u * 0.86 * fit.k
 
@@ -393,6 +398,7 @@ Item {
         phase = "browse"
         osdOn = false
         menu.hide()
+        chapMenu.hide()
         tech.open = false
         playing = null
         info = null
@@ -429,10 +435,37 @@ Item {
         player.osdText((d > 0 ? "+" : "−") + vs.fmtTime(Math.abs(d), ""), "1200")
     }
 
+    // ------------------------------------------------------------ Kapitel
+    function chapterAt(pos) {
+        var i = -1
+        for (var n = 0; n < chaps.length; n++) { if (chaps[n].t <= pos + 0.5) i = n; else break }
+        return i
+    }
+    function chapterName(i) { return chaps[i] && chaps[i].title ? chaps[i].title : Ui.t("yt.chapter.n", { n: i + 1 }) }
+    function gotoChapter(i) {
+        if (i < 0 || i >= chaps.length) return
+        player.seekTo(chaps[i].t)
+        showOsd()
+        player.osdText(chapterName(i), "1500")
+    }
+    function jumpChapter(d) {
+        var pos = st.position || 0, i = chapterAt(pos)
+        if (d < 0) return gotoChapter(i > 0 && pos - chaps[i].t < 3 ? i - 1 : Math.max(0, i))   // erst an den Anfang des Kapitels
+        if (i + 1 < chaps.length) return gotoChapter(i + 1)
+        showOsd()                                       // schon im letzten Kapitel
+    }
+    function chapterRows() {
+        var out = []
+        for (var i = 0; i < chaps.length; i++)
+            out.push({ label: chapterName(i), sub: vs.fmtTime(chaps[i].t, ""), on: i === chapIdx, act: { kind: "extra", id: String(i) } })
+        return out
+    }
+
     // ------------------------------------------------------------ Tasten
     function key(k) {
         if (intro.open) return intro.key(k)
         if (dlg.open) return dlg.key(k)
+        if (chapMenu.open) return chapMenu.key(k)
         if (menu.open) return menu.key(k)
         if (phase === "loading") { if (k === "b" || k === "stop") cancelLoad(); return }
         if (phase === "browse") {
@@ -456,8 +489,8 @@ Item {
         if (k === "home") return goHome()
         if (k === "left") return seek(-10)
         if (k === "right") return seek(10)
-        if (k === "lb" || k === "chdown") return seek(-60)
-        if (k === "rb" || k === "chup") return seek(60)
+        if (k === "lb" || k === "chdown") return chaps.length ? jumpChapter(-1) : seek(-60)
+        if (k === "rb" || k === "chup") return chaps.length ? jumpChapter(1) : seek(60)
         if (k === "x" || k === "next") { if (queue.length) return nextVideo(); return showOsd() }
         if (k === "y") return toggleLater(playing)
     }
@@ -614,6 +647,13 @@ Item {
                 text: yv.info ? [yv.info.channel, yv.info.height ? yv.info.height + "p" : "", yv.queue.length ? Ui.t("yt.queue", { n: yv.queue.length }) : ""]
                                 .filter(function (x) { return x }).join(" · ") : ""
             }
+            Txt {                                       // aktuelles Kapitel
+                width: parent.width
+                visible: yv.chaps.length > 0 && yv.chapIdx >= 0
+                font.pixelSize: 18 * Ui.f
+                text: visible ? Ui.t("yt.chapter.pos", { i: yv.chapIdx + 1, n: yv.chaps.length })
+                                + (yv.chaps[yv.chapIdx].title ? " · " + yv.chaps[yv.chapIdx].title : "") : ""
+            }
             Row {
                 width: parent.width
                 spacing: 18 * Ui.f
@@ -625,6 +665,7 @@ Item {
                     value: yv.st.duration > 0 ? (yv.st.position || 0) / yv.st.duration : 0
                     buffered: yv.st.duration > 0 ? ((yv.st.position || 0) + (yv.st.cache || 0)) / yv.st.duration : 0
                     seekable: true
+                    marks: yv.chapMarks
                     fill: "#e53935"
                     onSeek: function (f) { yv.player.seekTo(f * yv.st.duration); yv.showOsd() }
                 }
@@ -632,23 +673,25 @@ Item {
             }
             Hints {
                 width: parent.width
-                list: [Ui.t("player.hint.pause")].concat(yv.info && yv.info.live ? [] : [Ui.t("player.hint.seek"), Ui.t("player.hint.seekBig")])
+                list: [Ui.t("player.hint.pause")].concat(yv.info && yv.info.live ? []
+                          : [Ui.t("player.hint.seek"), Ui.t(yv.chaps.length ? "yt.hint.chapters" : "player.hint.seekBig")])
                       .concat(yv.queue.length ? [Ui.t("yt.hint.next")] : []).concat([Ui.t("player.hint.volumeUD"), Ui.t("player.hint.menu"), Ui.t("hint.homeShort"), Ui.t("player.hint.stop")])
             }
         }
     }
     MouseBar {
         id: mouseBar
-        visible: yv.phase === "video" && !menu.open && !dlg.open && opacity > 0
+        visible: yv.phase === "video" && !menu.open && !chapMenu.open && !dlg.open && opacity > 0
         buttons: [
             { icon: "pause", tip: Ui.t("player.paused"), act: function () { yv.player.togglePause(); yv.showOsd() } },
-            { icon: "subs", tip: Ui.t("player.menu.title"), act: function () { menu.show() } },
+            { icon: "subs", tip: Ui.t("player.menu.title"), act: function () { menu.show() } }
+        ].concat(yv.chaps.length ? [{ icon: "list", tip: Ui.t("yt.chapters"), act: function () { chapMenu.show() } }] : []).concat([
             { icon: "next", tip: Ui.t("yt.nextVideo"), act: function () { yv.nextVideo() } },
             { icon: "home", tip: Ui.t("player.menu.home"), act: function () { yv.goHome() } },
             { icon: "minus", tip: Ui.t("player.volume"), act: function () { app.volume("down") } },
             { icon: "plus", tip: Ui.t("player.volume"), act: function () { app.volume("up") } },
             { icon: "stop", tip: Ui.t("player.btn.stop"), act: function () { yv.stopPlayback() } }
-        ]
+        ])
     }
     TechInfo { id: tech }
     TrackMenu {
@@ -657,16 +700,29 @@ Item {
         quality: yv.quality
         qualityList: yv.qualityList()
         homeSub: Ui.t("player.menu.homeVideo")
+        // Kapitel ganz oben: Start, A oeffnet die Liste (unter "Weiteres" laege sie hinter Ton, Untertiteln, Bild, Qualitaet)
+        leadRows: yv.playing && yv.chaps.length && yv.chapIdx >= 0
+                  ? [{ head: Ui.t("yt.chapters") }, { id: "chapters", label: yv.chapterName(yv.chapIdx),
+                       sub: Ui.t("yt.chapter.pos", { i: yv.chapIdx + 1, n: yv.chaps.length }) }] : []
         extraRows: yv.playing ? [{ id: "later", label: Ui.t(yv.playing.later ? "yt.later.remove" : "yt.later.add") }]
                    .concat(yv.queue.length ? [{ id: "next", label: Ui.t("yt.nextVideo"), sub: yv.queue[0].title }] : [])
                    .concat(yv.info && yv.info.channel_id ? [{ id: "channel", label: Ui.t("yt.openChannel"), sub: yv.info.channel }] : []) : []
         onQualityChosen: function (v) { yv.changeQuality(v) }
         onHomeChosen: yv.goHome()
         onExtraChosen: function (id) {
+            if (id === "chapters") return chapMenu.show()
             if (id === "later") return yv.toggleLater(yv.playing)
             if (id === "next") return yv.nextVideo()
             if (id === "channel") { var it = { channel_id: yv.info.channel_id, channel: yv.info.channel }; yv.stopPlayback(); yv.openChannelOf(it) }
         }
+    }
+
+    TrackMenu {                                    // Kapitelliste (Start → Kapitel, Maus: Listen-Knopf)
+        id: chapMenu
+        title: Ui.t("yt.chapters")
+        customRows: yv.chapterRows()
+        startSel: yv.chapIdx
+        onExtraChosen: function (id) { yv.gotoChapter(parseInt(id)) }
     }
 
     // ------------------------------------------------------------ Hinweis beim ersten Start / Einstellungen

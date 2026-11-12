@@ -93,6 +93,12 @@ def main(argv):
         hdr = {"User-Agent": "Mozilla/5.0 (Mock)"}
         return out({"id": v, "title": f"Testvideo {v}", "channel": CHANNELS[2][1], "channel_id": CHANNELS[2][0], "duration": 30,
                     "is_live": False, "language": "de", "http_headers": hdr,
+                    # Kapitel wie bei yt-dlp (aus der Beschreibung); keine mit VS_YT_NOCHAP=1
+                    "chapters": None if os.environ.get("VS_YT_NOCHAP") == "1" else [
+                        {"start_time": 0.0, "end_time": 8.0, "title": "Einleitung"},
+                        {"start_time": 8.0, "end_time": 17.0, "title": "Teil 1: Aufbau und erste Schritte mit einem recht langen Kapitelnamen"},
+                        {"start_time": 17.0, "end_time": 24.0, "title": ""},
+                        {"start_time": 24.0, "end_time": 30.0, "title": "Fazit"}],
                     "formats": [{"format_id": str(h), "height": h, "vcodec": "avc1.4d401f", "acodec": "none"} for h in (360, 480, 720, 1080)],
                     "requested_formats": [
                         {"url": base + "v.mp4", "height": 720, "vcodec": "avc1.4d401f", "acodec": "none", "http_headers": hdr},

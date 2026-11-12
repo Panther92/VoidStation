@@ -11968,6 +11968,33 @@ class YtLight:
         return r
 
     # ---- Abspielen ----
+    @staticmethod
+    def chapters(d):
+        """Kapitel aus yt-dlp (aus der Beschreibung bzw. von YouTube): [{"t": Start in s, "title"}], aufsteigend, ab 0.
+        Weniger als zwei Kapitel = keine (ein einzelnes "Kapitel" ist das ganze Video)."""
+        dur = float(d.get("duration") or 0)
+        out = []
+        for c in d.get("chapters") or []:
+            if not isinstance(c, dict):
+                continue
+            try:
+                t = max(0.0, float(c.get("start_time") or 0))
+            except (TypeError, ValueError):
+                continue
+            if dur and t >= dur:
+                continue
+            title = " ".join(str(c.get("title") or "").split())[:120]
+            out.append({"t": round(t, 1), "title": title})
+        out.sort(key=lambda c: c["t"])
+        uniq = []
+        for c in out:                                   # gleiche Startzeit: das erste zaehlt
+            if not uniq or c["t"] - uniq[-1]["t"] >= 1:
+                uniq.append(c)
+        if len(uniq) < 2:
+            return []
+        uniq[0]["t"] = 0.0                              # das erste Kapitel beginnt immer am Anfang
+        return uniq[:300]
+
     def resolve(self, vid, quality="auto", lang="de"):
         """Stream-Adressen fuer mpv: Bild und Ton getrennt (DASH) oder eine Adresse (Livestream: HLS)."""
         if not YT_VID.fullmatch(vid or ""):
@@ -12001,7 +12028,7 @@ class YtLight:
             want = [lang.split("-")[0], "en", str(d.get("language") or "")]
             subs.sort(key=lambda s: next((i for i, w in enumerate(want) if w and s["lang"].split("-")[0] == w), 9))
             live = bool(d.get("is_live"))
-            return {"id": vid, "title": str(d.get("title") or "")[:200],
+            return {"id": vid, "title": str(d.get("title") or "")[:200], "chapters": [] if live else self.chapters(d),
                     "channel": str(d.get("channel") or d.get("uploader") or "")[:100],
                     "channel_id": str(d.get("channel_id") or "") if YT_CID.fullmatch(str(d.get("channel_id") or "")) else "",
                     "duration": int(d.get("duration") or 0), "live": live,
