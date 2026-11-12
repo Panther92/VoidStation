@@ -191,6 +191,8 @@ Layer {
             }
         }
     }
+    ScrollBar { flick: catList; x: catList.x - width - 4 * Ui.f; y: catList.y + 10 * Ui.f; height: catList.height - 20 * Ui.f }
+    ScrollBar { flick: pane; x: pane.x - width - 6 * Ui.f; y: pane.y + 10 * Ui.f; height: pane.height - 20 * Ui.f }
     Flickable {
         id: pane
         x: catList.x + catList.width + Ui.u * 0.22

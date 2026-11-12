@@ -187,9 +187,10 @@ Layer {
         Group {
             id: filterGroup
             title: Ui.t("tv.filter")
-            Column {
-                spacing: 10 * Ui.f
-                width: Ui.screenW * 0.42
+            Col {                                    // Laender + Themen: scrollt mit dem Fokus, Leiste links
+                id: filterCol
+                maxW: Ui.screenW * 0.42
+                maxH: trk.height - filterGroup.headH
                 Flow {
                     width: parent.width
                     spacing: 8 * Ui.f
@@ -213,6 +214,7 @@ Layer {
                     }
                 }
             }
+            ScrollBar { flick: filterCol; x: -width - 12 * Ui.f; height: filterCol.height }
         }
         Group {
             id: favGroup

@@ -35,9 +35,24 @@ Flickable {
         a.stop()
         if (instant) contentY = y; else { a.from = contentY; a.to = y; a.start() }
     }
+    // Die Ausblendungen liegen im mitscrollenden Inhalt (Flickable) – deshalb an contentY gekoppelt, damit sie
+    // am Rand des sichtbaren Bereichs bleiben.
+    Rectangle {                                   // oben weich ausblenden, sobald gescrollt ist
+        visible: col.contentY > 2
+        width: col.width
+        y: col.contentY
+        z: 1
+        height: 24 * Ui.f
+        gradient: Gradient {
+            GradientStop { position: 0; color: Ui.c.bgMain }
+            GradientStop { position: 1; color: Ui.alpha(Ui.c.bgMain, 0) }
+        }
+    }
     Rectangle {                                   // weich ausblenden, wo noch mehr kommt
         visible: col.more
-        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+        width: col.width
+        y: col.contentY + col.height - height
+        z: 1
         height: 36 * Ui.f
         gradient: Gradient {
             GradientStop { position: 0; color: Ui.alpha(Ui.c.bgMain, 0) }

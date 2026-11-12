@@ -7,9 +7,11 @@ Column {
     property bool isGroup: true
     property string title: ""
     property bool showTitle: true
+    readonly property real headH: showTitle ? head.height : 0      // Hoehe der Ueberschrift (fuer scrollende Inhalte)
     default property alias content: box.data
     spacing: 0
     Txt {
+        id: head
         visible: g.showTitle
         text: g.title
         font.pixelSize: 18 * Ui.f

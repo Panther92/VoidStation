@@ -22,4 +22,5 @@ VolBar 1.0 VolBar.qml
 Spinner 1.0 Spinner.qml
 Eq 1.0 Eq.qml
 Col 1.0 Col.qml
+ScrollBar 1.0 ScrollBar.qml
 Background 1.0 Background.qml
