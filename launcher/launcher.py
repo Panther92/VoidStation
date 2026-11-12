@@ -12503,7 +12503,9 @@ class Vpn:
     MAP = BASE / "qt" / "qml" / "vpn" / "worldmap.json"
     ACCT = re.compile(r"^\d{16}$")
     DNS_KEYS = ("ads", "trackers", "malware", "gambling", "adult_content", "social_media")
-    LATEST_API = "https://api.github.com/repos/mullvad/mullvadvpn-app/releases/latest"
+    # Release-Liste statt /releases/latest: Desktop und Android teilen sich das Repo, "latest" ist zeitweise
+    # das Android-Release ("android/2026.12"). Gilt die hoechste freigegebene Desktop-Version (wie voidstation-mullvad).
+    LATEST_API = "https://api.github.com/repos/mullvad/mullvadvpn-app/releases?per_page=100"
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -12727,9 +12729,16 @@ class Vpn:
                 return self._latest["v"]
         req = urllib.request.Request(self.LATEST_API, headers={**UA, "Accept": "application/vnd.github+json"})
         with urllib.request.urlopen(req, timeout=30) as r:
-            tag = json.load(r).get("tag_name", "")
-        if not re.match(r"^20\d\d\.\d{1,2}$", tag):
-            raise RuntimeError(f"Mullvad: unerwartete Version {tag!r}")
+            rels = json.load(r)
+        if not isinstance(rels, list):
+            raise RuntimeError("Mullvad: unerwartete Antwort von GitHub (keine Release-Liste)")
+        tags = [str(rel.get("tag_name") or "") for rel in rels
+                if not rel.get("draft") and not rel.get("prerelease")
+                and re.match(r"^20\d\d\.\d{1,2}$", str(rel.get("tag_name") or ""))
+                and f"MullvadVPN-{rel.get('tag_name')}_amd64.deb" in {a.get("name") for a in rel.get("assets") or []}]
+        if not tags:
+            raise RuntimeError("Mullvad: keine freigegebene Desktop-Version gefunden")
+        tag = max(tags, key=lambda t: tuple(int(x) for x in t.split(".")))
         with self.lock:
             self._latest = {"t": time.time(), "v": tag}
         return tag

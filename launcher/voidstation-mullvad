@@ -26,7 +26,9 @@ from pathlib import Path
 
 PKG = "mullvad-vpn-voidstation"
 REPO_GH = "mullvad/mullvadvpn-app"
-API = f"https://api.github.com/repos/{REPO_GH}/releases/latest"
+# Release-Liste statt /releases/latest: Mullvad veroeffentlicht Desktop und Android im selben Repo, "latest" ist
+# zeitweise das Android-Release ("android/2026.12"). Aus der Liste zaehlt die hoechste freigegebene Desktop-Version.
+API = f"https://api.github.com/repos/{REPO_GH}/releases?per_page=100"
 DL = f"https://github.com/{REPO_GH}/releases/download/{{ver}}/MullvadVPN-{{ver}}_amd64.deb"
 KEYFILE = Path("/usr/local/share/voidstation/mullvad-signing.asc")
 KEY_FPR = "A1198702FC3E0A09A9AE5B75D5A1D4F266DE8DDF"     # Mullvad (code signing) <admin@mullvad.net>
@@ -101,13 +103,28 @@ def installed_version():
     return m.group(1) if m else None
 
 
+def _vkey(tag):
+    """Versionsnummer zum Vergleichen: "2026.10" -> (2026, 10), damit 2026.10 nach 2026.5 kommt."""
+    return tuple(int(x) for x in tag.split("."))
+
+
 def latest():
+    """Neueste freigegebene Desktop-Version: kein Entwurf, keine Vorabversion, Tag wie "2026.5" und mit .deb fuer amd64."""
     req = urllib.request.Request(API, headers={**UA, "Accept": "application/vnd.github+json"})
     with urllib.request.urlopen(req, timeout=30) as r:
-        tag = json.load(r).get("tag_name", "")
-    if not VER_RE.match(tag):
-        raise RuntimeError(f"unerwartete Version bei Mullvad: {tag!r}")
-    return tag
+        rels = json.load(r)
+    if not isinstance(rels, list):
+        raise RuntimeError("unerwartete Antwort von GitHub (keine Release-Liste)")
+    tags = []
+    for rel in rels:
+        tag = str(rel.get("tag_name") or "")
+        if rel.get("draft") or rel.get("prerelease") or not VER_RE.match(tag):
+            continue
+        if f"MullvadVPN-{tag}_amd64.deb" in {a.get("name") for a in rel.get("assets") or []}:
+            tags.append(tag)
+    if not tags:
+        raise RuntimeError("keine freigegebene Desktop-Version von Mullvad gefunden")
+    return max(tags, key=_vkey)
 
 
 def download(url, dest):
