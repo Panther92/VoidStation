@@ -1,19 +1,32 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
-# VoidStation: komprimierter Auslagerungsspeicher im RAM (zram), vorerst nur zum Ausprobieren.
-#   sudo voidstation-zram on      einschalten, gilt auch nach dem Neustart
-#   sudo voidstation-zram off     ausschalten
+# VoidStation: komprimierter Auslagerungsspeicher im RAM (zram).
+# Von selbst an auf Rechnern mit weniger als 8 GB RAM (seit 2026.12; vorher nur auf Wunsch): Statt auf die SSD
+# auszulagern, presst der Kernel selten gebrauchte Seiten im RAM zusammen – das ist um Groessenordnungen schneller.
+#   sudo voidstation-zram on      einschalten (auch mit mehr RAM), gilt auch nach dem Neustart
+#   sudo voidstation-zram off     ausschalten, bleibt auch bei Updates aus
 #   voidstation-zram status       Zustand und belegter Speicher
 # Das Swapfile bleibt: zram bekommt die hoehere Prioritaet, das Swapfile faengt auf, was nicht mehr hineinpasst.
 MARK="${VS_ZRAM_MARK:-/usr/local/share/voidstation/zram-on}"
+OFFMARK="${VS_ZRAM_OFFMARK:-/usr/local/share/voidstation/zram-off}"
+LIVEMARK="${VS_ZRAM_LIVEMARK:-/etc/voidstation-live}"
+AUTO_BELOW_MB=7800                               # wie die Grenze fuer das Swapfile (install.sh, update.sh)
 SYS="${VS_ZRAM_SYS:-/sys/block/zram0}"
 SWAPS="${VS_ZRAM_SWAPS:-/proc/swaps}"
 MEMINFO="${VS_ZRAM_MEMINFO:-/proc/meminfo}"
 CLUSTER="${VS_ZRAM_CLUSTER:-/proc/sys/vm/page-cluster}"
+SWAPPINESS="${VS_ZRAM_SWAPPINESS:-/proc/sys/vm/swappiness}"
 DEV="${VS_ZRAM_DEV:-/dev/zram0}"
 MAXBYTES=$((4 * 1024 * 1024 * 1024))
 
 active() { grep -q "^$DEV " "$SWAPS" 2>/dev/null; }
+mem_mb() { awk '/^MemTotal:/{print int($2 / 1024)}' "$MEMINFO" 2>/dev/null; }
+# Beim Start einschalten? Ausdruecklich an (on) geht vor, ausdruecklich aus (off) auch; sonst nach RAM.
+wanted() {
+  [ -e "$MARK" ] && return 0
+  [ -e "$OFFMARK" ] && return 1
+  [ "$(mem_mb)" -lt "$AUTO_BELOW_MB" ] 2>/dev/null
+}
 
 need_root() {
   [ "$(id -u)" -eq 0 ] || [ -n "${VS_ZRAM_SYS:-}" ] || { echo "Bitte mit sudo starten." >&2; exit 1; }
@@ -37,6 +50,9 @@ start() {
   mkswap -q "$DEV" || return 1
   swapon -p 100 "$DEV" || return 1
   echo 0 > "$CLUSTER" 2>/dev/null                # einzelne Seiten statt Bloecke: bei RAM kostet Lesen nichts
+  # Auslagern in den RAM ist billig: frueher damit anfangen, statt den Dateicache (Programme, Bibliotheken)
+  # zu verwerfen und von der Platte neu zu lesen. 60 ist die Vorgabe des Kernels fuer Auslagern auf Platten.
+  echo 100 > "$SWAPPINESS" 2>/dev/null
   return 0
 }
 
@@ -46,6 +62,7 @@ stop() {
   fi
   [ -e "$SYS/reset" ] && echo 1 > "$SYS/reset"
   echo 3 > "$CLUSTER" 2>/dev/null
+  echo 60 > "$SWAPPINESS" 2>/dev/null
   return 0
 }
 
@@ -57,24 +74,30 @@ status() {
   else
     echo "zram: aus"
   fi
-  [ -e "$MARK" ] && echo "beim Start: an" || echo "beim Start: aus"
+  if [ -e "$LIVEMARK" ]; then echo "beim Start: aus (Live-System)"
+  elif [ -e "$MARK" ]; then echo "beim Start: an"
+  elif [ -e "$OFFMARK" ]; then echo "beim Start: aus (abgeschaltet)"
+  elif wanted; then echo "beim Start: an (weniger als 8 GB RAM)"
+  else echo "beim Start: aus (genug RAM – einschalten: sudo voidstation-zram on)"; fi
 }
 
 case "${1:-status}" in
   on)
     need_root
     start || exit 1
+    rm -f "$OFFMARK"
     touch "$MARK"
     status
     ;;
   off)
     need_root
     rm -f "$MARK"
+    touch "$OFFMARK"
     stop || exit 1
     status
     ;;
   boot)                                          # core-service
-    [ -e "$MARK" ] && [ ! -e /etc/voidstation-live ] && start
+    [ ! -e "$LIVEMARK" ] && wanted && start
     exit 0
     ;;
   status) status ;;

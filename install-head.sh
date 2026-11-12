@@ -71,7 +71,7 @@ PKGS="xinit xauth xset xrandr xprop setxkbmap $GPU_PKGS \
   python3-pyside6-declarative qt6-svg qt6-imageformats qt6-plugin-tls-openssl \
   pipewire wireplumber alsa-utils bluez libspa-bluetooth \
   noto-fonts-ttf noto-fonts-emoji noto-fonts-cjk dejavu-fonts-ttf \
-  NetworkManager wireless-regdb chrony htop nano fastfetch mousepad bash-completion"
+  NetworkManager wireless-regdb chrony htop nano fastfetch mousepad bash-completion earlyoom"
 # Startbild beim Hochfahren (VoidStation-Logo statt Textmeldungen, s. voidstation-splash) – nur 64 Bit,
 # die 32-Bit-Variante laesst es weg (Startzeit und RAM auf alten Rechnern)
 [ "$(xbps-uhelper arch 2>/dev/null)" = x86_64 ] && PKGS="$PKGS plymouth"

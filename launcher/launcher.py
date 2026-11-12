@@ -367,6 +367,7 @@ class AppManager:
             self.shown.discard(tid)
             self.kinds[tid] = emu_kind(args)
         self._touch(tid)
+        PERF.started(tid)                               # Spiel oder Emulator: CPU-Takt hoch, solange es laeuft
         # Neues Fenster aktiv nach vorn holen (Openbox verhindert sonst u. U. den Fokuswechsel,
         # und das Programm laeuft unsichtbar hinter der Startseite)
         threading.Thread(target=self._bring_up, args=(tid, proc, before, wm_fs), daemon=True).start()
@@ -5117,6 +5118,92 @@ def app_suspendable(tile_id):
     if a:
         return a.get("cat") == "Emulatoren"
     return tile_id in ROMS.SYSTEM_TO_TILE.values() or tile_id in ROMS.TILE_TO_SYSTEM
+
+
+# ---------------------------------------------------------------------------
+#  CPU-Takt beim Spielen (voidstation-tune perf, ueber den Root-Helfer): Solange ein Spiel oder Emulator laeuft und
+#  nicht im Hintergrund angehalten ist, steht der Governor auf "performance" – der Takt muss bei Lastwechseln nicht
+#  erst hochlaufen. Danach gilt wieder, was vorher eingestellt war. Abschalten: "perf": false in settings.json
+#  (alle), an der Kachel oder im Katalog (ein Programm) – oder fuer das Geraet: sudo voidstation-tune off perf.
+# ---------------------------------------------------------------------------
+PERF_CATS = ("Emulatoren", "Gaming", "Spiele")
+PERF_SAVED = Path("/run/voidstation/perf-saved")       # legt voidstation-tune an, solange der Takt oben ist
+
+
+def app_perf(tile_id):
+    """CPU-Takt hochstellen, solange das Programm dieser Kachel laeuft? Vorrang: "perf" an der Kachel (tiles.json),
+    dann im Katalog; von selbst bei Emulatoren, Spielen und Spiele-Plattformen (Steam, Heroic, Moonlight …) sowie
+    bei Kacheln, die Spiele aus share/ROMs starten."""
+    t = find_tile(tile_id) or {}
+    if isinstance(t.get("perf"), bool):
+        return t["perf"]
+    try:
+        a = catalog_app(tile_id)
+    except (OSError, ValueError):
+        a = None
+    if a:
+        if isinstance(a.get("perf"), bool):
+            return a["perf"]
+        return a.get("cat") in PERF_CATS
+    # Kacheln ausserhalb des Katalogs: Emulator-Kachel oder eine, die nach ihrem System heisst (Start aus der Spieleliste)
+    return tile_id in ROMS.TILE_TO_SYSTEM or tile_id in ROMS.SYSTEM_TO_TILE
+
+
+class PerfMode:
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.tids = set()                     # laufende Kacheln, fuer die der Takt hoch soll
+        self.on = False
+        self.watching = False
+
+    def started(self, tid):
+        try:
+            if settings_load().get("perf") is False or not app_perf(tid):
+                return
+        except Exception as e:  # noqa: BLE001
+            log("CPU-Takt:", e)
+            return
+        with self.lock:
+            self.tids.add(tid)
+            start, self.watching = not self.watching, True
+        if start:
+            threading.Thread(target=self._watch, daemon=True).start()
+
+    def _set(self, on):
+        if on == self.on:
+            return
+        self.on = on                          # auch nach einem Fehler: nicht alle drei Sekunden neu versuchen
+        r = run(["sudo", "-n", PKG_HELPER, "perf", "on" if on else "off"], timeout=15)
+        if r is None or r.returncode != 0:
+            log("CPU-Takt: Umschalten fehlgeschlagen", ((r.stderr or r.stdout).strip() if r else "(keine Antwort)"))
+        else:
+            log("CPU-Takt:", "hoch (Spiel laeuft)" if on else "wie vorher")
+
+    def _watch(self):
+        """Laeuft, solange eine der Kacheln laeuft. Angehaltene Emulatoren (Startseite vorn) zaehlen nicht."""
+        while True:
+            with self.lock:
+                tids = set(self.tids)
+            alive = {t for t in tids if APPS._get(t)}
+            with APPS.lock:
+                paused = set(APPS.paused)
+            with self.lock:
+                self.tids -= tids - alive
+                done = not self.tids
+                if done:
+                    self.watching = False
+            self._set(bool(alive - paused))
+            if done:
+                return
+            time.sleep(3)
+
+    def reset(self):
+        """Nach einem Neustart der Oberflaeche: War der Takt noch oben (Spiel lief beim Absturz), zurueckstellen."""
+        if PERF_SAVED.exists():
+            run(["sudo", "-n", PKG_HELPER, "perf", "off"], timeout=15)
+
+
+PERF = PerfMode()
 
 
 def tile_ids():
@@ -14730,6 +14817,7 @@ def main():
     threading.Thread(target=AUDIO_WATCH.run, daemon=True).start()   # neue Kopfhoerer, HDMI-Vorgabe Stereo
     threading.Thread(target=bios_sync, daemon=True).start()         # bios-Ordner je System samt Hinweis
     threading.Thread(target=ime_sync, daemon=True).start()          # Eingabemethode fuer ja/ko/zh (fcitx5)
+    threading.Thread(target=PERF.reset, daemon=True).start()        # CPU-Takt: Rest eines abgebrochenen Spiels
     if not LIVE:                                    # im Live-System gibt es keine Updates
         threading.Thread(target=updates_background_check, daemon=True).start()
         threading.Thread(target=kernel_autopurge, daemon=True).start()
