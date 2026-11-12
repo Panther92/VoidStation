@@ -190,7 +190,8 @@ Layer {
     function hints() {
         var T = Ui.t
         if (view === "login") return [T("hint.vpnDigit"), T("hint.vpnDel"), T("hint.vpnLogin"), T("hint.back")]
-        if (view === "main") return [T("hint.select"), T("hint.vpnPlaces"), T("hint.vpnOpts"), T("hint.back")]
+        if (view === "main")                    // bei grosser Skalierung ohne X/Y – die Knoepfe stehen ja da, sonst bricht die Zeile um
+            return compact ? [T("hint.select"), T("hint.back")] : [T("hint.select"), T("hint.vpnPlaces"), T("hint.vpnOpts"), T("hint.back")]
         if (view === "places") return [T("hint.vpnConnect"), T("hint.back")]
         return [T("hint.select"), T("hint.back")]
     }
@@ -244,8 +245,10 @@ Layer {
         property string label: ""
         property string value: ""
         spacing: 2
-        Txt { text: parent.label; color: Ui.c.textFaint; font.pixelSize: 14 * Ui.f; width: parent.width }
-        Txt { text: parent.value; font.pixelSize: 17 * Ui.f; width: parent.width; fontSizeMode: Text.HorizontalFit; minimumPixelSize: 12 * Ui.f }
+        // umbrechen statt kuerzen ("noch 24 Ta…", "Name dieses Geraets bei M…" in schmalen Spalten)
+        Txt { text: parent.label; color: Ui.c.textFaint; font.pixelSize: 14 * Ui.f; width: parent.width
+              wrapMode: Text.Wrap; elide: Text.ElideNone }
+        Txt { text: parent.value; font.pixelSize: 17 * Ui.f; width: parent.width; wrapMode: Text.Wrap; elide: Text.ElideNone }
     }
 
     headRight: NowLine {
@@ -254,75 +257,125 @@ Layer {
     }
 
     // ================================================================ Anmelden
+    // Passt sich selbst ein: Die Seite wird in natuerlicher Groesse (Masse in Ui.f) gebaut und als Ganzes auf die
+    // Buehne skaliert (lf <= 1). Vorher wird die Anordnung gewaehlt, die am wenigsten verkleinert werden muss:
+    // Ziffern ueber oder neben dem Ziffernblock, mit oder ohne QR-Karte (die QR-Karte bleibt, solange sie nicht
+    // deutlich mehr Platz kostet). Kein Scrollen, nichts unter der Hinweiszeile – bei jeder Aufloesung und Skalierung.
     Item {
         id: loginBox
         anchors.fill: parent
         visible: vp.view === "login"
-        Col {                                    // scrollt mit dem Fokus, wenn die Hoehe nicht reicht
-            id: loginCol
+
+        readonly property real gap: 12 * Ui.f
+        readonly property real kW: 104 * Ui.f                // Taste des Ziffernblocks
+        readonly property real kH: 50 * Ui.f
+        readonly property real kG: 8 * Ui.f
+        readonly property real kpW: 3 * kW + 2 * kG
+        readonly property real kpH: 4 * kH + 3 * kG
+        readonly property real gW: grpProbe.implicitWidth + 28 * Ui.f    // Feld fuer vier Ziffern
+        readonly property real gH: grpProbe.implicitHeight + 18 * Ui.f
+        readonly property real gG: 10 * Ui.f
+        readonly property real sideG: 24 * Ui.f              // Ziffern neben dem Ziffernblock
+        readonly property real textW: 480 * Ui.f
+        readonly property real headW: Math.max(textW, loginTitle.implicitWidth)
+        readonly property real headH: loginTitle.implicitHeight + gap + loginDesc.height + 16 * Ui.f
+        readonly property real noAcctH: gap + noAcctProbe.implicitHeight
+        readonly property real qrW: 400 * Ui.f
+        readonly property real qrH: qrCol.implicitHeight + 56 * Ui.f
+        readonly property real gapX: 48 * Ui.f
+
+        function fit(side, qr) {
+            var bw = side ? 2 * gW + gG + sideG + kpW : Math.max(4 * gW + 3 * gG, kpW)
+            var bh = side ? Math.max(2 * gH + gG, kpH) : gH + 16 * Ui.f + kpH
+            var w = Math.max(bw, headW, qr ? 0 : noAcctProbe.implicitWidth)
+            var h = headH + bh + (qr ? 0 : noAcctH)
+            if (qr) { w += gapX + qrW; h = Math.max(h, qrH) }
+            return Math.max(0.3, Math.min(1, (width - 2 * Ui.padX) / w, height / h))
+        }
+        readonly property var plan: {
+            var best = null, opts = [[false, true], [true, true], [false, false], [true, false]]
+            for (var i = 0; i < opts.length; i++) {
+                var f = fit(opts[i][0], opts[i][1])
+                var score = f + (opts[i][1] ? 0.25 : 0) + (opts[i][0] ? 0 : 0.01)
+                if (!best || score > best.score) best = { side: opts[i][0], qr: opts[i][1], lf: f, score: score }
+            }
+            return best
+        }
+        readonly property bool side: plan.side
+        readonly property bool withQr: plan.qr
+        readonly property real lf: plan.lf
+
+        Txt { id: grpProbe; visible: false; font.family: "monospace"; font.pixelSize: 30 * Ui.f; font.letterSpacing: 4 * Ui.f
+              elide: Text.ElideNone; text: "0000" }
+        Txt { id: noAcctProbe; visible: false; font.pixelSize: 15 * Ui.f; elide: Text.ElideNone
+              text: Ui.t("vpn.login.noAcct") + " mullvad.net" }
+
+        Column {
+            id: loginLeft
             x: Ui.padX
-            maxW: vp.compact ? loginBox.width - 2 * Ui.padX : loginBox.width - 2 * Ui.padX - qrCard.width - Ui.screenW * 0.04
-            maxH: loginBox.height
-            Txt { text: Ui.t("vpn.login.title"); font.pixelSize: 28 * Ui.f; width: loginCol.maxW }
-            Txt { text: vp.loginErr || Ui.t("vpn.login.text"); color: vp.loginErr ? Ui.c.statusDangerText : Ui.c.textDim
-                  font.pixelSize: 16 * Ui.f; width: vp.compact ? loginCol.maxW : vp.colW * 1.15; wrapMode: Text.WordWrap
+            scale: loginBox.lf
+            transformOrigin: Item.TopLeft
+            Txt { id: loginTitle; text: Ui.t("vpn.login.title"); font.pixelSize: 28 * Ui.f; elide: Text.ElideNone }
+            Item { width: 1; height: loginBox.gap }
+            Txt { id: loginDesc; text: vp.loginErr || Ui.t("vpn.login.text"); color: vp.loginErr ? Ui.c.statusDangerText : Ui.c.textDim
+                  font.pixelSize: 16 * Ui.f; width: loginBox.textW; wrapMode: Text.WordWrap
                   elide: Text.ElideNone; height: Math.max(implicitHeight, 2 * 16 * Ui.f * 1.3) }
-            Flow {                                   // Nummer und Ziffernblock: untereinander, kompakt nebeneinander
-                width: loginCol.maxW
-                spacing: 16 * Ui.f
-                Column {
-                    spacing: 12 * Ui.f
-                    Grid {
-                        columns: vp.compact ? 2 : 4
-                        spacing: 10 * Ui.f
-                        Repeater {
-                            model: 4
-                            Rectangle {
-                                readonly property int g: index
-                                readonly property bool cur: Math.min(3, Math.floor(vp.digits.length / 4)) === g && vp.digits.length < 16
-                                width: grp.implicitWidth + 28 * Ui.f
-                                height: grp.implicitHeight + 18 * Ui.f
-                                color: Ui.c.surfaceRaised
-                                border.width: cur ? 2 : 1
-                                border.color: cur ? Ui.c.borderFocus : Ui.c.borderSubtle
-                                Txt {
-                                    id: grp
-                                    anchors.centerIn: parent
-                                    font.family: "monospace"
-                                    font.pixelSize: (vp.compact ? 22 : 30) * Ui.f
-                                    font.letterSpacing: 4 * Ui.f
-                                    elide: Text.ElideNone
-                                    text: { var s = ""; for (var i = 0; i < 4; i++) { var c = vp.digits.charAt(parent.g * 4 + i); s += c || "·" } return s }
-                                    color: vp.digits.length > parent.g * 4 ? Ui.c.textPrimary : Ui.c.textFaint
-                                }
+            Item { width: 1; height: 16 * Ui.f }
+            Grid {                                   // Nummer und Ziffernblock: untereinander oder nebeneinander
+                columns: loginBox.side ? 2 : 1
+                columnSpacing: loginBox.sideG
+                rowSpacing: 16 * Ui.f
+                Grid {
+                    columns: loginBox.side ? 2 : 4
+                    spacing: loginBox.gG
+                    Repeater {
+                        model: 4
+                        Rectangle {
+                            readonly property int g: index
+                            readonly property bool cur: Math.min(3, Math.floor(vp.digits.length / 4)) === g && vp.digits.length < 16
+                            width: loginBox.gW
+                            height: loginBox.gH
+                            color: Ui.c.surfaceRaised
+                            border.width: cur ? 2 : 1
+                            border.color: cur ? Ui.c.borderFocus : Ui.c.borderSubtle
+                            Txt {
+                                anchors.centerIn: parent
+                                font.family: "monospace"
+                                font.pixelSize: 30 * Ui.f
+                                font.letterSpacing: 4 * Ui.f
+                                elide: Text.ElideNone
+                                text: { var s = ""; for (var i = 0; i < 4; i++) { var c = vp.digits.charAt(parent.g * 4 + i); s += c || "·" } return s }
+                                color: vp.digits.length > parent.g * 4 ? Ui.c.textPrimary : Ui.c.textFaint
                             }
                         }
                     }
-                    Txt { visible: vp.compact; text: Ui.t("vpn.login.noAcct") + " mullvad.net"; color: Ui.c.textFaint
-                          font.pixelSize: 15 * Ui.f }
                 }
                 Grid {
                     id: keypad
                     columns: 3
-                    spacing: 8 * Ui.f
+                    spacing: loginBox.kG
                     Repeater {
                         model: ["1", "2", "3", "4", "5", "6", "7", "8", "9"]
-                        Key { width: 104 * Ui.f; height: 50 * Ui.f; text: modelData; center: true; fontPx: 26 * Ui.f
+                        Key { width: loginBox.kW; height: loginBox.kH; text: modelData; center: true; fontPx: 26 * Ui.f
                               onTriggered: vp.typeDigit(modelData) }
                     }
-                    Key { width: 104 * Ui.f; height: 50 * Ui.f; iconName: "backspace"; center: true; onTriggered: vp.delDigit() }
-                    Key { width: 104 * Ui.f; height: 50 * Ui.f; text: "0"; center: true; fontPx: 26 * Ui.f; onTriggered: vp.typeDigit("0") }
-                    Key { width: 104 * Ui.f; height: 50 * Ui.f; text: vp.loggingIn ? "…" : Ui.t("vpn.login.go"); center: true
+                    Key { width: loginBox.kW; height: loginBox.kH; iconName: "backspace"; center: true; onTriggered: vp.delDigit() }
+                    Key { width: loginBox.kW; height: loginBox.kH; text: "0"; center: true; fontPx: 26 * Ui.f; onTriggered: vp.typeDigit("0") }
+                    Key { width: loginBox.kW; height: loginBox.kH; text: vp.loggingIn ? "…" : Ui.t("vpn.login.go"); center: true
                           fontPx: 17 * Ui.f; accent: vp.digits.length === 16; onTriggered: vp.submit() }
                 }
             }
+            Txt { visible: !loginBox.withQr; topPadding: loginBox.gap; text: noAcctProbe.text; color: Ui.c.textFaint
+                  font.pixelSize: 15 * Ui.f; elide: Text.ElideNone }
         }
         Rectangle {
             id: qrCard
-            visible: !vp.compact
-            x: parent.width - Ui.padX - width
-            width: Math.min(Ui.screenW * 0.33, 500 * Ui.f)
-            height: qrCol.implicitHeight + 56 * Ui.f
+            visible: loginBox.withQr
+            x: parent.width - Ui.padX - width * loginBox.lf
+            scale: loginBox.lf
+            transformOrigin: Item.TopLeft
+            width: loginBox.qrW
+            height: loginBox.qrH
             color: Ui.c.surfaceDialog
             border.width: 1
             border.color: Ui.c.borderSubtle
@@ -331,7 +384,8 @@ Layer {
                 x: 28 * Ui.f; y: 28 * Ui.f
                 width: parent.width - 56 * Ui.f
                 spacing: 16 * Ui.f
-                Txt { text: Ui.t("vpn.login.noAcct"); font.pixelSize: 24 * Ui.f; width: parent.width }
+                Txt { text: Ui.t("vpn.login.noAcct"); font.pixelSize: 24 * Ui.f; width: parent.width; wrapMode: Text.WordWrap
+                      elide: Text.ElideNone }
                 Txt { text: Ui.t("vpn.login.qr"); color: Ui.c.textDim; font.pixelSize: 15 * Ui.f; width: parent.width
                       wrapMode: Text.WordWrap; elide: Text.ElideNone }
                 Row {
@@ -351,9 +405,23 @@ Layer {
         anchors.fill: parent
         visible: vp.view === "main"
         readonly property bool hasLoc: vp.st.lat !== undefined && vp.st.lon !== undefined
+        // Linke Spalte passt sich ein wie die Anmeldung: natuerliche Breite mW, als Ganzes auf die Buehne skaliert.
+        // Kostet die volle Spalte (Angaben der Karte, "Zuletzt verbunden") deutlich mehr Verkleinerung als die knappe
+        // (unter 85 %), fallen diese Teile weg – sonst bleiben sie. Breite hoechstens 48 % des Bildschirms.
+        readonly property real mW: 440 * Ui.f
+        readonly property real sp: 12 * Ui.f
+        readonly property real btnH: 58 * Ui.f
+        readonly property bool hasRecent: !!vp.pg && !!vp.pg.recent && vp.pg.recent.length > 0
+        readonly property real baseH: statusRow.implicitHeight + 12 * Ui.f + nameCol.implicitHeight + 40 * Ui.f + sp + btnH
+        readonly property real factsH: 2 * 12 * Ui.f + 1 + factsGrid.implicitHeight
+        readonly property real recentH: hasRecent ? sp + recentLbl.implicitHeight + sp + 64 * Ui.f : 0
+        readonly property real maxW: Ui.screenW * 0.48 - Ui.padX
+        function fitH(h) { return Math.max(0.3, Math.min(1, maxW / mW, height / h)) }
+        readonly property bool full: fitH(baseH + factsH + recentH) >= 0.85 * fitH(baseH)
+        readonly property real lf: fitH(baseH + (full ? factsH + recentH : 0))
         Item {
             id: mapBox
-            x: Ui.padX + vp.colW + Ui.screenW * 0.06
+            x: Ui.padX + mainBox.mW * mainBox.lf + Ui.screenW * 0.05
             width: parent.width - x
             height: parent.height
             clip: true
@@ -411,13 +479,14 @@ Layer {
             }
         }
 
-        Col {                                    // scrollt mit dem Fokus, wenn die Spalte nicht ganz passt (720p, grosse Schrift)
+        Column {
             id: leftCol
             x: Ui.padX
-            maxW: vp.colW
-            maxH: mainBox.height
+            scale: mainBox.lf
+            transformOrigin: Item.TopLeft
+            spacing: mainBox.sp
             Rectangle {
-                width: vp.colW
+                width: mainBox.mW
                 height: card.implicitHeight + 40 * Ui.f
                 color: Ui.c.surfaceCard
                 Column {
@@ -426,6 +495,7 @@ Layer {
                     width: parent.width - 48 * Ui.f
                     spacing: 12 * Ui.f
                     Row {
+                        id: statusRow
                         spacing: 10 * Ui.f
                         Glyph { name: app.vpnInfo(vp.st).icon; color: app.vpnInfo(vp.st).color; width: 28 * Ui.f; height: width
                                 anchors.verticalCenter: parent.verticalCenter }
@@ -433,6 +503,7 @@ Layer {
                               font.weight: Font.DemiBold; font.letterSpacing: 1.5 * Ui.f; anchors.verticalCenter: parent.verticalCenter }
                     }
                     Column {
+                        id: nameCol
                         width: parent.width
                         spacing: 2
                         Txt { width: parent.width; font.pixelSize: 34 * Ui.f; font.weight: Font.Light
@@ -441,9 +512,10 @@ Layer {
                               text: vp.active ? [vp.cname(vp.st.cc, vp.st.country), vp.st.host].filter(Boolean).join(" · ")
                                               : [vp.st.city, vp.countryLocal(vp.st.country)].filter(Boolean).join(", ") }
                     }
-                    Rectangle { visible: !vp.compact; width: parent.width; height: 1; color: Ui.c.divider }
+                    Rectangle { visible: mainBox.full; width: parent.width; height: 1; color: Ui.c.divider }
                     Grid {
-                        visible: !vp.compact
+                        id: factsGrid
+                        visible: mainBox.full
                         width: parent.width
                         columns: 2
                         columnSpacing: 18 * Ui.f
@@ -457,19 +529,19 @@ Layer {
                 }
             }
             Row {
-                width: vp.colW
+                width: mainBox.mW
                 spacing: 8 * Ui.f
                 readonly property real bw: (width - 2 * spacing) / 3
-                Key { id: mainBtn; width: parent.bw; height: 58 * Ui.f; center: true; fontPx: 18 * Ui.f
+                Key { id: mainBtn; width: parent.bw; height: mainBox.btnH; center: true; fontPx: 18 * Ui.f
                       text: vp.active ? Ui.t("vpn.disconnect") : Ui.t("vpn.connect"); onTriggered: vp.toggle() }
-                Key { width: parent.bw; height: 58 * Ui.f; center: true; fontPx: 18 * Ui.f; text: Ui.t("vpn.places"); onTriggered: vp.openPlaces() }
-                Key { width: parent.bw; height: 58 * Ui.f; center: true; fontPx: 18 * Ui.f; text: Ui.t("vpn.opts"); onTriggered: vp.setView("opts") }
+                Key { width: parent.bw; height: mainBox.btnH; center: true; fontPx: 18 * Ui.f; text: Ui.t("vpn.places"); onTriggered: vp.openPlaces() }
+                Key { width: parent.bw; height: mainBox.btnH; center: true; fontPx: 18 * Ui.f; text: Ui.t("vpn.opts"); onTriggered: vp.setView("opts") }
             }
-            Txt { visible: recentRow.visible && !vp.compact; text: Ui.t("vpn.recent"); color: Ui.c.textDim; font.pixelSize: 16 * Ui.f; topPadding: 4 * Ui.f }
+            Txt { id: recentLbl; visible: recentRow.visible; text: Ui.t("vpn.recent"); color: Ui.c.textDim; font.pixelSize: 16 * Ui.f }
             Row {
                 id: recentRow
-                visible: !!vp.pg && !!vp.pg.recent && vp.pg.recent.length > 0 && !vp.compact
-                width: vp.colW
+                visible: mainBox.hasRecent && mainBox.full
+                width: mainBox.mW
                 spacing: 8 * Ui.f
                 Repeater {
                     model: vp.pg && vp.pg.recent ? vp.pg.recent : []
