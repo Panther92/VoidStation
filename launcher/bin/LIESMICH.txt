@@ -1,0 +1,16 @@
+chdman – Werkzeug aus MAME (https://www.mamedev.org), wandelt CD-Abbilder (bin/cue) in das CHD-Format um.
+VoidStation nutzt es in der Spieleliste ("In CHD umwandeln").
+
+Fassung:   MAME 0.289 (Tag mame0289, https://github.com/mamedev/mame)
+Gebaut:    mit tools/build-chdman.sh aus dem unveraenderten Quelltext des Tags, nur x86_64;
+           haengt nur von glibc ab (ab 2.38). Statt SDL sind vier leere Platzhalter fuer die
+           Zwischenablage eingebunden, die chdman nie benutzt (steht im Skript).
+Lizenz:    MAME als Ganzes GPL-2.0-or-later, chdman selbst BSD-3-Clause; enthaelt zlib (Zlib),
+           Zstandard (BSD-3-Clause), FLAC (BSD-3-Clause), LZMA SDK (gemeinfrei), utf8proc (MIT), expat (MIT).
+           Volltexte im Quelltext des Tags (COPYING, docs/legal, 3rdparty/*).
+Quelltext: der genannte Tag; das Skript holt ihn und baut dieselbe Datei neu.
+
+----
+chdman – a tool from MAME that converts CD images (bin/cue) to CHD. Built by tools/build-chdman.sh from the
+unmodified source of tag mame0289 (x86_64 only, depends on glibc only). MAME as a whole is GPL-2.0-or-later,
+chdman itself BSD-3-Clause. Source: https://github.com/mamedev/mame at that tag.

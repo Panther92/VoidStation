@@ -95,6 +95,7 @@ Window {
             else if (osk.open) { n = "osk"; r = osk }
             else if (adlg.open) { n = "adlg"; r = adlg }
             else if (powerDlg.open) { n = "dialog"; r = powerDlg }
+            else if (chd.open) { n = "chd"; r = chd }               // Karte "in CHD umwandeln" ueber der Spieleliste
             else if (keymap.open) { n = "keymap"; r = keymap }
             else if (emuopts.open) { n = "emuopts"; r = emuopts }
             else if (roms.open) { n = "roms"; r = roms }
@@ -729,6 +730,7 @@ Window {
         TvLayer { id: tv; anchors.fill: parent }
         VpnLayer { id: vpnLayer; anchors.fill: parent }
         RomsLayer { id: roms; anchors.fill: parent }
+        ChdCard { id: chd; anchors.fill: parent; onFinished: roms.reload(); onOpenChanged: if (!open) roms.chdUpdate(chd.st) }
         KeymapLayer { id: keymap; anchors.fill: parent }
         EmuOptsLayer { id: emuopts; anchors.fill: parent }
 

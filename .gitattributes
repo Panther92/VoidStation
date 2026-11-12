@@ -5,3 +5,6 @@ launcher/home.sh text eol=lf
 
 # Generiert von build.sh/publish.sh: in Diffs eingeklappt, nicht in der Sprachstatistik
 dist/** linguist-generated=true
+
+# Mitgeliefertes Werkzeug (tools/build-chdman.sh)
+launcher/bin/chdman binary

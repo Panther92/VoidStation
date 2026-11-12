@@ -31,6 +31,7 @@ Item {
         else if (l === "apps") h = [Nav.current && Nav.current.isCat ? T("hint.appCat") : T("hint.appInstall"), T("hint.appCats"), T("hint.back")]
         else if (l === "adlg") h = (adlg.fits ? [] : [T("hint.scrollText")]).concat([T("hint.cancel")])
         else if (l === "dialog") h = [T("hint.cancel")]
+        else if (l === "chd") h = [T("hint.select"), T("hint.cancel")]
         else if (l === "inst") h = inst.hints().slice()
         else if (l === "osk") h = [T("hint.select"), T("osk.space"), T("osk.backspace"), T("common.cancel")]
         else h = [T("hint.back")]

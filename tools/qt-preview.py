@@ -129,6 +129,35 @@ TILES["groups"].insert(1, {"name": "Spiele", "tiles": [
 
 
 JOB: dict[str, Any] = {}
+# bin/cue -> CHD (VS_CHD=ask: Karte fragt beim Oeffnen einer Spieleliste, VS_CHD=pill: nur der Knopf in der Leiste).
+# "Umwandeln" spielt sechs Spiele in rund 20 Sekunden durch, eines davon schlaegt fehl.
+CHDM: dict[str, Any] = {"mode": os.environ.get("VS_CHD", ""), "job": {}, "t0": 0.0, "stop": False}
+CHD_GAMES = ["Tekken 3", "Legend of Kartia", "Final Fantasy VII (Disc 1)", "Final Fantasy VII (Disc 2)",
+             "Final Fantasy VII (Disc 3)", "Rayman"]
+
+
+def chd_status():
+    if not CHDM["mode"]:
+        return {"count": 0, "bytes": 0, "ask": False, "free": 0, "job": {}}
+    job = CHDM["job"]
+    if job.get("state") == "running":
+        el, per = time.time() - CHDM["t0"], 3.3
+        i = int(el // per)
+        if CHDM["stop"] or i >= len(CHD_GAMES):
+            done = min(i, len(CHD_GAMES))
+            job.update(state="cancelled" if CHDM["stop"] else "done", ok=max(0, done - (1 if done > 1 else 0)),
+                       failed=["Legend of Kartia"] if done > 1 else [], saved=done * 231_000_000, step="", pct=0.0)
+            CHDM["mode"] = "done"
+        else:
+            f = (el % per) / per
+            job.update(i=i + 1, name=CHD_GAMES[i], step="convert" if f < 0.8 else "verify",
+                       pct=round(f / 0.8 * 100 if f < 0.8 else (f - 0.8) / 0.2 * 100, 1))
+    running = job.get("state") == "running"
+    left = CHDM["mode"] in ("ask", "pill")
+    return {"count": len(CHD_GAMES) if left and not running else 0, "bytes": 3_870_000_000 if left else 0,
+            "ask": CHDM["mode"] == "ask" and not running, "free": 60_000_000_000, "job": dict(job)}
+
+
 # Mullvad VPN (VS_VPN=login | off | on | locked | nodaemon): Kachel in "System", Symbol oben rechts, Seite mit Attrappe
 VPNM: dict[str, Any] = {"mode": os.environ.get("VS_VPN", ""), "loc": ["se", "sto"], "recent": [{"cc": "de", "city": "fra"},
         {"cc": "nl", "city": "ams"}, {"cc": "ch", "city": "zrh"}],
@@ -553,11 +582,13 @@ class H(S.H):
                                        {"ssid": "iPhone von Paul", "signal": 58, "secure": True, "known": True, "active": False},
                                        {"ssid": "Nachbar", "signal": 31, "secure": True, "known": False, "active": False}],
             "/api/roms/disc": lambda: {"disc": PREVIEW_DISC},
+            "/api/roms/chd": chd_status,
             "/api/keymap": lambda: keymap_payload(q.get("emu", ["gba"])[0]),
             "/api/emuopts": lambda: emuopts_payload(q.get("emu", ["gba"])[0], q.get("game", [""])[0]),
             "/api/roms": lambda: {"system": q.get("system", ["gba"])[0], "count": len(ROMS), "roms": ROMS,
                                   "keymap": q.get("system", ["gba"])[0] in EMU_LAYOUTS,
                                   "opts": True, "gameOpts": True, "discDrive": True, "disc": PREVIEW_DISC,
+                                  "chd": chd_status(),
                                   "bios": None if q.get("system", ["gba"])[0] not in BIOS_NEED else
                                   {"ok": True, "missing": []} if os.environ.get("VS_BIOS_OK") == "1" else
                                   {"ok": False, "missing": BIOS_NEED[q.get("system", ["gba"])[0]]}},
@@ -831,6 +862,19 @@ class H(S.H):
             BT.update(pairing=None, prompt=None)
             ok = not body.get("mac", "").endswith("01")
             return self.j({"ok": ok, "error": None if ok else "bt.err.timeout", "status": {}})
+        if p.startswith("/api/roms/chd/"):
+            act = p.rsplit("/", 1)[-1]
+            print("[vorschau] CHD:", act, body, flush=True)
+            if act == "start":
+                CHDM.update(t0=time.time(), stop=False, job={"state": "running", "system": body.get("system"),
+                            "delete": body.get("delete") is True, "i": 1, "n": len(CHD_GAMES), "name": CHD_GAMES[0],
+                            "step": "convert", "pct": 0.0, "ok": 0, "failed": [], "saved": 0, "error": ""})
+                return self.j({"job": chd_status()["job"]})
+            if act == "decline":
+                CHDM["mode"] = "pill"
+            elif act == "cancel":
+                CHDM["stop"] = True
+            return self.j(chd_status())
         if p == "/api/roms/launch":              # wie der Launcher: Spiel laeuft unter der Kennung der Kachel
             tid = str(body.get("system", ""))
             if tid not in st["running"]:

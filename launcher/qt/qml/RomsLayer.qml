@@ -15,6 +15,9 @@ Layer {
                                           size: [Ui.t("roms.discSub"), disc.serial].filter(Boolean).join(" · "), noOpts: !disc.opts }].concat(files) : files
     readonly property string sysName: tile ? (Ui.l(tile.label) || tile.id) : ""
     readonly property bool gameOpts: !!romData && romData.gameOpts === true
+    // bin/cue -> CHD (ChdCard): Anzahl umwandelbarer Spiele, laeuft gerade eine Umwandlung?
+    readonly property var chdSt: romData && romData.chd ? romData.chd : null
+    readonly property bool chdRunning: !!chdSt && !!chdSt.job && chdSt.job.state === "running"
     readonly property var fit: Ui.fitRows(stage.height - 18 * Ui.f * 1.36 - 14 * Ui.f - 4, Ui.u, Ui.gap, 3)
     title: Ui.t("roms.title", { system: sysName })
 
@@ -23,8 +26,27 @@ Layer {
         romData = null
         trk.reset()
         app.openLayer(rl)
-        Api.get("/api/roms?system=" + encodeURIComponent(t.id), function (j) { romData = j; focusFirst() },
-                function () { romData = { system: t.id, count: 0, roms: [] }; focusFirst() })
+        Api.get("/api/roms?system=" + encodeURIComponent(t.id), function (j) {
+            romData = j
+            focusFirst()
+            // Neue bin/cue-Spiele seit dem letzten "Nein": einmal fragen (Karte ueber der Liste)
+            if (j.chd && j.chd.ask) Qt.callLater(function () { if (rl.open && rl.sameTile(t)) chd.openFor(t, j.chd) })
+        }, function () { romData = { system: t.id, count: 0, roms: [] }; focusFirst() })
+    }
+    // Dieselbe Kachel? Nach der Kennung, nicht nach dem Objekt: tile kommt als neues Objekt zurueck, sobald es aus
+    // den Kacheldaten stammt (dann ist rl.tile === t nie wahr)
+    function sameTile(t) { return !!tile && !!t && tile.id === t.id }
+    // Karte zu: ihren letzten Stand uebernehmen (Knopf zeigt "laeuft", der Zeitgeber unten verfolgt den Rest)
+    function chdUpdate(st) { if (romData && st) { var d = Object.assign({}, romData); d.chd = st; romData = d } }
+    // Liste neu holen (nach einer Umwandlung heissen die Spiele anders: .chd statt .cue)
+    function reload() {
+        var t = tile
+        if (!t || !open) return
+        Api.get("/api/roms?system=" + encodeURIComponent(t.id), function (j) {
+            if (!rl.sameTile(t) || !rl.open) return
+            romData = j
+            Qt.callLater(function () { if (rl.open && app.layerName === "roms" && !Nav.alive(Nav.current, rl)) rl.focusFirst() })
+        }, function () {})
     }
     // BIOS fehlt (DuckStation, PCSX2, xemu – launcher.py bios_status): was fehlt und wohin damit (share/ROMs/<folder>/bios)
     function biosText() {
@@ -57,10 +79,26 @@ Layer {
         onTriggered: {
             var t = rl.tile
             Api.get("/api/roms/disc?system=" + encodeURIComponent(t.id), function (j) {
-                if (rl.tile !== t || !rl.romData || !rl.open) return
+                if (!rl.sameTile(t) || !rl.romData || !rl.open) return
                 if (JSON.stringify(j.disc || null) === JSON.stringify(rl.romData.disc || null)) return
                 var d = Object.assign({}, rl.romData); d.disc = j.disc; rl.romData = d
                 Qt.callLater(function () { if (rl.open && !keymap.open && !emuopts.open && !Nav.alive(Nav.current, rl)) rl.focusFirst() })
+            }, function () {})
+        }
+    }
+    // Umwandlung im Hintergrund (Karte zu): Stand fuer den Knopf, am Ende Liste neu laden und Bescheid geben
+    Timer {
+        interval: 2000; repeat: true
+        running: rl.open && rl.chdRunning && !chd.open
+        onTriggered: {
+            var t = rl.tile
+            Api.get("/api/roms/chd?system=" + encodeURIComponent(t.id), function (j) {
+                if (!rl.sameTile(t) || !rl.romData || !rl.open) return
+                var d = Object.assign({}, rl.romData); d.chd = j; rl.romData = d
+                if (j.job && j.job.state !== "running") {
+                    app.toast(j.job.state === "done" ? Ui.t("chd.toastDone", { games: chd.gamesText(j.job.ok || 0) }) : Ui.t("chd.toastStopped"), j.job.state !== "done")
+                    rl.reload()
+                }
             }, function () {})
         }
     }
@@ -70,7 +108,15 @@ Layer {
         // Tastenbelegung des Emulators (KeymapLayer) – nur fuer Emulatoren, die VoidStation belegen kann
         Pill { property string key: "romkeys"; visible: !!rl.romData && !!rl.romData.keymap; iconName: "gamepad"; text: Ui.t("keymap.title"); onTriggered: keymap.openFor(rl.tile) },
         // Wichtigste Einstellungen des Emulators (EmuOptsLayer) – nur fuer Emulatoren mit Optionen (launcher.py EMU_OPTS)
-        Pill { property string key: "romopts"; visible: !!rl.romData && !!rl.romData.opts; iconName: "gear"; text: Ui.t("emuopt.title"); onTriggered: emuopts.openFor(rl.tile, null) }
+        Pill { property string key: "romopts"; visible: !!rl.romData && !!rl.romData.opts; iconName: "gear"; text: Ui.t("emuopt.title"); onTriggered: emuopts.openFor(rl.tile, null) },
+        // bin/cue-Spiele in CHD umwandeln (ChdCard) – nur, wenn es welche gibt oder gerade umgewandelt wird
+        Pill {
+            property string key: "romchd"
+            visible: !!rl.chdSt && (rl.chdSt.count > 0 || rl.chdRunning)
+            iconName: "disc"
+            text: rl.chdRunning ? Ui.t("chd.pillRun") : Ui.t("chd.pill")
+            onTriggered: chd.openFor(rl.tile, rl.chdSt)
+        }
     ]
 
     Track {

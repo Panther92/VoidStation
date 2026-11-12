@@ -7251,7 +7251,7 @@ class ROMManager:
 
     # Unterordner: Spiele duerfen in eigenen Ordnern liegen (bin/cue mit mehreren Dateien, mehrere CDs, eigene Ordnung).
     SCAN_DEPTH = 3                                # so viele Ordner-Ebenen unter ROMs/<system>
-    SCAN_SKIP = {"bios", "cover", "covers", "textures", "saves", "savestates"}    # keine Spiele (klein verglichen)
+    SCAN_SKIP = {"bios", "cover", "covers", "textures", "saves", "savestates", "_umgewandelt"}    # keine Spiele (klein verglichen)
     FLAT_SYSTEMS = {"mame"}                       # MAME sucht ROM-Sets nur direkt im Ordner (rompath)
 
     def scan(self, sys_dir, valid_exts, deep=True):
@@ -10113,6 +10113,29 @@ def _disc_id(tile, path):
     return list(got) if isinstance(got, tuple) else got
 
 
+def _disc_id_put(tile, path, got):
+    """Seriennummer eines Abbilds eintragen, das VoidStation nicht selbst lesen kann (.chd nach dem Umwandeln aus bin/cue)."""
+    cache = Path.home() / ".cache/voidstation/disc-ids.json"
+    try:
+        st = path.stat()
+    except OSError:
+        return
+    with _DISC_LOCK:
+        try:
+            known = json.loads(cache.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            known = {}
+        known = {k: v for k, v in known.items() if not k.startswith(f"{tile}|{path}|")}
+        known[f"{tile}|{path}|{st.st_size}|{st.st_mtime_ns}"] = got
+        try:
+            cache.parent.mkdir(parents=True, exist_ok=True)
+            tmp = cache.with_suffix(".tmp")
+            tmp.write_text(json.dumps(known, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(cache)
+        except OSError as e:
+            log("disc-ids.json:", e)
+
+
 def emu_rom_path(tile, name):
     """Spieldatei einer Kachel aus ihrem Namen in der Spieleliste (auch "Ordner/Spiel.cue") -> Pfad oder None."""
     for f in ROMS.folders(tile):
@@ -11115,6 +11138,277 @@ class RomCovers:
 
 
 ROM_COVERS = RomCovers()
+
+
+# ---------------------------------------------------------------------------
+#  bin/cue -> CHD (eine Datei je Spiel, kleiner, ohne Verlust). Werkzeug: chdman aus MAME, von VoidStation selbst
+#  gebaut und mitgeliefert (bin/chdman, nur x86_64; tools/build-chdman.sh). Die Spieleliste fragt einmal je neuem
+#  Fund; umgewandelt wird im Hintergrund, Spiel fuer Spiel: umwandeln -> pruefen (chdman verify) -> erst dann das
+#  Original loeschen bzw. nach ROMs/<system>/_umgewandelt verschieben.
+# ---------------------------------------------------------------------------
+class ChdConvert:
+    FOLDERS = {"psx", "ps2"}                       # Systeme, deren Emulator CHD liest und die bin/cue kennen
+    KEEP_DIR = "_umgewandelt"
+    STATE = BASE / "chd.json"                      # {"declined": {Ordner: [Blaetter, zu denen "Nein" gesagt wurde]}}
+    CODECS = "cdlz,cdzl,cdfl"                      # Vorgabe von chdman fuer CDs; liest jeder Emulator (kein zstd noetig)
+    RESERVE = 200 * 1024 * 1024                    # so viel Platz bleibt mindestens frei
+    STALL = 180                                    # so lange ohne Lebenszeichen von chdman -> abbrechen (haengt)
+    SECTORS = (2352, 2048, 2336, 2448)             # Sektorgroessen in .bin-Dateien (roh, Mode 1, Mode 2, mit Subcode)
+
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.job: dict[str, Any] = {}
+        self.proc: Any = None
+        self.stop = False
+        self._tool: Any = None
+
+    # -- Werkzeug --
+    def tool(self):
+        """Pfad zu chdman oder "" (32 Bit, nicht ausfuehrbar, fehlende Bibliothek). Einmal je Launcher-Start geprueft."""
+        if self._tool is None:
+            self._tool = ""
+            for cand in (str(BASE / "bin" / "chdman"), shutil.which("chdman") or ""):
+                if not cand or not os.access(cand, os.X_OK):
+                    continue
+                try:
+                    r = subprocess.run([cand, "help"], capture_output=True, timeout=10)
+                except (OSError, subprocess.TimeoutExpired):
+                    continue
+                if b"chdman" in r.stdout + r.stderr:
+                    self._tool = cand
+                    break
+        return self._tool
+
+    # -- was gibt es umzuwandeln? --
+    def folders(self, system):
+        return [f for f in ROMS.folders(system) if f in self.FOLDERS]
+
+    def candidates(self, folder):
+        """Blaetter (.cue) mit vorhandenen Spuren, zu denen es noch keine .chd gibt: [{"cue", "tracks", "bytes", "rel"}]."""
+        sys_dir = ROMS.rom_dir / folder
+        out: list[dict[str, Any]] = []
+        if not sys_dir.is_dir():
+            return out
+        for cue in ROMS.scan(sys_dir, {".cue"}):
+            tracks = ROMS.cue_tracks(cue)
+            if not tracks or cue.with_suffix(".chd").exists():
+                continue
+            try:
+                sizes = [t.stat().st_size for t in tracks]
+                size = cue.stat().st_size + sum(sizes)
+            except OSError:
+                continue
+            # Abgeschnittene oder fremde Dateien (keine ganzen Sektoren): chdman bleibt daran haengen – gar nicht anbieten
+            if any(n == 0 or all(n % sec for sec in self.SECTORS) for n in sizes):
+                continue
+            out.append({"cue": cue, "tracks": tracks, "bytes": size, "rel": cue.relative_to(sys_dir).as_posix()})
+        return out
+
+    def _state(self):
+        try:
+            d = json.loads(self.STATE.read_text(encoding="utf-8"))
+            return d if isinstance(d, dict) else {}
+        except (OSError, ValueError):
+            return {}
+
+    def _state_save(self, d):
+        try:
+            tmp = self.STATE.with_suffix(".tmp")
+            tmp.write_text(json.dumps(d, ensure_ascii=False), encoding="utf-8")
+            tmp.replace(self.STATE)
+        except OSError as e:
+            log("chd.json:", e)
+
+    def status(self, system):
+        """Fuer die Spieleliste: wie viele bin/cue-Spiele, ob gefragt werden soll (neue seit dem letzten "Nein"),
+        freier Platz, laufender Auftrag."""
+        job = self.view()
+        folders = self.folders(system)
+        if not folders or not self.tool():
+            return {"count": 0, "bytes": 0, "ask": False, "free": 0, "job": job}
+        declined = self._state().get("declined", {})
+        count = size = new = 0
+        for f in folders:
+            seen = set(declined.get(f, []))
+            for c in self.candidates(f):
+                count += 1
+                size += c["bytes"]
+                new += c["rel"] not in seen
+        try:
+            free = shutil.disk_usage(ROMS.rom_dir).free
+        except OSError:
+            free = 0
+        running = job.get("state") == "running"
+        return {"count": 0 if running else count, "bytes": size, "ask": bool(new) and not running, "free": free, "job": job}
+
+    def decline(self, system):
+        """"Nein": Fuer die jetzt vorhandenen Spiele nicht mehr fragen (neue loesen die Frage wieder aus)."""
+        d = self._state()
+        dec = d.setdefault("declined", {})
+        for f in self.folders(system):
+            dec[f] = sorted(set(dec.get(f, [])) | {c["rel"] for c in self.candidates(f)})
+        self._state_save(d)
+
+    def view(self):
+        with self.lock:
+            return dict(self.job)
+
+    # -- Auftrag --
+    def start(self, system, delete):
+        tool = self.tool()
+        folders = self.folders(system)
+        if not tool or not folders:
+            raise ValueError("CHD-Umwandlung hier nicht moeglich")
+        with self.lock:
+            if self.job.get("state") == "running":
+                raise ValueError("Umwandlung laeuft schon")
+            todo = [(f, c) for f in folders for c in self.candidates(f)]
+            if not todo:
+                raise ValueError("Nichts umzuwandeln")
+            self.stop = False
+            self.job = {"state": "running", "system": system, "delete": bool(delete), "i": 0, "n": len(todo), "name": "",
+                        "step": "convert", "pct": 0.0, "ok": 0, "failed": [], "saved": 0, "error": ""}
+        threading.Thread(target=self._run, args=(tool, system, todo, bool(delete)), daemon=True).start()
+        return self.view()
+
+    def cancel(self):
+        self.stop = True
+        p = self.proc
+        if p is not None and p.poll() is None:
+            try:
+                p.terminate()
+            except OSError:
+                pass
+
+    def _set(self, **kw):
+        with self.lock:
+            self.job.update(kw)
+
+    def _chdman(self, args, progress=False):
+        """chdman ausfuehren (niedrige Prioritaet, ein Kern bleibt frei). Fortschritt steht in stderr als
+        "Compressing, 12.3% complete…" mit Wagenruecklauf statt Zeilenende. -> Rueckgabecode"""
+        self.proc = subprocess.Popen(["nice", "-n", "10", *args], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                                     stderr=subprocess.PIPE)
+        assert self.proc.stderr is not None
+        proc, alive, stalled = self.proc, [time.monotonic()], [False]
+
+        def watchdog():                                  # chdman ohne Ausgabe = haengt (kaputtes Abbild)
+            while proc.poll() is None:
+                if time.monotonic() - alive[0] > self.STALL:
+                    stalled[0] = True
+                    proc.kill()
+                    return
+                time.sleep(1)
+        threading.Thread(target=watchdog, daemon=True).start()
+        buf, tail = b"", b""
+        while True:
+            chunk = self.proc.stderr.read1(4096)
+            if not chunk:
+                break
+            alive[0] = time.monotonic()
+            tail = (tail + chunk)[-2000:]
+            buf += chunk
+            parts = re.split(rb"[\r\n]", buf)
+            buf = parts.pop()
+            for line in parts:
+                m = re.search(rb"([0-9]+(?:\.[0-9]+)?)% complete", line)
+                if m and progress:
+                    self._set(pct=float(m.group(1)))
+        rc = self.proc.wait()
+        self.proc = None
+        if stalled[0]:
+            log("chdman:", args[1], f"seit {self.STALL} s ohne Ausgabe, abgebrochen")
+        elif rc != 0 and not self.stop:
+            log("chdman:", args[1], "->", rc, tail.decode("utf-8", "replace").strip().splitlines()[-1:] or "")
+        return rc
+
+    def _run(self, tool, system, todo, delete):
+        tile = ROMS.SYSTEM_TO_TILE.get(ROMS.canonical_system(system), system)
+        cores = max(1, (os.cpu_count() or 2) - 1)
+        refs: dict = {}                                  # Spur -> wie viele Blaetter sie noch brauchen
+        for _f, c in todo:
+            for t in c["tracks"]:
+                refs[t] = refs.get(t, 0) + 1
+        state, error = "done", ""
+        for i, (folder, c) in enumerate(todo, 1):
+            cue, name = c["cue"], ROMS.title_of(folder, c["cue"])
+            self._set(i=i, name=name, step="convert", pct=0.0)
+            if self.stop:
+                state = "cancelled"
+                break
+            final = cue.with_suffix(".chd")
+            part = cue.with_name("." + cue.stem + ".chd.part")
+            try:
+                if shutil.disk_usage(cue.parent).free < c["bytes"] + self.RESERVE:
+                    state, error = "error", "space"       # schlimmstenfalls so gross wie das Original
+                    break
+                serial = _disc_id(tile, cue) if tile in ("duckstation", "pcsx2") else None
+                rc = self._chdman([tool, "createcd", "-i", str(cue), "-o", str(part), "-f", "-c", self.CODECS,
+                                   "-np", str(cores)], progress=True)
+                if rc == 0 and not self.stop:
+                    self._set(step="verify", pct=0.0)
+                    rc = self._chdman([tool, "verify", "-i", str(part)], progress=True)
+                if self.stop:
+                    part.unlink(missing_ok=True)
+                    state = "cancelled"
+                    break
+                if rc != 0 or not part.is_file() or part.stat().st_size == 0 or final.exists():
+                    part.unlink(missing_ok=True)
+                    with self.lock:
+                        self.job["failed"].append(name)
+                    continue
+                os.replace(part, final)
+                self._after(tile, folder, c, final, serial, delete, refs)
+                with self.lock:
+                    self.job["ok"] += 1
+                    self.job["saved"] += max(0, c["bytes"] - final.stat().st_size)
+                log(f"CHD: {c['rel']} -> {final.name} ({c['bytes'] >> 20} -> {final.stat().st_size >> 20} MB)")
+            except OSError as e:
+                part.unlink(missing_ok=True)
+                log("CHD:", c["rel"], e)
+                with self.lock:
+                    self.job["failed"].append(name)
+        self._set(state=state, error=error, step="", pct=0.0)
+        log("CHD-Umwandlung:", state, error, f"{self.job.get('ok')} von {len(todo)}")
+
+    def _after(self, tile, folder, c, final, serial, delete, refs):
+        """Nach gepruefter Umwandlung: Seriennummer merken (aus einer .chd liest VoidStation sie nicht selbst), Optionen
+        des Spiels auf den neuen Dateinamen umziehen, Originale loeschen oder nach _umgewandelt verschieben."""
+        cue = c["cue"]
+        if serial:
+            _disc_id_put(tile, final, serial)
+        try:
+            d = emu_games_load()
+            moved = False
+            for games in d.values():
+                if isinstance(games, dict) and cue.name in games and final.name not in games:
+                    games[final.name] = games.pop(cue.name)
+                    moved = True
+            if moved:
+                emu_games_save(d)
+        except OSError as e:
+            log("emu-games.json:", e)
+        sys_dir = ROMS.rom_dir / folder
+        files = [cue]
+        for t in c["tracks"]:
+            refs[t] = refs.get(t, 1) - 1
+            if refs[t] <= 0:                              # eine Spur, die noch ein anderes Blatt braucht, bleibt liegen
+                files.append(t)
+        for f in files:
+            try:
+                if delete:
+                    f.unlink()
+                else:
+                    dest = sys_dir / self.KEEP_DIR / f.relative_to(sys_dir)
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    if dest.exists():
+                        dest = dest.with_name(f"{dest.stem}-{int(time.time())}{dest.suffix}")
+                    os.replace(f, dest)
+            except OSError as e:
+                log("CHD: Original bleibt liegen:", f.name, e)
+
+
+CHD = ChdConvert()
 
 
 # ---------------------------------------------------------------------------
@@ -13274,8 +13568,10 @@ class Handler(BaseHTTPRequestHandler):
                                     "count": len(roms), "roms": roms, "keymap": system in EMU_LAYOUTS,
                                     "bios": bios_status(system),
                                     "opts": system in EMU_OPTS, "gameOpts": emu_opts_has_game(system),
-                                    "disc": DVD.game_for(system),
+                                    "disc": DVD.game_for(system), "chd": CHD.status(system),
                                     "discDrive": system in ("duckstation", "pcsx2") and bool(DVD.devices())})
+        if path == "/api/roms/chd":                # Spieleliste: bin/cue -> CHD (Stand, Fortschritt)
+            return self._json(200, CHD.status(urllib.parse.parse_qs(url.query).get("system", [""])[0]))
         if path == "/api/roms/disc":               # Spieleliste: Disc eingelegt/entnommen?
             return self._json(200, {"disc": DVD.game_for(urllib.parse.parse_qs(url.query).get("system", [""])[0])})
         if path == "/api/emuopts":                 # Optionen eines Emulators bzw. eines Spiels (&game=<datei>)
@@ -13659,6 +13955,21 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(200, emu_opts_set(str(b.get("emu", "")), str(b.get("id", "")), b.get("value"),
                                                         str(b.get("game") or "") or None))
                 except (ValueError, OSError) as e:
+                    return self._json(400, {"error": str(e)})
+            if parts[:3] == ["api", "roms", "chd"] and len(parts) == 4:
+                b = self._body()
+                sys_id = str(b.get("system", ""))
+                try:
+                    if parts[3] == "start":
+                        return self._json(200, {"job": CHD.start(sys_id, b.get("delete") is True)})
+                    if parts[3] == "decline":
+                        CHD.decline(sys_id)
+                    elif parts[3] == "cancel":
+                        CHD.cancel()
+                    else:
+                        return self._send(404)
+                    return self._json(200, CHD.status(sys_id))
+                except ValueError as e:
                     return self._json(400, {"error": str(e)})
             if parts == ["api", "roms", "launch"]:
                 b = self._body()
