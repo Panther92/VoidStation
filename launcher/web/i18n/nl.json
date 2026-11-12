@@ -664,6 +664,8 @@
   "settings.padMouseOffToast": "Controllermuis uitgeschakeld",
   "pad.mouseOn": "Controllermuis aan · <b>R3</b> zet hem uit · <b>LT / L3</b> toetsenbord",
   "pad.mouseOff": "Controllermuis uit · <b>R3</b> zet hem aan",
+  "shot.saved": "Schermafbeelding opgeslagen · <b>Screenshots</b>",
+  "shot.failed": "Schermafbeelding mislukt",
   "kbd.hint": "<b>A</b> typen · <b>X</b> wissen · <b>Y</b> spatie · <b>LB / RB</b> cursor · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> sluiten",
   "osk.space": "Spatie",
   "osk.backspace": "Wissen",

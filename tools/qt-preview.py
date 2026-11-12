@@ -488,6 +488,8 @@ def updates(q):
 
 # Eingabefeld im Browser (wie OskField in launcher.py): melden mit
 #   curl -H 'X-TV: 1' -d '{"ev":"focus","kind":"search","pos":0.1,"sid":"t"}' http://127.0.0.1:8766/api/osk/field
+# Hinweis "Bildschirmfoto gespeichert" (OskField.notice im Launcher) ueber denselben Weg:
+#   curl -H 'X-TV: 1' -d '{"ev":"shot","ok":true,"file":"x.png"}' http://127.0.0.1:8766/api/osk/field
 OSKF: dict[str, Any] = {"cv": threading.Condition(), "seq": 0, "state": {}}
 
 
@@ -649,7 +651,7 @@ class H(S.H):
         if p == "/api/osk/field":
             with OSKF["cv"]:
                 OSKF["seq"] += 1
-                OSKF["state"] = {k: body.get(k) for k in ("ev", "kind", "pos", "sid")}
+                OSKF["state"] = {k: body.get(k) for k in ("ev", "kind", "pos", "sid", "ok", "file")}
                 OSKF["cv"].notify_all()
             print("[vorschau] Eingabefeld:", OSKF["state"], flush=True)
             return self.j({"ok": True})

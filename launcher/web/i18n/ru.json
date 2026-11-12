@@ -664,6 +664,8 @@
   "settings.padMouseOffToast": "Мышь контроллера выключена",
   "pad.mouseOn": "Мышь контроллера вкл. · <b>R3</b> выключает · <b>LT / L3</b> клавиатура",
   "pad.mouseOff": "Мышь контроллера выкл. · <b>R3</b> включает",
+  "shot.saved": "Снимок экрана сохранён · <b>Screenshots</b>",
+  "shot.failed": "Не удалось сделать снимок экрана",
   "kbd.hint": "<b>A</b> ввод · <b>X</b> стереть · <b>Y</b> пробел · <b>LB / RB</b> курсор · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> закрыть",
   "osk.space": "Пробел",
   "osk.backspace": "Стереть",

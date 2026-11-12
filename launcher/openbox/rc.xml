@@ -33,6 +33,8 @@
     <keybind key="Super_L"><action name="Execute"><command>sh -c '$HOME/.local/share/voidstation/vsctl home'</command></action></keybind>
     <keybind key="Super_R"><action name="Execute"><command>sh -c '$HOME/.local/share/voidstation/vsctl home'</command></action></keybind>
     <keybind key="XF86HomePage"><action name="Execute"><command>sh -c '$HOME/.local/share/voidstation/vsctl home'</command></action></keybind>
+    <!-- Bildschirmfoto nach share/Screenshots (vsshot) -->
+    <keybind key="F12"><action name="Execute"><command>sh -c '$HOME/.local/share/voidstation/vsshot'</command></action></keybind>
     <!-- Fenster schliessen -->
     <keybind key="A-F4"><action name="Close"/></keybind>
     <!-- Notfall-Terminal -->

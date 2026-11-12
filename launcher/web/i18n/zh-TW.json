@@ -665,6 +665,8 @@
   "settings.padMouseOffToast": "控制器滑鼠已關閉",
   "pad.mouseOn": "控制器滑鼠開啟 · <b>R3</b> 關閉 · <b>LT / L3</b> 鍵盤",
   "pad.mouseOff": "控制器滑鼠關閉 · <b>R3</b> 開啟",
+  "shot.saved": "螢幕截圖已儲存 · <b>Screenshots</b>",
+  "shot.failed": "螢幕截圖失敗",
   "kbd.hint": "<b>A</b> 輸入 · <b>X</b> 刪除 · <b>Y</b> 空白 · <b>LB / RB</b> 游標 · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> 關閉",
   "osk.space": "空白",
   "osk.backspace": "刪除",

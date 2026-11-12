@@ -665,6 +665,8 @@
   "settings.padMouseOffToast": "コントローラーのマウス操作をオフにしました",
   "pad.mouseOn": "マウス操作オン · <b>R3</b> でオフ · <b>LT / L3</b> キーボード",
   "pad.mouseOff": "マウス操作オフ · <b>R3</b> でオン",
+  "shot.saved": "スクリーンショットを保存しました · <b>Screenshots</b>",
+  "shot.failed": "スクリーンショットに失敗しました",
   "kbd.hint": "<b>A</b> 入力 · <b>X</b> 削除 · <b>Y</b> スペース · <b>LB / RB</b> カーソル · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> 閉じる",
   "osk.space": "スペース",
   "osk.backspace": "削除",

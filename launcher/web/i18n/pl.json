@@ -664,6 +664,8 @@
   "settings.padMouseOffToast": "Mysz kontrolera wyłączona",
   "pad.mouseOn": "Mysz kontrolera wł. · <b>R3</b> wyłącza · <b>LT / L3</b> klawiatura",
   "pad.mouseOff": "Mysz kontrolera wył. · <b>R3</b> włącza",
+  "shot.saved": "Zrzut ekranu zapisany · <b>Screenshots</b>",
+  "shot.failed": "Nie udało się zrobić zrzutu ekranu",
   "kbd.hint": "<b>A</b> pisz · <b>X</b> usuń · <b>Y</b> spacja · <b>LB / RB</b> kursor · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> zamknij",
   "osk.space": "Spacja",
   "osk.backspace": "Usuń",

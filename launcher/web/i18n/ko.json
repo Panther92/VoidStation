@@ -665,6 +665,8 @@
   "settings.padMouseOffToast": "컨트롤러 마우스 꺼짐",
   "pad.mouseOn": "컨트롤러 마우스 켜짐 · <b>R3</b> 끄기 · <b>LT / L3</b> 키보드",
   "pad.mouseOff": "컨트롤러 마우스 꺼짐 · <b>R3</b> 켜기",
+  "shot.saved": "스크린샷을 저장했습니다 · <b>Screenshots</b>",
+  "shot.failed": "스크린샷을 찍지 못했습니다",
   "kbd.hint": "<b>A</b> 입력 · <b>X</b> 삭제 · <b>Y</b> 스페이스 · <b>LB / RB</b> 커서 · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> 닫기",
   "osk.space": "스페이스",
   "osk.backspace": "지우기",

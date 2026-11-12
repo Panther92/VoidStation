@@ -665,6 +665,8 @@
   "settings.padMouseOffToast": "Kontrolcü faresi kapatıldı",
   "pad.mouseOn": "Kontrolcü faresi açık · <b>R3</b> kapatır · <b>LT / L3</b> klavye",
   "pad.mouseOff": "Kontrolcü faresi kapalı · <b>R3</b> açar",
+  "shot.saved": "Ekran görüntüsü kaydedildi · <b>Screenshots</b>",
+  "shot.failed": "Ekran görüntüsü alınamadı",
   "kbd.hint": "<b>A</b> yaz · <b>X</b> sil · <b>Y</b> boşluk · <b>LB / RB</b> imleç · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> kapat",
   "osk.space": "Boşluk",
   "osk.backspace": "Sil",

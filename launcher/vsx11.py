@@ -529,3 +529,49 @@ def type_reset():
 def last_typed():
     """Wann zuletzt getippt wurde (time.monotonic); 0 = noch nie."""
     return _typer.injected
+
+
+class _XImage(Structure):
+    _fields_ = [("width", c_int), ("height", c_int), ("xoffset", c_int), ("format", c_int), ("data", c_void_p),
+                ("byte_order", c_int), ("bitmap_unit", c_int), ("bitmap_bit_order", c_int), ("bitmap_pad", c_int),
+                ("depth", c_int), ("bytes_per_line", c_int), ("bits_per_pixel", c_int),
+                ("red_mask", c_ulong), ("green_mask", c_ulong), ("blue_mask", c_ulong)]
+
+
+def grab_screen():
+    """Ganzer Bildschirm (Wurzelfenster, alle Monitore) als (Breite, Hoehe, Bytes) im Format BGRX, Zeilen ohne Luecke –
+    oder None (kein libX11, anderes Pixelformat). Eigene, kurze Verbindung: XGetImage dauert bei 4K einige zehn
+    Millisekunden, so lange soll die Sperre der Fensterabfragen nicht haengen. Gedacht fuer Bildschirmfotos: schneller
+    als ffmpeg mit x11grab (neuer Prozess), damit das Bild vom Moment des Tastendrucks stammt."""
+    with _lock:
+        if not _open():
+            return None
+        x = _x
+        x.XGetImage.restype = POINTER(_XImage)
+        x.XGetImage.argtypes = [c_void_p, c_ulong, c_int, c_int, c_uint, c_uint, c_ulong, c_int]
+        x.XDestroyImage.argtypes = [POINTER(_XImage)]
+        x.XDefaultScreen.argtypes = [c_void_p]
+        x.XDisplayWidth.argtypes = x.XDisplayHeight.argtypes = [c_void_p, c_int]
+        x.XCloseDisplay.argtypes = [c_void_p]
+    dpy = x.XOpenDisplay(None)
+    if not dpy:
+        return None
+    try:
+        scr = x.XDefaultScreen(dpy)
+        w, h = x.XDisplayWidth(dpy, scr), x.XDisplayHeight(dpy, scr)
+        img = x.XGetImage(dpy, x.XDefaultRootWindow(dpy), 0, 0, w, h, 0xFFFFFFFF, 2)   # AllPlanes, ZPixmap
+        if not img:
+            return None
+        try:
+            i = img.contents
+            if i.bits_per_pixel != 32 or i.byte_order != 0 or i.red_mask != 0xFF0000 or i.blue_mask != 0xFF:
+                return None                                  # nur das uebliche BGRX (LSBFirst, 24/32 Bit)
+            stride, row = i.bytes_per_line, i.width * 4
+            raw = ctypes.string_at(i.data, stride * i.height)
+            if stride != row:
+                raw = b"".join(raw[y * stride:y * stride + row] for y in range(i.height))
+            return i.width, i.height, raw
+        finally:
+            x.XDestroyImage(img)
+    finally:
+        x.XCloseDisplay(dpy)

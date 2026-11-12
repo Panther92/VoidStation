@@ -664,6 +664,8 @@
   "settings.padMouseOffToast": "Мишу контролера вимкнено",
   "pad.mouseOn": "Миша контролера ввімк. · <b>R3</b> вимикає · <b>LT / L3</b> клавіатура",
   "pad.mouseOff": "Миша контролера вимк. · <b>R3</b> вмикає",
+  "shot.saved": "Знімок екрана збережено · <b>Screenshots</b>",
+  "shot.failed": "Не вдалося зробити знімок екрана",
   "kbd.hint": "<b>A</b> введення · <b>X</b> стерти · <b>Y</b> пробіл · <b>LB / RB</b> курсор · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> закрити",
   "osk.space": "Пробіл",
   "osk.backspace": "Стерти",

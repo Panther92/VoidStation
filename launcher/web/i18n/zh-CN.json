@@ -665,6 +665,8 @@
   "settings.padMouseOffToast": "手柄鼠标已关闭",
   "pad.mouseOn": "手柄鼠标开启 · <b>R3</b> 关闭 · <b>LT / L3</b> 键盘",
   "pad.mouseOff": "手柄鼠标关闭 · <b>R3</b> 开启",
+  "shot.saved": "截图已保存 · <b>Screenshots</b>",
+  "shot.failed": "截图失败",
   "kbd.hint": "<b>A</b> 输入 · <b>X</b> 删除 · <b>Y</b> 空格 · <b>LB / RB</b> 光标 · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> 关闭",
   "osk.space": "空格",
   "osk.backspace": "删除",

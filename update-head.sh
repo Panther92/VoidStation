@@ -123,7 +123,7 @@ for f in tiles.json radio.json tvfavs.json settings.json; do [ -f "$TV/$f" ] && 
 sed -n '/^__PAYLOAD_BELOW__$/,$p' "$0" | tail -n +2 | base64 -d | tar -xz -C "$TV" || { warn "Entpacken fehlgeschlagen"; exit 1; }
 for f in tiles.json radio.json tvfavs.json settings.json; do [ -f "$KEEP/$f" ] && cp "$KEEP/$f" "$TV/$f"; done
 rm -rf "$KEEP"
-chmod +x "$TV/launcher.py" "$TV/launcher-start.py" "$TV/home.sh" "$TV/vsctl" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/qt/voidstation-player.py" "$TV/sysfix.sh"
+chmod +x "$TV/launcher.py" "$TV/launcher-start.py" "$TV/home.sh" "$TV/vsctl" "$TV/vsshot" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/qt/voidstation-player.py" "$TV/sysfix.sh"
 # Python-Bytecode mit Pruefsumme statt Dateizeit: build.sh setzt feste Dateizeiten, ein gleich grosser neuer Stand
 # saehe fuer Python sonst unveraendert aus. Scheitert es, uebersetzt Python beim naechsten Start selbst.
 rm -rf "$TV/__pycache__" "$TV/qt/__pycache__"
@@ -354,6 +354,7 @@ fi
 say "3/8  AppCenter-Helfer (installiert nur freigegebene Pakete)"
 install -o root -g root -m 755 "$TV/voidstation-pkg" /usr/local/sbin/voidstation-pkg
 ln -sfn "$TV/vsctl" /usr/local/bin/vsctl          # "vsctl update" im Terminal = Einstellungen → Updates
+ln -sfn "$TV/vsshot" /usr/local/bin/vsshot        # Bildschirmfoto nach share/Screenshots (wie F12, Start + Select)
 install -d -o root -g root -m 755 /usr/local/share/voidstation
 python3 - "$TV/catalog.json" "$(xbps-uhelper arch 2>/dev/null)" > /usr/local/share/voidstation/allowed-packages <<'PYEOF'
 import json, sys
@@ -506,7 +507,7 @@ PYEOF
 say "6/8  Freigabe-Ordner $SHARE"
 for d in ROMs/gba ROMs/gbc ROMs/nes ROMs/snes ROMs/psx ROMs/psp ROMs/nds ROMs/gamecube ROMs/dreamcast \
          ROMs/dos ROMs/c64 ROMs/atari2600 ROMs/scummvm ROMs/ps2 ROMs/n64 ROMs/xbox ROMs/3ds ROMs/wiiu ROMs/mame \
-         Musik Videos Bilder; do
+         Musik Videos Bilder Screenshots; do
   mkdir -p "$SHARE/$d"
 done
 [ -f "$SHARE/LIESMICH.txt" ] || cat > "$SHARE/LIESMICH.txt" <<'EOF'
@@ -516,10 +517,13 @@ ROMs/<system>   Spiele fuer die Emulatoren (gba, gbc, nes, snes, psx, psp, nds �
 ROMs/<system>/bios  BIOS-Dateien aus der eigenen Konsole – was hineingehoert, steht im Hinweis im Ordner
 Musik, Videos   eigene Medien (Kachel "Videos & Musik")
 Bilder          fuer den Bildbetrachter
+Screenshots     Bildschirmfotos (F12, Start + Select am Controller oder Befehl vsshot)
 EOF
 # BIOS liegt seit Oktober 2026 je System in ROMs/<system>/bios (der Launcher verschiebt alte Dateien selbst)
 sed -i 's|^BIOS  .*|ROMs/<system>/bios  BIOS-Dateien aus der eigenen Konsole – was hineingehoert, steht im Hinweis im Ordner|' \
   "$SHARE/LIESMICH.txt" 2>/dev/null || true
+grep -q '^Screenshots ' "$SHARE/LIESMICH.txt" 2>/dev/null || \
+  printf '%s\n' 'Screenshots     Bildschirmfotos (F12, Start + Select am Controller oder Befehl vsshot)' >> "$SHARE/LIESMICH.txt" 2>/dev/null || true
 rmdir "$SHARE/BIOS" 2>/dev/null || true
 chown -R "$VSUSER:$VSUSER" "$SHARE"
 

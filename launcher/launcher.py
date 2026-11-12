@@ -1707,6 +1707,25 @@ def apply_openbox_theme(theme, dark):
         run(["openbox", "--reconfigure"])                   # laufendes Openbox laedt das Theme neu
 
 
+def openbox_rc_sync():
+    """Neue Tastenkuerzel aus einem Update (rc.xml, z. B. F12 = Bildschirmfoto) gleich wirksam machen: Openbox liest
+    rc.xml nur beim Start bzw. auf --reconfigure. Merkt sich den Stand, damit nicht jeder Launcher-Start neu laedt."""
+    rc, mark = Path.home() / ".config/openbox/rc.xml", BASE / "openbox-rc.sha"
+    try:
+        if not rc.is_file():                        # noch nicht eingerichtet (Live-Start, Test)
+            return
+        h = hashlib.sha256(rc.read_bytes()).hexdigest()[:16]
+        if mark.exists() and mark.read_text().strip() == h:
+            return
+        r = run(["pgrep", "-x", "openbox"])
+        if os.environ.get("DISPLAY") and r and r.returncode == 0:      # laeuft es noch nicht, liest es rc.xml beim Start
+            run(["openbox", "--reconfigure"])
+            log("Openbox: rc.xml neu geladen")
+        mark.write_text(h + "\n")
+    except OSError as e:
+        log("Openbox rc.xml:", e)
+
+
 def restart_home_later(delay=0.8):
     """Startseite neu starten, z. B. fuer den neuen Mauszeiger (home.sh startet sie neu)."""
     def _go():
@@ -7218,6 +7237,24 @@ class ROMManager:
 
     def __init__(self):
         self.rom_dir = Path.home() / "share" / "ROMs"
+        self.games: dict = {}                     # Kachel -> (Popen, Spielname) des aus der Spieleliste gestarteten Spiels
+
+    @staticmethod
+    def clean_name(name):
+        """Spielname ohne Zusaetze in Klammern ("Spiel (Europe) [!]" -> "Spiel"), wie in der Spieleliste."""
+        return re.sub(r"\s*[\(\[][^()\[\]]*[\)\]]", "", name).strip() or name
+
+    def title_of(self, canon, target):
+        """Name des Spiels wie in der Spieleliste (MAME: voller Name des ROM-Sets, DOS/ScummVM: Ordner)."""
+        if target.is_dir():
+            return target.name
+        name = (mame_names([target.stem]).get(target.stem) if canon == "mame" else None) or target.stem
+        return self.clean_name(name)
+
+    def playing(self, key):
+        """Name des Spiels, das unter der Kachel `key` gerade laeuft ("" = unbekannt, z. B. im Emulator selbst geoeffnet)."""
+        proc, name = self.games.get(key, (None, ""))
+        return name if proc is not None and APPS._get(key) is proc else ""
 
     def canonical_system(self, sys_or_tile):
         return self.TILE_TO_SYSTEM.get(sys_or_tile, sys_or_tile)
@@ -7246,8 +7283,7 @@ class ROMManager:
                                  "dir": True})
                     continue
                 if item.is_file() and item.suffix.lower() in valid_exts:
-                    name = names.get(item.stem) or item.stem
-                    clean_name = re.sub(r"\s*[\(\[][^()\[\]]*[\)\]]", "", name).strip() or name
+                    clean_name = self.clean_name(names.get(item.stem) or item.stem)
                     size_bytes = item.stat().st_size
                     size_mb = round(size_bytes / (1024 * 1024), 1)
                     size_str = f"{size_mb} MB" if size_mb >= 1 else f"{round(size_bytes / 1024)} KB"
@@ -7309,7 +7345,7 @@ class ROMManager:
         if not cmd:
             raise ValueError(f"Kein Emulator fuer {canon} konfiguriert")
 
-        return self._start(system, tid, cmd)
+        return self._start(system, tid, cmd, self.title_of(canon, target))
 
     def launch_disc(self, system, dev):
         """PlayStation-Disc aus dem Laufwerk starten. PCSX2 will -disc, DuckStation nimmt das Geraet wie eine Datei."""
@@ -7321,10 +7357,10 @@ class ROMManager:
         extra = ["-disc", dev] if canon == "ps2" and dev.startswith("/dev/") else [dev]
         for src in (find_tile(system), find_tile(tid), catalog_app(system), catalog_app(tid)):
             if src and isinstance(src.get("cmd"), list):
-                return self._start(system, tid, expand(src["cmd"]) + extra)
+                return self._start(system, tid, expand(src["cmd"]) + extra, disc.get("label") or disc.get("serial") or "")
         raise ValueError(f"Kein Emulator fuer {canon} konfiguriert")
 
-    def _start(self, system, tid, cmd):
+    def _start(self, system, tid, cmd, game=""):
         # Unter der Kennung der Kachel starten (frueher "rom_<system>"): Nur so kennt die Startseite das Spiel als
         # laufend – Kachel holt es zurueck, Y bzw. die heisse Ecke beenden es –, und ein zweites Spiel startet
         # keine weitere, dann nicht mehr erreichbare Instanz.
@@ -7333,7 +7369,9 @@ class ROMManager:
             log("Emulator laeuft schon, wird fuer das neue Spiel beendet:", key)
             APPS.close(key)
         media_notify("background")
-        return APPS.start(key, cmd)
+        res = APPS.start(key, cmd)
+        self.games[key] = (APPS._get(key), game)           # fuer Bildschirmfotos (Dateiname)
+        return res
 
 
 ROMS = ROMManager()
@@ -7752,7 +7790,7 @@ EMU_KEYS = {
     "pcsx2": {"save": ("tap", "F1"), "load": ("tap", "F3"), "ff": ("hold", "Tab")},
     "rmg": {"save": ("tap", "F5"), "load": ("tap", "F7"), "ff": ("toggle", "F4")},
     "xemu": {"save": ("tap", "shift+F5"), "load": ("tap", "F5")},
-    "azahar": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("toggle", "F12")},
+    "azahar": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("toggle", "ctrl+t")},
     "mame": {"save": ("tap", "shift+F6"), "load": ("tap", "shift+F7"), "ff": ("hold", "Insert")},
     "retroarch": {"save": ("tap", "F2"), "load": ("tap", "F4"), "ff": ("hold", "l"), "rewind": ("hold", "r")},
     "dosbox": {"Space": ("hold", "space"), "Ctrl": ("hold", "Control_L"), "Alt": ("hold", "Alt_L"),
@@ -9214,7 +9252,9 @@ AZAHAR_KEYS = {"A": "button_a", "B": "button_b", "X": "button_x", "Y": "button_y
                "Down": "button_down", "Left": "button_left", "Right": "button_right", "L": "button_l", "R": "button_r",
                "Start": "button_start", "Select": "button_select", "ZL": "button_zl", "ZR": "button_zr"}
 # Schnellspeichern/-laden und Turbo (EMU_KEYS): Azahar gibt keine Tasten vor
-AZAHAR_HOTKEYS = {"Quick Save": "Shift+F1", "Quick Load": "F1", "Toggle Turbo Mode": "F12"}
+# (Strg+T ist in Azahar 2126 frei, config.cpp default_hotkeys; F12 gehoert seit 2026.12 dem Bildschirmfoto)
+AZAHAR_HOTKEYS = {"Quick Save": "Shift+F1", "Quick Load": "F1", "Toggle Turbo Mode": "Ctrl+T"}
+AZAHAR_HOTKEYS_OLD = {"Toggle Turbo Mode": "F12"}      # frueher von VoidStation gesetzt -> umstellen
 
 
 def azahar_param(ctx, b):
@@ -9273,7 +9313,8 @@ def azahar_prepare(ctx):
     fix = {}
     for name, keyseq in AZAHAR_HOTKEYS.items():
         k = "Main%20Window\\" + name.replace(" ", "%20") + "\\KeySeq"
-        if sc.get(k + "\\default", "true") == "true" or not qt_unquote(sc.get(k)):
+        if sc.get(k + "\\default", "true") == "true" or not qt_unquote(sc.get(k)) or \
+                qt_unquote(sc.get(k)) == AZAHAR_HOTKEYS_OLD.get(name):
             fix.update({k: keyseq, k + "\\default": "false"})
     if fix:
         ini_update(AZAHAR_INI, "Shortcuts", fix)
@@ -12479,7 +12520,9 @@ class OskField:
     kehrt bei jeder Aenderung sofort zurueck) und oeffnet bzw. schliesst die Bildschirmtastatur ueber dem Programm.
     Ereignisse: focus (Feld angewaehlt, kind = text/password/search/email/url/tel/number/textarea, pos = Mitte des
     Felds als Anteil der Bildschirmhoehe 0..1), blur (verlassen), typed (auf einer echten Tastatur getippt).
-    sid kennzeichnet die meldende Seite bzw. den Frame."""
+    sid kennzeichnet die meldende Seite bzw. den Frame.
+    Ausserdem (vom Launcher selbst, notice): shot (Bildschirmfoto gespeichert, file = Dateiname, ok = True/False) –
+    die Startseite zeigt dazu kurz einen Hinweis ueber dem Programm."""
     KINDS = ("text", "password", "search", "email", "url", "tel", "number", "textarea")
 
     def __init__(self):
@@ -12502,6 +12545,13 @@ class OskField:
                           "sid": str(b.get("sid") or "")[:40], "t": time.time()}
             self.cv.notify_all()
         return True
+
+    def notice(self, ev, **data):
+        """Meldung des Launchers an die Startseite (siehe oben), nicht von der Firefox-Erweiterung."""
+        with self.cv:
+            self.seq += 1
+            self.state = dict(data, ev=ev, t=time.time())
+            self.cv.notify_all()
 
     def wait(self, seq, timeout=25.0):
         """Neuester Stand, sobald er sich gegenueber seq geaendert hat (seq < 0: sofort)."""
@@ -13205,6 +13255,9 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "home"]:
                 raise_home()
                 return self._json(200, {"running": APPS.running()})
+            if parts == ["api", "shot"]:               # vsshot bzw. F12: Bildschirmfoto nach share/Screenshots
+                path, err = screenshot("vsshot")
+                return self._json(200 if path else 500, {"path": str(path) if path else "", "error": err})
             if parts == ["api", "osk", "field"]:       # Firefox-Erweiterung: Eingabefeld an/ab
                 return self._json(200 if OSK_FIELD.post(self._body()) else 400, {"ok": True})
             if parts[:2] == ["api", "vpn"] and len(parts) == 3:
@@ -13613,6 +13666,100 @@ class Handler(BaseHTTPRequestHandler):
 
 
 # ---------------------------------------------------------------------------
+#  Bildschirmfotos: F12 (Openbox, rc.xml), Befehl vsshot, Start + Select am Controller
+# ---------------------------------------------------------------------------
+SHOT_DIR = Path.home() / "share" / "Screenshots"
+SHOT_LOCK = threading.Lock()                       # ein Bild nach dem anderen (Tastenwiederholung, zwei Wege zugleich)
+_SHOT_BAD = re.compile(r'[<>:"/\\|?*\x00-\x1f]')    # in Windows-Dateinamen verboten (Freigabe per Samba)
+# Fenstertitel der Browser enden auf den Programmnamen – der steht schon vorn im Dateinamen
+_SHOT_TITLE_TAIL = re.compile(r"\s+[-—–]\s+(Mozilla Firefox|LibreWolf|Chromium|Brave|Google Chrome)\s*$")
+
+
+def shot_part(text, limit=60):
+    """Teil eines Dateinamens: ohne verbotene Zeichen, Leerraum zusammengefasst, hoechstens `limit` Zeichen."""
+    t = re.sub(r"\s+", " ", _SHOT_BAD.sub(" ", str(text or ""))).strip()
+    return t[:limit].strip().rstrip(". ")
+
+
+def shot_context():
+    """(Programm, Spiel) fuer den Dateinamen. Programm = Name aus dem AppCenter (mGBA, DuckStation, PCSX2 …), sonst
+    die Kachel; nichts vorn -> "VoidStation". Spiel = das aus der Spieleliste gestartete (ROMS.playing). Bei Programmen,
+    die keine Emulatoren sind (Steam, Browser), der Fenstertitel – bei Steam ist das der Name des Spiels."""
+    tid = APPS.front()
+    if not tid or not emu_front(tid):
+        return "VoidStation", ""
+    app = (catalog_app(tid) or {}).get("name") or (find_tile(tid) or {}).get("label") or tid
+    app = str(app).split(" + ")[0]                  # "Steam + Proton-GE" -> "Steam"
+    game = ROMS.playing(tid)
+    emu = tid in ROMS.TILE_TO_SYSTEM or tid in ROMS.SYSTEM_TO_TILE
+    if not game and not emu:
+        act = active_window()
+        title = next((t for w, _, t in windows() if int(w, 16) == act), "") if act else ""
+        title = _SHOT_TITLE_TAIL.sub("", title or "").strip()
+        game = "" if title.casefold() in (app.casefold(), str(tid).casefold()) else title
+    return app, game
+
+
+def shot_encode(w, h, raw, dest):
+    """BGRX-Rohdaten (vsx11.grab_screen) als PNG speichern – ffmpeg ist auf jedem Geraet (Player, Musik)."""
+    r = subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "rawvideo", "-pix_fmt", "bgr0",
+                        "-video_size", f"{w}x{h}", "-i", "-", "-frames:v", "1", "-y", str(dest)],
+                       input=raw, capture_output=True, timeout=60)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.decode(errors="replace").strip()[-300:] or "ffmpeg")
+
+
+def shot_x11grab(dest):
+    """Rueckfall ohne libX11 bzw. bei fremdem Pixelformat: ffmpeg nimmt den Bildschirm selbst auf."""
+    r = subprocess.run(["ffmpeg", "-nostdin", "-loglevel", "error", "-f", "x11grab", "-i", os.environ.get("DISPLAY", ":0"),
+                        "-frames:v", "1", "-y", str(dest)], capture_output=True, timeout=30)
+    if r.returncode != 0:
+        raise RuntimeError(r.stderr.decode(errors="replace").strip()[-300:] or "ffmpeg")
+
+
+def screenshot(how="?"):
+    """Ganzen Bildschirm nach share/Screenshots: "<Programm>_<Spiel>_<JJJJ-MM-TT_HH-MM-SS>.png" (ohne Spiel nur
+    Programm und Zeit). Erst das Bild holen (Moment des Tastendrucks), dann Namen bilden und speichern; danach kurzer
+    Hinweis ueber dem Programm. Rueckgabe (Pfad, Fehlertext)."""
+    if not SHOT_LOCK.acquire(blocking=False):
+        return None, "busy"
+    try:
+        t0 = time.monotonic()
+        try:
+            img = vsx11.grab_screen()
+        except Exception as e:  # noqa: BLE001
+            log("Bildschirmfoto: XGetImage", e)
+            img = None
+        stamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        app, game = shot_context()
+        base = "_".join(p for p in (shot_part(app) or "VoidStation", shot_part(game)) if p) + "_" + stamp
+        SHOT_DIR.mkdir(parents=True, exist_ok=True)
+        dest = SHOT_DIR / f"{base}.png"
+        n = 2
+        while dest.exists():                         # zwei Bilder in derselben Sekunde
+            dest = SHOT_DIR / f"{base}-{n}.png"
+            n += 1
+        tmp = dest.with_name("." + dest.name + ".tmp.png")   # erst fertig, dann sichtbar (Freigabe, Bildbetrachter)
+        try:
+            if img:
+                w, h, raw = img
+                shot_encode(w, h, raw, tmp)
+            else:
+                shot_x11grab(tmp)
+            os.replace(tmp, dest)
+        except (OSError, RuntimeError, subprocess.TimeoutExpired) as e:
+            tmp.unlink(missing_ok=True)
+            log("Bildschirmfoto fehlgeschlagen:", e)
+            OSK_FIELD.notice("shot", ok=False, file="")
+            return None, str(e)
+        log(f"Bildschirmfoto ({how}, {'XGetImage' if img else 'x11grab'}, {time.monotonic() - t0:.2f} s):", dest.name)
+        OSK_FIELD.notice("shot", ok=True, file=dest.name)
+        return dest, ""
+    finally:
+        SHOT_LOCK.release()
+
+
+# ---------------------------------------------------------------------------
 #  Gamepad: Guide-Taste -> Startseite nach vorn
 # ---------------------------------------------------------------------------
 def gamepad_watcher():
@@ -13621,6 +13768,7 @@ def gamepad_watcher():
       * L3 lang halten: Vollbild des Emulators vorn an/aus (emu_toggle_fullscreen)
       * Aktionen aus der Tastenbelegung des Emulators, z. B. mGBA: △ speichern, □ laden (je eine halbe Sekunde
         halten, SAVESTATE_HOLD – Antippen tut nichts), L2/R2 halten = spulen
+      * Start + Select zusammen: Bildschirmfoto (screenshot), ausgeloest beim Druck der zweiten Taste, einmal je Druck
     Welche Taste welche Rolle hat, kommt aus pad_roles (SDL, Linux-Codes) und emu_binds. Waehrend die Seite
     "Tastenbelegung" eine Taste abfragt, haelt PadCapture das Geraet exklusiv – dann kommt hier nichts an."""
     try:
@@ -13640,6 +13788,7 @@ def gamepad_watcher():
     def actions_for(pad, probe):
         roles, src = pad_roles(pad, probe)
         out = [(roles["l3"], "fullscreen")] if roles.get("l3") else []
+        out += [(roles[r], "shot:" + r) for r in ("select", "start") if roles.get(r)]
         own = []
         for tile, keys in EMU_KEYS.items():                    # Extras jedes Emulators; ausgeloest nur, wenn er vorn ist
             bmap, custom = emu_binds(tile, pad, roles=roles)
@@ -13695,6 +13844,10 @@ def gamepad_watcher():
         if on == was:
             return
         state[k] = on
+        if action.startswith("shot:"):                 # Start + Select: sobald beide gehalten sind
+            if on and state.get((path, "shot:select")) and state.get((path, "shot:start")):
+                threading.Thread(target=screenshot, args=("Start+Select",), daemon=True).start()
+            return
         if action.rpartition(":")[2] in HOLD_ACTIONS:   # erst nach langem Halten (Vollbild, Savestates)
             if on:
                 hold_since[k] = ev_time
@@ -13788,6 +13941,7 @@ def main():
     s = settings_load()
     apply_appearance(s)
     apply_display(s)
+    openbox_rc_sync()
     threading.Thread(target=gamepad_watcher, daemon=True).start()
     threading.Thread(target=resume_watcher, daemon=True).start()
     BLUETOOTH.start()                               # Kopplungs-Agent (BlueZ ueber D-Bus)

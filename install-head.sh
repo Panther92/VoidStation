@@ -116,7 +116,7 @@ say "3/8  Dateien entpacken nach $TV"
 mkdir -p "$TV"
 [ -f "$TV/tiles.json" ] && cp "$TV/tiles.json" /tmp/tiles.json.keep
 sed -n '/^__PAYLOAD_BELOW__$/,$p' "$0" | tail -n +2 | base64 -d | tar -xz -C "$TV"
-chmod +x "$TV/launcher.py" "$TV/launcher-start.py" "$TV/home.sh" "$TV/vsctl" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/qt/voidstation-player.py" "$TV/sysfix.sh"
+chmod +x "$TV/launcher.py" "$TV/launcher-start.py" "$TV/home.sh" "$TV/vsctl" "$TV/vsshot" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/qt/voidstation-player.py" "$TV/sysfix.sh"
 # Python-Bytecode mit Pruefsumme statt Dateizeit: build.sh setzt feste Dateizeiten, ein gleich grosser neuer Stand
 # saehe fuer Python sonst unveraendert aus. Scheitert es, uebersetzt Python beim naechsten Start selbst.
 rm -rf "$TV/__pycache__" "$TV/qt/__pycache__"
@@ -377,6 +377,7 @@ echo "dunkles Theme eingerichtet (Mauszeiger-Stil und -Größe unter Einstellung
 say "Extra: AppCenter-Helfer (installiert nur freigegebene Pakete)"
 install -o root -g root -m 755 "$TV/voidstation-pkg" /usr/local/sbin/voidstation-pkg
 ln -sfn "$TV/vsctl" /usr/local/bin/vsctl          # "vsctl update" im Terminal = Einstellungen → Updates
+ln -sfn "$TV/vsshot" /usr/local/bin/vsshot        # Bildschirmfoto nach share/Screenshots (wie F12, Start + Select)
 install -d -o root -g root -m 755 /usr/local/share/voidstation
 # Kernel-Start: EFISTUB-Helfer und Initramfs-Vorgabe (nutzt der Installer des Live-Sticks)
 install -o root -g root -m 755 "$TV/voidstation-efistub" /usr/local/sbin/voidstation-efistub
@@ -448,7 +449,7 @@ fi
 say "Extra: Freigabe-Ordner $SHARE"
 for d in ROMs/gba ROMs/gbc ROMs/nes ROMs/snes ROMs/psx ROMs/psp ROMs/nds ROMs/gamecube ROMs/dreamcast \
          ROMs/dos ROMs/c64 ROMs/atari2600 ROMs/scummvm ROMs/ps2 ROMs/n64 ROMs/xbox ROMs/3ds ROMs/wiiu ROMs/mame \
-         Musik Videos Bilder; do
+         Musik Videos Bilder Screenshots; do
   mkdir -p "$SHARE/$d"
 done
 [ -f "$SHARE/LIESMICH.txt" ] || cat > "$SHARE/LIESMICH.txt" <<'EOF'
@@ -458,6 +459,7 @@ ROMs/<system>   Spiele fuer die Emulatoren (gba, gbc, nes, snes, psx, psp, nds �
 ROMs/<system>/bios  BIOS-Dateien aus der eigenen Konsole – was hineingehoert, steht im Hinweis im Ordner
 Musik, Videos   eigene Medien (Kachel "Videos & Musik")
 Bilder          fuer den Bildbetrachter
+Screenshots     Bildschirmfotos (F12, Start + Select am Controller oder Befehl vsshot)
 EOF
 chown -R "$VSUSER:$VSUSER" "$SHARE"
 

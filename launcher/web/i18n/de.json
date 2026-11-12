@@ -665,6 +665,8 @@
   "settings.padMouseOffToast": "Controller-Maus ausgeschaltet",
   "pad.mouseOn": "Controller-Maus an · <b>R3</b> schaltet aus · <b>LT / L3</b> Tastatur",
   "pad.mouseOff": "Controller-Maus aus · <b>R3</b> schaltet an",
+  "shot.saved": "Bildschirmfoto gespeichert · <b>Screenshots</b>",
+  "shot.failed": "Bildschirmfoto fehlgeschlagen",
   "kbd.hint": "<b>A</b> tippen · <b>X</b> löschen · <b>Y</b> Leerzeichen · <b>LB / RB</b> Cursor · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> schließen",
   "osk.space": "Leerzeichen",
   "osk.backspace": "Löschen",

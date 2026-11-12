@@ -664,6 +664,8 @@
   "settings.padMouseOffToast": "Kontroliera pele izslēgta",
   "pad.mouseOn": "Kontroliera pele ieslēgta · <b>R3</b> izslēdz · <b>LT / L3</b> tastatūra",
   "pad.mouseOff": "Kontroliera pele izslēgta · <b>R3</b> ieslēdz",
+  "shot.saved": "Ekrānuzņēmums saglabāts · <b>Screenshots</b>",
+  "shot.failed": "Ekrānuzņēmums neizdevās",
   "kbd.hint": "<b>A</b> rakstīt · <b>X</b> dzēst · <b>Y</b> atstarpe · <b>LB / RB</b> kursors · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> aizvērt",
   "osk.space": "Atstarpe",
   "osk.backspace": "Dzēst",

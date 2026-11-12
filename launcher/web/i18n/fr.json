@@ -664,6 +664,8 @@
   "settings.padMouseOffToast": "Souris de la manette désactivée",
   "pad.mouseOn": "Souris de la manette activée · <b>R3</b> la désactive · <b>LT / L3</b> clavier",
   "pad.mouseOff": "Souris de la manette désactivée · <b>R3</b> l’active",
+  "shot.saved": "Capture d’écran enregistrée · <b>Screenshots</b>",
+  "shot.failed": "Échec de la capture d’écran",
   "kbd.hint": "<b>A</b> taper · <b>X</b> effacer · <b>Y</b> espace · <b>LB / RB</b> curseur · <b>RT</b> Maj · <b>Start</b> Entrée · <b>B</b> fermer",
   "osk.space": "Espace",
   "osk.backspace": "Effacer",

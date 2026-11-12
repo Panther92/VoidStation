@@ -303,6 +303,10 @@ Window {
         // "Tasten zeigen" wie auf der Startseite: Automatisch (nach Tippen auf der echten Tastatur nicht mehr),
         // Immer, Nicht mit Tastatur (sobald eine angeschlossen ist).
         function oskField(st) {
+            if (st.ev === "shot") {                               // Bildschirmfoto (Launcher: F12, vsshot, Start + Select)
+                mouseHint.showText("camera", st.ok ? Ui.t("shot.saved") : Ui.t("shot.failed"))
+                return
+            }
             var mode = sett && sett.osk ? sett.osk.mode : "auto"
             if (st.ev === "typed") {
                 if (vs.kbdIdle() < 0.6) return                    // das waren unsere eigenen Tastendruecke

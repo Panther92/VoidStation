@@ -665,6 +665,8 @@
   "settings.padMouseOffToast": "Mouse-ul controlerului a fost oprit",
   "pad.mouseOn": "Mouse controler pornit · <b>R3</b> îl oprește · <b>LT / L3</b> tastatură",
   "pad.mouseOff": "Mouse controler oprit · <b>R3</b> îl pornește",
+  "shot.saved": "Captură de ecran salvată · <b>Screenshots</b>",
+  "shot.failed": "Captura de ecran a eșuat",
   "kbd.hint": "<b>A</b> tastează · <b>X</b> șterge · <b>Y</b> spațiu · <b>LB / RB</b> cursor · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> închide",
   "osk.space": "Spațiu",
   "osk.backspace": "Șterge",

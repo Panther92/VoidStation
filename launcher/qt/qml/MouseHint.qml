@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-// Kurzer Hinweis, wenn die Controller-Maus per R3 an- oder ausgeht. Kommt nur vor, waehrend ein Programm vorn ist,
+// Kurzer Hinweis, wenn die Controller-Maus per R3 an- oder ausgeht oder ein Bildschirmfoto gespeichert ist (showText).
+// Kommt meist vor, waehrend ein Programm vorn ist,
 // darum wie die heisse Ecke ein eigenes Fenster ohne Fensterverwaltung (X11 override-redirect): liegt auch ueber
 // Vollbild-Programmen und nimmt ihnen den Fokus nicht weg. Steht unten rechts wie die Meldungen der Startseite.
 import QtQuick
@@ -16,9 +17,22 @@ Window {
     width: row.width + 2 * 16 * Ui.f
     height: row.height + 2 * 12 * Ui.f
     property bool on: false
+    property string glyph: "gamepad"
+    property string msg: ""
 
     function show(isOn) {
         on = isOn
+        glyph = "gamepad"
+        msg = Ui.t(isOn ? "pad.mouseOn" : "pad.mouseOff")
+        place()
+    }
+    function showText(icon, text) {                     // z. B. Bildschirmfoto gespeichert
+        on = true
+        glyph = icon
+        msg = text
+        place()
+    }
+    function place() {
         var g = vs.cursorScreen()                       // [x, y, Breite, Hoehe]
         mh.x = g[0] + g[2] - mh.width - 48 * Ui.f
         mh.y = g[1] + g[3] - mh.height - 52 * Ui.f
@@ -44,12 +58,12 @@ Window {
             anchors.verticalCenter: parent.verticalCenter
             width: 20 * Ui.f
             height: width
-            name: "gamepad"
+            name: mh.glyph
             color: mh.on ? Ui.c.textPrimary : Ui.c.textFaint
         }
         Txt {
             anchors.verticalCenter: parent.verticalCenter
-            text: Ui.keys(Ui.t(mh.on ? "pad.mouseOn" : "pad.mouseOff"), Ui.c.textPrimary, 16 * Ui.f)
+            text: Ui.keys(mh.msg, Ui.c.textPrimary, 16 * Ui.f)
             textFormat: Text.StyledText
             font.pixelSize: 16 * Ui.f
             elide: Text.ElideNone

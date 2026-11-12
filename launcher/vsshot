@@ -1,0 +1,43 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# vsshot – Bildschirmfoto nach ~/share/Screenshots (ueber die Freigabe erreichbar)
+#
+#   vsshot            ganzer Bildschirm, Name "<Programm>_<Spiel>_<Datum_Uhrzeit>.png"
+#                     (z. B. "DuckStation_Crash Bandicoot_2026-11-12_19-35-02.png")
+#   vsshot --help     diese Hilfe
+#
+# Dasselbe machen F12 auf der Tastatur (Openbox, rc.xml) und Start + Select am Controller.
+# Den Namen kennt der Launcher (welches Programm vorn ist, welches Spiel aus der Spieleliste laeuft). Laeuft er
+# nicht, nimmt vsshot das Bild selbst auf ("VoidStation_<Datum_Uhrzeit>.png").
+# Per SSH: DISPLAY wird bei Bedarf auf :0 gesetzt.
+URL=http://127.0.0.1:8765/api/shot
+DIR="$HOME/share/Screenshots"
+
+case "${1:-}" in
+  -h|--help) sed -n '3,12p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+  "") ;;
+  *) echo "vsshot: unbekannte Option \"$1\" (vsshot --help)" >&2; exit 2 ;;
+esac
+
+out="$(curl -sS -m 90 -X POST -H 'X-TV: 1' "$URL" 2>/dev/null)"
+if [ -n "$out" ]; then
+  # Antwort {"path": …, "error": …}: Pfad ausgeben; "busy" = ein Bild entsteht gerade (F12 und vsshot zugleich)
+  res="$(printf '%s' "$out" | python3 -c 'import json,sys; j=json.load(sys.stdin); print(j.get("path") or "error:" + str(j.get("error") or ""))' 2>/dev/null)"
+  case "$res" in
+    error:busy) exit 0 ;;
+    error:*|"") echo "vsshot: Launcher meldet: ${res#error:}" >&2 ;;
+    *) printf '%s\n' "$res"; exit 0 ;;
+  esac
+fi
+
+# Launcher nicht erreichbar (oder Fehler): selbst aufnehmen
+: "${DISPLAY:=:0}"
+export DISPLAY
+mkdir -p "$DIR" || exit 1
+dest="$DIR/VoidStation_$(date +%Y-%m-%d_%H-%M-%S).png"
+if ffmpeg -nostdin -loglevel error -f x11grab -i "$DISPLAY" -frames:v 1 -y "$dest"; then
+  printf '%s\n' "$dest"
+else
+  echo "vsshot: Bildschirmfoto fehlgeschlagen" >&2
+  exit 1
+fi

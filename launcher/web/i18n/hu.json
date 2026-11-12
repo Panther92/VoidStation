@@ -664,6 +664,8 @@
   "settings.padMouseOffToast": "Kontroller-egér kikapcsolva",
   "pad.mouseOn": "Kontroller-egér be · <b>R3</b> kikapcsolja · <b>LT / L3</b> billentyűzet",
   "pad.mouseOff": "Kontroller-egér ki · <b>R3</b> bekapcsolja",
+  "shot.saved": "Képernyőkép mentve · <b>Screenshots</b>",
+  "shot.failed": "A képernyőkép nem sikerült",
   "kbd.hint": "<b>A</b> gépelés · <b>X</b> törlés · <b>Y</b> szóköz · <b>LB / RB</b> kurzor · <b>RT</b> Shift · <b>Start</b> Enter · <b>B</b> bezárás",
   "osk.space": "Szóköz",
   "osk.backspace": "Törlés",

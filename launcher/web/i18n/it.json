@@ -664,6 +664,8 @@
   "settings.padMouseOffToast": "Mouse del controller disattivato",
   "pad.mouseOn": "Mouse del controller attivo · <b>R3</b> lo disattiva · <b>LT / L3</b> tastiera",
   "pad.mouseOff": "Mouse del controller disattivato · <b>R3</b> lo attiva",
+  "shot.saved": "Screenshot salvato · <b>Screenshots</b>",
+  "shot.failed": "Screenshot non riuscito",
   "kbd.hint": "<b>A</b> digita · <b>X</b> cancella · <b>Y</b> spazio · <b>LB / RB</b> cursore · <b>RT</b> Maiusc · <b>Start</b> Invio · <b>B</b> chiudi",
   "osk.space": "Spazio",
   "osk.backspace": "Cancella",
