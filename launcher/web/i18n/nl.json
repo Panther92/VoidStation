@@ -1315,6 +1315,8 @@
   "emuopt.renderer": "Grafische API",
   "emuopt.fastBoot": "Opstartscherm overslaan",
   "emuopt.pgxp": "Stabiele geometrie",
+  "emuopt.texfilter": "Texturen verzachten",
+  "emuopt.aniso": "Verre texturen scherper",
   "emuopt.resume": "Verdergaan waar je was",
   "emuopt.integer": "Geheeltallig schalen",
   "emuopt.smooth": "Beeld verzachten",

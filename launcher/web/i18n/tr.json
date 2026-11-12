@@ -1316,6 +1316,8 @@
   "emuopt.renderer": "Grafik arayüzü",
   "emuopt.fastBoot": "Açılış ekranını atla",
   "emuopt.pgxp": "Sabit geometri",
+  "emuopt.texfilter": "Dokuları yumuşat",
+  "emuopt.aniso": "Uzak dokuları netleştir",
   "emuopt.resume": "Kaldığın yerden devam et",
   "emuopt.integer": "Tam sayı ölçekleme",
   "emuopt.smooth": "Görüntüyü yumuşat",

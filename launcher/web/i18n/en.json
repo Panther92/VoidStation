@@ -1259,6 +1259,8 @@
   "emuopt.renderer": "Graphics API",
   "emuopt.fastBoot": "Skip boot screen",
   "emuopt.pgxp": "Stable geometry",
+  "emuopt.texfilter": "Smooth textures",
+  "emuopt.aniso": "Sharpen distant textures",
   "emuopt.resume": "Resume where you left off",
   "emuopt.integer": "Integer scaling",
   "emuopt.smooth": "Soften image",

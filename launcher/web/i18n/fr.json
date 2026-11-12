@@ -1315,6 +1315,8 @@
   "emuopt.renderer": "API graphique",
   "emuopt.fastBoot": "Passer l’écran de démarrage",
   "emuopt.pgxp": "Géométrie stable",
+  "emuopt.texfilter": "Lisser les textures",
+  "emuopt.aniso": "Textures lointaines nettes",
   "emuopt.resume": "Reprendre là où tu t’es arrêté",
   "emuopt.integer": "Mise à l’échelle entière",
   "emuopt.smooth": "Adoucir l’image",

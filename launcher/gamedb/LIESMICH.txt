@@ -1,0 +1,36 @@
+Spielprofile von VoidStation
+============================
+
+Was VoidStation fuer ein bekanntes Spiel von selbst einstellt. Gelesen von ../gameprofiles.py, eingetragen vom
+Launcher (launcher.py: emu_profile, _opts_apply_profile, dosbox_game_conf). Pruefen: tools/gamedb-check.py
+
+Grundsaetze
+  - Ein Profil setzt nur Optionen, die es auch in der Spieleliste unter "Optionen" gibt.
+  - Es gilt nur, solange die Option allgemein auf "Automatik" (PlayStation) bzw. "Standard" (DOS) steht und der
+    Nutzer fuer das Spiel nichts gewaehlt hat. Die Wahl des Nutzers geht immer vor.
+  - Es gilt fuer einen Start; danach steht in den Einstellungen des Emulators wieder, was vorher drinstand.
+  - sicher = nein: Eintrag ist vorgemerkt, wird aber nicht angewendet (erst pruefen, dann auf ja stellen).
+  - Lieber kein Eintrag als ein geratener. Was nicht in der Liste steht, laeuft wie allgemein eingestellt.
+
+Aufbau: Semikolon als Trenner, erste Zeile = Spaltennamen, UTF-8. Mehrere Aliase bzw. Dateien mit | trennen.
+Zeilen, deren Titel mit # beginnt, sind Anmerkungen.
+
+psx.csv   titel;aliase;kategorie;sicher;notiz
+  titel      wie in DuckStations Datenbank (dort heissen die Fassungen aller Regionen meist gleich)
+  aliase     andere Titel: andere Regionen, uebliche Dateinamen
+  kategorie  3d            alles aus Flaechen                       -> Texturen glaetten: an
+             vorgerendert  3D-Figuren vor gemalten Hintergruenden   -> an
+             3d-sprites    3D-Welt, Figuren oder Schrift als Pixel  -> aus (Pixelgrafik bliebe sonst verwaschen)
+             2d            alles Pixelgrafik                        -> aus
+  Erkannt am Titel zur Seriennummer (DuckStations gamedb.yaml, wird nur gelesen), sonst am Datei- oder Ordnernamen.
+  Nicht in der Liste: nur Genres, die praktisch immer reines 3D sind (Rennspiele, Ego-Shooter, Flugsimulation).
+
+dos.csv   titel;aliase;dateien;jahr;tempo;sicher;notiz
+  dateien    kennzeichnende Programmdatei(en) im Spielordner, GROSS, 8.3 (DOOM2.EXE) – nur eindeutige Namen
+  tempo      xt (300 Zyklen) | 286 (1500) | 386 (6000) | 486 (25000) | pentium (50000) | max | std
+             std = der Standard von VoidStation passt (4000, im Protected Mode 60000) – Eintrag nur zur Uebersicht
+  Erkannt am Namen des Ordners bzw. der Datei, sonst an "dateien".
+
+Andere Systeme haben mit Absicht keine Liste:
+  PlayStation 2   PCSX2 bringt je Spiel eigene Korrekturen mit (GameIndex.yaml), VoidStation stellt nur allgemein ein.
+  Game Boy (Advance), Xbox   nichts, was sich je Spiel sinnvoll unterscheidet.

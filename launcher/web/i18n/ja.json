@@ -1316,6 +1316,8 @@
   "emuopt.renderer": "グラフィックAPI",
   "emuopt.fastBoot": "起動画面をスキップ",
   "emuopt.pgxp": "安定したジオメトリ",
+  "emuopt.texfilter": "テクスチャをなめらかに",
+  "emuopt.aniso": "遠くのテクスチャをくっきり",
   "emuopt.resume": "続きから再開",
   "emuopt.integer": "整数倍スケーリング",
   "emuopt.smooth": "映像をぼかす",

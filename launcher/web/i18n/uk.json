@@ -1317,6 +1317,8 @@
   "emuopt.renderer": "Графічний API",
   "emuopt.fastBoot": "Пропускати заставку",
   "emuopt.pgxp": "Стабільна геометрія",
+  "emuopt.texfilter": "Згладжування текстур",
+  "emuopt.aniso": "Чіткі далекі текстури",
   "emuopt.resume": "Продовжувати з того ж місця",
   "emuopt.integer": "Цілочислове масштабування",
   "emuopt.smooth": "Пом’якшити зображення",

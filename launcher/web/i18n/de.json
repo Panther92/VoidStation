@@ -1126,6 +1126,8 @@
   "emuopt.renderer": "Grafik-Schnittstelle",
   "emuopt.fastBoot": "Startbild überspringen",
   "emuopt.pgxp": "Geometrie ohne Wackeln",
+  "emuopt.texfilter": "Texturen glätten",
+  "emuopt.aniso": "Ferne Texturen schärfen",
   "emuopt.resume": "Automatisch weiterspielen",
   "emuopt.integer": "Ganzzahlig skalieren",
   "emuopt.smooth": "Bild weichzeichnen",

@@ -8,7 +8,7 @@
 #
 #  Prueft: Shell-Skripte (shellcheck, falls installiert, sonst bash -n / sh -n),
 #  Python-Syntax, Python-Fehlerklassen (ruff) und Typen (mypy),
-#  JSON-Dateien, Bau (build.sh: i18n vollstaendig, CHANGELOG de + en,
+#  JSON-Dateien, Spielprofile (launcher/gamedb), Bau (build.sh: i18n vollstaendig, CHANGELOG de + en,
 #  ISO-Teile) und den Bau der Webseite.
 #
 #  ruff und mypy: Einstellungen in pyproject.toml. Fehlen sie, wird der
@@ -119,6 +119,9 @@ for fn in sys.argv[1:]:
 print(f"{len(sys.argv) - 1} Dateien geprueft")
 sys.exit(bad)
 PYEOF
+
+step "Spielprofile (tools/gamedb-check.py)"
+python3 tools/gamedb-check.py || bad "Spielprofile"
 
 step "Bau (build.sh)"
 if OUT="$tmp/dist" ./build.sh >"$tmp/build.log" 2>&1; then

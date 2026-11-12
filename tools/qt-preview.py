@@ -76,28 +76,32 @@ EMUOPTS_GAME: dict[str, Any] = {}
 PREVIEW_DISC: dict[str, Any] | None = {"dev": "/dev/sr0", "name": "sr0", "label": "Beispielspiel", "serial": "SLUS-20946", "opts": True} \
     if os.environ.get("VS_GAME_DISC") == "1" else None
 EMUOPT_TF = [{"v": "true", "k": "common.on"}, {"v": "false", "k": "common.off"}]
-EMUOPT_LIST = [("picture", [
+EMUOPT_LIST: list[tuple[str, list[tuple[str, bool, list[dict[str, Any]]]]]] = [("picture", [
     ("res", False, [{"v": "1", "k": "emuopt.v.original"}, {"v": "2", "t": "2\u00d7"}, {"v": "3", "t": "3\u00d7"}, {"v": "4", "t": "4\u00d7"}]),
     ("aspect", True, [{"v": "Auto", "k": "emuopt.v.auto"}, {"v": "4:3", "t": "4:3"}, {"v": "16:9", "t": "16:9"}, {"v": "Stretch", "k": "emuopt.v.stretch"}]),
     ("widescreen", True, EMUOPT_TF),
     ("pgxp", False, EMUOPT_TF),
+    ("texfilter", True, [{"v": "auto", "k": "emuopt.v.auto", "auto": True}, {"v": "on", "k": "common.on"}, {"v": "off", "k": "common.off"}]),
+    ("aniso", False, [{"v": "0", "k": "common.off"}, {"v": "4", "t": "4\u00d7"}, {"v": "8", "t": "8\u00d7"}, {"v": "16", "t": "16\u00d7"}]),
     ("renderer", False, [{"v": "auto", "k": "emuopt.v.auto"}, {"v": "vk", "t": "Vulkan"}, {"v": "gl", "t": "OpenGL"}, {"v": "sw", "t": "Software"}]),
 ]), ("play", [
     ("fastBoot", False, EMUOPT_TF),
     ("resume", False, EMUOPT_TF),
     ("mute", False, EMUOPT_TF),
-    ("speed", True, [{"v": "std", "k": "emuopt.v.standard"}, {"v": "286", "t": "286"}, {"v": "386", "t": "386"}, {"v": "486", "t": "486"}, {"v": "pentium", "t": "Pentium"}, {"v": "max", "t": "Max"}]),
+    ("speed", True, [{"v": "std", "k": "emuopt.v.standard"}, {"v": "xt", "t": "XT"}, {"v": "286", "t": "286"}, {"v": "386", "t": "386"}, {"v": "486", "t": "486"}, {"v": "pentium", "t": "Pentium"}, {"v": "max", "t": "Max"}]),
     ("soundCard", True, [{"v": "sb16", "t": "Sound Blaster 16"}, {"v": "sbpro2", "t": "Sound Blaster Pro 2"}, {"v": "sb1", "t": "Sound Blaster 1.0"}]),
 ])]
 
 
 def emuopts_payload(emu, game):
     own = EMUOPTS_GAME.get(game, {})
+    only = [x for x in os.environ.get("VS_OPTS", "").split(",") if x]      # VS_OPTS=res,aspect,…: nur diese Optionen zeigen
     groups, values = [], {}
     for gid, opts in EMUOPT_LIST:
-        shown = [o for o in opts if o[1]] if game else opts
-        if shown:
-            groups.append({"id": gid, "opts": [{"id": o[0], "choices": o[2]} for o in shown]})
+        shown = [o for o in opts if (o[1] if game else True) and (not only or o[0] in only)]
+        if shown:                                   # "Automatik" gibt es nur allgemein, nicht je Spiel (wie launcher.py)
+            groups.append({"id": gid, "opts": [{"id": o[0], "choices": [
+                {k: v for k, v in c.items() if k != "auto"} for c in o[2] if not (game and c.get("auto"))]} for o in shown]})
         for o in shown:
             values[o[0]] = own.get(o[0]) if game else EMUOPTS.get(o[0], o[2][0]["v"])
     return {"emu": emu, "name": emu, "game": game or None, "groups": groups, "values": values}

@@ -1317,6 +1317,8 @@
   "emuopt.renderer": "API γραφικών",
   "emuopt.fastBoot": "Παράλειψη οθόνης εκκίνησης",
   "emuopt.pgxp": "Σταθερή γεωμετρία",
+  "emuopt.texfilter": "Εξομάλυνση υφών",
+  "emuopt.aniso": "Όξυνση μακρινών υφών",
   "emuopt.resume": "Συνέχεια από εκεί που σταμάτησες",
   "emuopt.integer": "Ακέραια κλιμάκωση",
   "emuopt.smooth": "Απάλυνση εικόνας",

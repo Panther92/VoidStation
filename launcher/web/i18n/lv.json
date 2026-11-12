@@ -1316,6 +1316,8 @@
   "emuopt.renderer": "Grafikas API",
   "emuopt.fastBoot": "Izlaist sākuma ekrānu",
   "emuopt.pgxp": "Stabila ģeometrija",
+  "emuopt.texfilter": "Gludināt tekstūras",
+  "emuopt.aniso": "Asākas tālās tekstūras",
   "emuopt.resume": "Turpināt, kur beidzi",
   "emuopt.integer": "Veselskaitļu mērogošana",
   "emuopt.smooth": "Mīkstināt attēlu",

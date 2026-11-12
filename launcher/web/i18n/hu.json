@@ -1317,6 +1317,8 @@
   "emuopt.renderer": "Grafikus API",
   "emuopt.fastBoot": "Indítóképernyő kihagyása",
   "emuopt.pgxp": "Stabil geometria",
+  "emuopt.texfilter": "Textúrák simítása",
+  "emuopt.aniso": "Távoli textúrák élesítése",
   "emuopt.resume": "Folytatás ott, ahol abbahagytad",
   "emuopt.integer": "Egész szorzós méretezés",
   "emuopt.smooth": "Kép lágyítása",

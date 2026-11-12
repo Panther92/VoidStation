@@ -1316,6 +1316,8 @@
   "emuopt.renderer": "그래픽 API",
   "emuopt.fastBoot": "부팅 화면 건너뛰기",
   "emuopt.pgxp": "안정된 지오메트리",
+  "emuopt.texfilter": "텍스처 부드럽게",
+  "emuopt.aniso": "먼 텍스처 선명하게",
   "emuopt.resume": "마지막 위치에서 이어 하기",
   "emuopt.integer": "정수 배율",
   "emuopt.smooth": "화면 부드럽게",

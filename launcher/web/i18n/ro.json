@@ -1316,6 +1316,8 @@
   "emuopt.renderer": "Interfață grafică",
   "emuopt.fastBoot": "Sari peste ecranul de pornire",
   "emuopt.pgxp": "Geometrie stabilă",
+  "emuopt.texfilter": "Netezire texturi",
+  "emuopt.aniso": "Texturi îndepărtate clare",
   "emuopt.resume": "Continuă de unde ați rămas",
   "emuopt.integer": "Scalare la numere întregi",
   "emuopt.smooth": "Netezește imaginea",

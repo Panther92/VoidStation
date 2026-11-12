@@ -1315,6 +1315,8 @@
   "emuopt.renderer": "Grafické rozhraní",
   "emuopt.fastBoot": "Přeskočit úvodní obrazovku",
   "emuopt.pgxp": "Stabilní geometrie",
+  "emuopt.texfilter": "Vyhlazení textur",
+  "emuopt.aniso": "Ostřejší vzdálené textury",
   "emuopt.resume": "Pokračovat, kde jsi skončil",
   "emuopt.integer": "Celočíselné škálování",
   "emuopt.smooth": "Změkčit obraz",

@@ -1315,6 +1315,8 @@
   "emuopt.renderer": "Interfejs graficzny",
   "emuopt.fastBoot": "Pomiń ekran startowy",
   "emuopt.pgxp": "Stabilna geometria",
+  "emuopt.texfilter": "Wygładzanie tekstur",
+  "emuopt.aniso": "Ostrzejsze odległe tekstury",
   "emuopt.resume": "Wznów tam, gdzie skończyłeś",
   "emuopt.integer": "Skalowanie całkowite",
   "emuopt.smooth": "Zmiękcz obraz",

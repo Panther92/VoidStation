@@ -1286,6 +1286,15 @@ def dosbox_game_conf(game):
         return ""
     sections: dict = {}
     try:
+        own = emu_opts_game("dosbox", game.name)
+        idx = _OPT_INDEX["dosbox"]
+        with EMU_LOCK:
+            st = emu_state_load()
+        # Spielprofil (z. B. CPU-Tempo): nur, wo die Option allgemein auf Standard steht und fuer das Spiel nichts gewaehlt ist
+        for oid, v in emu_profile("dosbox", game).items():
+            opt = idx.get(oid)
+            if opt and oid not in own and _opt_game_choice(opt, v) and _opt_auto_on("dosbox", opt, st):
+                sections.setdefault(opt["section"], {}).update(_opt_writes(opt, _opt_choice(opt, v)))
         for section, values in emu_opts_game_writes("dosbox", game.name):
             sections.setdefault(section, {}).update(values)
     except Exception as e:  # noqa: BLE001 – darf den Start nie verhindern
@@ -9893,7 +9902,15 @@ def emu_mute_apply(tile):
 # Rueckfall, wo sich das Abbild nicht lesen laesst (.chd, .cso, zweite CD bei DuckStation …): Der Wert gilt fuer diesen Start
 # in der Haupteinstellung, der alte kommt vor dem naechsten Start bzw. Oeffnen der Optionen zurueck (emu_opts_restore; nur, wo
 # der Nutzer in der Zwischenzeit nichts anderes eingestellt hat).
+#
+# Spielprofile (gameprofiles.py, gamedb/<system>.csv): Was VoidStation fuer ein bekanntes Spiel von selbst einstellt, z. B.
+# Texturen glaetten bei 3D-Spielen der PlayStation oder das CPU-Tempo eines DOS-Spiels. Ein Profil gilt nur, solange die Option
+# allgemein auf der Stufe aus EMU_AUTO steht ("Automatisch" bzw. "Standard") und der Nutzer fuer das Spiel nichts gewaehlt hat.
+# Eingetragen wird es wie der Rueckfall oben: fuer diesen einen Start, danach kommt der alte Wert zurueck.
+# Eine Moeglichkeit mit "auto": True schreibt denselben Wert wie eine andere (bei DuckStation "Nearest"); welche von beiden
+# gemeint ist, steht in emu-defaults.json unter opt_fixed. Je Spiel gibt es sie nicht (dort heisst "nichts gewaehlt" schon das).
 EMU_GAME_OPTS = Path.home() / ".config/voidstation/emu-games.json"       # {Kachel: {Spieldatei: {Option: Wert}}}
+EMU_AUTO = {"duckstation": {"texfilter": "auto"}, "dosbox": {"speed": "std"}}   # {Kachel: {Option: Stufe, auf der Profile gelten}}
 _OPT_TF = [{"v": "true", "k": "common.on"}, {"v": "false", "k": "common.off"}]
 _OPT_10 = [{"v": "1", "k": "common.on"}, {"v": "0", "k": "common.off"}]
 
@@ -9920,6 +9937,8 @@ EMU_OPTS: dict[str, Any] = {
                 {"v": "Stretch", "k": "emuopt.v.stretch"}], "Auto 4:3/3:2", game=True),
             _opt("widescreen", "EmuCore", "EnableWideScreenPatches", _OPT_TF, "false", game=True),
             _opt("noInterlace", "EmuCore", "EnableNoInterlacingPatches", _OPT_TF, "false"),
+            _opt("aniso", "EmuCore/GS", "MaxAnisotropy", [
+                {"v": "0", "k": "common.off"}, {"v": "4", "t": "4×"}, {"v": "8", "t": "8×"}, {"v": "16", "t": "16×"}], "0"),
             _opt("renderer", "EmuCore/GS", "Renderer", [
                 {"v": "-1", "k": "emuopt.v.auto"}, {"v": "14", "t": "Vulkan"}, {"v": "12", "t": "OpenGL"},
                 {"v": "13", "t": "Software"}], "-1"),
@@ -9936,6 +9955,10 @@ EMU_OPTS: dict[str, Any] = {
                 {"v": "Stretch To Fill", "k": "emuopt.v.stretch"}], "Auto (Game Native)", game=True),
             _opt("widescreen", "GPU", "WidescreenHack", _OPT_TF, "false", game=True),
             _opt("pgxp", "GPU", "PGXPEnable", _OPT_TF, "false"),
+            # Nur die Texturen der 3D-Flaechen; Sprites (Schrift, Menues) haben mit SpriteTextureFilter einen eigenen Filter
+            _opt("texfilter", "GPU", "TextureFilter", [
+                {"v": "auto", "k": "emuopt.v.auto", "set": {"TextureFilter": "Nearest"}, "auto": True},
+                {"v": "BilinearBinAlpha", "k": "common.on"}, {"v": "Nearest", "k": "common.off"}], "auto", game=True),
             _opt("renderer", "GPU", "Renderer", [
                 {"v": "Automatic", "k": "emuopt.v.auto"}, {"v": "Vulkan", "t": "Vulkan"}, {"v": "OpenGL", "t": "OpenGL"},
                 {"v": "Software", "t": "Software"}], "Automatic"),
@@ -9975,6 +9998,7 @@ EMU_OPTS: dict[str, Any] = {
         ("play", [
             _opt("speed", "cpu", ["cpu_cycles", "cpu_cycles_protected"], [
                 {"v": "std", "k": "emuopt.v.standard", "set": _opt_cycles("4000", "60000")},
+                {"v": "xt", "t": "XT", "set": _opt_cycles("300", "300")},
                 {"v": "286", "t": "286", "set": _opt_cycles("1500", "1500")},
                 {"v": "386", "t": "386", "set": _opt_cycles("6000", "6000")},
                 {"v": "486", "t": "486", "set": _opt_cycles("25000", "25000")},
@@ -10017,9 +10041,11 @@ def _opt_defaults_for(tile):
     """Vorgaben von VoidStation, die von der Hardware abhaengen: {Option: Wert}."""
     gpu = emu_gpu_class()
     if tile == "pcsx2":                 # PS2 hochskalieren ist teuer: nur mit eigener Grafikkarte
-        return {"res": "2"} if gpu == "dgpu" else {}
+        return {"res": "2", "aniso": "16"} if gpu == "dgpu" else {}
     if tile == "duckstation" and gpu != "none":
         return {"res": "4" if gpu == "dgpu" else "2", "pgxp": "true"}
+    if tile == "dosbox":                # Fernseher: scharfe Pixel statt nachgemachter Roehre (DOSBox' eigener Standard)
+        return {"shader": "sharp"}
     return {}
 
 
@@ -10037,6 +10063,27 @@ def _opt_writes(opt, choice):
 
 def _opt_choice(opt, value):
     return next((c for c in opt["choices"] if c["v"] == value), None)
+
+
+def _opt_game_choice(opt, value):
+    """Wie _opt_choice, aber nur, was sich auch fuer ein einzelnes Spiel waehlen laesst."""
+    c = _opt_choice(opt, value)
+    return None if c and c.get("auto") else c
+
+
+def _opt_plain(opt, choice):
+    """Zu einer "auto"-Moeglichkeit die gewoehnliche, die dasselbe schreibt."""
+    return next((c for c in opt["choices"] if not c.get("auto") and _opt_writes(opt, c) == _opt_writes(opt, choice)), choice)
+
+
+def _opt_fixed(tile, opt, st):
+    return opt["id"] in st.get("opt_fixed", {}).get(tile, [])
+
+
+def _opt_auto_on(tile, opt, st):
+    """Duerfen Spielprofile diese Option gerade setzen? (allgemein auf der Automatik-Stufe, s. EMU_AUTO)"""
+    level = EMU_AUTO.get(tile, {}).get(opt["id"])
+    return bool(level) and _opt_value(tile, opt) == level and not _opt_fixed(tile, opt, st)
 
 
 def _opt_value(tile, opt):
@@ -10190,7 +10237,7 @@ def _game_ini_read(tile, opt, ini):
     if not any(k in sec for k in opt["keys"]):
         return None
     for c in opt["choices"]:
-        if all(_opt_norm(sec.get(k, v)) == _opt_norm(v) for k, v in _opt_writes(opt, c).items()):
+        if not c.get("auto") and all(_opt_norm(sec.get(k, v)) == _opt_norm(v) for k, v in _opt_writes(opt, c).items()):
             return c["v"]
     return None
 
@@ -10219,7 +10266,7 @@ def _game_sync(tile, name, ini):
         return
     idx = _OPT_INDEX[tile]
     for oid, v in own.items():
-        if oid in idx and idx[oid]["game"] and _opt_choice(idx[oid], v):
+        if oid in idx and idx[oid]["game"] and _opt_game_choice(idx[oid], v):
             _game_ini_write(tile, idx[oid], ini, v)
     emu_games_save(d)
     log(f"{tile}: Optionen fuer {name} in {ini.name} uebernommen")
@@ -10229,7 +10276,7 @@ def emu_opts_game(tile, game):
     """Fuer ein Spiel gewaehlte Optionen {Option: Wert}, nur was es (noch) gibt."""
     idx = _OPT_INDEX.get(tile, {})
     own = emu_games_load().get(tile, {}).get(os.path.basename(game), {})
-    return {k: v for k, v in own.items() if k in idx and idx[k]["game"] and _opt_choice(idx[k], v)}
+    return {k: v for k, v in own.items() if k in idx and idx[k]["game"] and _opt_game_choice(idx[k], v)}
 
 
 def emu_opts_game_writes(tile, game):
@@ -10274,6 +10321,82 @@ def _opts_apply_game(tile, game, st):
         log(f"{tile}: Optionen fuer {os.path.basename(game)}:", rec)
 
 
+DUCK_APP = Path.home() / ".local/share/voidstation/apps/duckstation"
+_DUCK_DB: list = []
+
+
+def duck_gamedb():
+    """gamedb.yaml von DuckStation (liegt entpackt bei dessen Programm; nur lesen) oder None."""
+    if _DUCK_DB and (_DUCK_DB[0] is None or _DUCK_DB[0].is_file()):
+        return _DUCK_DB[0]
+    found = next((p for p in (DUCK_APP / "usr/bin/resources/gamedb.yaml", DUCK_APP / "usr/share/duckstation/resources/gamedb.yaml",
+                              DUCK_APP / "resources/gamedb.yaml") if p.is_file()), None)
+    if not found and DUCK_APP.is_dir():
+        found = next(iter(sorted(DUCK_APP.rglob("gamedb.yaml"))), None)
+    _DUCK_DB[:] = [found]
+    return found
+
+
+def emu_profile(tile, game):
+    """Spielprofil {Option: Wert} fuer ein Spiel der Spieleliste ({} = nichts bekannt). Liest ggf. das Abbild und DuckStations
+    Datenbank – nicht unter EMU_LOCK aufrufen. Darf den Start nie verhindern."""
+    if tile not in EMU_AUTO or not game:
+        return {}
+    try:
+        import gameprofiles                              # nur bei Bedarf, spart dem Launcher Speicher
+        if tile == "duckstation":
+            path = Path(game)
+            if _DISC_NAME.fullmatch(path.name):
+                serial = (DVD.game("/dev/" + path.name) or {}).get("serial")
+                names: list = []
+            else:
+                if not path.is_absolute():
+                    path = emu_rom_path(tile, game) or path
+                serial = _disc_id(tile, path) if path.is_file() else None
+                names = [path.stem, path.parent.name]
+            entry = gameprofiles.duck_entry(duck_gamedb(), serial) if isinstance(serial, str) else {}
+            got, why = gameprofiles.psx_profile([entry.get("name")] + names, entry.get("genre", ""))
+        elif tile == "dosbox":
+            got, why = gameprofiles.dos_profile(game)
+        else:
+            return {}
+    except Exception as e:  # noqa: BLE001
+        log(f"{tile}: Spielprofil:", e)
+        return {}
+    if got:
+        log(f"{tile}: Spielprofil {why} ->", got)
+    return got
+
+
+def _opts_apply_profile(tile, game, native, profile, st):
+    """Spielprofil fuer diesen Start in die Haupteinstellung schreiben und den alten Wert merken – nur Optionen, die allgemein
+    auf Automatik stehen und fuer die der Nutzer bei diesem Spiel nichts gewaehlt hat. Aufruf mit EMU_LOCK."""
+    idx = _OPT_INDEX[tile]
+    own = {} if native else emu_opts_game(tile, game)
+    path = EMU_OPTS[tile]["file"]()
+    ini = ini_read(path)
+    rec = st.setdefault("opt_game", {}).get(tile) or {}
+    done = {}
+    for oid, v in profile.items():
+        opt = idx.get(oid)
+        if not opt or not _opt_game_choice(opt, v) or oid in own:
+            continue
+        if native and _game_ini_read(tile, opt, native) is not None:
+            continue
+        if not _opt_auto_on(tile, opt, st):
+            continue
+        vals = _opt_writes(opt, _opt_choice(opt, v))
+        if vals == _opt_writes(opt, _opt_choice(opt, EMU_AUTO[tile][oid])):
+            continue                                     # das Profil will, was ohnehin gilt
+        for k, w in vals.items():
+            rec.setdefault(opt["section"], {})[k] = [ini.get(opt["section"], {}).get(k), w]
+        ini_update(path, opt["section"], vals)
+        done[oid] = v
+    if done:
+        st["opt_game"][tile] = rec
+        log(f"{tile}: Spielprofil fuer {os.path.basename(game)} eingetragen:", done)
+
+
 def _opts_apply_defaults(tile, st):
     """Vorgaben einmal setzen, solange die Option noch auf dem Standard des Emulators steht. Nie ueber das, was der Nutzer
     gewaehlt hat (mine[option] = None), egal ob hier oder im Emulator."""
@@ -10310,7 +10433,10 @@ def emu_opts_prepare(tid, args):
     game = str(args[-1]) if len(args) > 1 else ""
     if tid == "dosbox" or Path(game).suffix.lower() not in {e for x in ROMS.EXTENSIONS.values() for e in x}:
         game = ""
-    native = emu_game_ini(tid, game) if game else None   # Abbild lesen dauert: nicht unter der Sperre
+    last = str(args[-1]) if len(args) > 1 else ""
+    disc = last if last.startswith("/dev/") and _DISC_NAME.fullmatch(os.path.basename(last)) else ""     # Disc im Laufwerk
+    native = emu_game_ini(tid, game or disc) if game or disc else None      # Abbild lesen dauert: nicht unter der Sperre
+    profile = emu_profile(tid, game or disc) if game or disc else {}        # DOSBox: s. dosbox_game_conf
     with EMU_LOCK:
         st = emu_state_load()
         emu_opts_restore(tid, st)
@@ -10319,10 +10445,12 @@ def emu_opts_prepare(tid, args):
             if opt and _opt_choice(opt, v):
                 _opt_write(tid, opt, v)
         _opts_apply_defaults(tid, st)
-        if native:
+        if native and game:
             _game_sync(tid, os.path.basename(game), native)
         elif game:
             _opts_apply_game(tid, game, st)
+        if profile:
+            _opts_apply_profile(tid, game or disc, native, profile, st)
         emu_state_save(st)
 
 
@@ -10359,10 +10487,15 @@ def emu_opts_payload(tile, game=None):
             for o in shown:
                 if native:
                     values[o["id"]] = _game_ini_read(tile, o, native)
+                elif game:
+                    values[o["id"]] = own.get(o["id"])
                 else:
-                    values[o["id"]] = own.get(o["id"]) if game else pending.get(o["id"], _opt_value(tile, o))
+                    v = pending.get(o["id"], _opt_value(tile, o))
+                    c = _opt_choice(o, v) if v is not None else None
+                    values[o["id"]] = _opt_plain(o, c)["v"] if c and c.get("auto") and _opt_fixed(tile, o, st) else v
             groups.append({"id": gid, "opts": [{"id": o["id"], "choices": [
-                {x: c[x] for x in ("v", "k", "t") if x in c} for c in o["choices"]]} for o in shown]})
+                {x: c[x] for x in ("v", "k", "t") if x in c} for c in o["choices"] if not (game and c.get("auto"))]}
+                for o in shown]})
         if not game and tile in EMU_MUTE and groups:      # "Spiel stumm": eigener Weg, s. emu_set_mute
             groups[-1]["opts"].append({"id": "mute", "choices": _OPT_TF})
             values["mute"] = "true" if _opt_mute_now(tile, st) else "false"
@@ -10380,7 +10513,7 @@ def emu_opts_set(tile, oid, value, game=None):
     opt = _OPT_INDEX.get(tile, {}).get(oid)
     if not opt:
         raise ValueError("Unbekannte Option")
-    if value is not None and not _opt_choice(opt, value):
+    if value is not None and not (_opt_game_choice(opt, value) if game else _opt_choice(opt, value)):
         raise ValueError("Unbekannter Wert")
     if game:
         if not opt["game"]:
@@ -10420,6 +10553,9 @@ def emu_opts_set(tile, oid, value, game=None):
         if not ready or APPS._get(tile):
             st.setdefault("opt_pending", {}).setdefault(tile, {})[oid] = value
         st.setdefault("opt_defaults", {}).setdefault(tile, {})[oid] = None      # ab jetzt die Wahl des Nutzers
+        if any(c.get("auto") for c in opt["choices"]):   # "Automatisch" und "Aus" schreiben dasselbe: merken, was gemeint ist
+            fixed = [o for o in st.setdefault("opt_fixed", {}).get(tile, []) if o != oid]
+            st["opt_fixed"][tile] = fixed if _opt_choice(opt, value).get("auto") else fixed + [oid]
         emu_state_save(st)
     log(f"{tile}: Option {oid}={value}")
     return emu_opts_payload(tile)

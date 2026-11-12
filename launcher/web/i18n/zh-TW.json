@@ -1316,6 +1316,8 @@
   "emuopt.renderer": "圖形 API",
   "emuopt.fastBoot": "略過開機畫面",
   "emuopt.pgxp": "穩定幾何",
+  "emuopt.texfilter": "平滑紋理",
+  "emuopt.aniso": "遠處紋理更清晰",
   "emuopt.resume": "從上次離開的地方繼續",
   "emuopt.integer": "整數倍縮放",
   "emuopt.smooth": "柔化畫面",
