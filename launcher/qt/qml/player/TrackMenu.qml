@@ -17,6 +17,9 @@ Rectangle {
     property string homeSub: ""
     property var qualityList: []                 // eigene Qualitaetsstufen [{v, label, sub}] statt Beste/Sparsam
     property var extraRows: []                   // weitere Eintraege unter "Weiteres" [{id, label, sub}]
+    property var customRows: null                // statt Spuren usw. nur diese Zeilen [{label, sub, on, act}] (YouTube: Kapitel)
+    property var leadRows: []                    // ganz oben, vor den Spuren [{head} | {id, label, sub}] (YouTube: Kapitel)
+    property int startSel: -1                    // beim Oeffnen markierte Zeile (-1 = erste)
     signal qualityChosen(string v)
     signal extraChosen(string id)
     signal repeatChosen(string m)
@@ -54,10 +57,14 @@ Rectangle {
         return "-1"
     }
     function build() {
+        if (customRows) return customRows
         var st = app.st || {}, out = [], tracks = st.tracks || [], i, t
         var audio = tracks.filter(function (t) { return t.type === "audio" })
         var subs = tracks.filter(function (t) { return t.type === "sub" })
         var hasVideo = tracks.some(function (t) { return t.type === "video" && !t.albumart })
+        for (i = 0; i < leadRows.length; i++)
+            out.push(leadRows[i].head ? { head: leadRows[i].head }
+                     : { label: leadRows[i].label, sub: leadRows[i].sub || "", on: false, act: { kind: "extra", id: leadRows[i].id } })
         if (repeatMode) {
             out.push({ head: Ui.t("player.menu.repeat") })
             var modes = ["next", "folder", "once", "track"]
@@ -107,8 +114,10 @@ Rectangle {
     function show() {
         rows = build()
         sel = -1
-        for (var i = 0; i < rows.length; i++) if (!rows[i].head) { sel = i; break }
+        if (startSel >= 0 && startSel < rows.length && !rows[startSel].head) sel = startSel
+        else for (var i = 0; i < rows.length; i++) if (!rows[i].head) { sel = i; break }
         open = true
+        Qt.callLater(function () { if (m.sel >= 0) list.positionViewAtIndex(m.sel, ListView.Center) })
     }
     function hide() { open = false }
     function refresh() {
