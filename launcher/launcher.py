@@ -9983,14 +9983,16 @@ _OPT_TF = [{"v": "true", "k": "common.on"}, {"v": "false", "k": "common.off"}]
 _OPT_10 = [{"v": "1", "k": "common.on"}, {"v": "0", "k": "common.off"}]
 
 
-def _opt(oid, section, key, choices, default, game=False, hidden=False, own=False, label=None):
+def _opt(oid, section, key, choices, default, game=False, hidden=False, own=False, label=None, io=None):
     """hidden: gehoert zu den VoidStation-Einstellungen (Vorgabe, wird beim Zurueckstellen mitgesetzt), hat auf der Karte
     aber keine eigene Zeile – wer daran drehen will, tut das im Emulator.
     own: kein Schluessel des Emulators, sondern ein Schalter von VoidStation selbst (EMU_OWN, Abschnitt = Kachel) – fuer
     die Patches je Spiel (EMU_PATCHES), fuer die die Emulatoren keinen allgemeinen Schalter haben.
-    label: Beschriftung einer anderen Option uebernehmen (emuopt.<label>)."""
+    label: Beschriftung einer anderen Option uebernehmen (emuopt.<label>).
+    io: eigenes Lesen/Schreiben fuer Optionen, die mehr als einen Abschnitt beruehren (Shader-Ketten von DuckStation,
+    Shader-Pfad von mGBA): Objekt mit read(ini) -> Wert oder None und write(path, value). Nur allgemein, nie je Spiel."""
     return {"id": oid, "section": section, "keys": key if isinstance(key, list) else [key], "choices": choices,
-            "default": default, "game": game, "hidden": hidden, "own": own, "label": label}
+            "default": default, "game": game, "hidden": hidden, "own": own, "label": label, "io": io}
 
 
 def _opt_res(values):
@@ -9999,6 +10001,141 @@ def _opt_res(values):
 
 def _opt_cycles(real, protected):
     return {"cpu_cycles": real, "cpu_cycles_protected": protected}
+
+
+# ---- Bildstil: Shader der Emulatoren (Paul, 13.11.2026: "die Presets, die von Haus aus von den Emulatoren kommen") ----
+# Eine Zeile "Stil" in der Spalte Bildstil (Karte "Anpassen"), dazu bei PS1/PS2 "Kanten glaetten" (FXAA, Vorgabe von
+# VoidStation, sobald es eine GPU gibt). Angeboten wird, was ein Bild gestaltet; Werkzeuge (Kalibrierung, Spiegeln,
+# Tiefenpuffer anzeigen, Schwarzbilder fuer 120 Hz, Farbsehschwaeche simulieren …) bleiben im Emulator.
+# Namen der Shader am Quelltext geprueft (13.11.2026): DuckStation data/resources/shaders (GLSL: Pfad ohne .glsl,
+# ReShade: Pfad unter reshade/Shaders ohne .fx, postprocessing.cpp TryLoadingShader), PCSX2 TVShader 0–7
+# (GraphicsPostProcessingSettingsTab.ui), mGBA res/shaders (mitgeliefert, s. launcher/shaders/LIESMICH.txt),
+# DOSBox Staging 0.82.2 glshader (render.cpp, shader_manager.cpp MapShaderName).
+_TRUE = ("true", "1", "yes", "on")
+MGBA_SHADERS = BASE / "shaders" / "mgba"
+
+
+class _DuckChain:
+    """Ein Shader als einzige Stufe einer Nachbearbeitungs-Kette von DuckStation (postprocessing.cpp): [<Kette>] Enabled,
+    StageCount, [<Kette>/Stage1] ShaderName, StageEnabled. "off" = Kette aus. Hat der Nutzer im Emulator eine laengere
+    Kette gebaut, ist kein Knopf an (None); erst eine Wahl hier ersetzt sie."""
+
+    def __init__(self, chain, shaders):
+        self.chain, self.shaders = chain, shaders        # {Wert: ShaderName}
+
+    def read(self, ini):
+        main = ini.get(self.chain, {})
+        try:
+            count = int(main.get("StageCount", "0") or 0)
+        except ValueError:
+            return None
+        if main.get("Enabled", "false").strip().lower() not in _TRUE or count == 0:
+            return "off"
+        if count != 1:
+            return None
+        stage = ini.get(f"{self.chain}/Stage1", {})
+        if stage.get("StageEnabled", "true").strip().lower() not in _TRUE:
+            return "off"
+        name = stage.get("ShaderName", "").strip()
+        return next((v for v, s in self.shaders.items() if s == name), None)
+
+    def write(self, path, value):
+        if value == "off":
+            ini_update(path, self.chain, {"Enabled": "false"})
+            return
+        shader, sec = self.shaders[value], f"{self.chain}/Stage1"
+        old = ini_read(path).get(sec, {})
+        # Anderer Shader: dessen Einstellungen (Regler) aus der Stufe nehmen, sonst traegt der neue fremde Werte
+        drop = [k for k in old if k not in ("ShaderName", "StageEnabled")] if old.get("ShaderName") != shader else []
+        ini_update(path, sec, {"ShaderName": shader, "StageEnabled": "true"}, remove=drop)
+        ini_update(path, self.chain, {"Enabled": "true", "StageCount": "1"})
+
+
+class _MgbaShader:
+    """Shader von mGBA: [ports.qt] shader = Ordner des Shaders (ShaderSelector.cpp), leer = keiner. Nur die von
+    VoidStation mitgelieferten zaehlen. "orig" (Original-Farben) merkt sich VoidStation in EMU_OWN, weil der Shader dafuer
+    je Spiel wechselt (mgba_look_game): GBA Color, GBC Color oder bei Game-Boy-Spielen keiner."""
+
+    ORIG = ("gba-color", "gbc-color")
+
+    def __init__(self, names):
+        self.names = names
+
+    def read(self, ini):
+        path = ini.get("ports.qt", {}).get("shader", "").strip()
+        p = Path(path)
+        ours = bool(path) and str(p.parent) == str(MGBA_SHADERS)
+        name = p.name.removesuffix(".shader") if path else ""
+        if ini_read(EMU_OWN).get("gba", {}).get("look") == "orig" and (not path or (ours and name in self.ORIG)):
+            return "orig"
+        if not path:
+            return "off"
+        return name if ours and name in self.names else None
+
+    def write(self, path, value):
+        ini_update(EMU_OWN, "gba", {"look": value})
+        shader = "" if value == "off" else str(MGBA_SHADERS / f"{'gba-color' if value == 'orig' else value}.shader")
+        ini_update(path, "ports.qt", {"shader": shader})
+
+
+def mgba_look_game(game):
+    """Original-Farben: Shader passend zum Spiel, das jetzt startet (.gba GBA Color, .gbc GBC Color, .gb ohne – das
+    Display des ersten Game Boy hatte keine Farben zu korrigieren). Aufruf mit EMU_LOCK."""
+    if ini_read(EMU_OWN).get("gba", {}).get("look") != "orig":
+        return
+    name = {".gbc": "gbc-color", ".gb": ""}.get(Path(game).suffix.lower(), "gba-color") if game else "gba-color"
+    shader = str(MGBA_SHADERS / f"{name}.shader") if name else ""
+    if ini_read(MGBA_CONFIG).get("ports.qt", {}).get("shader", "") != shader:
+        ini_update(MGBA_CONFIG, "ports.qt", {"shader": shader})
+        log(f"mGBA: Original-Farben: {name or 'ohne Shader'}")
+
+
+_OFF = {"v": "off", "k": "common.off"}
+DUCK_LOOKS = [                                 # (Wert, ShaderName, Beschriftung: Schluessel "k" oder fester Name "t")
+    ("crt-lottes", "crt-lottes", {"t": "CRT-Lottes"}),
+    ("crt-lottes2", "CRTLottes2", {"t": "CRT-Lottes 2"}),
+    ("crt-hyllian", "dolphinfx/crt/CRT-HYLLIAN", {"t": "CRT-Hyllian"}),
+    ("crt-newpixie", "CRT-NewPixie", {"t": "CRT-NewPixie"}),
+    ("scanlines", "dolphinfx/scanlines", {"k": "emuopt.v.scanlines"}),
+    ("scanlines-4x2", "scanline-modern-4x2", {"t": "Scanlines 4×2"}),
+    ("scanlines-ex", "scanline-modern-ex", {"t": "Scanlines EX"}),
+    ("scanlines-abs", "scanlines-abs", {"t": "Scanlines abs"}),
+    ("ntsc", "ntsc/ntsc-adaptive-lite", {"t": "NTSC"}),
+    ("sharpen", "simple-sharpen", {"k": "emuopt.v.sharpen"}),
+    ("bicubic", "interpolation/bicubic", {"k": "emuopt.v.bicubic"}),
+    ("deband", "Deband", {"k": "emuopt.v.deband"}),
+    ("grain", "FilmGrain2", {"k": "emuopt.v.grain"}),
+    ("pixellate", "dolphinfx/pixel-art/PIXELLATE", {"t": "Pixellate"}),
+    ("ddt", "dolphinfx/edge-smoothing/DDT", {"t": "DDT"}),
+    ("xbr", "dolphinfx/edge-smoothing/XBR", {"t": "xBR"}),
+    ("super-xbr", "edge-smoothing/super-xbr", {"t": "Super-xBR"}),
+]
+PCSX2_LOOKS = [{"v": "0", "k": "common.off"}, {"v": "5", "t": "Lottes CRT"}, {"v": "1", "k": "emuopt.v.scanlines"},
+               {"v": "2", "k": "emuopt.v.diagonal"}, {"v": "3", "k": "emuopt.v.triangular"},
+               {"v": "4", "k": "emuopt.v.wave"}, {"v": "6", "t": "4×RGSS"}, {"v": "7", "t": "N×AGSS"}]
+MGBA_LOOKS = [                                 # Ordner unter launcher/shaders/mgba ohne ".shader"
+    ("agb001", {"t": "AGB-001"}), ("ags001", {"t": "AGS-001"}), ("sp101-color", {"t": "GBA SP 101"}),
+    ("nso-gba-color", {"t": "NSO GBA"}), ("nso-gbc-color", {"t": "NSO GBC"}), ("gb-micro-color", {"t": "GB Micro"}),
+    ("dslite-color", {"t": "DS Lite"}), ("nds-color", {"t": "Nintendo DS"}), ("wiiu", {"t": "Wii U"}),
+    ("lcd", {"t": "LCD"}), ("gbc-lcd", {"t": "GBC-LCD"}), ("tv-mode", {"k": "emuopt.v.tv"}),
+    ("scanlines", {"k": "emuopt.v.scanlines"}), ("soften", {"k": "emuopt.v.soft"}),
+    ("motion_blur", {"k": "emuopt.v.motionBlur"}), ("vignette", {"k": "emuopt.v.vignette"}),
+    ("pixelate", {"t": "Pixelate"}), ("vba_pixelate", {"t": "VBA Pixelate"}), ("scale2x", {"t": "Scale2x"}),
+    ("scale4x", {"t": "Scale4x"}), ("hq2x", {"t": "hq2x"}), ("xbr-lv2", {"t": "xBR-lv2"}), ("xbr-lv3", {"t": "xBR-lv3"}),
+    ("mmpx", {"t": "MMPX"}), ("omniscale", {"t": "OmniScale"}), ("fish", {"t": "fish"}),
+]
+DOSBOX_LOOKS = [
+    {"v": "sharp", "k": "emuopt.v.sharp"}, {"v": "nearest", "k": "emuopt.v.nearest"},
+    {"v": "bilinear", "k": "emuopt.v.soft"}, {"v": "interpolation/catmull-rom", "t": "Catmull-Rom"},
+    {"v": "crt-auto", "k": "emuopt.v.crt"}, {"v": "crt-auto-machine", "k": "emuopt.v.crtMachine"},
+    {"v": "crt-auto-arcade", "k": "emuopt.v.crtArcade"}, {"v": "crt-auto-arcade-sharp", "k": "emuopt.v.crtArcadeSharp"},
+    {"v": "scaler/xbr-lv3", "t": "xBR-lv3"}, {"v": "scaler/xbr-lv2-3d", "t": "xBR-lv2 3D"},
+    {"v": "scaler/xbr-lv2-noblend", "t": "xBR-lv2 noblend"}, {"v": "scaler/advmame2x", "t": "AdvMAME2x"},
+    {"v": "scaler/advmame3x", "t": "AdvMAME3x"}, {"v": "scaler/advinterp2x", "t": "AdvInterp2x"},
+    {"v": "scaler/advinterp3x", "t": "AdvInterp3x"},
+]
+_DUCK_LOOK_IO = _DuckChain("PostProcessing", {v: s for v, s, _ in DUCK_LOOKS})
+_DUCK_FXAA_IO = _DuckChain("InternalPostProcessing", {"on": "anti-aliasing/fxaa"})
 
 
 EMU_OPTS: dict[str, Any] = {
@@ -10018,6 +10155,10 @@ EMU_OPTS: dict[str, Any] = {
             _opt("textures", "EmuCore/GS", "LoadTextureReplacements", _OPT_TF, "false", hidden=True),
             # Bildraten-Patch aus PCSX2' patches.zip, je Spiel eingetragen (EMU_PATCHES, _patches_apply)
             _opt("fps", "pcsx2", "fps", _OPT_TF, "false", game=True, hidden=True, own=True),
+        ]),
+        ("look", [
+            _opt("fxaa", "EmuCore/GS", "fxaa", _OPT_TF, "false"),
+            _opt("look", "EmuCore/GS", "TVShader", PCSX2_LOOKS, "0"),
         ]),
         ("play", [
             _opt("fastBoot", "EmuCore", "EnableFastBoot", _OPT_TF, "true"),
@@ -10048,6 +10189,13 @@ EMU_OPTS: dict[str, Any] = {
             _opt("wsPatch", "duckstation", "wsPatch", _OPT_TF, "false", game=True, hidden=True, own=True, label="widescreen"),
             _opt("fps", "duckstation", "fps", _OPT_TF, "false", game=True, hidden=True, own=True),
         ]),
+        ("look", [
+            # In der Kette vor der Ausgabe (InternalPostProcessing, Renderaufloesung) statt am fertigen Bild: guenstiger
+            _opt("fxaa", "InternalPostProcessing", "Enabled", [{"v": "on", "k": "common.on"}, _OFF], "off",
+                 io=_DUCK_FXAA_IO),
+            _opt("look", "PostProcessing", "Enabled", [_OFF] + [dict(lab, v=v) for v, _, lab in DUCK_LOOKS], "off",
+                 io=_DUCK_LOOK_IO),
+        ]),
         ("play", [
             _opt("fastBoot", "BIOS", "PatchFastBoot", _OPT_TF, "false"),
             _opt("resume", "Main", "SaveStateOnExit", _OPT_TF, "true"),
@@ -10067,6 +10215,10 @@ EMU_OPTS: dict[str, Any] = {
             _opt("blend", "ports.qt", "interframeBlending", _OPT_10, "0"),
             _opt("sgb", "ports.qt", "sgb.borders", _OPT_10, "1"),
         ]),
+        ("look", [
+            _opt("look", "ports.qt", "shader", [_OFF, {"v": "orig", "k": "emuopt.v.orig"}] +
+                 [dict(lab, v=v) for v, lab in MGBA_LOOKS], "off", io=_MgbaShader([v for v, _ in MGBA_LOOKS])),
+        ]),
         ("play", [
             _opt("resume", "ports.qt", ["autosave", "autoload"], _OPT_10, "1"),
             _opt("rewind", "ports.qt", "rewindEnable", _OPT_10, "0"),
@@ -10077,15 +10229,15 @@ EMU_OPTS: dict[str, Any] = {
     ]},
     "dosbox": {"file": lambda: dosbox_primary(), "groups": [
         ("picture", [
-            _opt("shader", "render", "glshader", [
-                {"v": "crt-auto", "k": "emuopt.v.crt"}, {"v": "sharp", "k": "emuopt.v.sharp"},
-                {"v": "bilinear", "k": "emuopt.v.soft"}], "crt-auto"),
             _opt("aspect", "render", "aspect", [
                 {"v": "auto", "t": "4:3"}, {"v": "square-pixels", "k": "emuopt.v.square"},
                 {"v": "stretch", "k": "emuopt.v.stretch"}], "auto"),
             _opt("integer", "render", "integer_scaling", [
                 {"v": "auto", "k": "emuopt.v.auto"}, {"v": "off", "k": "common.off"}], "auto"),
             _opt("fullscreen", "sdl", "fullscreen", _OPT_TF, "true"),
+        ]),
+        ("look", [
+            _opt("shader", "render", "glshader", DOSBOX_LOOKS, "crt-auto", label="look"),
         ]),
         ("play", [
             _opt("speed", "cpu", ["cpu_cycles", "cpu_cycles_protected"], [
@@ -10159,11 +10311,13 @@ def _opt_defaults_for(tile):
             d.update({"res": "2", "aniso": "16"})
         if gpu != "none" and emu_cpu_class() == "strong":     # doppelte Bildrate, oft mit uebertakteter PS2-CPU: kostet Rechenzeit
             d["fps"] = "true"
+        if gpu != "none":               # Kanten glaetten (Paul, 13.11.2026: Vorgabe von VoidStation); kostet kaum etwas
+            d["fxaa"] = "true"
         return d
     if tile == "duckstation":
         d = {"cdSpeed": "4", "fmvSmooth": "true", "textures": "true", "wsPatch": "true", "fps": "true"}
         if gpu != "none":
-            d.update({"res": "4" if gpu == "dgpu" else "2", "pgxp": "true"})
+            d.update({"res": "4" if gpu == "dgpu" else "2", "pgxp": "true", "fxaa": "on"})
         return d
     if tile == "dosbox":                # Fernseher: scharfe Pixel statt nachgemachter Roehre (DOSBox' eigener Standard)
         return {"shader": "sharp"}
@@ -10210,6 +10364,8 @@ def _opt_auto_on(tile, opt, st):
 def _opt_value(tile, opt, ini=None):
     """Aktuell gewaehlte Moeglichkeit laut Datei des Emulators, der Standard, wenn nichts drinsteht, oder None (etwas
     anderes, das sich hier nicht waehlen laesst – dann ist keiner der Knoepfe an)."""
+    if opt["io"]:
+        return opt["io"].read(ini_read(EMU_OPTS[tile]["file"]()) if ini is None else ini)
     if opt["own"]:
         ini = ini_read(EMU_OWN)
     sec = (ini_read(EMU_OPTS[tile]["file"]()) if ini is None else ini).get(opt["section"], {})
@@ -10331,6 +10487,9 @@ def emu_opts_mode_set(tile, mode):
 
 
 def _opt_write(tile, opt, value):
+    if opt["io"]:
+        opt["io"].write(EMU_OPTS[tile]["file"](), value)
+        return
     ini_update(EMU_OWN if opt["own"] else EMU_OPTS[tile]["file"](), opt["section"], _opt_writes(opt, _opt_choice(opt, value)))
 
 
@@ -10926,6 +11085,8 @@ def emu_opts_prepare(tid, args):
             if opt and _opt_choice(opt, v):
                 _opt_write(tid, opt, v)
         _opts_apply_defaults(tid, st)
+        if tid == "gba":
+            mgba_look_game(game)
         emu_textures_prepare(tid)
         if native and game:
             _game_sync(tid, os.path.basename(game), native)

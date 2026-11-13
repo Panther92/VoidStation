@@ -1,0 +1,14 @@
+Shader, die VoidStation fuer die Emulatoren mitliefert
+=====================================================
+
+mgba/  Shader von mGBA, unveraendert aus dem Quelltext von mGBA uebernommen
+       (github.com/mgba-emu/mgba, Ordner res/shaders, Stand d58ea8a vom 12.11.2026).
+       Grund: Void liefert mGBA 0.10.5 als Paket mgba-qt; dessen Shader liegen im Paket
+       mgba (SDL-Fassung) und enthalten die neueren Farbprofile (GBC Color, GBA SP 101,
+       NSO, DS) und Skalierer (MMPX, OmniScale) noch nicht. Das Format ist dasselbe
+       (manifest.ini + GLSL), mGBA 0.10.5 liest alle Schluessel, die darin vorkommen.
+       Lizenzen: wie in den Dateien angegeben (MIT bzw. gemeinfrei), mGBA selbst MPL-2.0.
+
+Auswahl in VoidStation: Spieleliste -> Optionen -> Anpassen -> Bildstil
+(launcher.py: EMU_OPTS, MGBA_LOOKS). "Original-Farben" nimmt je Spiel GBA Color (.gba)
+bzw. GBC Color (.gbc); Game-Boy-Spiele (.gb) bleiben ohne Shader.

@@ -91,6 +91,19 @@ EMUOPT_LIST: list[tuple[str, list[tuple[str, bool, list[dict[str, Any]]]]]] = [(
     ("speed", True, [{"v": "std", "k": "emuopt.v.standard"}, {"v": "xt", "t": "XT"}, {"v": "286", "t": "286"}, {"v": "386", "t": "386"}, {"v": "486", "t": "486"}, {"v": "pentium", "t": "Pentium"}, {"v": "max", "t": "Max"}]),
     ("soundCard", True, [{"v": "sb16", "t": "Sound Blaster 16"}, {"v": "sbpro2", "t": "Sound Blaster Pro 2"}, {"v": "sb1", "t": "Sound Blaster 1.0"}]),
 ])]
+# Spalte Bildstil mit den echten Listen aus launcher.py; VS_LOOK=duckstation|pcsx2|gba|dosbox (Standard duckstation)
+_looks: dict[str, Any] = {"BASE": REPO / "launcher", "Path": Path}
+exec(_src[_src.index("_OFF = {"):_src.index("_DUCK_LOOK_IO = ")], _looks)
+_LOOK_EMU = os.environ.get("VS_LOOK", "duckstation")
+_LOOK_CHOICES = {
+    "duckstation": [_looks["_OFF"]] + [dict(lab, v=v) for v, _, lab in _looks["DUCK_LOOKS"]],
+    "pcsx2": _looks["PCSX2_LOOKS"],
+    "gba": [_looks["_OFF"], {"v": "orig", "k": "emuopt.v.orig"}] + [dict(lab, v=v) for v, lab in _looks["MGBA_LOOKS"]],
+    "dosbox": _looks["DOSBOX_LOOKS"],
+}[_LOOK_EMU]
+EMUOPT_LIST.append(("look", ([("fxaa", False, EMUOPT_TF)] if _LOOK_EMU in ("duckstation", "pcsx2") else [])
+                    + [("look", False, _LOOK_CHOICES)]))
+EMUOPTS.setdefault("fxaa", "true")
 
 
 def emuopts_payload(emu, game):
@@ -100,7 +113,7 @@ def emuopts_payload(emu, game):
     groups, values = [], {}
     # wie launcher.py emu_opts_payload: allgemein links "Allgemein" (Schalter VoidStation-Einstellungen | Anpassen, die
     # uebrigen Zeilen erst mit "Anpassen"), rechts "Bild"; je Spiel Bild, dann Spiel, ohne "Automatik"
-    for gid, opts in (EMUOPT_LIST if game else EMUOPT_LIST[::-1]):
+    for gid, opts in (EMUOPT_LIST if game else sorted(EMUOPT_LIST, key=lambda g: g[0] != "play")):
         shown = [o for o in opts if (o[1] if game else mode == "custom" and o[0] != "mute") and (not only or o[0] in only)]
         rows = [{"id": o[0], "choices": [{k: v for k, v in c.items() if k != "auto"} for c in o[2] if not (game and c.get("auto"))]}
                 for o in shown]
