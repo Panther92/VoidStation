@@ -5071,12 +5071,13 @@ SYS_ARCH = "i686" if os.uname().machine in ("i386", "i486", "i586", "i686") else
 # liegt als "implicit layer" im System und wird je Prozess mit ENABLE_VKBASALT=1 eingeschaltet (vkBasalt.json,
 # enable_environment); VKBASALT_CONFIG_FILE zeigt auf die Einstellungen, die VoidStation schreibt.
 # Einstellungen -> Anzeige -> "Bild in Spielen": Aus (Vorgabe) | Schaerfen (CAS) | Schaerfen + Kanten glaetten (SMAA, CAS).
-# Gilt fuer Kacheln aus dem Katalog der Kategorien Emulatoren, Gaming, Spiele – ausser denen mit eigenem Bildstil in
-# den Optionen (EMU_OPTS: PCSX2 und DuckStation schaerfen und glaetten selbst, doppelt waere zu viel). Wirkt nur, wo ein
+# Gilt fuer Kacheln aus dem Katalog der Kategorien Emulatoren, Gaming, Spiele – ausser GAME_FX_SKIP (PCSX2 und
+# DuckStation schaerfen und glaetten selbst, doppelt waere zu viel; mGBA und DOSBox nutzen OpenGL). Wirkt nur, wo ein
 # Programm ueber Vulkan zeichnet; OpenGL-Programme merken nichts davon. Nur 64 Bit; 32-Bit-Spiele in Steam bleiben aussen
 # vor (dafuer braeuchte es vkBasalt-32bit). Das Paket kommt erst, wenn jemand die Einstellung einschaltet.
 GAME_FX = {"off": "", "cas": "cas", "smaa": "smaa:cas"}
 GAME_FX_CATS = ("Emulatoren", "Gaming", "Spiele")
+GAME_FX_SKIP = ("pcsx2", "duckstation", "gba", "dosbox")      # schaerfen/glaetten selbst bzw. zeichnen nicht ueber Vulkan
 VKBASALT_LAYER = Path("/usr/share/vulkan/implicit_layer.d/vkBasalt.json")
 VKBASALT_CONF = Path.home() / ".config/voidstation/vkBasalt.conf"
 _GAME_FX_JOB: dict[str, Any] = {"busy": False, "failed": False}
@@ -5116,7 +5117,7 @@ def game_fx_env(tid):
     """Umgebung fuer den Start einer Kachel: {} oder die Schalter fuer vkBasalt. Darf den Start nie verhindern."""
     try:
         effects = GAME_FX[game_fx()]
-        if not effects or tid in EMU_OPTS or SYS_ARCH != "x86_64" or not VKBASALT_LAYER.is_file():
+        if not effects or tid in GAME_FX_SKIP or SYS_ARCH != "x86_64" or not VKBASALT_LAYER.is_file():
             return {}
         app = catalog_app(tid)
         if not app or app.get("cat") not in GAME_FX_CATS:
@@ -8647,6 +8648,7 @@ def nestopia_prepare(ctx):
 
 # -- PPSSPP 1.20 (SDL2-GameController; PSP/SYSTEM/controls.ini [ControlMapping], Core/KeyMap.cpp, SDL/SDLJoystick.cpp)
 PPSSPP_CTRL = Path.home() / ".config/ppsspp/PSP/SYSTEM/controls.ini"
+PPSSPP_INI = PPSSPP_CTRL.with_name("ppsspp.ini")
 PPSSPP_PAD = {"y": 188, "a": 189, "b": 190, "x": 191, "rb": 192, "lb": 193, "back": 196, "start": 197, "l3": 106,
               "r3": 107, "up": 19, "down": 20, "left": 21, "right": 22, "lt": 4008, "rt": 4010}   # NKCODE / 4000+Achse*2
 # Vorgaben von PPSSPP (RestoreDefault: Tastatur QWERTY + DEFAULT_MAPPING_PAD), aus KeyMapDefaults.cpp erzeugt. Fehlt
@@ -9977,8 +9979,12 @@ def keymap_prepare(tile):
 EMU_MUTE = {"gba": lambda: (MGBA_CONFIG, "ports.qt", "mute", "1", "0"),
             "pcsx2": lambda: (PCSX2_INI, "SPU2/Output", "OutputMuted", "true", "false"),
             "duckstation": lambda: (DUCK_INI, "Audio", "OutputMuted", "true", "false"),
-            "dosbox": lambda: (dosbox_primary(), "mixer", "nosound", "true", "false")}
-EMU_READY = {"duckstation": lambda: duck_ready(), "pcsx2": lambda: pcsx2_ready()}   # vorher gilt die Datei dem Emulator als neu
+            "dosbox": lambda: (dosbox_primary(), "mixer", "nosound", "true", "false"),
+            "ppsspp": lambda: (PPSSPP_INI, "Sound", "Enable", "False", "True"),
+            "dolphin": lambda: (dolphin_dir() / "Dolphin.ini", "DSP", "Muted", "True", "False")}
+# vorher gilt die Datei dem Emulator als neu; Cemu: settings.xml legt first_run an (sonst fehlten dort die Spielordner)
+EMU_READY = {"duckstation": lambda: duck_ready(), "pcsx2": lambda: pcsx2_ready(),
+             "cemu": lambda: (emu_dir("cemu") / "settings.xml").exists()}
 
 
 def emu_ready(tile):
@@ -10024,6 +10030,8 @@ def emu_mute_apply(tile):
 # Emulators selbst, damit beide dasselbe zeigen. Schluessel und Werte geprueft an den Quelltexten (November 2026):
 # PCSX2 Pcsx2Config.cpp/Config.h, DuckStation settings.cpp, mGBA 0.10 core/config.c + Qt, DOSBox Staging 0.82.2
 # (Void-Paket; glshader gilt in 0.83 weiter, aber als veraltet).
+# PPSSPP, Dolphin, Cemu, Azahar: s. weiter unten bei _OtherIni. Je Spiel gibt es dort nur den Rueckfall (Wert gilt fuer
+# einen Start in der Haupteinstellung) – ihre eigenen Spiel-Einstellungen braeuchten je Format das Lesen der Spielkennung.
 #
 # "game": auch je Spiel waehlbar. DOSBox: kommt in die Datei, die VoidStation vor jedem Start schreibt. PCSX2/DuckStation:
 # in deren eigene Spiel-Einstellungen (gamesettings/<Seriennummer>…ini, s. emu_game_ini; Seriennummer aus dem Abbild, discid.py).
@@ -10371,6 +10379,126 @@ _DUCK_FXAA_IO = _DuckSingle("InternalPostProcessing", {"auto": "anti-aliasing/fx
 _MGBA_LOOK_IO = _MgbaShader(dict({"klar": "voidstation-klar"}, **{v: v for v, _ in MGBA_LOOKS}))
 
 
+# ---- PPSSPP, Dolphin, Cemu, Azahar (Paul, 13.11.2026: "zur Vereinheitlichung eine vollstaendige Optionsseite") ----
+# Schluessel geprueft am 13.11.2026: PPSSPP v1.20.4 (Void-Paket) Core/Config.cpp + assets/shaders/defaultshaders.ini,
+# Dolphin 2609 (Void-Paket) Core/Config/GraphicsSettings.cpp, MainSettings.cpp, VideoCommon/VideoConfig.h, Data/Sys/Shaders,
+# Cemu (main) src/config/CemuConfig.cpp/.h, Azahar (master) src/common/settings.h, citra_qt/configuration/config.cpp.
+_OPT_TFC = [{"v": "True", "k": "common.on"}, {"v": "False", "k": "common.off"}]     # PPSSPP, Dolphin: True/False
+
+
+class _OtherIni:
+    """Schluessel in einer anderen Datei als der der Kachel (Dolphin: Dolphin.ini neben GFX.ini). Nur allgemein."""
+
+    def __init__(self, path, section, key, default):
+        self.path, self.section, self.key, self.default = path, section, key, default
+
+    def read(self, ini):
+        return ini_read(self.path()).get(self.section, {}).get(self.key, self.default)
+
+    def write(self, path, value):
+        ini_update(self.path(), self.section, {self.key: value})
+
+
+class _QtIni:
+    """Qt-Einstellungsdatei von Azahar: Neben jedem Schluessel steht "<Schluessel>\\default"; ist das true, gilt die
+    Vorgabe des Programms, egal was im Schluessel steht (config.cpp ReadBasicSetting). Geschrieben wird beides, wie
+    Azahar es selbst tut. fallback: laesst sich je Spiel fuer einen Start in die Haupteinstellung eintragen."""
+    fallback = True
+
+    def __init__(self, section, key, default):
+        self.section, self.key, self.default = section, key, default
+
+    def read(self, ini):
+        sec = ini.get(self.section, {})
+        if self.key not in sec or sec.get(self.key + "\\default", "false").strip().lower() == "true":
+            return self.default
+        return qt_unquote(sec[self.key])
+
+    def writes(self, value, ini):
+        return {self.section: {self.key: value, self.key + "\\default": "true" if value == self.default else "false"}}, {}
+
+    def write(self, path, value):
+        _io_apply(path, *self.writes(value, {}))
+
+
+class _CemuXml:
+    """Wert in Cemus settings.xml (<content><Graphic><api>…). Die Datei muss es schon geben (EMU_READY)."""
+
+    def __init__(self, path, default):
+        self.path, self.default = path, default
+
+    def read(self, ini):
+        try:
+            node = ET.parse(emu_dir("cemu") / "settings.xml").getroot().find("/".join(self.path))
+        except (OSError, ET.ParseError):
+            return self.default
+        return (node.text or "").strip() if node is not None and (node.text or "").strip() else self.default
+
+    def write(self, path, value):
+        try:
+            tree = ET.parse(path)
+        except (OSError, ET.ParseError) as e:
+            log("Cemu: settings.xml:", e)
+            return
+        node = tree.getroot()
+        for name in self.path:
+            nxt = node.find(name)
+            node = ET.SubElement(node, name) if nxt is None else nxt
+        node.text = value
+        tmp = path.with_name(path.name + ".vs-tmp")
+        tree.write(tmp, encoding="UTF-8", xml_declaration=True)
+        tmp.replace(path)
+
+
+class _PpssppShader:
+    """Nachbearbeitung von PPSSPP: [PostShaderList] PostShader1…n = Name des Shaders (Abschnitt in defaultshaders.ini),
+    "Off" zaehlt nicht (Config.cpp). Hier: genau einer oder keiner; eine laengere Kette des Nutzers -> kein Knopf an."""
+
+    def __init__(self, names):
+        self.names = set(names)
+
+    def read(self, ini):
+        chain = [v.strip() for k, v in sorted(ini.get("PostShaderList", {}).items())
+                 if k.startswith("PostShader") and v.strip() and v.strip() != "Off"]
+        if not chain:
+            return "off"
+        return chain[0] if len(chain) == 1 and chain[0] in self.names else None
+
+    def write(self, path, value):
+        drop = [k for k in ini_read(path).get("PostShaderList", {}) if k.startswith("PostShader") and k != "PostShader1"]
+        ini_update(path, "PostShaderList", {"PostShader1": "Off" if value == "off" else value}, remove=drop)
+
+
+PPSSPP_LOOKS = [                               # (Abschnitt in defaultshaders.ini, Beschriftung); ohne Stereo-Shader
+    ("PSPColor", {"k": "emuopt.v.orig"}), ("FXAA", {"t": "FXAA"}), ("Sharpen", {"k": "emuopt.v.sharpen"}),
+    ("FSR-RCAS", {"t": "FSR (RCAS)"}), ("FSR-EASU", {"t": "FSR (EASU)"}), ("UpscaleSharpBilinear", {"t": "Sharp Bilinear"}),
+    ("UpscaleBicubic", {"k": "emuopt.v.bicubic"}), ("UpscaleSpline36", {"t": "Spline36"}), ("SSAA(Gauss)", {"t": "SSAA (Gauss)"}),
+    ("VideoSmoothingAA", {"t": "Video AA"}), ("AAColor", {"t": "AA-Color"}), ("Natural", {"t": "Natural Colors"}),
+    ("NaturalA", {"t": "Natural Colors (No Blur)"}), ("ColorCorrection", {"t": "Color Correction"}),
+    ("CRT", {"t": "CRT"}), ("Scanlines", {"k": "emuopt.v.scanlines"}), ("LCDPersistence", {"t": "LCD Persistence"}),
+    ("Vignette", {"k": "emuopt.v.vignette"}), ("Bloom", {"t": "Bloom"}), ("BloomNoBlur", {"t": "Bloom (no blur)"}),
+    ("FakeReflections", {"t": "Fake Reflections"}), ("Cartoon", {"t": "Cartoon"}), ("4xHqGLSL", {"t": "4xHQ"}),
+    ("5xBR", {"t": "5xBR"}), ("5xBR-lv2", {"t": "5xBR lv2"}),
+]
+# Dateien in Dolphins Sys/Shaders ohne ".glsl" – so heissen sie auch in Dolphin selbst. Nicht dabei: die Werkzeuge
+# default_pre_post_process, AutoHDR, PerceptualHDR, swap_RGB_*
+DOLPHIN_LOOKS = ["FXAA", "integer_scaling", "brighten", "darkerbrighter", "sunset", "sepia", "grayscale", "grayscale2",
+                 "16bit", "32bit", "posterize", "posterize2", "primarycolors", "auto_toon", "auto_toon2", "sketchy",
+                 "emboss", "invertedoutline", "bad_bloom", "lens_distortion", "asciiart", "nightvision", "nightvision2",
+                 "nightvision2scanlines", "acidmetal", "acidtrip", "acidtrip2", "chrismas", "cool1", "fire", "fire2",
+                 "firewater", "invert", "invert_blue", "mad_world", "spookey1", "spookey2", "toxic"]
+_AUTO0 = {"v": "0", "k": "emuopt.v.auto"}
+_PPSSPP_LOOK_IO = _PpssppShader([n for n, _ in PPSSPP_LOOKS])
+
+
+def _az(oid, section, key, choices, default, **kw):
+    return _opt(oid, section, key, choices, default, io=_QtIni(section, key, default), **kw)
+
+
+def _cemu(oid, key, choices, default, **kw):
+    return _opt(oid, "Graphic", key, choices, default, io=_CemuXml(("Graphic", key), default), **kw)
+
+
 EMU_OPTS: dict[str, Any] = {
     "pcsx2": {"file": lambda: PCSX2_INI, "groups": [
         ("picture", [
@@ -10492,6 +10620,92 @@ EMU_OPTS: dict[str, Any] = {
                 {"v": "medium", "k": "emuopt.v.medium"}, {"v": "large", "k": "emuopt.v.large"}], "off"),
         ]),
     ]},
+    "ppsspp": {"file": lambda: PPSSPP_INI, "groups": [
+        ("picture", [
+            # 0 = so gross wie das Fenster; PPSSPP waehlt ohne Eintrag 2-fach, sobald der Bildschirm 1000 Punkte breit ist
+            _opt("res", "Graphics", "InternalResolution", [_AUTO0] + _opt_res([2, 3, 4, 5]), "2", game=True),
+            _opt("aspect", "DisplayLayout.Landscape", "DisplayStretch", [
+                {"v": "False", "k": "emuopt.v.original"}, {"v": "True", "k": "emuopt.v.stretch"}], "False", game=True),
+            _opt("integer", "DisplayLayout.Landscape", "DisplayIntegerScale", _OPT_TFC, "False"),
+            _opt("aniso", "Graphics", "AnisotropyLevel", [
+                {"v": "0", "k": "common.off"}, {"v": "1", "t": "2×"}, {"v": "2", "t": "4×"}, {"v": "3", "t": "8×"},
+                {"v": "4", "t": "16×"}], "4"),
+        ]),
+        ("look", [
+            # Zahl der Abtastungen ist 1 << Wert; wirkt nur mit Vulkan
+            _opt("msaa", "Graphics", "MultiSampleLevel", [
+                {"v": "0", "k": "common.off"}, {"v": "1", "t": "2×"}, {"v": "2", "t": "4×"}, {"v": "3", "t": "8×"}], "0"),
+            _opt("look", "PostShaderList", "PostShader1", [_OFF] + [dict(lab, v=v) for v, lab in PPSSPP_LOOKS], "off",
+                 io=_PPSSPP_LOOK_IO),
+        ]),
+        ("play", [
+            # PPSSPP schreibt "<Nummer> (<Name>)" und liest die Nummer (ConfigTranslator)
+            _opt("renderer", "Graphics", "GraphicsBackend", [
+                {"v": "3 (VULKAN)", "t": "Vulkan"}, {"v": "0 (OPENGL)", "t": "OpenGL"}], "3 (VULKAN)"),
+        ]),
+    ]},
+    "dolphin": {"file": lambda: dolphin_dir() / "GFX.ini", "groups": [
+        ("picture", [
+            _opt("res", "Settings", "InternalResolution", [_AUTO0] + _opt_res([2, 3, 4, 5, 6]), "1", game=True),
+            _opt("aspect", "Settings", "AspectRatio", [                     # VideoConfig.h AspectMode
+                _AUTO0, {"v": "2", "t": "4:3"}, {"v": "1", "t": "16:9"}, {"v": "3", "k": "emuopt.v.stretch"}], "0", game=True),
+            _opt("widescreen", "Settings", "wideScreenHack", _OPT_TFC, "False", game=True),
+            _opt("aniso", "Enhancements", "MaxAnisotropy", [                # AnisotropicFilteringMode: -1 = wie das Spiel
+                {"v": "-1", "k": "emuopt.v.standard"}, {"v": "1", "t": "2×"}, {"v": "2", "t": "4×"}, {"v": "3", "t": "8×"},
+                {"v": "4", "t": "16×"}], "-1"),
+        ]),
+        ("look", [
+            _opt("msaa", "Settings", "MSAA", [
+                {"v": "1", "k": "common.off"}, {"v": "2", "t": "2×"}, {"v": "4", "t": "4×"}, {"v": "8", "t": "8×"}], "1"),
+            _opt("look", "Enhancements", "PostProcessingShader", [dict(_OFF, set={"PostProcessingShader": ""})] +
+                 [{"v": n, "t": n} for n in DOLPHIN_LOOKS], "off", game=True),
+        ]),
+        ("play", [
+            # ShaderCompilationMode 2 = AsynchronousUberShaders: kein Stocken, waehrend Dolphin Shader uebersetzt
+            _opt("asyncShaders", "Settings", "ShaderCompilationMode", [
+                {"v": "2", "k": "common.on"}, {"v": "0", "k": "common.off"}], "0"),
+            _opt("renderer", "Core", "GFXBackend", [
+                {"v": "OGL", "t": "OpenGL"}, {"v": "Vulkan", "t": "Vulkan"}, {"v": "Software Renderer", "t": "Software"}],
+                 "OGL", io=_OtherIni(lambda: dolphin_dir() / "Dolphin.ini", "Core", "GFXBackend", "OGL")),
+        ]),
+    ]},
+    # Cemu: keine allgemeine Aufloesung – die stellen bei der Wii U Grafikpakete je Spiel ein (in Cemu selbst)
+    "cemu": {"file": lambda: emu_dir("cemu") / "settings.xml", "groups": [
+        ("picture", [
+            _cemu("aspect", "FullscreenScaling", [
+                {"v": "0", "k": "emuopt.v.original"}, {"v": "1", "k": "emuopt.v.stretch"}], "0"),
+        ]),
+        ("look", [
+            _cemu("upscale", "UpscaleFilter", [                             # CemuConfig.h: 0 linear … 3 naechster Nachbar
+                {"v": "0", "k": "emuopt.v.soft"}, {"v": "1", "k": "emuopt.v.bicubic"}, {"v": "2", "t": "Hermite"},
+                {"v": "3", "k": "emuopt.v.nearest"}], "2"),
+        ]),
+        ("play", [
+            _cemu("asyncShaders", "AsyncCompile", _OPT_TF, "true"),
+            _cemu("renderer", "api", [{"v": "1", "t": "Vulkan"}, {"v": "0", "t": "OpenGL"}], "1"),
+        ]),
+    ]},
+    "azahar": {"file": lambda: AZAHAR_INI, "groups": [
+        ("picture", [
+            _az("res", "Renderer", "resolution_factor", [_AUTO0] + _opt_res([2, 3, 4, 5]), "1", game=True),
+            _az("layout", "Layout", "layout_option", [                      # settings.h LayoutOption (4 = eigene Fenster)
+                {"v": "0", "k": "emuopt.v.layStd"}, {"v": "2", "k": "emuopt.v.layLarge"}, {"v": "3", "k": "emuopt.v.laySide"},
+                {"v": "1", "k": "emuopt.v.laySingle"}, {"v": "5", "k": "emuopt.v.layHybrid"}], "0", game=True),
+            _az("swap", "Layout", "swap_screen", _OPT_TF, "false", game=True),
+            _az("integer", "Renderer", "use_integer_scaling", _OPT_TF, "false"),
+            _az("smooth", "Layout", "filter_mode", _OPT_TF, "true"),
+        ]),
+        ("look", [
+            _az("texscale", "Renderer", "texture_filter", [                 # settings.h TextureFilter
+                {"v": "0", "k": "common.off"}, {"v": "2", "k": "emuopt.v.bicubic"}, {"v": "1", "t": "Anime4K"},
+                {"v": "3", "t": "ScaleForce"}, {"v": "4", "t": "xBRZ"}, {"v": "5", "t": "MMPX"}], "0"),
+        ]),
+        ("play", [
+            _az("asyncShaders", "Renderer", "async_shader_compilation", _OPT_TF, "false"),
+            _az("renderer", "Renderer", "graphics_api", [
+                {"v": "1", "t": "OpenGL"}, {"v": "2", "t": "Vulkan"}, {"v": "0", "t": "Software"}], "1"),
+        ]),
+    ]},
 }
 _OPT_INDEX = {t: {o["id"]: o for _, opts in spec["groups"] for o in opts} for t, spec in EMU_OPTS.items()}
 
@@ -10557,6 +10771,13 @@ def _opt_defaults_for(tile):
         return d
     if tile == "dosbox":                # Fernseher: scharfe Pixel statt nachgemachter Roehre (DOSBox' eigener Standard)
         return {"shader": "sharp"}
+    # Aufloesung nach Grafikleistung (Annahme, nicht gemessen): PSP 480×272, GameCube 640×528, 3DS 400×240 je Bildschirm
+    if tile == "ppsspp":
+        return {"res": "4"} if gpu == "dgpu" else {"res": "1"} if gpu == "none" else {}
+    if tile == "dolphin":
+        return {"res": "3"} if gpu == "dgpu" else {"res": "2"} if gpu == "igp" else {}
+    if tile == "azahar":
+        return {"res": "4"} if gpu == "dgpu" else {"res": "2"} if gpu == "igp" else {}
     return {}
 
 
@@ -10936,8 +11157,9 @@ def emu_opts_game(tile, game):
 def emu_opts_game_writes(tile, game):
     """[(Abschnitt, {Schluessel: Wert})] der Optionen eines Spiels."""
     idx = _OPT_INDEX[tile]
-    return [(idx[k]["section"], _opt_writes(idx[k], _opt_choice(idx[k], v))) for k, v in emu_opts_game(tile, game).items()
-            if not idx[k]["own"] and not idx[k]["io"]]
+    return [(sec, vals) for k, v in emu_opts_game(tile, game).items()
+            if not idx[k]["own"] and (not idx[k]["io"] or getattr(idx[k]["io"], "fallback", False))
+            for sec, vals in _opt_secs(idx[k], _opt_choice(idx[k], v)).items()]
 
 
 def emu_opts_restore(tile, st):
@@ -11361,8 +11583,9 @@ def _opt_mute_now(tile, st):
     want = st.get("mute", {}).get(tile)
     if want is not None:                               # vorgemerkt (Emulator lief noch nie oder laeuft gerade)
         return bool(want)
-    path, sec, key = EMU_MUTE[tile]()[:3]
-    return ini_read(path).get(sec, {}).get(key, "0").strip().lower() not in ("0", "", "false", "off", "no")
+    path, sec, key, yes, _ = EMU_MUTE[tile]()
+    cur = ini_read(path).get(sec, {}).get(key)
+    return cur is not None and _opt_norm(cur) == _opt_norm(yes)
 
 
 _LOOK_PREVIEWS: dict[str, bool] = {}
@@ -11408,7 +11631,7 @@ def emu_opts_payload(tile, game=None):
             if game:                                     # ein echter Breitbild-Patch ersetzt bei dem Spiel den Schalter fuer den Hack
                 shown = [o for o in opts if o["game"] and (o["id"] in plan if o["id"] in patches else
                                                            not (o["id"] == "widescreen" and "wsPatch" in plan))
-                         and (not o["io"] or native or tile == "gba")]
+                         and (not o["io"] or native or tile == "gba" or getattr(o["io"], "fallback", False))]
             else:
                 shown = [o for o in opts if not o["hidden"]] if mode == "custom" else []
             for o in shown:
@@ -11474,7 +11697,7 @@ def emu_opts_set(tile, oid, value, game=None):
             return emu_opts_payload(tile, rel)
         if _DISC_NAME.fullmatch(name):
             raise ValueError("Diese Disc hat keine Seriennummer")
-        if opt["io"] and tile != "gba":
+        if opt["io"] and tile != "gba" and not getattr(opt["io"], "fallback", False):
             raise ValueError("Fuer dieses Spiel nicht einstellbar")
         with EMU_LOCK:
             d = emu_games_load()

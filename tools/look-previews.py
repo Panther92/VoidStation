@@ -20,11 +20,10 @@ Ausschnitte und Massstab (wie auf einem 1080p-Fernseher bzw. etwas kleiner, Bild
   duckstation, pcsx2   120×90 Konsolenpixel, mit 2-facher Aufloesung gerechnet (240×180) -> 480×360
 """
 import argparse
-import math
 import re
-import struct
 import sys
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
@@ -294,7 +293,8 @@ MGBA_NULL_FS = ("varying vec2 texCoord;\nuniform sampler2D tex;\nvoid main() {\n
 
 
 def ini(path):
-    out, sec = {}, None
+    out: dict[str, dict[str, str]] = {}
+    sec = None
     for line in Path(path).read_text(encoding="utf-8", errors="replace").splitlines():
         s = line.strip()
         if s.startswith("[") and s.endswith("]"):
@@ -419,7 +419,8 @@ def duck_glsl(src_dir, path, frame, internal, native):
     """frame: das schon auf Bildschirmgroesse gerechnete Bild (so bekommt es die Kette "PostProcessing")."""
     defs, helpers = duck_header(src_dir)
     code = path.read_text(encoding="utf-8", errors="replace")
-    opts, decl, uni = duck_options(code), "", {}
+    opts, decl = duck_options(code), ""
+    uni: dict[str, Any] = {}
     for o in opts:
         vals = [x.strip() for x in o.get("DefaultValue", "0").split(",")]
         if o["type"] == "OptionBool":
@@ -448,8 +449,6 @@ def duck_glsl(src_dir, path, frame, internal, native):
         "u_native_pixel_size": (ww / native[0], wh / native[1]), "u_norm_native_pixel_size": (1 / native[0], 1 / native[1]),
         "u_upscale_multiplier": internal[0] / native[0], "u_time": 1.0})
     t = tex_from(frame, False, False, border=True)
-    import moderngl
-    t.repeat_x = t.repeat_y = False
     _, fbo = target((ww, wh))
     draw(prog, fbo, "pos", uni, [("samp0", t)])
     return read(fbo, True)
