@@ -85,38 +85,12 @@
       "cat": "Gaming",
       "desc": "Spiele von Epic, GOG und Amazon Prime Gaming in einem Launcher – Windows-Spiele laufen über Wine/Proton, das Heroic selbst verwaltet.",
       "source": {
-        "type": "appimage",
-        "gh": "Heroic-Games-Launcher/HeroicGamesLauncher",
-        "assets": [
-          "Heroic-{ver}-linux-x86_64.AppImage"
-        ],
-        "host_pkgs": [
-          "gtk+3",
-          "nss",
-          "libcups",
-          "libgbm",
-          "at-spi2-core",
-          "alsa-lib",
-          "libxkbcommon"
-        ],
-        "was_flatpak": "com.heroicgameslauncher.hgl",
-        "migrate": [
-          [
-            "config/heroic",
-            ".config/heroic"
-          ],
-          [
-            "config/legendary",
-            ".config/legendary"
-          ],
-          [
-            "config/nile",
-            ".config/nile"
-          ]
-        ]
+        "type": "xbps",
+        "pkg": "heroic",
+        "was_appimage": true
       },
       "cmd": [
-        "~/.local/share/voidstation/apps/heroic/AppRun"
+        "heroic"
       ],
       "tile": {
         "group": "Spiele",
@@ -124,7 +98,10 @@
         "color": "#3b2d5c",
         "icon": "gamepad",
         "sub": "Epic · GOG · Amazon"
-      }
+      },
+      "arch": [
+        "x86_64"
+      ]
     },
     {
       "id": "lutris",
@@ -152,34 +129,12 @@
       "cat": "Gaming",
       "desc": "Indie-Spiele von itch.io kaufen, herunterladen und starten – viele davon kostenlos.",
       "source": {
-        "type": "appimage",
-        "ver": {
-          "url": "https://broth.itch.zone/itch/linux-amd64/LATEST",
-          "re": "([0-9][0-9.]*[0-9])"
-        },
-        "dl": "https://broth.itch.zone/itch/linux-amd64/{ver}/archive/default",
-        "format": "zip",
-        "run": "itch",
-        "chromium": true,
-        "host_pkgs": [
-          "gtk+3",
-          "nss",
-          "libcups",
-          "libgbm",
-          "at-spi2-core",
-          "alsa-lib",
-          "libxkbcommon"
-        ],
-        "was_flatpak": "io.itch.itch",
-        "migrate": [
-          [
-            "config/itch",
-            ".config/itch"
-          ]
-        ]
+        "type": "xbps",
+        "pkg": "itch",
+        "was_appimage": true
       },
       "cmd": [
-        "~/.local/share/voidstation/apps/itch/AppRun"
+        "itch"
       ],
       "tile": {
         "group": "Spiele",
@@ -187,7 +142,10 @@
         "color": "#5c2b2b",
         "icon": "gamepad",
         "sub": "Indie-Spiele"
-      }
+      },
+      "arch": [
+        "x86_64"
+      ]
     },
     {
       "id": "prismlauncher",
@@ -219,21 +177,12 @@
       "cat": "Gaming",
       "desc": "Spiele vom Gaming-PC auf den Fernseher streamen (braucht Sunshine oder NVIDIA GameStream auf dem PC).",
       "source": {
-        "type": "appimage",
-        "gh": "moonlight-stream/moonlight-qt",
-        "assets": [
-          "Moonlight-{ver}-x86_64.AppImage"
-        ],
-        "was_flatpak": "com.moonlight_stream.Moonlight",
-        "migrate": [
-          [
-            "config/Moonlight Game Streaming Project",
-            ".config/Moonlight Game Streaming Project"
-          ]
-        ]
+        "type": "xbps",
+        "pkg": "moonlight-qt",
+        "was_appimage": true
       },
       "cmd": [
-        "~/.local/share/voidstation/apps/moonlight/AppRun"
+        "moonlight"
       ],
       "tile": {
         "group": "Spiele",
@@ -378,15 +327,12 @@
       "cat": "Emulatoren",
       "desc": "PlayStation 2. Braucht ein BIOS aus der eigenen Konsole (Ordner share/ROMs/ps2/bios) und einen kräftigeren Rechner – auf schwacher Hardware laufen nur leichte Spiele flüssig.",
       "source": {
-        "type": "appimage",
-        "gh": "PCSX2/pcsx2",
-        "assets": [
-          "pcsx2-{tag}-linux-appimage-x64-Qt.AppImage"
-        ],
-        "was_flatpak": "net.pcsx2.PCSX2"
+        "type": "xbps",
+        "pkg": "pcsx2",
+        "was_appimage": true
       },
       "cmd": [
-        "~/.local/share/voidstation/apps/pcsx2/AppRun"
+        "pcsx2-qt"
       ],
       "tile": {
         "group": "Spiele",
@@ -394,7 +340,10 @@
         "color": "#283a5c",
         "icon": "gamepad",
         "sub": "PlayStation 2"
-      }
+      },
+      "arch": [
+        "x86_64"
+      ]
     },
     {
       "id": "ppsspp",
@@ -482,15 +431,12 @@
       "cat": "Emulatoren",
       "desc": "Nintendo 64 – moderne Oberfläche für Mupen64Plus, gut mit dem Controller bedienbar.",
       "source": {
-        "type": "appimage",
-        "gh": "Rosalie241/RMG",
-        "assets": [
-          "RMG-Portable-Linux64-{tag}.AppImage"
-        ],
-        "was_flatpak": "com.github.Rosalie241.RMG"
+        "type": "xbps",
+        "pkg": "rmg",
+        "was_appimage": true
       },
       "cmd": [
-        "~/.local/share/voidstation/apps/rmg/AppRun"
+        "RMG"
       ],
       "tile": {
         "group": "Spiele",
@@ -499,7 +445,10 @@
         "icon": "gamepad",
         "sub": "Nintendo 64",
         "label": "Nintendo 64"
-      }
+      },
+      "arch": [
+        "x86_64"
+      ]
     },
     {
       "id": "melonds",
@@ -527,15 +476,12 @@
       "cat": "Emulatoren",
       "desc": "Nintendo 3DS (Nachfolger von Citra und Lime3DS). Spiele müssen entschlüsselt sein.",
       "source": {
-        "type": "appimage",
-        "gh": "azahar-emu/azahar",
-        "assets": [
-          "azahar.AppImage"
-        ],
-        "was_flatpak": "org.azahar_emu.Azahar"
+        "type": "xbps",
+        "pkg": "azahar",
+        "was_appimage": true
       },
       "cmd": [
-        "~/.local/share/voidstation/apps/azahar/AppRun"
+        "azahar"
       ],
       "tile": {
         "group": "Spiele",
@@ -543,7 +489,10 @@
         "color": "#5a2f3c",
         "icon": "handheld",
         "sub": "Nintendo 3DS"
-      }
+      },
+      "arch": [
+        "x86_64"
+      ]
     },
     {
       "id": "flycast",
@@ -551,16 +500,12 @@
       "cat": "Emulatoren",
       "desc": "Sega Dreamcast, Naomi und Atomiswave.",
       "source": {
-        "type": "appimage",
-        "gh": "flyinghead/flycast",
-        "assets": [
-          "flycast-x86_64-{ver}.AppImage",
-          "flycast-x86_64.AppImage"
-        ],
-        "was_flatpak": "org.flycast.Flycast"
+        "type": "xbps",
+        "pkg": "flycast",
+        "was_appimage": true
       },
       "cmd": [
-        "~/.local/share/voidstation/apps/flycast/AppRun"
+        "flycast"
       ],
       "tile": {
         "group": "Spiele",
@@ -568,7 +513,10 @@
         "color": "#4a3f2a",
         "icon": "gamepad",
         "sub": "Dreamcast"
-      }
+      },
+      "arch": [
+        "x86_64"
+      ]
     },
     {
       "id": "dolphin",
@@ -596,15 +544,12 @@
       "cat": "Emulatoren",
       "desc": "Wii U. Anspruchsvoll – braucht Vulkan und eine kräftige Grafik; auf schwacher Hardware eher zum Ausprobieren.",
       "source": {
-        "type": "appimage",
-        "gh": "cemu-project/Cemu",
-        "assets": [
-          "Cemu-{ver}-x86_64.AppImage"
-        ],
-        "was_flatpak": "info.cemu.Cemu"
+        "type": "xbps",
+        "pkg": "cemu",
+        "was_appimage": true
       },
       "cmd": [
-        "~/.local/share/voidstation/apps/cemu/AppRun"
+        "cemu"
       ],
       "tile": {
         "group": "Spiele",
@@ -612,7 +557,10 @@
         "color": "#25465a",
         "icon": "gamepad",
         "sub": "Wii U"
-      }
+      },
+      "arch": [
+        "x86_64"
+      ]
     },
     {
       "id": "xemu",
@@ -620,15 +568,12 @@
       "cat": "Emulatoren",
       "desc": "Original-Xbox. Braucht MCPX-Boot-ROM, BIOS und Festplatten-Image aus der eigenen Konsole im Ordner share/ROMs/xbox/bios.",
       "source": {
-        "type": "appimage",
-        "gh": "xemu-project/xemu",
-        "assets": [
-          "xemu-{ver}-x86_64.AppImage"
-        ],
-        "was_flatpak": "app.xemu.xemu"
+        "type": "xbps",
+        "pkg": "xemu",
+        "was_appimage": true
       },
       "cmd": [
-        "~/.local/share/voidstation/apps/xemu/AppRun"
+        "xemu"
       ],
       "tile": {
         "group": "Spiele",
@@ -636,7 +581,10 @@
         "color": "#2d4a2c",
         "icon": "gamepad",
         "sub": "Xbox"
-      }
+      },
+      "arch": [
+        "x86_64"
+      ]
     },
     {
       "id": "mame",
@@ -1074,30 +1022,12 @@
       "cat": "Medien",
       "desc": "YouTube ohne Werbung und ohne Google-Konto – Abos bleiben auf dem Gerät.",
       "source": {
-        "type": "appimage",
-        "gh": "FreeTubeApp/FreeTube",
-        "assets": [
-          "freetube-{ver}-amd64.AppImage"
-        ],
-        "host_pkgs": [
-          "gtk+3",
-          "nss",
-          "libcups",
-          "libgbm",
-          "at-spi2-core",
-          "alsa-lib",
-          "libxkbcommon"
-        ],
-        "was_flatpak": "io.freetubeapp.FreeTube",
-        "migrate": [
-          [
-            "config/FreeTube",
-            ".config/FreeTube"
-          ]
-        ]
+        "type": "xbps",
+        "pkg": "freetube",
+        "was_appimage": true
       },
       "cmd": [
-        "~/.local/share/voidstation/apps/freetube/AppRun"
+        "freetube"
       ],
       "tile": {
         "group": "Unterhaltung",
@@ -1105,7 +1035,10 @@
         "color": "#4a2a2e",
         "icon": "play",
         "sub": "YouTube ohne Werbung"
-      }
+      },
+      "arch": [
+        "x86_64"
+      ]
     },
     {
       "id": "strawberry",
@@ -1393,39 +1326,12 @@
       "cat": "Browser",
       "desc": "Browser auf Chromium-Basis mit eingebautem Werbe- und Tracking-Blocker.",
       "source": {
-        "type": "appimage",
-        "gh": "brave/brave-browser",
-        "assets": [
-          "brave-browser-{ver}-linux-amd64.zip"
-        ],
-        "run": [
-          "brave-browser",
-          "brave"
-        ],
-        "chromium": true,
-        "host_pkgs": [
-          "gtk+3",
-          "nss",
-          "libcups",
-          "libgbm",
-          "at-spi2-core",
-          "alsa-lib",
-          "libxkbcommon"
-        ],
-        "was_flatpak": "com.brave.Browser",
-        "migrate": [
-          [
-            "config/BraveSoftware",
-            ".config/BraveSoftware"
-          ],
-          [
-            ".pki",
-            ".pki"
-          ]
-        ]
+        "type": "xbps",
+        "pkg": "brave",
+        "was_appimage": true
       },
       "cmd": [
-        "~/.local/share/voidstation/apps/brave/AppRun"
+        "brave"
       ],
       "tile": {
         "group": "Programme",
@@ -1433,7 +1339,10 @@
         "color": "#5a2e1c",
         "icon": "globe",
         "sub": "Browser"
-      }
+      },
+      "arch": [
+        "x86_64"
+      ]
     },
     {
       "id": "braveorigin",
@@ -1478,23 +1387,12 @@
       "cat": "Browser",
       "desc": "Firefox-Ableger mit Fokus auf Privatsphäre, uBlock Origin ist schon dabei.",
       "source": {
-        "type": "appimage",
-        "api": "https://librewolf.dev/api/v1/repos/librewolf/bsys6/releases/latest",
-        "pick": "-linux-x86_64-appimage\\.AppImage$",
-        "was_flatpak": "io.gitlab.librewolf-community",
-        "migrate": [
-          [
-            ".librewolf",
-            ".librewolf"
-          ],
-          [
-            "config/librewolf",
-            ".config/librewolf"
-          ]
-        ]
+        "type": "xbps",
+        "pkg": "librewolf",
+        "was_appimage": true
       },
       "cmd": [
-        "~/.local/share/voidstation/apps/librewolf/AppRun"
+        "librewolf"
       ],
       "tile": {
         "group": "Programme",
@@ -1502,7 +1400,10 @@
         "color": "#1f3a4f",
         "icon": "globe",
         "sub": "Browser"
-      }
+      },
+      "arch": [
+        "x86_64"
+      ]
     },
     {
       "id": "htop",
@@ -1533,13 +1434,12 @@
       "cat": "Werkzeuge",
       "desc": "Grafischer Systemmonitor: Prozessor, Speicher, Grafik, Netzwerk und laufende Programme auf einen Blick.",
       "source": {
-        "type": "appimage",
-        "api": "https://gitlab.com/api/v4/projects/mission-center-devs%2Fmission-center/releases/permalink/latest",
-        "pick": "x86_64.*AppImage|AppImage.*x86_64",
-        "was_flatpak": "io.missioncenter.MissionCenter"
+        "type": "xbps",
+        "pkg": "mission-center",
+        "was_appimage": true
       },
       "cmd": [
-        "~/.local/share/voidstation/apps/missioncenter/AppRun"
+        "mission-center"
       ],
       "tile": {
         "group": "System",
@@ -1547,7 +1447,10 @@
         "color": "#2a3f4a",
         "icon": "chart",
         "sub": "Systemmonitor"
-      }
+      },
+      "arch": [
+        "x86_64"
+      ]
     },
     {
       "id": "mullvad",
@@ -1575,21 +1478,12 @@
       "cat": "Werkzeuge",
       "desc": "Fotos, Videos und Dateien vom Handy oder PC im WLAN aufs Gerät schicken – ohne Kabel und ohne Cloud. Die App gibt es für Android, iOS, Windows und macOS.",
       "source": {
-        "type": "appimage",
-        "gh": "localsend/localsend",
-        "assets": [
-          "LocalSend-{ver}-linux-x86-64.AppImage"
-        ],
-        "was_flatpak": "org.localsend.localsend_app",
-        "migrate": [
-          [
-            "data/org.localsend.localsend_app",
-            ".local/share/org.localsend.localsend_app"
-          ]
-        ]
+        "type": "xbps",
+        "pkg": "localsend",
+        "was_appimage": true
       },
       "cmd": [
-        "~/.local/share/voidstation/apps/localsend/AppRun"
+        "localsend"
       ],
       "tile": {
         "group": "System",
@@ -1597,7 +1491,10 @@
         "color": "#2a4a44",
         "icon": "send",
         "sub": "Dateien senden"
-      }
+      },
+      "arch": [
+        "x86_64"
+      ]
     },
     {
       "id": "antimicrox",

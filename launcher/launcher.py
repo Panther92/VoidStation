@@ -5324,16 +5324,16 @@ def installed_sets():
 
 def app_installed_in(a, pkgs, fps, tiles):
     s = a["source"]
-    if s["type"] == "xbps":
-        return s["pkg"] in pkgs
+    if s["type"] == "xbps":                                # oder noch als frueheres AppImage (Wechsel beim naechsten Update)
+        return s["pkg"] in pkgs or bool(s.get("was_appimage") and legacy_appimage(a))
     if s["type"] == "flatpak":
         return s["ref"] in fps
     if s["type"] == "appimage":                            # oder noch als frueheres Flatpak (Wechsel beim naechsten Update)
         return (APPDIR / a["id"] / "AppRun").exists() or bool(s.get("was_flatpak") and s["was_flatpak"] in fps)
     if s["type"] in ("web", "builtin"):                    # builtin: im Player eingebaut (YouTube Light) – nur die Kachel
         return a["id"] in tiles
-    if s["type"] == "mullvad":                             # eigenes xbps-Paket aus der .deb (voidstation-mullvad)
-        return Vpn.PKG in pkgs
+    if s["type"] == "mullvad":                             # Paket mullvad-vpn (eigene Paketquelle) oder noch das alte
+        return Vpn.PKG in pkgs or Vpn.OLD_PKG in pkgs
     return False
 
 
@@ -5341,7 +5341,7 @@ def app_installed(a):
     s = a["source"]
     if s["type"] == "xbps":
         r = run(["xbps-query", s["pkg"]])
-        return bool(r and r.returncode == 0)
+        return bool(r and r.returncode == 0) or bool(s.get("was_appimage") and legacy_appimage(a))
     if s["type"] == "flatpak":
         r = run(["flatpak", "info", "--user", s["ref"]])
         return bool(r and r.returncode == 0)
@@ -5350,7 +5350,7 @@ def app_installed(a):
     if s["type"] in ("web", "builtin"):
         return a["id"] in tile_ids()
     if s["type"] == "mullvad":
-        return xbps_installed(Vpn.PKG)
+        return xbps_installed(Vpn.PKG) or xbps_installed(Vpn.OLD_PKG)
     return False
 
 
@@ -5366,6 +5366,11 @@ def flathub_ensure():
         return
     r = run(["flatpak", "remote-add", "--user", "--if-not-exists", "flathub", FLATHUB], timeout=60)
     log("Flathub eingerichtet" if r and r.returncode == 0 else "Flathub nicht eingerichtet (kein Netz?)")
+
+
+def legacy_appimage(a):
+    """Ist von dieser App (heute Paket aus der eigenen Paketquelle) noch die fruehere entpackte Fassung da?"""
+    return (APPDIR / a["id"] / "AppRun").exists()
 
 
 def legacy_flatpak(a):
@@ -5920,6 +5925,12 @@ class Jobs:
     def _remove(self, a):
         s = a["source"]
         if s["type"] == "xbps":
+            if s.get("was_appimage") and legacy_appimage(a):   # noch die fruehere entpackte Fassung
+                rm_path(APPDIR / a["id"])
+                appimage_stampfile(a).unlink(missing_ok=True)
+                self._log(f"entfernt: {APPDIR / a['id']}")
+                if not xbps_installed(s["pkg"]):
+                    return True
             ok = self._run(["sudo", "-n", PKG_HELPER, "remove", s["pkg"]]) == 0
             if ok and "proton-ge" in s.get("addons", []):
                 self._log("Spiele, Spielstaende und Proton-GE unter ~/.local/share/Steam bleiben erhalten")
@@ -5955,7 +5966,33 @@ class Jobs:
         """Ein Programm aus der Update-Liste (_SCACHE["appimage"]) aktualisieren."""
         if a["source"]["type"] == "mullvad":
             return self._mullvad("update")
+        if a["source"]["type"] == "xbps":
+            return self._to_package(a)
         return self._appimage(a)
+
+    def _to_package(self, a):
+        """Wechsel entpackte Fassung (apps/<id>) -> Paket aus der eigenen Paketquelle (seit 2026.12). Einstellungen
+        liegen bei beiden unter ~/.config bzw. ~/.local/share und bleiben, wo sie sind. Erst wenn das Paket
+        installiert ist, wird die Kachel umgestellt und der Ordner geloescht – nie ohne lauffaehige Fassung."""
+        if not self._xbps_install(a["source"]):
+            self._log("Paket nicht installiert – die entpackte Fassung bleibt, naechstes Update versucht es erneut")
+            return False
+        c = load_config()
+        changed = False
+        for g in c.get("groups", []):
+            for t in g.get("tiles", []):
+                cmd = t.get("cmd")
+                if t.get("id") == a["id"] and isinstance(cmd, list) and cmd and Path(str(cmd[0])).name == "AppRun":
+                    t["cmd"] = app_cmd(a)
+                    changed = True
+        if changed:
+            config_save(c)
+            self._log("Kachel startet jetzt das Paket")
+        rm_path(APPDIR / a["id"])
+        appimage_stampfile(a).unlink(missing_ok=True)
+        self._log(f"entpackte Fassung entfernt: {APPDIR / a['id']}")
+        emu_paths_refresh()
+        return True
 
     def _appimage(self, a):
         """Programm herunterladen und unter apps/<id> entpacken – AppImage, ZIP, Tarball oder .deb (app_release).
@@ -6713,6 +6750,11 @@ def _sys_check(sync, logf=None):
                 if VPN.outdated():
                     res["appimage"].append(a["id"])
                 continue
+            if a["source"]["type"] == "xbps" and a["source"].get("was_appimage") and legacy_appimage(a):
+                res["appimage"].append(a["id"])       # Wechsel AppImage -> Paket (eigene Paketquelle) beim Update
+                if logf:
+                    logf(f"{a['name']}: Wechsel von der entpackten Fassung auf das Paket steht an")
+                continue
             if a["source"]["type"] != "appimage":
                 continue
             if (APPDIR / a["id"] / "AppRun").exists():
@@ -7004,6 +7046,8 @@ def apps_payload():
         item["type"] = a["source"]["type"]
         if item["type"] == "appimage" and a["source"].get("run"):   # ZIP, Tarball, .deb: Beschriftung "Download"
             item["type"] = "archive"
+        elif item["type"] == "mullvad":                # seit 2026.12 ein Paket aus der eigenen Paketquelle
+            item["type"] = "xbps"
         item["installed"] = app_installed_in(a, pkgs, fps, tiles)
         if not item["installed"] and (a.get("retired") or not app_supported(a)):
             continue                                   # nicht mehr im Angebot bzw. nicht fuer diese Architektur (32 Bit)
@@ -10108,8 +10152,11 @@ def emu_dirs(tid):
 
 
 def emu_native(tid):
-    """Laeuft die Kachel als AppImage (entpackt)? Sonst (noch) als Flatpak."""
-    return (APPDIR / tid / "AppRun").exists()
+    """Laeuft die Kachel ohne Flatpak – als Paket (seit 2026.12) oder entpackt? Sonst (noch) als Flatpak."""
+    if (APPDIR / tid / "AppRun").exists():
+        return True
+    a = catalog_app(tid)
+    return bool(a and a["source"].get("type") == "xbps")
 
 
 def emu_dir(tid, i=0):
@@ -11773,7 +11820,7 @@ def _disc_id(tile, path):
         if key in known:
             return known[key]
         import discid                                    # nur bei Bedarf, spart dem Launcher Speicher
-        discid.CHDMAN = CHD.tool()                       # .chd: ueber das mitgelieferte chdman (nur 64 Bit)
+        discid.CHDMAN = CHD.tool()                       # .chd: ueber chdman aus vs-chdman (nur 64 Bit)
         got = discid.ps2_id(path) if tile == "pcsx2" else discid.psx_serial(path)
         known = {k: v for k, v in known.items() if not k.startswith(f"{tile}|{path}|")}
         known[key] = got
@@ -12550,9 +12597,12 @@ SAVESTATE_HOLD = 0.5                         # Savestate speichern/laden erst na
 HOLD_ACTIONS = {"fullscreen": FS_HOLD, "save": SAVESTATE_HOLD, "load": SAVESTATE_HOLD}   # je Aktion (Kachel egal)
 
 
+EMU_BIN_KIND = {"pcsx2-qt": "pcsx2", "RMG": "rmg"}   # Paket-Programme, deren Name nicht der Kachel entspricht
+
+
 def emu_kind(args):
     p = Path(str(args[0]))
-    return p.parent.name.lower() if p.name == "AppRun" else p.name
+    return p.parent.name.lower() if p.name == "AppRun" else EMU_BIN_KIND.get(p.name, p.name)
 
 
 def emu_fullscreen_wanted(tid):
@@ -13228,7 +13278,8 @@ ROM_COVERS = RomCovers()
 
 # ---------------------------------------------------------------------------
 #  bin/cue -> CHD (eine Datei je Spiel, kleiner, ohne Verlust). Werkzeug: chdman aus MAME, von VoidStation selbst
-#  gebaut und mitgeliefert (bin/chdman, nur x86_64; tools/build-chdman.sh). Die Spieleliste fragt einmal je neuem
+#  gebaut, als Paket vs-chdman aus der eigenen Paketquelle (/usr/libexec/voidstation/chdman, nur x86_64; Template in
+#  github.com/Panther92/voidstation-packages). Die Spieleliste fragt einmal je neuem
 #  Fund; umgewandelt wird im Hintergrund, Spiel fuer Spiel: umwandeln -> pruefen (chdman verify) -> erst dann das
 #  Original loeschen bzw. nach ROMs/<system>/_umgewandelt verschieben.
 # ---------------------------------------------------------------------------
@@ -13249,11 +13300,14 @@ class ChdConvert:
         self._tool: Any = None
 
     # -- Werkzeug --
+    PKG_TOOL = "/usr/libexec/voidstation/chdman"   # Paket vs-chdman (bis 2026.11: launcher/bin/chdman)
+
     def tool(self):
-        """Pfad zu chdman oder "" (32 Bit, nicht ausfuehrbar, fehlende Bibliothek). Einmal je Launcher-Start geprueft."""
+        """Pfad zu chdman oder "" (32 Bit, nicht installiert, fehlende Bibliothek). Einmal je Launcher-Start geprueft.
+        Rueckfall: ein chdman im PATH (z. B. aus Voids MAME-Paket)."""
         if self._tool is None:
             self._tool = ""
-            for cand in (str(BASE / "bin" / "chdman"), shutil.which("chdman") or ""):
+            for cand in (self.PKG_TOOL, shutil.which("chdman") or ""):
                 if not cand or not os.access(cand, os.X_OK):
                     continue
                 try:
@@ -15115,21 +15169,19 @@ OSK_FIELD = OskField()
 
 
 # ---------------------------------------------------------------------------
-#  Mullvad VPN (AppCenter-Eintrag "mullvad", Quelle "mullvad": voidstation-mullvad baut Daemon + CLI aus der
-#  signierten .deb). Die Startseite bedient alles ueber die mullvad-CLI – kein Electron, kein Root:
+#  Mullvad VPN (AppCenter-Eintrag "mullvad", Quelle "mullvad": Paket mullvad-vpn aus der eigenen Paketquelle, Daemon
+#  + CLI aus der signierten .deb; voidstation-mullvad schaltet den Dienst ein). Die Startseite bedient alles ueber die mullvad-CLI – kein Electron, kein Root:
 #  der Daemon nimmt Befehle von jedem lokalen Benutzer an. Zustand ueber "mullvad status listen -j" (ein Prozess,
 #  meldet nur Aenderungen), Rest bei Bedarf mit kurzen Aufrufen.
 # ---------------------------------------------------------------------------
 class Vpn:
-    PKG = "mullvad-vpn-voidstation"
+    PKG = "mullvad-vpn"
+    OLD_PKG = "mullvad-vpn-voidstation"             # bis 2026.11 auf dem Geraet aus der .deb gebaut
     BIN = "/usr/bin/mullvad"
     STATE = BASE / "vpn.json"                       # zuletzt verbundene Orte (Startseite: "Zuletzt verbunden")
     MAP = BASE / "qt" / "qml" / "vpn" / "worldmap.json"
     ACCT = re.compile(r"^\d{16}$")
     DNS_KEYS = ("ads", "trackers", "malware", "gambling", "adult_content", "social_media")
-    # Release-Liste statt /releases/latest: Desktop und Android teilen sich das Repo, "latest" ist zeitweise
-    # das Android-Release ("android/2026.12"). Gilt die hoechste freigegebene Desktop-Version (wie voidstation-mullvad).
-    LATEST_API = "https://api.github.com/repos/mullvad/mullvadvpn-app/releases?per_page=100"
 
     def __init__(self):
         self.lock = threading.Lock()
@@ -15140,7 +15192,6 @@ class Vpn:
         self.watching = False
         self._acct: dict[str, Any] = {"t": 0.0, "v": None}
         self._relays: dict[str, Any] = {"t": 0.0, "v": None}
-        self._latest: dict[str, Any] = {"t": 0.0, "v": None}
 
     # ---- installiert? ------------------------------------------------------------------------------------------
     def installed(self):
@@ -15350,39 +15401,25 @@ class Vpn:
         return countries
 
     def latest(self):
-        """Neueste freigegebene Mullvad-Version (fuer die Update-Pruefung), hoechstens alle 6 Stunden gefragt."""
-        with self.lock:
-            if self._latest["v"] and time.time() - self._latest["t"] < 6 * 3600:
-                return self._latest["v"]
-        req = urllib.request.Request(self.LATEST_API, headers={**UA, "Accept": "application/vnd.github+json"})
-        with urllib.request.urlopen(req, timeout=30) as r:
-            rels = json.load(r)
-        if not isinstance(rels, list):
-            raise RuntimeError("Mullvad: unerwartete Antwort von GitHub (keine Release-Liste)")
-        tags = [str(rel.get("tag_name") or "") for rel in rels
-                if not rel.get("draft") and not rel.get("prerelease")
-                and re.match(r"^20\d\d\.\d{1,2}$", str(rel.get("tag_name") or ""))
-                and f"MullvadVPN-{rel.get('tag_name')}_amd64.deb" in {a.get("name") for a in rel.get("assets") or []}]
-        if not tags:
-            raise RuntimeError("Mullvad: keine freigegebene Desktop-Version gefunden")
-        tag = max(tags, key=lambda t: tuple(int(x) for x in t.split(".")))
-        with self.lock:
-            self._latest = {"t": time.time(), "v": tag}
-        return tag
+        """Version in der Paketquelle (Paketlisten laedt die Update-Pruefung)."""
+        r = run(["xbps-query", "-R", "-p", "pkgver", self.PKG], timeout=60)
+        m = re.match(rf"^{re.escape(self.PKG)}-(.+)_\d+$", r.stdout.strip()) if r and r.returncode == 0 else None
+        if not m:
+            raise RuntimeError("Mullvad: nicht in der Paketquelle")
+        return m.group(1)
 
     def version(self):
-        r = run(["xbps-query", "-p", "pkgver", self.PKG])
-        m = re.match(rf"^{re.escape(self.PKG)}-(.+)_\d+$", r.stdout.strip()) if r and r.returncode == 0 else None
-        return m.group(1) if m else None
+        for pkg in (self.PKG, self.OLD_PKG):
+            r = run(["xbps-query", "-p", "pkgver", pkg])
+            m = re.match(rf"^{re.escape(pkg)}-(.+)_\d+$", r.stdout.strip()) if r and r.returncode == 0 else None
+            if m:
+                return m.group(1)
+        return None
 
     def outdated(self):
-        have = self.version()
-        if not have:
-            return False
-        try:
-            return self.latest() != have
-        except Exception:  # noqa: BLE001 – ohne Netz: kein Update anbieten
-            return False
+        """Nur der Wechsel vom alten, auf dem Geraet gebauten Paket steht als eigenes Update an. Neue Versionen von
+        mullvad-vpn kommen mit den Paket-Updates (voidstation-pkg update startet den Dienst danach neu)."""
+        return xbps_installed(self.OLD_PKG)
 
     # ---- zuletzt verbunden -------------------------------------------------------------------------------------
     def recent(self):

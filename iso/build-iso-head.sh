@@ -9,7 +9,7 @@
 #  Das Live-System ist eine komplette VoidStation (YouTube, Fernsehen, Radio,
 #  Videos & Musik …) mit der Kachel "VoidStation installieren". Der Installer kopiert
 #  genau dieses System auf die SSD – dafuer braucht er kein Internet.
-#  Grafik-Server: XLibre (Paketquelle xlibre-void).
+#  Grafik-Server: XLibre (eigene Paketquelle repo.voidstation.de, wie vs-chdman).
 #  Startmenue mit Logo (Start / Start NVIDIA only / Reboot), Startbild per Plymouth.
 #  NVIDIA-Treiber (offene Kernel-Module, DKMS) ist dabei, laedt aber nur ueber
 #  den Eintrag "NVIDIA only" – sonst laufen die freien Treiber.
@@ -23,8 +23,8 @@
 set -euo pipefail
 
 REPO="${REPO:-https://repo-default.voidlinux.org/current}"
-XLIBRE_REPO=https://github.com/xlibre-void/xlibre/releases/latest/download
-XLIBRE_KEYFP=00:ca:42:57:c9:c0:9a:ec:94:b4:7d:97:e5:a9:aa:1e
+VS_REPO=https://repo.voidstation.de                        # eigene Paketquelle (derselbe Eintrag wie in voidstation-pkg)
+VS_KEYFP=df:95:b3:5d:e1:24:a1:4d:1f:63:ff:f4:f3:56:af:5c
 WORK="${WORK:-/var/tmp/voidstation-iso}"
 VS_VERSION="__VS_RELEASE__"
 
@@ -122,9 +122,9 @@ mkfont /usr/share/fonts/TTF/DejaVuSansMono.ttf "VoidStation Mono" 20 vs-mono-20.
 # Keine eigenen Favoriten (Radio, TV) auf dem Stick: Radio schlaegt die beliebtesten Sender des Landes vor,
 # Fernsehen zeigt die Sender des Landes – beides nach der Sprache aus dem Startmenue (region in launcher.py)
 
-# Signaturschluessel der XLibre-Quelle (derselbe wie in voidstation-pkg) fuer den Bau
-sed -n "/^  cat <<'KEYEOF'$/,/^KEYEOF$/p" "$SRC/voidstation-pkg" | sed '1d;$d' > "$MK/keys/$XLIBRE_KEYFP.plist"
-grep -q '<plist' "$MK/keys/$XLIBRE_KEYFP.plist" || die "XLibre-Schluessel nicht gefunden."
+# Signaturschluessel der eigenen Paketquelle (derselbe wie in voidstation-pkg, vs_key) fuer den Bau
+sed -n "/^  cat <<'KEYEOF'$/,/^KEYEOF$/p" "$SRC/voidstation-pkg" | sed '1d;$d' > "$MK/keys/$VS_KEYFP.plist"
+grep -q '<plist' "$MK/keys/$VS_KEYFP.plist" || die "Schluessel der VoidStation-Paketquelle nicht gefunden."
 
 # Paketliste: alles, was install.sh braucht, dazu Grafiktreiber fuer Intel, AMD und NVIDIA
 # und die Werkzeuge des Installers
@@ -143,7 +143,8 @@ LIVE_PKGS="$PKGS void-repo-nonfree intel-ucode xlibre-minimal linux-firmware gru
 REQUIRED="xlibre-minimal firefox python3 python3-pyside6-declarative NetworkManager grub"
 CMDLINE="live.user=tv live.shell=/bin/bash quiet loglevel=3"
 if [ "$ARCH" = x86_64 ]; then
-  LIVE_PKGS="$LIVE_PKGS linux-firmware-nvidia nvidia plymouth grub-x86_64-efi"
+  # vs-chdman: bin/cue -> CHD in der Spieleliste (eigene Paketquelle, nur x86_64)
+  LIVE_PKGS="$LIVE_PKGS linux-firmware-nvidia nvidia plymouth grub-x86_64-efi vs-chdman"
   REQUIRED="$REQUIRED grub-x86_64-efi nvidia"
 else
   # Pentium M (Banias, fruehe Dothan) koennen PAE, melden es aber nicht – ohne forcepae startet kein PAE-Kernel.
@@ -182,7 +183,7 @@ ISO="voidstation-${VS_VERSION}${ARCHTAG}-${STAMP}.iso"
 export VOIDSTATION_SRC="$SRC" VOIDSTATION_ARCH="$ARCH"
 cd "$MK"
 ./mklive.sh -a "$ARCH" \
-  -r "$REPO" -r "$REPO/nonfree" -r "$XLIBRE_REPO" \
+  -r "$REPO" -r "$REPO/nonfree" -r "$VS_REPO" \
   -k de -l de_DE.UTF-8 -T "VoidStation" \
   -C "$CMDLINE" \
   -p "$LIVE_PKGS" -S "dbus NetworkManager chronyd" \

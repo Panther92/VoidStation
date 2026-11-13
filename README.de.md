@@ -14,7 +14,7 @@ Weiterschauen, Wiederholen/Zufall, „Musik suchen“ mit Download samt Tags und
 Tonausgang, WLAN, Bluetooth, Mauszeiger), Samba-Freigabe `\\<rechner>\share`, mehrere Apps parallel mit Umschalten.
 Oberfläche auf **Deutsch oder Englisch**, dazu neunzehn maschinell übersetzte Sprachen: Čeština, Español, Français, Italiano, Latviešu, Magyar,
 Nederlands, Polski, Português (Brasil), Română, Slovenčina, Türkçe, Ελληνικά, Русский, Українська, 日本語, 한국어, 简体中文, 繁體中文 (Einstellungen → Sprache). Installer und Startmenü des Sticks sprechen ab der Live-ISO 2026.11 ebenfalls alle Sprachen (Japanisch, Koreanisch, Chinesisch, Rumänisch und Türkisch ab der nächsten Live-ISO).
-Grafik-Server ist [XLibre](https://github.com/X11Libre/xserver) (Pakete von [xlibre-void](https://github.com/xlibre-void/xlibre));
+Grafik-Server ist [XLibre](https://github.com/X11Libre/xserver) (Templates von [xlibre-void](https://github.com/xlibre-void/xlibre), gebaut und signiert in der eigenen Paketquelle [voidstation-packages](https://github.com/Panther92/voidstation-packages));
 X.Org wird nicht verwendet. Startet die Oberfläche zweimal nicht, installiert VoidStation XLibre einmal neu;
 danach folgt eine Rettungskonsole. Von Hand: `sudo /usr/local/sbin/voidstation-pkg xserver ensure|repair|status`.
 Fernzugriff per SSH lässt sich unter Einstellungen → System ein- und ausschalten.

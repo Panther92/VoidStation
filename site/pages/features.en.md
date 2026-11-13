@@ -72,7 +72,7 @@ Everything you need from the couch – on a small PC next to the TV, with no acc
 - **Games:** SuperTuxKart, SuperTux, Neverball, Luanti, Xonotic, Hedgewars, Battle for Wesnoth, OpenTTD
 - **Media, streaming, browsers and tools:** from Kodi to LocalSend (send files from your phone)
 
-Native Void packages come first; where there is none, VoidStation downloads the program straight from its maker and unpacks it (AppImage, zip, tarball) – no Flatpak, no sandbox, updates via the same button as everything else. Flatpak itself is still there for anything you want to install yourself. “Installed” shows everything on the device – including programs installed from the terminal.
+Native Void packages come first. Whatever Void lacks comes as a package from VoidStation's own signed package repository (emulators such as PCSX2, Cemu or Azahar, browsers, Heroic, Moonlight, Mullvad …). Only Discord, Spotify and DuckStation (their licenses don't allow a package of our own) and Brave Origin are downloaded straight from their makers and unpacked – no Flatpak, no sandbox, updates via the same button as everything else. Flatpak itself is still there for anything you want to install yourself. “Installed” shows everything on the device – including programs installed from the terminal.
 
 ## Games {#games}
 

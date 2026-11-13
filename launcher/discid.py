@@ -4,7 +4,7 @@ Damit findet VoidStation die Spiel-Einstellungen von DuckStation und PCSX2. Beid
   DuckStation (core/system.cpp):  BOOT aus SYSTEM.CNF  ->  SLUS_007.00  ->  SLUS-00700
   PCSX2 (CDVD/CDVD.cpp):          BOOT2 aus SYSTEM.CNF ->  dieselbe Umformung, dazu die CRC der ELF-Datei
                                   (Elfheader.cpp: XOR ueber alle 32-Bit-Woerter)
-.chd geht ueber chdman (CHDMAN, vom Launcher gesetzt: launcher/bin/chdman, nur 64 Bit): Es holt nur die noetigen
+.chd geht ueber chdman (CHDMAN, vom Launcher gesetzt: Paket vs-chdman, nur 64 Bit): Es holt nur die noetigen
 Bytebereiche heraus (extractraw), nicht das ganze Abbild. Andere komprimierte Abbilder (.cso, .gz, .pbp) gehen nicht:
 None, der Launcher nimmt dann seinen Rueckfall.
 Geht auch fuer ein Laufwerk (/dev/sr0): identify() sagt, ob eine PlayStation-Disc darin liegt.

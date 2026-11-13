@@ -17,8 +17,12 @@ OPTINFILE=/usr/local/share/voidstation/testing-optin  # Testing bewusst gewaehlt
 SIGNERS=/usr/local/share/voidstation/allowed_signers
 NM_NOWIRED="${VS_NM_NOWIRED:-/etc/NetworkManager/conf.d/90-voidstation-nowired.conf}"
 XCHOICE=/usr/local/share/voidstation/xserver         # frueher: Wahl XLibre/X.Org (wird entfernt)
-XLIBRE_REPO=https://github.com/xlibre-void/xlibre/releases/latest/download
-XLIBRE_KEYFP=00:ca:42:57:c9:c0:9a:ec:94:b4:7d:97:e5:a9:aa:1e
+# Eigene Paketquelle (github.com/Panther92/voidstation-packages): XLibre, vs-chdman, AppCenter-Programme.
+# Signiert in der CI nach Freigabe durch Paul; xbps prueft jede Paketliste gegen den hinterlegten Schluessel.
+VS_REPO=https://repo.voidstation.de
+VS_KEYFP=df:95:b3:5d:e1:24:a1:4d:1f:63:ff:f4:f3:56:af:5c
+VS_REPOCONF=/etc/xbps.d/90-repository-voidstation.conf
+OLD_XLIBRE_KEYFP=00:ca:42:57:c9:c0:9a:ec:94:b4:7d:97:e5:a9:aa:1e   # frueher: Pakete von xlibre-void (bis 2026.11)
 export LC_ALL=C
 
 # Internet nur ueber eine Verbindungsart: Das Kabel wird dafuer NetworkManager entzogen (bleibt auch nach einem Neustart
@@ -134,30 +138,36 @@ bluetooth_ctl() {
 }
 
 # ---------------------------------------------------------------------
-#  Grafik-Server: ausschliesslich XLibre (Pakete von xlibre-void)
+#  Eigene Paketquelle (repo.voidstation.de) und Grafik-Server XLibre
 # ---------------------------------------------------------------------
-xlibre_key() {   # Signaturschluessel des xlibre-void-Repos (Fingerabdruck geprueft: 00:ca:42:57:…)
+vs_key() {   # oeffentlicher Schluessel der VoidStation-Paketquelle (Fingerabdruck df:95:b3:5d:…, RSA 4096)
   cat <<'KEYEOF'
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple Computer//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
 	<key>public-key</key>
-	<data>LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQklqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FROEFNSUlCQ2dLQ0FRRUF6aFR1SkVjalBFZzZaUnNGbThtLwpaRnY0RWoyNUZVZzRZR3JQZlI3cWdaaGs5MExWd1hnTnVBQVl2TXFrSmpDd1dueEdYZVNzWUgyNFpSaFhiSHNvCm1DOGJFSDBOWkpmWGRYWFl3Rjg1dGl3b0RGRkpxOE0wN3daT0JsVmI4YXhkRm96UElpWXlRUEMxN1BwTjg0UksKS3NzZkJtQmt0dDUwbGptUWpmQW5lV21tZzF5VTRlSWZvR3AvamgrWW9TUGkyTzZTQi9ZVVJpZnNFYmlUK1RoMQpGdmpZTWhCb1VmQ2NGaGlIb3hDWXJOREhNOURSM21lUVI5ZkFuTEhKNEdXclhoMy84TjFhTngwcnZXckdSNDlJCkJrenNJdjErL2hHNzdyVG54Z3VPNGx0QVZ0QnljdVhRa2ZoWlpzMCtNSXphMzZpaVJja1lVRVVzYVFtQkJnUXMKaHdJREFRQUIKLS0tLS1FTkQgUFVCTElDIEtFWS0tLS0tCg==</data>
+	<data>LS0tLS1CRUdJTiBQVUJMSUMgS0VZLS0tLS0KTUlJQ0lqQU5CZ2txaGtpRzl3MEJBUUVGQUFPQ0FnOEFNSUlDQ2dLQ0FnRUFwSnhoYXdUN1J0QnlTM2ZVRndzZwpMMEQzY0VUcDNCcnRYWGdtaWVzYVcwK0dDTGg0SkxXTWFNVEExUUhCV0IzUnRnMWZjTHNKWHl2WjNDLzJFVjFYCnp0V1dvVFdCakdGUTdabmw2WUNDWnJ6VG5BbDcvanpGb1Z2aHl1a3hWN0p3c2ZERDBVWktBQmRzWVdOdVdBOUMKYXM3NHp5U0lzdFo2bkljTmNKTTAzMUZxVnhvdm9NTTk5TEYrOU5FNUFtQzNpcFcyK1VCcWw2K3A1R2JxRFQrMQp0Zk02T0tJNS9xcWp4YTNpWG9FcDhTcjRpcWl3TFgxMzZqemI5blVoUFpueWZ1V2xEcTBEK01ZODF5ZWx2cmRqClVQUmtnQ21qTkZSTmpveFZpUElBRW1KOFlWYUwzZ1BMZ0hHN3BnS2pCSEU4K3h1MnV2UzY0U1hqYzZObmE3UFUKWDNjVmR3T00yWVc5MTFZU3RKaklLbnY1MzltK25ONjdiMUpuQTVrcHh0dUJmUWRzSjlCanRibkdiK1hXRDVZYQpqN2RvdFk3RmhWTHdFNUw4eXlDMzE5Y3IzbVZzY0Y3Z2NNdnAzRnhEWFpLNjNuTmMzT0VCdE40UVJ5Ym8wSmFoCmsrUE1xUHdIVzN6VWZzOCtiaGxnK29hZHREMlJEWWtJTFlZL1JZWmptNUpkNEppNGUzQ0FrajhQZTJIQ0tXbGYKNVoyYnk1Z3F0dlBUZmI0ZEVsY0tFK1BNb3VGM3BOR1c2TnRZajN0c3V5T2xNbFU4SFAyOTlGdlhMQUN0UkxrcwozMWxUbks5YTcwbXZTY0lUcEVKajJtSGxtRlVkNTlUanVIYy81aWJoNit4cVUwZXRKZkVqSUR3UmlCQ014bTRHCnh5L2lIOVFtck1QRHlWT3lQak9jVnlFQ0F3RUFBUT09Ci0tLS0tRU5EIFBVQkxJQyBLRVktLS0tLQo=</data>
 	<key>public-key-size</key>
-	<integer>2048</integer>
+	<integer>4096</integer>
 	<key>signature-by</key>
-	<string>xlibre-github-actions</string>
+	<string>VoidStation packages</string>
 </dict>
 </plist>
 KEYEOF
 }
 
-xlibre_repo() {   # Paketquelle + fest hinterlegter Schluessel
+vs_repo() {   # Paketquelle + fest hinterlegter Schluessel; raeumt die fruehere Quelle xlibre-void ab
   mkdir -p /etc/xbps.d /var/db/xbps/keys
-  xlibre_key > "/var/db/xbps/keys/$XLIBRE_KEYFP.plist"
-  echo "repository=$XLIBRE_REPO" > /etc/xbps.d/99-repository-xlibre.conf
+  tmp="/var/db/xbps/keys/.$VS_KEYFP.plist.vs-tmp"
+  vs_key > "$tmp" && chmod 644 "$tmp" && mv -f "$tmp" "/var/db/xbps/keys/$VS_KEYFP.plist"
+  echo "repository=$VS_REPO" > "$VS_REPOCONF"
+  chmod 644 "$VS_REPOCONF"
+  # Dieselben XLibre-Pakete (Name, Version, Revision) kommen jetzt von uns: nichts wird neu installiert
+  rm -f /etc/xbps.d/99-repository-xlibre.conf "/var/db/xbps/keys/$OLD_XLIBRE_KEYFP.plist"
 }
+
+# Grafik-Server: ausschliesslich XLibre (Pakete aus der eigenen Paketquelle)
 xlibre_ok() { xbps-query xlibre-xserver >/dev/null 2>&1; }
 xorg_left() { xbps-query xorg-server >/dev/null 2>&1 || xbps-query xorg-minimal >/dev/null 2>&1; }
 xorg_cleanup() {
@@ -169,11 +179,11 @@ xorg_cleanup() {
 # XLibre sicherstellen; ersetzt ein noch vorhandenes X.Org (Geraete von vor 0.7.0)
 xserver_ensure() {
   rm -f "$XCHOICE"                       # fruehere Wahl XLibre/X.Org gibt es nicht mehr
-  xlibre_repo
+  vs_repo
   if xlibre_ok && ! xorg_left; then echo "XLibre ist aktiv."; return 0; fi
   echo "Lade Paketlisten (XLibre) …"
   if ! xbps-install -S >/dev/null || ! xbps-query -R xlibre-minimal >/dev/null 2>&1; then
-    echo "XLibre-Paketquelle nicht erreichbar."
+    echo "VoidStation-Paketquelle ($VS_REPO) nicht erreichbar."
     xlibre_ok && return 0
     return 1
   fi
@@ -197,7 +207,7 @@ xserver_ensure() {
 
 # Nach Fehlstarts (xstart): XLibre-Pakete neu installieren
 xserver_repair() {
-  xlibre_repo
+  vs_repo
   xbps-install -S >/dev/null 2>&1 || echo "Paketquelle nicht erreichbar – versuche es mit dem Zwischenspeicher"
   xbps-install -fy xlibre-minimal xlibre-xserver xinit xauth && echo "XLibre neu installiert."
 }
@@ -234,7 +244,8 @@ mirror_custom() {  # eigene Paketquelle in /etc/xbps.d? Gibt die Datei aus.
   for f in /etc/xbps.d/*.conf; do
     [ -f "$f" ] || continue
     n="${f##*/}"
-    [ "$n" = 99-repository-xlibre.conf ] && continue
+    [ "$n" = "${VS_REPOCONF##*/}" ] && continue          # eigene Paketquelle (vs_repo)
+    [ "$n" = 99-repository-xlibre.conf ] && continue     # frueher: xlibre-void
     urls="$(sed -n 's/^[[:space:]]*repository[[:space:]]*=[[:space:]]*\([^[:space:]]*\).*/\1/p' "$f")"
     [ -n "$urls" ] || continue
     for u in $urls; do
@@ -420,6 +431,7 @@ main() {
   case "$cmd" in
     install)
       check_pkgs "$@" || return $?
+      [ -f "$VS_REPOCONF" ] || vs_repo      # AppCenter-Programme kommen teils aus der eigenen Paketquelle
       mirror_auto
       xbps-install -Sy "$@"
       ;;
@@ -437,10 +449,17 @@ main() {
       repo_sync
       ;;
     update)
+      [ -f "$VS_REPOCONF" ] || vs_repo
       mirror_auto now                       # vor jedem Update den schnellsten Mirror suchen (dauert hoechstens 10 s)
       repo_sync || return 1
       xbps-install -yu xbps || true         # xbps muss sich ggf. zuerst selbst aktualisieren
+      mv_before="$(xbps-query -p pkgver mullvad-vpn 2>/dev/null)"
       xbps-install -yu; rc=$?
+      # Mullvad erneuert: der laufende Daemon ist noch der alte – mit gehaltener Sperre neu starten
+      mv_after="$(xbps-query -p pkgver mullvad-vpn 2>/dev/null)"
+      if [ -n "$mv_after" ] && [ "$mv_before" != "$mv_after" ] && [ -x /usr/local/sbin/voidstation-mullvad ]; then
+        /usr/local/sbin/voidstation-mullvad restart || true
+      fi
       [ $rc -eq 0 ] && { gpu32 --nosync || echo "gpu32: fehlgeschlagen – naechstes Update versucht es erneut"; }
       return $rc
       ;;
@@ -473,6 +492,13 @@ main() {
       ;;
     netmode)                                # Internet nur ueber Kabel, nur ueber WLAN oder ueber beides
       net_mode "${1:-}" ;;
+    repo)                                   # eigene Paketquelle einrichten (Install/Update tun das selbst)
+      case "$1" in
+        ensure|"") vs_repo; echo "Paketquelle $VS_REPO eingerichtet" ;;
+        status) if [ -f "$VS_REPOCONF" ] && [ -f "/var/db/xbps/keys/$VS_KEYFP.plist" ]; then echo "eingerichtet: $VS_REPO"; else echo "nicht eingerichtet"; fi ;;
+        *) echo "repo: ensure | status"; return 2 ;;
+      esac
+      ;;
     xserver)                                # Grafik-Server: nur XLibre
       case "$1" in
         ensure|auto|xlibre) xserver_ensure ;;
@@ -517,14 +543,14 @@ main() {
       [ -x /usr/local/sbin/voidstation-tune ] || return 0
       /usr/local/sbin/voidstation-tune perf "$1"
       ;;
-    mullvad)                                # Mullvad VPN aus der signierten .deb: install | update | remove | status | latest
+    mullvad)                                # Mullvad VPN (Paket mullvad-vpn): install | update | remove | status | latest | restart
       case "$1" in
-        install|update|remove|status|latest) ;;
-        *) echo "mullvad: install | update | remove | status | latest"; return 2 ;;
+        install|update|remove|status|latest|restart) ;;
+        *) echo "mullvad: install | update | remove | status | latest | restart"; return 2 ;;
       esac
       [ -x /usr/local/sbin/voidstation-mullvad ] || { echo "voidstation-mullvad fehlt (VoidStation aktualisieren)"; return 1; }
       if [ "$1" = install ] || [ "$1" = update ]; then
-        command -v gpg >/dev/null 2>&1 || { mirror_auto; xbps-install -Sy gnupg || return 1; }
+        vs_repo; mirror_auto                # Paket kommt aus der eigenen Quelle (signiert, geprueft von xbps)
       fi
       /usr/local/sbin/voidstation-mullvad "$1"
       ;;
@@ -550,7 +576,7 @@ main() {
       esac
       ;;
     *)
-      echo "Benutzung: voidstation-pkg install|remove|markauto <paket>... | sync | update | check [--nosync] | mirror status|auto | selfupdate [--markers] | gpu32 [--nosync] | kernelpurge | syslog | perf on|off|status | mullvad install|update|remove|status|latest | channel stable|main|auto | xserver ensure|repair|status | ssh on|off|status | bluetooth on|off|status | suspend"
+      echo "Benutzung: voidstation-pkg install|remove|markauto <paket>... | sync | update | check [--nosync] | mirror status|auto | selfupdate [--markers] | gpu32 [--nosync] | kernelpurge | syslog | perf on|off|status | mullvad install|update|remove|status|latest|restart | channel stable|main|auto | repo ensure|status | xserver ensure|repair|status | ssh on|off|status | bluetooth on|off|status | suspend"
       return 2
       ;;
   esac

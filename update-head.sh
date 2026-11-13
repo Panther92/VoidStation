@@ -123,10 +123,12 @@ for f in tiles.json radio.json tvfavs.json settings.json; do [ -f "$TV/$f" ] && 
 sed -n '/^__PAYLOAD_BELOW__$/,$p' "$0" | tail -n +2 | base64 -d | tar -xz -C "$TV" || { warn "Entpacken fehlgeschlagen"; exit 1; }
 for f in tiles.json radio.json tvfavs.json settings.json; do [ -f "$KEEP/$f" ] && cp "$KEEP/$f" "$TV/$f"; done
 rm -rf "$KEEP"
-chmod +x "$TV/launcher.py" "$TV/launcher-start.py" "$TV/home.sh" "$TV/vsctl" "$TV/vsshot" "$TV/bin/chdman" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/qt/voidstation-player.py" "$TV/sysfix.sh"
+chmod +x "$TV/launcher.py" "$TV/launcher-start.py" "$TV/home.sh" "$TV/vsctl" "$TV/vsshot" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/qt/voidstation-player.py" "$TV/sysfix.sh"
 # Python-Bytecode mit Pruefsumme statt Dateizeit: build.sh setzt feste Dateizeiten, ein gleich grosser neuer Stand
 # saehe fuer Python sonst unveraendert aus. Scheitert es, uebersetzt Python beim naechsten Start selbst.
 rm -rf "$TV/__pycache__" "$TV/qt/__pycache__"
+# chdman kommt seit 2026.12 als Paket vs-chdman aus der eigenen Paketquelle (s. "Grafik-Server" unten)
+rm -rf "${TV:?}/bin"
 python3 -m compileall -q --invalidation-mode checked-hash "$TV/launcher.py" "$TV/tvindex.py" "$TV/discid.py" "$TV/gameprofiles.py" "$TV/vsx11.py" "$TV/vsreport.py" "$TV/qt" || warn "Bytecode nicht vorbereitet"
 echo "__VS_VERSION__" > "$TV/VERSION"
 echo '__VS_VERSION_B64__' | base64 -d > "$TV/version.json" 2>/dev/null || true
@@ -416,7 +418,8 @@ install -o root -g root -m 755 "$TV/voidstation-splash" /usr/local/sbin/voidstat
 install -o root -g root -m 755 "$TV/voidstation-zram" /usr/local/sbin/voidstation-zram
 install -o root -g root -m 755 "$TV/voidstation-mullvad" /usr/local/sbin/voidstation-mullvad
 install -d -o root -g root -m 755 /usr/local/share/voidstation
-install -o root -g root -m 644 "$TV/mullvad-signing.asc" /usr/local/share/voidstation/mullvad-signing.asc
+# Mullvad kommt seit 2026.12 signiert aus der eigenen Paketquelle (geprueft wird dort in der CI): Schluessel weg
+rm -f /usr/local/share/voidstation/mullvad-signing.asc "$TV/mullvad-signing.asc"
 install -o root -g root -m 644 "$TV/dracut-voidstation.conf" /usr/local/share/voidstation/dracut-voidstation.conf
 KCHANGED=0
 # Initramfs-Vorgabe von VoidStation (vom Installer bzw. aus 0.14.2) auf den neuen Stand bringen:
@@ -479,6 +482,11 @@ fi
 # ---------------------------------------------------------------------
 say "Grafik-Server: XLibre (ersetzt ein noch vorhandenes X.Org)"
 sh /usr/local/sbin/voidstation-pkg xserver ensure || warn "XLibre nicht eingerichtet – naechstes Update versucht es erneut"
+# chdman (bin/cue -> CHD in der Spieleliste): Paket vs-chdman aus derselben Quelle, nur x86_64
+if [ "$(xbps-uhelper arch 2>/dev/null)" = x86_64 ] && ! xbps-query vs-chdman >/dev/null 2>&1; then
+  xbps-install -y vs-chdman >/dev/null 2>&1 || xbps-install -Sy vs-chdman >/dev/null 2>&1 \
+    || warn "vs-chdman nicht installiert – In CHD umwandeln fehlt bis zum naechsten Update"
+fi
 
 say "4/8  Rechte ohne Passwort: Ausschalten, WLAN, AppCenter"
 rm -f /etc/sudoers.d/voidstation /etc/sudoers.d/tvstart /etc/sudoers.d/zz-tvstart

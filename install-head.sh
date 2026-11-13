@@ -116,7 +116,7 @@ say "3/8  Dateien entpacken nach $TV"
 mkdir -p "$TV"
 [ -f "$TV/tiles.json" ] && cp "$TV/tiles.json" /tmp/tiles.json.keep
 sed -n '/^__PAYLOAD_BELOW__$/,$p' "$0" | tail -n +2 | base64 -d | tar -xz -C "$TV"
-chmod +x "$TV/launcher.py" "$TV/launcher-start.py" "$TV/home.sh" "$TV/vsctl" "$TV/vsshot" "$TV/bin/chdman" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/qt/voidstation-player.py" "$TV/sysfix.sh"
+chmod +x "$TV/launcher.py" "$TV/launcher-start.py" "$TV/home.sh" "$TV/vsctl" "$TV/vsshot" "$TV/xstart" "$TV/qt/voidstation-home.py" "$TV/qt/voidstation-player.py" "$TV/sysfix.sh"
 # Python-Bytecode mit Pruefsumme statt Dateizeit: build.sh setzt feste Dateizeiten, ein gleich grosser neuer Stand
 # saehe fuer Python sonst unveraendert aus. Scheitert es, uebersetzt Python beim naechsten Start selbst.
 rm -rf "$TV/__pycache__" "$TV/qt/__pycache__"
@@ -386,7 +386,6 @@ install -o root -g root -m 755 "$TV/voidstation-splash" /usr/local/sbin/voidstat
 install -o root -g root -m 755 "$TV/voidstation-zram" /usr/local/sbin/voidstation-zram
 install -o root -g root -m 755 "$TV/voidstation-mullvad" /usr/local/sbin/voidstation-mullvad
 install -d -o root -g root -m 755 /usr/local/share/voidstation
-install -o root -g root -m 644 "$TV/mullvad-signing.asc" /usr/local/share/voidstation/mullvad-signing.asc
 python3 - "$TV/catalog.json" "$(xbps-uhelper arch 2>/dev/null)" > /usr/local/share/voidstation/allowed-packages <<'PYEOF'
 import json, sys
 c = json.load(open(sys.argv[1], encoding="utf-8"))
@@ -445,6 +444,11 @@ say "Grafik-Server: XLibre"
 if ! sh /usr/local/sbin/voidstation-pkg xserver ensure; then
   warn "XLibre konnte nicht installiert werden – ohne Grafik-Server startet die Oberflaeche nicht."
   warn "Internetverbindung pruefen und nochmal starten:  sudo /usr/local/sbin/voidstation-pkg xserver ensure"
+fi
+# chdman (bin/cue -> CHD in der Spieleliste): Paket vs-chdman aus derselben Quelle, nur x86_64 (auf dem Stick schon dabei)
+if [ "$(xbps-uhelper arch 2>/dev/null)" = x86_64 ] && ! xbps-query vs-chdman >/dev/null 2>&1; then
+  xbps-install -y vs-chdman >/dev/null 2>&1 || xbps-install -Sy vs-chdman >/dev/null 2>&1 \
+    || warn "vs-chdman nicht installiert – In CHD umwandeln fehlt bis zum naechsten Update"
 fi
 
 say "Extra: Freigabe-Ordner $SHARE"

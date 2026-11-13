@@ -14,7 +14,7 @@ continue watching, repeat/shuffle, “Find music” with downloads including tag
 audio output, Wi-Fi, Bluetooth, mouse pointer), a Samba share `\\<hostname>\share`, several apps side by side with switching.
 Interface in **English or German**, plus nineteen machine-translated languages: Čeština, Español, Français, Italiano, Latviešu, Magyar,
 Nederlands, Polski, Português (Brasil), Română, Slovenčina, Türkçe, Ελληνικά, Русский, Українська, 日本語, 한국어, 简体中文, 繁體中文 (Settings → Language). From the 2026.11 live ISO on, the installer and the stick's boot menu speak all languages too (Japanese, Korean, Chinese, Romanian and Turkish from the next live ISO).
-The display server is [XLibre](https://github.com/X11Libre/xserver) (packages from [xlibre-void](https://github.com/xlibre-void/xlibre));
+The display server is [XLibre](https://github.com/X11Libre/xserver) (templates from [xlibre-void](https://github.com/xlibre-void/xlibre), built and signed in VoidStation's own package repository [voidstation-packages](https://github.com/Panther92/voidstation-packages));
 X.Org is not used. If the interface fails to start twice, VoidStation reinstalls XLibre once;
 after that, a rescue console appears. By hand: `sudo /usr/local/sbin/voidstation-pkg xserver ensure|repair|status`.
 Remote access via SSH can be switched on and off under Settings → System.

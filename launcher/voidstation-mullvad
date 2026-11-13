@@ -2,14 +2,18 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """voidstation-mullvad – Mullvad VPN auf VoidStation (Root-Helfer, aufgerufen ueber "voidstation-pkg mullvad …").
 
-Mullvad liefert fuer Linux nur .deb und .rpm mit systemd-Diensten. VoidStation laedt die offizielle .deb von GitHub,
-prueft deren Signatur gegen den festen Code-Signing-Schluessel von Mullvad (Fingerabdruck A119 8702 … 66DE 8DDF,
-/usr/local/share/voidstation/mullvad-signing.asc) und baut daraus ein eigenes xbps-Paket
-"mullvad-vpn-voidstation": nur Daemon und Kommandozeile (keine Electron-Oberflaeche – die Bedienung macht die
-Startseite), dazu ein runit-Dienst statt mullvad-daemon.service und ein Core-Service statt
-mullvad-early-boot-blocking.service. Das Paket liegt in einem lokalen Repo unter /var/cache/voidstation/mullvad.
+Seit 2026.12 kommt Mullvad als Paket "mullvad-vpn" aus der eigenen Paketquelle (repo.voidstation.de,
+github.com/Panther92/voidstation-packages): Die CI laedt dort die offizielle .deb, prueft deren Signatur gegen den
+Code-Signing-Schluessel von Mullvad (Fingerabdruck A119 8702 … 66DE 8DDF) und packt nur Daemon und Kommandozeile
+(keine Electron-Oberflaeche – die Bedienung macht die Startseite), dazu ein runit-Dienst statt mullvad-daemon.service
+und ein Core-Service statt mullvad-early-boot-blocking.service. Das Paket ist mit dem Schluessel der Paketquelle
+signiert; xbps prueft das. Es ersetzt das frueher auf jedem Geraet selbst gebaute "mullvad-vpn-voidstation"
+(gleicher Inhalt, gleiche Pfade, replaces im Paket).
 
-Befehle:  install | update | remove | status | latest
+Dieser Helfer erledigt, was xbps nicht weiss: Dienst einschalten, beim Wechsel die Sperre halten
+("prepare-restart"), beim Entfernen das Geraet beim Konto abmelden, beim ersten Mal das Heimnetz erlauben.
+
+Befehle:  install | update | remove | status | latest | restart
 Ausgabe: Protokollzeilen fuer das AppCenter (Jobs), Fehler mit Rueckgabewert != 0.
 """
 import json
@@ -18,255 +22,53 @@ import re
 import shutil
 import subprocess
 import sys
-import tarfile
-import tempfile
 import time
-import urllib.request
 from pathlib import Path
 
-PKG = "mullvad-vpn-voidstation"
-REPO_GH = "mullvad/mullvadvpn-app"
-# Release-Liste statt /releases/latest: Mullvad veroeffentlicht Desktop und Android im selben Repo, "latest" ist
-# zeitweise das Android-Release ("android/2026.12"). Aus der Liste zaehlt die hoechste freigegebene Desktop-Version.
-API = f"https://api.github.com/repos/{REPO_GH}/releases?per_page=100"
-DL = f"https://github.com/{REPO_GH}/releases/download/{{ver}}/MullvadVPN-{{ver}}_amd64.deb"
-KEYFILE = Path("/usr/local/share/voidstation/mullvad-signing.asc")
-KEY_FPR = "A1198702FC3E0A09A9AE5B75D5A1D4F266DE8DDF"     # Mullvad (code signing) <admin@mullvad.net>
-LOCALREPO = Path("/var/cache/voidstation/mullvad")
+PKG = "mullvad-vpn"
+OLD_PKG = "mullvad-vpn-voidstation"                     # bis 2026.11 auf dem Geraet aus der .deb gebaut
+OLD_LOCALREPO = Path("/var/cache/voidstation/mullvad")  # dessen lokales Repo
 RESDIR = "/opt/Mullvad VPN/resources/"
 SV = Path("/etc/sv/mullvad-daemon")
 SVLINK = Path("/var/service/mullvad-daemon")
 SETTINGS = Path("/etc/mullvad-vpn/settings.json")
-UA = {"User-Agent": "VoidStation (+https://voidstation.de)"}
-VER_RE = re.compile(r"^20\d\d\.\d{1,2}$")                # nur freigegebene Versionen, keine Betas ("2026.5-beta2")
-
-# Was aus der .deb uebernommen wird (Pfad im Paket -> Rechte). Alles andere (Electron, Icons, Desktop-Datei,
-# systemd-Units, AppArmor) bleibt draussen. mullvad-exclude ohne setuid: Split-Tunneling bietet VoidStation nicht an.
-TAKE = {
-    "usr/bin/mullvad": 0o755,
-    "usr/bin/mullvad-daemon": 0o755,
-    "usr/bin/mullvad-exclude": 0o755,
-    "opt/Mullvad VPN/resources/mullvad-setup": 0o755,
-    "opt/Mullvad VPN/resources/mullvad-problem-report": 0o755,
-    "opt/Mullvad VPN/resources/ca.crt": 0o644,
-    "opt/Mullvad VPN/resources/relays.json": 0o644,
-    "opt/Mullvad VPN/resources/CHANGELOG.md": 0o644,
-    "usr/share/bash-completion/completions/mullvad": 0o644,
-}
-NEED = ("usr/bin/mullvad", "usr/bin/mullvad-daemon", "opt/Mullvad VPN/resources/mullvad-setup",
-        "opt/Mullvad VPN/resources/ca.crt", "opt/Mullvad VPN/resources/relays.json")
-
-RUN = f"""#!/bin/sh
-# VoidStation: Mullvad VPN (ersetzt mullvad-daemon.service). Der Daemon schreibt sein Protokoll selbst nach
-# /var/log/mullvad-vpn/daemon.log. DNS: erkennt systemd-resolved, NetworkManager, resolvconf oder /etc/resolv.conf
-# selbst; erzwingen ginge mit TALPID_DNS_MODULE=network-manager (bzw. static-file).
-export MULLVAD_RESOURCE_DIR="{RESDIR}"
-exec /usr/bin/mullvad-daemon -v --disable-stdout-timestamps >/dev/null 2>&1
-"""
-
-# Laeuft in Stufe 1 (vor runsvdir und damit vor NetworkManager), wird von /etc/runit/1 eingelesen: kein exit.
-# Sperrt den Verkehr nur, wenn der Lockdown-Modus bzw. "Beim Start verbinden" an ist – wie die systemd-Unit.
-CORE = f"""# VoidStation: Mullvad VPN – Sperre beim Start (ersetzt mullvad-early-boot-blocking.service)
-if [ -x /usr/bin/mullvad-daemon ]; then
-  MULLVAD_RESOURCE_DIR="{RESDIR}" timeout 10 /usr/bin/mullvad-daemon -v --initialize-early-boot-firewall >/dev/null 2>&1 || true
-fi
-"""
-CORE_PATH = "etc/runit/core-services/95-voidstation-mullvad.sh"
 
 
 def say(*a):
     print(*a, flush=True)
 
 
-def run(args, timeout=None, env=None, check=False):
+def run(args, timeout=None, env=None):
     try:
-        r = subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout,
-                           env=env, stdin=subprocess.DEVNULL)
-    except (OSError, subprocess.SubprocessError) as e:
-        if check:
-            raise RuntimeError(f"{args[0]}: {e}") from e
+        return subprocess.run(args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=timeout,
+                              env=env, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError):
         return None
-    if check and r.returncode != 0:
-        raise RuntimeError(f"{' '.join(args[:3])}: {r.stdout.strip().splitlines()[-1] if r.stdout.strip() else r.returncode}")
-    return r
 
 
 def env_mullvad():
     return {**os.environ, "MULLVAD_RESOURCE_DIR": RESDIR}
 
 
-def installed_version():
-    r = run(["xbps-query", "-p", "pkgver", PKG])
+def pkg_version(pkg, remote=False):
+    """Version eines Pakets ("2026.5"), installiert oder (remote) in der Paketquelle; None = nicht da."""
+    r = run(["xbps-query"] + (["-R"] if remote else []) + ["-p", "pkgver", pkg], timeout=60)
     if not r or r.returncode != 0 or not r.stdout.strip():
         return None
-    m = re.match(rf"^{re.escape(PKG)}-(.+)_\d+$", r.stdout.strip())
+    m = re.match(rf"^{re.escape(pkg)}-(.+)_\d+$", r.stdout.strip().splitlines()[-1])
     return m.group(1) if m else None
 
 
-def _vkey(tag):
-    """Versionsnummer zum Vergleichen: "2026.10" -> (2026, 10), damit 2026.10 nach 2026.5 kommt."""
-    return tuple(int(x) for x in tag.split("."))
+def installed_version():
+    return pkg_version(PKG) or pkg_version(OLD_PKG)
 
 
 def latest():
-    """Neueste freigegebene Desktop-Version: kein Entwurf, keine Vorabversion, Tag wie "2026.5" und mit .deb fuer amd64."""
-    req = urllib.request.Request(API, headers={**UA, "Accept": "application/vnd.github+json"})
-    with urllib.request.urlopen(req, timeout=30) as r:
-        rels = json.load(r)
-    if not isinstance(rels, list):
-        raise RuntimeError("unerwartete Antwort von GitHub (keine Release-Liste)")
-    tags = []
-    for rel in rels:
-        tag = str(rel.get("tag_name") or "")
-        if rel.get("draft") or rel.get("prerelease") or not VER_RE.match(tag):
-            continue
-        if f"MullvadVPN-{tag}_amd64.deb" in {a.get("name") for a in rel.get("assets") or []}:
-            tags.append(tag)
-    if not tags:
-        raise RuntimeError("keine freigegebene Desktop-Version von Mullvad gefunden")
-    return max(tags, key=_vkey)
-
-
-def download(url, dest):
-    req = urllib.request.Request(url, headers=UA)
-    with urllib.request.urlopen(req, timeout=60) as r, open(dest, "wb") as f:
-        total = int(r.headers.get("Content-Length") or 0)
-        done, last = 0, 0
-        while True:
-            chunk = r.read(1 << 18)
-            if not chunk:
-                break
-            f.write(chunk)
-            done += len(chunk)
-            if total and done * 10 // total > last:
-                last = done * 10 // total
-                say(f"… {last * 10} %")
-    return done
-
-
-def verify(deb, asc, work):
-    """Signatur pruefen: gueltig UND vom festen Mullvad-Schluessel (Hauptschluessel-Fingerabdruck in VALIDSIG)."""
-    if not shutil.which("gpg"):
-        raise RuntimeError("gpg fehlt (Paket gnupg) – Signatur kann nicht geprueft werden")
-    if not KEYFILE.is_file():
-        raise RuntimeError(f"Schluessel fehlt: {KEYFILE}")
-    home = Path(work) / "gnupg"
-    home.mkdir(mode=0o700)
-    g = ["gpg", "--homedir", str(home), "--batch", "--no-tty", "--no-auto-key-retrieve"]
-    run(g + ["--import", str(KEYFILE)], timeout=60, check=True)
-    r = run(g + ["--status-fd", "1", "--verify", str(asc), str(deb)], timeout=120)
-    if not r or r.returncode != 0:
-        raise RuntimeError("Signatur UNGUELTIG – Download verworfen")
-    for line in r.stdout.splitlines():
-        p = line.split()
-        if len(p) >= 3 and p[0] == "[GNUPG:]" and p[1] == "VALIDSIG" and p[-1].upper() == KEY_FPR:
-            return True
-    raise RuntimeError("Signatur nicht vom Mullvad-Code-Signing-Schluessel – Download verworfen")
-
-
-def ar_members(path):
-    """Mitglieder einer .deb (ar-Archiv): {name: bytes}."""
-    out = {}
-    with open(path, "rb") as f:
-        if f.read(8) != b"!<arch>\n":
-            raise RuntimeError("keine .deb-Datei")
-        while True:
-            hdr = f.read(60)
-            if len(hdr) < 60:
-                break
-            name = hdr[:16].decode("ascii", "replace").strip().rstrip("/")
-            size = int(hdr[48:58].decode("ascii").strip())
-            data = f.read(size)
-            if size % 2:
-                f.read(1)
-            out[name] = data
-    return out
-
-
-def data_tar(members, work):
-    for name, data in members.items():
-        if not name.startswith("data.tar"):
-            continue
-        p = Path(work) / name
-        p.write_bytes(data)
-        if name.endswith(".zst"):
-            try:
-                from compression import zstd                     # Python 3.14
-                raw = zstd.decompress(data)
-            except ImportError:
-                if not shutil.which("zstd"):
-                    raise RuntimeError("zstd fehlt – .deb nicht entpackbar") from None
-                r = subprocess.run(["zstd", "-dc", str(p)], stdout=subprocess.PIPE, check=True)
-                raw = r.stdout
-            p = Path(work) / "data.tar"
-            p.write_bytes(raw)
-        return p
-    raise RuntimeError("data.tar fehlt in der .deb")
-
-
-def extract(deb, dest, work):
-    """Nur die Dateien aus TAKE nach dest – keine Links nach aussen, kein setuid, root:root."""
-    tar = data_tar(ar_members(deb), work)
-    found = set()
-    with tarfile.open(tar) as t:
-        for m in t.getmembers():
-            name = m.name.lstrip("./")
-            if name == "usr/bin/mullvad-problem-report" and m.issym():
-                continue                                    # Link auf resources/ – legen wir selbst an
-            if name not in TAKE or not m.isfile():
-                continue
-            target = dest / name
-            target.parent.mkdir(parents=True, exist_ok=True)
-            src = t.extractfile(m)
-            if src is None:                         # kann nach isfile() nicht vorkommen
-                continue
-            with src, open(target, "wb") as f:
-                shutil.copyfileobj(src, f)
-            os.chmod(target, TAKE[name])
-            found.add(name)
-    missing = [n for n in NEED if n not in found]
-    if missing:
-        raise RuntimeError("in der .deb fehlt: " + ", ".join(missing))
-    link = dest / "usr/bin/mullvad-problem-report"
-    link.symlink_to(RESDIR + "mullvad-problem-report")
-    sv = dest / "etc/sv/mullvad-daemon"
-    sv.mkdir(parents=True)
-    (sv / "run").write_text(RUN)
-    os.chmod(sv / "run", 0o755)
-    core = dest / CORE_PATH
-    core.parent.mkdir(parents=True, exist_ok=True)
-    core.write_text(CORE)
-    os.chmod(core, 0o644)
-    for p in dest.rglob("*"):
-        os.lchown(p, 0, 0)
-
-
-def build_pkg(dest, ver, work):
-    arch = (run(["xbps-uhelper", "arch"]) or subprocess.CompletedProcess([], 1, "")).stdout.strip() or "x86_64"
-    if arch != "x86_64":
-        raise RuntimeError(f"Mullvad gibt es nur fuer x86_64 (dieses Geraet: {arch})")
-    out = Path(work) / "pkg"
-    out.mkdir()
-    # xbps-create schreibt das Paket ins aktuelle Verzeichnis
-    r = subprocess.run(["xbps-create", "-A", arch, "-n", f"{PKG}-{ver}_1", "-s",
-                        "Mullvad VPN – Daemon und CLI aus der offiziellen .deb (VoidStation)",
-                        "-l", "GPL-3.0-only", "-H", "https://mullvad.net",
-                        "-m", "VoidStation <https://voidstation.de>", str(dest)],
-                       cwd=out, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, timeout=300)
-    if r.returncode != 0:
-        raise RuntimeError("xbps-create: " + (r.stdout.strip().splitlines() or ["?"])[-1])
-    pkgs = list(out.glob("*.xbps"))
-    if len(pkgs) != 1:
-        raise RuntimeError("xbps-create hat kein Paket erzeugt")
-    LOCALREPO.mkdir(parents=True, exist_ok=True)
-    os.chmod(LOCALREPO, 0o755)
-    for old in list(LOCALREPO.glob("*.xbps")) + list(LOCALREPO.glob("*-repodata*")):
-        old.unlink()
-    final = LOCALREPO / pkgs[0].name
-    shutil.move(str(pkgs[0]), final)
-    os.chmod(final, 0o644)
-    run(["xbps-rindex", "-a", str(final)], timeout=120, check=True)
-    return final
+    """Version in der Paketquelle (ohne frisches Laden der Paketlisten; das macht die Update-Pruefung)."""
+    v = pkg_version(PKG, remote=True)
+    if not v:
+        raise RuntimeError("mullvad-vpn nicht in der Paketquelle (sudo voidstation-pkg repo status)")
+    return v
 
 
 def daemon_running():
@@ -282,42 +84,58 @@ def wait_socket(seconds=20):
     return False
 
 
-def cmd_install():
-    have = installed_version()
-    ver = latest()
-    if have == ver and SV.is_dir():
-        say(f"Mullvad VPN {ver} ist aktuell")
-        return enable()
-    fresh = not SETTINGS.exists()
-    say(f"Mullvad VPN {ver}" + (f" (vorher {have})" if have else ""))
-    work = tempfile.mkdtemp(prefix="voidstation-mullvad.")
-    try:
-        deb = Path(work) / f"MullvadVPN-{ver}_amd64.deb"
-        say(f"Lade {deb.name} …")
-        download(DL.format(ver=ver), deb)
-        download(DL.format(ver=ver) + ".asc", Path(str(deb) + ".asc"))
-        verify(deb, Path(str(deb) + ".asc"), work)
-        say("Signatur geprueft: ok (Mullvad Code Signing)")
-        dest = Path(work) / "dest"
-        dest.mkdir()
-        extract(deb, dest, work)
-        say("Baue Paket …")
-        build_pkg(dest, ver, work)
-    finally:
-        shutil.rmtree(work, ignore_errors=True)
-    if have and daemon_running():                      # wie before-install.sh: Sperre halten, dann anhalten
+def hold_and_stop():
+    """Wie before-install.sh der .deb: dem Daemon sagen, dass er gleich neu startet (Sperre bleibt), dann anhalten."""
+    if daemon_running():
         run(["/opt/Mullvad VPN/resources/mullvad-setup", "prepare-restart"], timeout=20, env=env_mullvad())
         run(["sv", "stop", str(SV)], timeout=30)
-    args = ["xbps-install", "-y"] + (["-u"] if have else []) + ["--repository", str(LOCALREPO), PKG]
-    r = subprocess.run(args, stdout=sys.stdout, stderr=subprocess.STDOUT)
-    if r.returncode != 0:
+
+
+def cmd_install():
+    have = installed_version()
+    old = pkg_version(OLD_PKG) is not None
+    fresh = not SETTINGS.exists()
+    r = run(["xbps-install", "-S"], timeout=300)                 # Paketlisten (auch die eigene Quelle)
+    if not r or r.returncode != 0:
+        say("Paketlisten konnten nicht geladen werden – versuche es mit dem Stand von vorher")
+    ver = latest()
+    if have == ver and not old and SV.is_dir():
+        say(f"Mullvad VPN {ver} ist aktuell")
+        return enable()
+    say(f"Mullvad VPN {ver}" + (f" (vorher {have})" if have else ""))
+    if have:
+        hold_and_stop()
+    # -u: Update; ein vorhandenes mullvad-vpn-voidstation ersetzt das Paket selbst (replaces)
+    args = ["xbps-install", "-y"] + (["-u"] if have and not old else []) + [PKG]
+    r2 = subprocess.run(args, stdout=sys.stdout, stderr=subprocess.STDOUT)
+    if r2.returncode != 0:
+        if have:
+            run(["sv", "up", str(SV)], timeout=10)                # alte Fassung laeuft weiter
         raise RuntimeError("Paket konnte nicht installiert werden")
+    if old:
+        if pkg_version(OLD_PKG):
+            run(["xbps-remove", "-y", OLD_PKG], timeout=120)
+        shutil.rmtree(OLD_LOCALREPO, ignore_errors=True)
+        say("Umgestellt auf das Paket aus der VoidStation-Paketquelle")
     rc = enable()
     if rc == 0 and fresh:
         # Heimnetz erlauben: SSH, LocalSend, Freigaben und der Controller per Handy bleiben erreichbar
         run(["mullvad", "lan", "set", "allow"], timeout=20)
         say("Heimnetz erlaubt (Einstellung in Mullvad VPN → Optionen)")
     return rc
+
+
+def cmd_restart():
+    """Nach einem System-Update (voidstation-pkg update), wenn xbps mullvad-vpn erneuert hat: neuen Daemon starten."""
+    if not SVLINK.exists():
+        return 0
+    hold_and_stop()
+    run(["sv", "up", str(SV)], timeout=10)
+    if wait_socket():
+        say("Mullvad-Dienst neu gestartet")
+        return 0
+    say("Mullvad-Dienst startet nicht – Protokoll: /var/log/mullvad-vpn/daemon.log")
+    return 1
 
 
 def enable():
@@ -332,7 +150,6 @@ def enable():
 
 
 def cmd_remove():
-    have = installed_version()
     if Path("/usr/bin/mullvad").exists():
         # wie before-remove.sh: Geraet beim Konto abmelden (gibt den Platz frei), Firewall-Regeln weg
         run(["/opt/Mullvad VPN/resources/mullvad-setup", "remove-device"], timeout=30, env=env_mullvad())
@@ -342,12 +159,13 @@ def cmd_remove():
         time.sleep(1)
     if Path("/opt/Mullvad VPN/resources/mullvad-setup").exists():
         run(["/opt/Mullvad VPN/resources/mullvad-setup", "reset-firewall"], timeout=20, env=env_mullvad())
-    if have:
-        r = subprocess.run(["xbps-remove", "-y", PKG], stdout=sys.stdout, stderr=subprocess.STDOUT)
-        if r.returncode != 0:
-            say("Paket konnte nicht entfernt werden")
-            return 1
-    for d in (LOCALREPO, Path("/etc/mullvad-vpn"), Path("/var/cache/mullvad-vpn"), Path("/var/log/mullvad-vpn")):
+    for pkg in (PKG, OLD_PKG):
+        if pkg_version(pkg):
+            r = subprocess.run(["xbps-remove", "-y", pkg], stdout=sys.stdout, stderr=subprocess.STDOUT)
+            if r.returncode != 0:
+                say("Paket konnte nicht entfernt werden")
+                return 1
+    for d in (OLD_LOCALREPO, Path("/etc/mullvad-vpn"), Path("/var/cache/mullvad-vpn"), Path("/var/log/mullvad-vpn")):
         shutil.rmtree(d, ignore_errors=True)
     say("Mullvad VPN entfernt")
     return 0
@@ -371,13 +189,15 @@ def main(argv):
             return cmd_remove()
         if cmd == "status":
             return cmd_status()
+        if cmd == "restart":
+            return cmd_restart()
         if cmd == "latest":
             print(latest())
             return 0
-    except (RuntimeError, OSError, ValueError, subprocess.SubprocessError, tarfile.TarError) as e:
+    except (RuntimeError, OSError, ValueError, subprocess.SubprocessError) as e:
         say(f"Fehler: {e}")
         return 1
-    print("Benutzung: voidstation-pkg mullvad install|update|remove|status|latest", file=sys.stderr)
+    print("Benutzung: voidstation-pkg mullvad install|update|remove|status|latest|restart", file=sys.stderr)
     return 2
 
 
