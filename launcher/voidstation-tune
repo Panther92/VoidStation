@@ -1,0 +1,325 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+# =====================================================================
+#  VoidStation: Abstimmung unter der Haube. Es bleibt bei Voids Standardkernel – nichts wird neu gebaut,
+#  alles hier sind Einstellungen, die der Kernel und die Pakete von Void schon mitbringen.
+#
+#   ton       PipeWire darf Echtzeit-Prioritaet nehmen (limits.d fuer die Gruppe "audio"). Void baut PipeWire
+#             mit Grenzwerten fuer die Gruppe "_pipewire", in der VoidStation-Benutzer nicht sind; rtkit ist
+#             nicht installiert – der Ton lief deshalb mit normaler Prioritaet und konnte unter Last knacken.
+#             Gilt ab der naechsten Anmeldung (pam_limits), also nach dem Neustart.
+#   oom       Speicherschutz (earlyoom): beendet bei Speichermangel das groesste Programm – bevorzugt einen
+#             Browser-Tab –, bevor der Rechner minutenlang haengt. Oberflaeche, Grafik-Server und Ton bleiben.
+#   preempt   Kernel voll unterbrechbar ("full" statt "voluntary"): kuerzere Wartezeiten fuer Ton, Eingaben
+#             und Bild, wenn der Rechner ausgelastet ist. Zur Laufzeit ueber debugfs (PREEMPT_DYNAMIC) – die
+#             Startzeile von EFISTUB/GRUB bleibt unangetastet.
+#   trim      SSDs einmal pro Woche aufraeumen (fstrim), nie waehrend eines Spiels. Dienst voidstation-trim.
+#   perf      CPU-Takt beim Spielen: Governor "performance", solange ein Spiel oder Emulator vorn laeuft;
+#             danach wieder wie vorher. Schaltet der Launcher ueber "voidstation-pkg perf on|off".
+#
+#  Aufruf (root):
+#    voidstation-tune setup               einrichten (sysfix.sh: install.sh, update.sh, Installer, ISO-Bau);
+#                                         beliebig oft ausfuehrbar
+#    voidstation-tune boot                beim Start (Core-Service 94-voidstation-tune.sh)
+#    voidstation-tune perf on|off|status  CPU-Takt (s. o.)
+#    voidstation-tune off <teil>          einen Teil abschalten: oom | preempt | trim | perf (bleibt bei Updates so)
+#    voidstation-tune on <teil>           wieder einschalten
+#    voidstation-tune trim [--force]      SSD jetzt aufraeumen, wenn faellig (--force: auf jeden Fall)
+#    voidstation-tune trim-loop           nur fuer den Dienst voidstation-trim
+#    voidstation-tune status              Stand anzeigen (geht ohne root)
+#
+#  zram (komprimierter Auslagerungsspeicher bei wenig RAM) hat sein eigenes Skript: voidstation-zram.
+# =====================================================================
+R="${VS_TUNE_ROOT:-}"                         # nur fuer Tests: anderes Wurzelverzeichnis
+VSD="$R/usr/local/share/voidstation"
+RUN="$R/run/voidstation"
+CPUFREQ="$R/sys/devices/system/cpu/cpufreq"
+DBG="$R/sys/kernel/debug"
+SVD="$R/etc/runit/runsvdir/default"           # /var/service zeigt darauf; gilt auch im chroot (Installer, ISO-Bau)
+CORE_DIR="$R/etc/runit/core-services"
+LIMITS="$R/etc/security/limits.d/95-voidstation-audio.conf"
+OOM_SV="$R/etc/sv/earlyoom"
+TRIM_SV="$R/etc/sv/voidstation-trim"
+TRIM_STAMP="$VSD/trim-done"
+TRIM_LOG="$R/var/log/voidstation-trim.log"
+SAVED="$RUN/perf-saved"                       # Governor (und EPP) je Policy von vor dem Spiel
+CHROOT="${VOIDSTATION_CHROOT:-0}"
+PARTS="oom preempt trim perf"
+
+say()  { printf '%s\n' "$*"; }
+warn() { printf 'voidstation-tune: %s\n' "$*" >&2; }
+is_live() { [ -e "$R/etc/voidstation-live" ] || [ "${VOIDSTATION_LIVE:-0}" = 1 ]; }
+is_off() { [ -e "$VSD/tune-off-$1" ]; }       # mit "voidstation-tune off <teil>" abgeschaltet
+live_system() { [ "$CHROOT" != 1 ] && [ -z "$R" ]; }   # laufendes System (kein chroot, kein Test)
+need_root() { [ "$(id -u)" = 0 ] || [ -n "$R" ] || { echo "Bitte mit sudo starten: sudo voidstation-tune $*" >&2; exit 1; }; }
+# Datei nur schreiben, wenn sich der Inhalt aendert (Inhalt auf stdin); Rueckgabe 0 = geschrieben
+put() {
+  _t="$1.vs-new"
+  mkdir -p "${1%/*}"
+  cat > "$_t" || { rm -f "$_t"; return 1; }
+  if cmp -s "$_t" "$1"; then rm -f "$_t"; return 1; fi
+  chmod "${2:-644}" "$_t" && mv -f "$_t" "$1"
+}
+
+# ---------------------------------------------------------------------
+# ton: Echtzeit-Prioritaet fuer PipeWire (Werte wie in PipeWires eigener 25-pw-rlimits.conf)
+setup_audio() {
+  put "$LIMITS" <<'EOF' || true
+# VoidStation: Der Ton (PipeWire) darf Echtzeit-Prioritaet nehmen – sonst knackt er, sobald der Rechner
+# ausgelastet ist. Gilt fuer die Gruppe "audio" ab der naechsten Anmeldung. Wird bei Updates neu geschrieben.
+@audio   -   rtprio    95
+@audio   -   nice      -19
+@audio   -   memlock   4194304
+EOF
+  say "Ton: Echtzeit-Prioritaet fuer PipeWire (ab dem naechsten Start)"
+}
+
+# ---------------------------------------------------------------------
+# oom: earlyoom. Voids Dienst liest OPTS aus ./conf und setzt sie ohne Anfuehrungszeichen ein – in den Mustern
+# deshalb keine Leerzeichen ("." statt Leerzeichen) und keine Anfuehrungszeichen.
+#   -m 10,5 / -s 20,10   eingreifen, wenn hoechstens 10 % RAM verfuegbar UND hoechstens 20 % Auslagerung frei
+#                        sind (SIGTERM), bei 5 % / 10 % hart (SIGKILL)
+#   -r 3600              Zwischenstand nur einmal pro Stunde ins Protokoll (Vorgabe: jede Sekunde)
+#   --prefer             zuerst die Inhaltsprozesse der Browser (ein Tab stuerzt ab, der Browser bleibt; bei
+#                        Chromium/Brave heissen alle Prozesse gleich, dort markiert der Browser seine Tabs selbst)
+#   --avoid              nie Grafik-Server, Fenstermanager, Oberflaeche (python3), Ton, Fernzugriff, Dienste
+setup_oom() {
+  if [ ! -d "$OOM_SV" ]; then
+    say "Speicherschutz: earlyoom ist nicht installiert (uebersprungen)"
+    return 0
+  fi
+  if is_off oom; then
+    rm -f "$SVD/earlyoom"
+    say "Speicherschutz: aus (sudo voidstation-tune on oom)"
+    return 0
+  fi
+  changed=0
+  # eigene Fassung des Benutzers (ohne unsere Kennung) bleibt, wie sie ist
+  if [ ! -e "$OOM_SV/conf" ] || grep -q 'VoidStation' "$OOM_SV/conf" 2>/dev/null; then
+    put "$OOM_SV/conf" <<'EOF' && changed=1
+# VoidStation: Speicherschutz (s. voidstation-tune). Wird bei Updates neu geschrieben – eigene Fassung:
+# die Zeile mit "VoidStation" hier entfernen. Abschalten: sudo voidstation-tune off oom
+OPTS="-p -r 3600 -m 10,5 -s 20,10 --prefer ^(Web.Content|Isolated.Web.Co|Isolated.Servic|WebKitWebProces|chrome|chromium|brave|steamwebhelper)$ --avoid ^(Xorg|Xlibre|X|openbox|python3|pipewire|pipewire-pulse|wireplumber|sshd|dbus-daemon|elogind|NetworkManager|runsvdir|runsv)$"
+EOF
+  fi
+  if [ -d "$SVD" ] && [ ! -e "$SVD/earlyoom" ]; then
+    ln -s /etc/sv/earlyoom "$SVD/" && changed=1
+  fi
+  if [ "$changed" = 1 ] && live_system && command -v sv >/dev/null 2>&1; then
+    sv restart earlyoom >/dev/null 2>&1 || true        # neu angelegt: runsvdir startet ihn selbst
+  fi
+  say "Speicherschutz: earlyoom (beendet bei Speichermangel zuerst einen Browser-Tab)"
+}
+
+# ---------------------------------------------------------------------
+# preempt: PREEMPT_DYNAMIC zur Laufzeit. debugfs ist bei Void nicht von selbst eingehaengt – nur fuer diesen
+# einen Schreibzugriff einhaengen und wieder loesen.
+preempt_file() { printf '%s' "$DBG/sched/preempt"; }
+preempt_now() {      # Ausgabe: laufende Stufe (none | voluntary | full | lazy), leer = Kernel kann nicht umschalten
+  sed -n 's/.*(\([a-z]*\)).*/\1/p' "$(preempt_file)" 2>/dev/null
+}
+preempt_apply() {
+  is_off preempt && return 0
+  _mounted=0
+  if [ ! -e "$(preempt_file)" ] && [ -z "$R" ]; then
+    mount -t debugfs debugfs "$DBG" 2>/dev/null && _mounted=1
+  fi
+  _rc=0
+  if [ -w "$(preempt_file)" ]; then
+    [ "$(preempt_now)" = full ] || echo full > "$(preempt_file)" 2>/dev/null || _rc=1
+  else
+    _rc=1
+  fi
+  [ "$_mounted" = 1 ] && umount "$DBG" 2>/dev/null
+  return "$_rc"
+}
+preempt_status() {
+  _mounted=0
+  if [ ! -e "$(preempt_file)" ] && [ -z "$R" ] && [ "$(id -u)" = 0 ]; then
+    mount -t debugfs debugfs "$DBG" 2>/dev/null && _mounted=1
+  fi
+  _now="$(preempt_now)"
+  [ "$_mounted" = 1 ] && umount "$DBG" 2>/dev/null
+  if is_off preempt; then _want="aus"; else _want="an"; fi
+  if [ -n "$_now" ]; then
+    say "Kernel unterbrechbar: $_want (laeuft gerade: $_now)"
+  elif [ "$(id -u)" = 0 ] || [ -n "$R" ]; then
+    say "Kernel unterbrechbar: $_want (dieser Kernel kann nicht umschalten)"
+  else
+    say "Kernel unterbrechbar: $_want (laufende Stufe nur mit sudo sichtbar)"
+  fi
+}
+setup_preempt() {
+  put "$CORE_DIR/94-voidstation-tune.sh" <<'EOF' || true
+# SPDX-License-Identifier: GPL-3.0-or-later
+# VoidStation (runit core-service): Abstimmung beim Start – Kernel voll unterbrechbar (s. voidstation-tune).
+[ -x /usr/local/sbin/voidstation-tune ] && /usr/local/sbin/voidstation-tune boot
+EOF
+  if is_off preempt; then
+    say "Kernel: Vorgabe von Void (sudo voidstation-tune on preempt)"
+  elif live_system; then
+    if preempt_apply; then say "Kernel: voll unterbrechbar (preempt=full, gilt sofort)"
+    else say "Kernel: laesst sich auf diesem Kernel nicht umschalten (bleibt, wie er ist)"; fi
+  else
+    say "Kernel: voll unterbrechbar (preempt=full, ab dem naechsten Start)"
+  fi
+}
+
+# ---------------------------------------------------------------------
+# trim: einmal pro Woche "fstrim -A" (alle Dateisysteme aus /etc/fstab, deren Laufwerk das kann). Ein Dienst
+# statt cron – VoidStation hat keinen cron. Nie waehrend eines Spiels (perf an): Auf aelteren SATA-SSDs haelt
+# TRIM andere Zugriffe kurz auf.
+trim_due() { [ -z "$(find "$TRIM_STAMP" -mtime -7 2>/dev/null)" ]; }
+trim_now() {         # Rueckgabe: 0 erledigt oder nichts zu tun, 3 spaeter nochmal (Spiel laeuft)
+  _force=0; [ "${1:-}" = --force ] && _force=1
+  if [ "$_force" = 0 ]; then
+    is_off trim && return 0
+    trim_due || return 0
+    [ -e "$SAVED" ] && return 3
+  fi
+  is_live && return 0
+  command -v fstrim >/dev/null 2>&1 || return 0
+  _out="$(fstrim -A -v 2>&1)"
+  mkdir -p "$VSD" "${TRIM_LOG%/*}"
+  { date '+%Y-%m-%d %H:%M'; printf '%s\n' "${_out:-nichts aufzuraeumen (kein Laufwerk mit TRIM in /etc/fstab)}"; } > "$TRIM_LOG" 2>/dev/null
+  : > "$TRIM_STAMP" && chmod 644 "$TRIM_STAMP"
+  [ "$_force" = 1 ] && cat "$TRIM_LOG"
+  return 0
+}
+trim_loop() {
+  sleep "${VS_TUNE_TRIM_WAIT:-900}"                    # nach dem Start erst alles andere hochkommen lassen
+  while :; do
+    trim_now
+    case $? in
+      3) sleep "${VS_TUNE_TRIM_RETRY:-1800}" ;;
+      *) sleep "${VS_TUNE_TRIM_IDLE:-21600}" ;;
+    esac
+  done
+}
+setup_trim() {
+  put "$TRIM_SV/run" 755 <<'EOF' || true
+#!/bin/sh
+# VoidStation: SSDs einmal pro Woche aufraeumen (TRIM), nie waehrend eines Spiels – s. voidstation-tune.
+# Letzter Lauf: /var/log/voidstation-trim.log. Abschalten: sudo voidstation-tune off trim
+exec 2>&1
+exec /usr/local/sbin/voidstation-tune trim-loop
+EOF
+  if is_off trim; then
+    rm -f "$SVD/voidstation-trim"
+    say "SSD: woechentliches Aufraeumen aus (sudo voidstation-tune on trim)"
+    return 0
+  fi
+  if [ -d "$SVD" ] && [ ! -e "$SVD/voidstation-trim" ]; then
+    ln -s /etc/sv/voidstation-trim "$SVD/"
+  fi
+  say "SSD: Aufraeumen (TRIM) einmal pro Woche"
+}
+
+# ---------------------------------------------------------------------
+# perf: CPU-Takt beim Spielen. Vorgabe von Void: "schedutil" (acpi-cpufreq, z. B. AMD vor Zen 2) bzw.
+# "powersave" mit Hardware-Regelung (intel_pstate) – beide takten bei Lastwechseln erst hoch. "performance"
+# haelt den Takt oben; die Kerne schlafen in Pausen trotzdem (C-States), es kostet also nur unter Last Strom.
+# Bei intel_pstate/amd-pstate stellt der Governor "performance" auch die Energie-Vorgabe (EPP) um; sie laesst
+# sich dann nicht einzeln schreiben – deshalb beim Zurueckstellen erst der Governor, dann die EPP.
+perf_on() {
+  is_off perf && return 0
+  [ -d "$CPUFREQ" ] || return 0
+  mkdir -p "$RUN"
+  if [ ! -s "$SAVED" ]; then                           # schon an: gemerkten Stand nicht ueberschreiben
+    : > "$SAVED.new"
+    for _p in "$CPUFREQ"/policy*; do
+      [ -r "$_p/scaling_governor" ] || continue
+      _g="$(cat "$_p/scaling_governor" 2>/dev/null)"; _e="-"
+      [ -r "$_p/energy_performance_preference" ] && _e="$(cat "$_p/energy_performance_preference" 2>/dev/null)"
+      [ -n "$_g" ] && printf '%s %s %s\n' "${_p##*/}" "$_g" "${_e:--}" >> "$SAVED.new"
+    done
+    mv -f "$SAVED.new" "$SAVED"
+  fi
+  for _p in "$CPUFREQ"/policy*; do
+    [ -w "$_p/scaling_governor" ] || continue
+    grep -qw performance "$_p/scaling_available_governors" 2>/dev/null || continue
+    echo performance > "$_p/scaling_governor" 2>/dev/null
+  done
+  return 0
+}
+perf_off() {
+  [ -e "$SAVED" ] || return 0
+  while read -r _pol _g _e; do
+    _p="$CPUFREQ/$_pol"
+    [ -n "$_g" ] && [ -w "$_p/scaling_governor" ] || continue
+    echo "$_g" > "$_p/scaling_governor" 2>/dev/null
+    if [ "${_e:--}" != - ] && [ -w "$_p/energy_performance_preference" ]; then
+      echo "$_e" > "$_p/energy_performance_preference" 2>/dev/null
+    fi
+  done < "$SAVED"
+  rm -f "$SAVED"
+  return 0
+}
+perf_status() {
+  _g="$(cat "$CPUFREQ"/policy*/scaling_governor 2>/dev/null | sort -u | paste -sd, -)"
+  if is_off perf; then _want="aus"; elif [ -e "$SAVED" ]; then _want="an, gerade aktiv"; else _want="an"; fi
+  say "CPU-Takt beim Spielen: $_want (Governor jetzt: ${_g:-unbekannt})"
+}
+
+# ---------------------------------------------------------------------
+setup() {
+  mkdir -p "$VSD"
+  setup_audio
+  setup_oom
+  setup_preempt
+  if is_live; then
+    rm -f "$SVD/voidstation-trim"                      # der Stick hat nichts aufzuraeumen; der Installer richtet es ein
+  else
+    setup_trim
+  fi
+  return 0
+}
+
+status() {
+  if [ -s "$LIMITS" ]; then say "Ton: Echtzeit-Prioritaet erlaubt (Gruppe audio)"; else say "Ton: nicht eingerichtet"; fi
+  if is_off oom; then say "Speicherschutz: aus"
+  elif [ -e "$SVD/earlyoom" ]; then say "Speicherschutz: an (earlyoom)"
+  else say "Speicherschutz: nicht eingerichtet"; fi
+  preempt_status
+  if is_off trim; then say "SSD aufraeumen: aus"
+  elif [ -e "$SVD/voidstation-trim" ]; then
+    say "SSD aufraeumen: einmal pro Woche (zuletzt: $(head -n1 "$TRIM_LOG" 2>/dev/null || true))"
+  else say "SSD aufraeumen: nicht eingerichtet"; fi
+  perf_status
+}
+
+switch() {           # $1 = on | off, $2 = Teil
+  case " $PARTS " in *" ${2:-} "*) ;; *) echo "voidstation-tune $1: $(echo "$PARTS" | sed 's/ / | /g')" >&2; return 2 ;; esac
+  mkdir -p "$VSD"
+  if [ "$1" = off ]; then
+    : > "$VSD/tune-off-$2" && chmod 644 "$VSD/tune-off-$2"
+    [ "$2" = perf ] && perf_off
+  else
+    rm -f "$VSD/tune-off-$2"
+  fi
+  case "$2" in
+    oom) setup_oom ;;
+    trim) setup_trim ;;
+    preempt)
+      if [ "$1" = on ]; then setup_preempt
+      else say "Kernel: Vorgabe von Void (ab dem naechsten Start)"; fi ;;
+    perf) perf_status ;;
+  esac
+}
+
+case "${1:-status}" in
+  setup) need_root setup; setup ;;
+  boot) preempt_apply; exit 0 ;;
+  perf)
+    case "${2:-status}" in
+      on) need_root perf on; perf_on ;;
+      off) need_root perf off; perf_off ;;
+      status) perf_status ;;
+      *) echo "voidstation-tune perf: on | off | status" >&2; exit 2 ;;
+    esac ;;
+  on|off) need_root "$@"; switch "$1" "${2:-}" ;;
+  trim) need_root trim; trim_now "${2:-}" ;;
+  trim-loop) need_root trim-loop; trim_loop ;;
+  status) status ;;
+  *) echo "voidstation-tune: setup | perf on|off|status | on|off <$(echo "$PARTS" | sed 's/ /|/g')> | trim [--force] | status" >&2; exit 2 ;;
+esac

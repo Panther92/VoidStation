@@ -22,6 +22,9 @@
 #   8. Terminal: bash-Komfort (/etc/bash/bashrc.d), fastfetch mit VoidStation-Logo, nano mit Syntaxfarben.
 #   9. Konsolen: tty3 bis tty6 aus (tty1 Oberflaeche, tty2 Anmeldung als Rettungsweg). Beim naechsten Start per
 #      core-service, damit keine offene Sitzung abbricht. Der Live-Stick behaelt alle.
+#  10. Abstimmung unter der Haube (voidstation-tune): Echtzeit-Prioritaet fuer den Ton, Speicherschutz (earlyoom),
+#      Kernel voll unterbrechbar, SSD woechentlich aufraeumen, CPU-Takt beim Spielen. Dazu zram von selbst bei
+#      weniger als 8 GB RAM (voidstation-zram, beim Start).
 # =====================================================================
 CHROOT="${VOIDSTATION_CHROOT:-0}"
 say() { printf '%s\n' "$*"; }
@@ -73,10 +76,11 @@ chmod 644 /etc/runit/core-services/92-voidstation-tty.sh
 say "Konsolen: tty3 bis tty6 aus (ab dem naechsten Start)"
 
 # ---------------------------------------------------------------------
-# zram (nur wenn eingeschaltet: sudo voidstation-zram on)
+# zram: von selbst bei weniger als 8 GB RAM, sonst nur eingeschaltet (sudo voidstation-zram on | off)
 cat > /etc/runit/core-services/93-voidstation-zram.sh <<'EOF'
 # SPDX-License-Identifier: GPL-3.0-or-later
-# VoidStation (runit core-service): zram einrichten, falls eingeschaltet (voidstation-zram on).
+# VoidStation (runit core-service): zram einrichten – von selbst bei wenig RAM oder wenn eingeschaltet
+# (voidstation-zram on), nicht wenn abgeschaltet (voidstation-zram off) und nicht auf dem Live-Stick.
 [ -x /usr/local/sbin/voidstation-zram ] && /usr/local/sbin/voidstation-zram boot
 EOF
 chmod 644 /etc/runit/core-services/93-voidstation-zram.sh
@@ -311,4 +315,10 @@ EOF
   chmod 644 /etc/nanorc
 fi
 say "Terminal: Vervollstaendigung, Verlauf, Eingabeaufforderung, fastfetch-Logo, nano mit Farben"
+
+# ---------------------------------------------------------------------
+# 10. Abstimmung unter der Haube: alles Weitere steht in voidstation-tune (dort auch, wie man Teile abschaltet).
+#     Hier installiert, weil sysfix.sh vor den uebrigen Helfern laeuft (install.sh, update.sh).
+install -D -m 755 "$VSDIR/voidstation-tune" /usr/local/sbin/voidstation-tune
+VOIDSTATION_CHROOT="$CHROOT" /usr/local/sbin/voidstation-tune setup || say "Abstimmung: nicht vollstaendig eingerichtet"
 exit 0

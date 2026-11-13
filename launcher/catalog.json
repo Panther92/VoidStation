@@ -270,6 +270,7 @@
       "id": "discord",
       "name": "Discord",
       "cat": "Gaming",
+      "perf": false,
       "desc": "Sprach- und Text-Chat für Spielerunden.",
       "source": {
         "type": "appimage",

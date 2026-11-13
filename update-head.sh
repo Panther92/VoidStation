@@ -57,7 +57,7 @@ say "1/8  Pakete"
 MISSING=""
 for p in curl elogind xrdb pulseaudio-utils xdotool mpv python3-mpv ffmpegthumbnailer ffmpeg yt-dlp nodejs lsdvd samba flatpak xdg-desktop-portal xdg-desktop-portal-gtk fuse3 dconf xprop adwaita-qt adwaita-qt6 gnome-themes-extra xsetroot python3-gobject \
          bluez libspa-bluetooth htop nano fastfetch mousepad python3-pyside6-declarative qt6-svg qt6-imageformats qt6-plugin-tls-openssl \
-         wireless-regdb bash-completion; do
+         wireless-regdb bash-completion earlyoom; do
   xbps-query "$p" >/dev/null 2>&1 || MISSING="$MISSING $p"
 done
 # Startbild beim Hochfahren (s. voidstation-splash) – nur 64 Bit
