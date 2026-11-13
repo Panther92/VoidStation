@@ -91,26 +91,53 @@ def hold_and_stop():
         run(["sv", "stop", str(SV)], timeout=30)
 
 
+def detach_service():
+    """Dienst aus runit nehmen und den von runsv angelegten Ordner supervise/ entfernen. Das alte, auf dem Geraet gebaute
+    Paket hatte dort keinen Verweis, das Paket aus der Paketquelle bringt (wie jedes Void-Paket) supervise als Verweis
+    nach /run/runit mit – einen Ordner ersetzt xbps nicht ("Directory not empty", 14.11.2026 auf dem NiPoGi)."""
+    sup = SV / "supervise"
+    if not sup.is_dir() or sup.is_symlink():
+        return
+    if SVLINK.is_symlink() or SVLINK.exists():
+        SVLINK.unlink()
+    for _ in range(30):                                  # runsvdir beendet runsv binnen etwa 5 s
+        r = run(["pgrep", "-f", "^runsv mullvad-daemon$"], timeout=5)
+        if not r or r.returncode != 0:
+            break
+        time.sleep(0.5)
+    shutil.rmtree(sup, ignore_errors=True)
+
+
+def broken_service():
+    """Dienst unvollstaendig: run fehlt oder supervise ist ein Ordner (abgebrochener Wechsel vom alten Paket)."""
+    sup = SV / "supervise"
+    return SV.is_dir() and (not (SV / "run").exists() or (sup.is_dir() and not sup.is_symlink()))
+
+
 def cmd_install():
     have = installed_version()
     old = pkg_version(OLD_PKG) is not None
+    broken = broken_service()
     fresh = not SETTINGS.exists()
     r = run(["xbps-install", "-S"], timeout=300)                 # Paketlisten (auch die eigene Quelle)
     if not r or r.returncode != 0:
         say("Paketlisten konnten nicht geladen werden – versuche es mit dem Stand von vorher")
     ver = latest()
-    if have == ver and not old and SV.is_dir():
+    if have == ver and not old and not broken and SV.is_dir():
         say(f"Mullvad VPN {ver} ist aktuell")
         return enable()
     say(f"Mullvad VPN {ver}" + (f" (vorher {have})" if have else ""))
     if have:
         hold_and_stop()
-    # -u: Update; ein vorhandenes mullvad-vpn-voidstation ersetzt das Paket selbst (replaces)
-    args = ["xbps-install", "-y"] + (["-u"] if have and not old else []) + [PKG]
+    if old or broken:
+        detach_service()
+    # -u: Update; ein vorhandenes mullvad-vpn-voidstation ersetzt das Paket selbst (replaces);
+    # -f: nach einem abgebrochenen Wechsel das halb entpackte Paket neu auspacken
+    args = ["xbps-install", "-y"] + (["-f"] if broken and not old else ["-u"] if have and not old else []) + [PKG]
     r2 = subprocess.run(args, stdout=sys.stdout, stderr=subprocess.STDOUT)
     if r2.returncode != 0:
-        if have:
-            run(["sv", "up", str(SV)], timeout=10)                # alte Fassung laeuft weiter
+        if have and (SV / "run").exists():
+            enable()                                              # alte Fassung laeuft weiter
         raise RuntimeError("Paket konnte nicht installiert werden")
     if old:
         if pkg_version(OLD_PKG):

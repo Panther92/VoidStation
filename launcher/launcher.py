@@ -15418,8 +15418,12 @@ class Vpn:
 
     def outdated(self):
         """Nur der Wechsel vom alten, auf dem Geraet gebauten Paket steht als eigenes Update an. Neue Versionen von
-        mullvad-vpn kommen mit den Paket-Updates (voidstation-pkg update startet den Dienst danach neu)."""
-        return xbps_installed(self.OLD_PKG)
+        mullvad-vpn kommen mit den Paket-Updates (voidstation-pkg update startet den Dienst danach neu). Ebenso ein
+        abgebrochener Wechsel (Dienst ohne run, supervise als Ordner statt Verweis): voidstation-mullvad repariert ihn."""
+        sv = Path("/etc/sv/mullvad-daemon")
+        sup = sv / "supervise"
+        broken = sv.is_dir() and (not (sv / "run").exists() or (sup.is_dir() and not sup.is_symlink()))
+        return xbps_installed(self.OLD_PKG) or (broken and self.installed())
 
     # ---- zuletzt verbunden -------------------------------------------------------------------------------------
     def recent(self):
