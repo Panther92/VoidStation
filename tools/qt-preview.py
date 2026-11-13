@@ -759,9 +759,9 @@ class H(S.H):
             sys.path.insert(0, str(REPO / "launcher"))
             import vsreport
             time.sleep(1.5)                         # Hinweis „Erstelle Fehlerbericht …“ sichtbar
-            r = vsreport.build({"running": [], "front": None})
-            name = f"{vsreport.PREFIX}{vsreport.safe(r['host'])}_{r['time']:%Y-%m-%d_%H-%M-%S}.txt"
-            return self.j({"name": name, "size": len(r["text"].encode()), "overview": r["overview"], "logs": r["logs"]})
+            rep = vsreport.build({"running": [], "front": None})
+            name = f"{vsreport.PREFIX}{vsreport.safe(rep['host'])}_{rep['time']:%Y-%m-%d_%H-%M-%S}.txt"
+            return self.j({"name": name, "size": len(rep["text"].encode()), "overview": rep["overview"], "logs": rep["logs"]})
         if p == "/api/nowplaying/control":          # heisse Ecke oben links
             a = body.get("action")
             print("[vorschau] Musik:", a, flush=True)
