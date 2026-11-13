@@ -98,12 +98,27 @@ _LOOK_EMU = os.environ.get("VS_LOOK", "duckstation")
 _LOOK_CHOICES = {
     "duckstation": [_looks["_OFF"]] + [dict(lab, v=v) for v, _, lab in _looks["DUCK_LOOKS"]],
     "pcsx2": _looks["PCSX2_LOOKS"],
-    "gba": [_looks["_OFF"], {"v": "orig", "k": "emuopt.v.orig"}] + [dict(lab, v=v) for v, lab in _looks["MGBA_LOOKS"]],
+    "gba": [_looks["_OFF"], dict(_looks["_KLAR"], v="klar"), {"v": "orig", "k": "emuopt.v.orig"}]
+    + [dict(lab, v=v) for v, lab in _looks["MGBA_LOOKS"]],
     "dosbox": _looks["DOSBOX_LOOKS"],
 }[_LOOK_EMU]
-EMUOPT_LIST.append(("look", ([("fxaa", False, EMUOPT_TF)] if _LOOK_EMU in ("duckstation", "pcsx2") else [])
-                    + [("look", False, _LOOK_CHOICES)]))
-EMUOPTS.setdefault("fxaa", "true")
+_LOOK_ID = "shader" if _LOOK_EMU == "dosbox" else "look"
+
+
+def _look_p(oid, choices):
+    """Vorschaubild je Moeglichkeit wie launcher.py look_preview"""
+    out = []
+    for c in choices:
+        f = REPO / "launcher" / "shaders" / "previews" / _LOOK_EMU / f"{oid}-{str(c['v']).replace('/', '_')}.jpg"
+        out.append(dict(c, p=str(f)) if f.is_file() else c)
+    return out
+
+
+_FXAA = {"duckstation": [{"v": "auto", "k": "emuopt.v.auto", "auto": True}, {"v": "on", "k": "common.on"}, _looks["_OFF"]],
+         "pcsx2": EMUOPT_TF}.get(_LOOK_EMU)
+EMUOPT_LIST.append(("look", ([("fxaa", True, _look_p("fxaa", _FXAA)), ("color", False, _look_p("color", _looks["_COLOR_CHOICES"]))]
+                             if _FXAA else []) + [(_LOOK_ID, True, _look_p(_LOOK_ID, _LOOK_CHOICES))]))
+EMUOPTS.update({"fxaa": _FXAA[0]["v"] if _FXAA else "", "color": "nat"})
 
 
 def emuopts_payload(emu, game):
@@ -975,6 +990,9 @@ class H(S.H):
                                                    default=max(d["rates"].get(d["current"], [60.0])))
             if p.endswith("/matchrate"):
                 S.SETTINGS["match_rate"] = bool(body.get("on"))
+            if p.endswith("/gamefx"):
+                S.SETTINGS["game_fx"] = {"mode": body.get("mode"), "ready": os.environ.get("VS_GAMEFX") != "install",
+                                         "busy": False, "failed": os.environ.get("VS_GAMEFX") == "failed"}
             return self.j(settings())
         return self.j({})
 

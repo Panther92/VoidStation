@@ -395,6 +395,7 @@ pk = {"flatpak"}
 # Eingabemethode fuer Japanisch, Koreanisch, Chinesisch (IME_PKGS/IME_ENGINES in launcher.py)
 pk.update(["fcitx5", "fcitx5-gtk+3", "fcitx5-gtk4", "fcitx5-qt6", "fcitx5-hangul", "fcitx5-chinese-addons",
            "fcitx5-chewing", "fcitx5-mozc", "fcitx5-anthy"])
+pk.add("vkBasalt")                                # Bild in Spielen (launcher.py GAME_FX), kommt erst beim Einschalten
 for a in c["apps"]:
     s = a["source"]
     if arch and isinstance(a.get("arch"), list) and arch not in a["arch"]:

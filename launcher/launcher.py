@@ -357,6 +357,7 @@ class AppManager:
         args, emu_env, wm_fs = emu_prepare(tid, args)   # Emulatoren: Vorgaben, Vollbild, Controller
         penv = app_env()
         penv.update(emu_env)
+        penv.update(game_fx_env(tid))
         penv.update(env or {})
         self.pause_background(keep=tid)                 # anderes Programm kommt nach vorn: Emulatoren anhalten
         proc = subprocess.Popen(args, cwd=str(Path.home()), stdin=subprocess.DEVNULL, env=penv,
@@ -1299,7 +1300,7 @@ def dosbox_midi_conf():
             _DOSBOX_SF_TRIED.append(1)
 
             def fetch():
-                r = run(["sudo", "-n", PKG_HELPER, "install", "soundfont-fluid"])
+                r = run(["sudo", "-n", PKG_HELPER, "install", "soundfont-fluid"], timeout=1800)     # rund 140 MB
                 log("DOSBox: Soundfont fuer General MIDI", "installiert" if r and r.returncode == 0 else "nicht installiert")
             threading.Thread(target=fetch, daemon=True).start()
     except Exception as e:  # noqa: BLE001 – darf den Start nie verhindern
@@ -5065,6 +5066,72 @@ def catalog_app(app_id):
 SYS_ARCH = "i686" if os.uname().machine in ("i386", "i486", "i586", "i686") else os.uname().machine
 
 
+# ---- Bild in Spielen (Paul, 13.11.2026: "ein Look fuer alle Vulkan-Programme") ----------------------------------
+# vkBasalt (Void-Paket, Zlib-Lizenz) ist eine Vulkan-Schicht, die das fertige Bild eines Programms nachbearbeitet. Sie
+# liegt als "implicit layer" im System und wird je Prozess mit ENABLE_VKBASALT=1 eingeschaltet (vkBasalt.json,
+# enable_environment); VKBASALT_CONFIG_FILE zeigt auf die Einstellungen, die VoidStation schreibt.
+# Einstellungen -> Anzeige -> "Bild in Spielen": Aus (Vorgabe) | Schaerfen (CAS) | Schaerfen + Kanten glaetten (SMAA, CAS).
+# Gilt fuer Kacheln aus dem Katalog der Kategorien Emulatoren, Gaming, Spiele – ausser denen mit eigenem Bildstil in
+# den Optionen (EMU_OPTS: PCSX2 und DuckStation schaerfen und glaetten selbst, doppelt waere zu viel). Wirkt nur, wo ein
+# Programm ueber Vulkan zeichnet; OpenGL-Programme merken nichts davon. Nur 64 Bit; 32-Bit-Spiele in Steam bleiben aussen
+# vor (dafuer braeuchte es vkBasalt-32bit). Das Paket kommt erst, wenn jemand die Einstellung einschaltet.
+GAME_FX = {"off": "", "cas": "cas", "smaa": "smaa:cas"}
+GAME_FX_CATS = ("Emulatoren", "Gaming", "Spiele")
+VKBASALT_LAYER = Path("/usr/share/vulkan/implicit_layer.d/vkBasalt.json")
+VKBASALT_CONF = Path.home() / ".config/voidstation/vkBasalt.conf"
+_GAME_FX_JOB: dict[str, Any] = {"busy": False, "failed": False}
+
+
+def game_fx(s=None):
+    v = (settings_load() if s is None else s).get("game_fx")
+    return v if v in GAME_FX else "off"
+
+
+def game_fx_state(s=None):
+    """Fuer die Einstellungsseite: None, wo es die Einstellung nicht gibt (32 Bit, Live-System)."""
+    if SYS_ARCH != "x86_64" or Path("/etc/voidstation-live").exists():
+        return None
+    return {"mode": game_fx(s), "ready": VKBASALT_LAYER.is_file(), "busy": _GAME_FX_JOB["busy"], "failed": _GAME_FX_JOB["failed"]}
+
+
+def game_fx_set(mode):
+    if mode not in GAME_FX or game_fx_state() is None:
+        raise ValueError("Unbekannter Wert")
+    s = settings_load()
+    s["game_fx"] = mode
+    settings_save(s)
+    log("Bild in Spielen:", mode)
+    if mode != "off" and not VKBASALT_LAYER.is_file() and not _GAME_FX_JOB["busy"]:
+        _GAME_FX_JOB.update(busy=True, failed=False)
+
+        def fetch():
+            r = run(["sudo", "-n", PKG_HELPER, "install", "vkBasalt"], timeout=900)
+            ok = bool(r and r.returncode == 0 and VKBASALT_LAYER.is_file())
+            _GAME_FX_JOB.update(busy=False, failed=not ok)
+            log("vkBasalt", "installiert" if ok else "nicht installiert: " + ((r.stdout + r.stderr).strip()[-200:] if r else "Zeit abgelaufen"))
+        threading.Thread(target=fetch, daemon=True).start()
+
+
+def game_fx_env(tid):
+    """Umgebung fuer den Start einer Kachel: {} oder die Schalter fuer vkBasalt. Darf den Start nie verhindern."""
+    try:
+        effects = GAME_FX[game_fx()]
+        if not effects or tid in EMU_OPTS or SYS_ARCH != "x86_64" or not VKBASALT_LAYER.is_file():
+            return {}
+        app = catalog_app(tid)
+        if not app or app.get("cat") not in GAME_FX_CATS:
+            return {}
+        # toggleKey: Vorgabe waere "Pos1" – eine Taste, die niemand aus Versehen trifft
+        text = f"effects = {effects}\ncasSharpness = 0.4\nsmaaEdgeDetection = luma\nenableOnLaunch = True\ntoggleKey = Scroll_Lock\n"
+        if not VKBASALT_CONF.is_file() or VKBASALT_CONF.read_text(encoding="utf-8") != text:
+            VKBASALT_CONF.parent.mkdir(parents=True, exist_ok=True)
+            VKBASALT_CONF.write_text(text, encoding="utf-8")
+        return {"ENABLE_VKBASALT": "1", "VKBASALT_CONFIG_FILE": str(VKBASALT_CONF)}
+    except Exception as e:  # noqa: BLE001
+        log(f"{tid}: Bild in Spielen:", e)
+        return {}
+
+
 def app_archs(a):
     """Architekturen, fuer die es eine App gibt; None = alle. "arch" im Katalog geht vor, sonst aus der Quelle:
     Flathub baut kein 32-Bit-x86 mehr, AppImages im Katalog sind 64 Bit, Widevine (Netflix & Co.) gibt es unter
@@ -6989,6 +7056,7 @@ def settings_payload():
             "sysupd_days": sysupd_days(s), "sysupd_choices": SYSUPD_DAYS, "music_volume": music_volume(),
             "padmouse": bool(s.get("padmouse", True)),
             "rate": s.get("rate"), "match_rate": bool(s.get("match_rate")), "region": region(s),
+            "game_fx": game_fx_state(s),
             "osk": {"choice": s.get("osk_layout") if s.get("osk_layout") in OSK_LAYOUTS else "auto",
                     "mode": s.get("osk_mode") if s.get("osk_mode") in OSK_MODES else "auto"}}
 
@@ -9977,7 +10045,7 @@ def emu_mute_apply(tile):
 # Zurueck auf VoidStation-Einstellungen: Werte merken (opt_saved), Vorgaben eintragen; "Anpassen" holt die gemerkten zurueck.
 EMU_GAME_OPTS = Path.home() / ".config/voidstation/emu-games.json"       # {Kachel: {Spieldatei: {Option: Wert}}}
 _OPT_MODE = [{"v": "vs", "k": "emuopt.v.vs"}, {"v": "custom", "k": "emuopt.v.custom"}]
-EMU_AUTO = {"duckstation": {"texfilter": "auto"}, "dosbox": {"speed": "std"}}   # {Kachel: {Option: Stufe, auf der Profile gelten}}
+EMU_AUTO = {"duckstation": {"texfilter": "auto", "fxaa": "auto"}, "dosbox": {"speed": "std"}}   # {Kachel: {Option: Stufe, auf der Profile gelten}}
 EMU_OWN = BASE / "emu-own.ini"                         # Schalter von VoidStation selbst: [<Kachel>] <Option> = Wert
 _OPT_TF = [{"v": "true", "k": "common.on"}, {"v": "false", "k": "common.off"}]
 _OPT_10 = [{"v": "1", "k": "common.on"}, {"v": "0", "k": "common.off"}]
@@ -9990,7 +10058,8 @@ def _opt(oid, section, key, choices, default, game=False, hidden=False, own=Fals
     die Patches je Spiel (EMU_PATCHES), fuer die die Emulatoren keinen allgemeinen Schalter haben.
     label: Beschriftung einer anderen Option uebernehmen (emuopt.<label>).
     io: eigenes Lesen/Schreiben fuer Optionen, die mehr als einen Abschnitt beruehren (Shader-Ketten von DuckStation,
-    Shader-Pfad von mGBA): Objekt mit read(ini) -> Wert oder None und write(path, value). Nur allgemein, nie je Spiel."""
+    Shader-Pfad von mGBA): Objekt mit read(ini) -> Wert oder None und write(path, value); fuer DuckStation dazu
+    writes/game_read/game_writes/game_clear (Spiel-Datei, Spielprofile)."""
     return {"id": oid, "section": section, "keys": key if isinstance(key, list) else [key], "choices": choices,
             "default": default, "game": game, "hidden": hidden, "own": own, "label": label, "io": io}
 
@@ -10012,86 +10081,229 @@ def _opt_cycles(real, protected):
 # (GraphicsPostProcessingSettingsTab.ui), mGBA res/shaders (mitgeliefert, s. launcher/shaders/LIESMICH.txt),
 # DOSBox Staging 0.82.2 glshader (render.cpp, shader_manager.cpp MapShaderName).
 _TRUE = ("true", "1", "yes", "on")
-MGBA_SHADERS = BASE / "shaders" / "mgba"
+SHADER_DIR = BASE / "shaders"
+MGBA_SHADERS = SHADER_DIR / "mgba"                    # Shader von mGBA und "voidstation-*.shader" (eigene)
+DUCK_OWN_SHADERS = SHADER_DIR / "duckstation"         # eigene Shader fuer DuckStation (*.glsl), s. duck_shaders_install
+LOOK_PREVIEWS = SHADER_DIR / "previews"               # Vorschaubilder je Stil: <Kachel>/<Option>-<Wert>.jpg (tools/look-previews.py)
 
 
-class _DuckChain:
-    """Ein Shader als einzige Stufe einer Nachbearbeitungs-Kette von DuckStation (postprocessing.cpp): [<Kette>] Enabled,
-    StageCount, [<Kette>/Stage1] ShaderName, StageEnabled. "off" = Kette aus. Hat der Nutzer im Emulator eine laengere
-    Kette gebaut, ist kein Knopf an (None); erst eine Wahl hier ersetzt sie."""
+def _io_apply(path, sets, drops=None):
+    """{Abschnitt: {Schluessel: Wert}} schreiben und {Abschnitt: [Schluessel]} entfernen; nichts anlegen, wo nichts zu tun ist."""
+    drops = drops or {}
+    have = ini_read(path) if drops else {}
+    for sec in list(sets) + [x for x in drops if x not in sets]:
+        rm = [k for k in drops.get(sec, ()) if k in have.get(sec, {})]
+        if sets.get(sec) or rm:
+            ini_update(path, sec, sets.get(sec, {}), remove=rm)
+
+
+def _duck_stages(ini, chain):
+    """Shader der eingeschalteten Stufen einer Nachbearbeitungs-Kette von DuckStation (postprocessing.cpp: [<Kette>] Enabled,
+    StageCount, [<Kette>/Stage<n>] ShaderName, StageEnabled). [] = Kette aus oder leer, None = nicht lesbar."""
+    main = ini.get(chain, {})
+    try:
+        count = int(main.get("StageCount", "0") or 0)
+    except ValueError:
+        return None
+    if main.get("Enabled", "false").strip().lower() not in _TRUE:
+        return []
+    out = []
+    for i in range(1, count + 1):
+        stage = ini.get(f"{chain}/Stage{i}", {})
+        if stage.get("StageEnabled", "true").strip().lower() in _TRUE:
+            out.append(stage.get("ShaderName", "").strip())
+    return out
+
+
+def _duck_chain_writes(ini, chain, shaders):
+    """Kette auf genau diese Shader stellen -> (setzen, entfernen). Wechselt in einer Stufe der Shader, fliegen die Regler
+    des alten heraus (sonst traegt der neue fremde Werte)."""
+    if not shaders:
+        return {chain: {"Enabled": "false"}}, {}
+    sets = {chain: {"Enabled": "true", "StageCount": str(len(shaders))}}
+    drops = {}
+    for i, name in enumerate(shaders, 1):
+        sec = f"{chain}/Stage{i}"
+        old = ini.get(sec, {})
+        sets[sec] = {"ShaderName": name, "StageEnabled": "true"}
+        if old.get("ShaderName") != name:
+            drops[sec] = [k for k in old if k not in ("ShaderName", "StageEnabled")]
+    return sets, drops
+
+
+def _duck_chain_clear(ini, chain):
+    return {sec: list(vals) for sec, vals in ini.items() if sec == chain or sec.startswith(chain + "/Stage")}
+
+
+class _DuckSingle:
+    """Ein Shader als einzige Stufe einer Kette ("off" = Kette aus) – fuer "Kanten glaetten" in [InternalPostProcessing].
+    Mehrere Werte duerfen denselben Shader meinen (Automatik und An); gelesen wird der erste. Hat der Nutzer im Emulator
+    eine andere Kette gebaut, ist kein Knopf an (None); erst eine Wahl hier ersetzt sie.
+    Je Spiel: Steht in der Spiel-Datei [<Kette>] Enabled, nimmt DuckStation die ganze Kette von dort
+    (video_presenter.cpp GetPostProcessingSettingsInterface)."""
 
     def __init__(self, chain, shaders):
-        self.chain, self.shaders = chain, shaders        # {Wert: ShaderName}
+        self.chain, self.shaders = chain, shaders
 
     def read(self, ini):
-        main = ini.get(self.chain, {})
-        try:
-            count = int(main.get("StageCount", "0") or 0)
-        except ValueError:
+        stages = _duck_stages(ini, self.chain)
+        if stages is None:
             return None
-        if main.get("Enabled", "false").strip().lower() not in _TRUE or count == 0:
+        if not stages:
             return "off"
-        if count != 1:
-            return None
-        stage = ini.get(f"{self.chain}/Stage1", {})
-        if stage.get("StageEnabled", "true").strip().lower() not in _TRUE:
-            return "off"
-        name = stage.get("ShaderName", "").strip()
-        return next((v for v, s in self.shaders.items() if s == name), None)
+        return next((v for v, name in self.shaders.items() if [name] == stages), None)
+
+    def game_read(self, ini):
+        return self.read(ini) if "Enabled" in ini.get(self.chain, {}) else None
+
+    def writes(self, value, ini):
+        return _duck_chain_writes(ini, self.chain, [] if value == "off" else [self.shaders[value]])
+
+    def game_writes(self, value, ini, base):
+        return self.writes(value, ini)
+
+    def game_clear(self, ini):
+        return _duck_chain_clear(ini, self.chain)
 
     def write(self, path, value):
-        if value == "off":
-            ini_update(path, self.chain, {"Enabled": "false"})
-            return
-        shader, sec = self.shaders[value], f"{self.chain}/Stage1"
-        old = ini_read(path).get(sec, {})
-        # Anderer Shader: dessen Einstellungen (Regler) aus der Stufe nehmen, sonst traegt der neue fremde Werte
-        drop = [k for k in old if k not in ("ShaderName", "StageEnabled")] if old.get("ShaderName") != shader else []
-        ini_update(path, sec, {"ShaderName": shader, "StageEnabled": "true"}, remove=drop)
-        ini_update(path, self.chain, {"Enabled": "true", "StageCount": "1"})
+        _io_apply(path, *self.writes(value, ini_read(path)))
+
+
+class _DuckDisplay:
+    """"Stil" (role 0) und "Farbe" (role 1) teilen sich die Kette [PostProcessing]: erst die Farbe, dann der Stil.
+    Lesbar ist nur, was genau so aufgebaut ist – sonst ist kein Knopf an. Je Spiel gibt es nur den Stil; die Kette des
+    Spiels bekommt die allgemeine Farbe davor (duck_game_color_sync zieht sie vor jedem Start nach)."""
+    chain = "PostProcessing"
+
+    def __init__(self, role, looks, colors):
+        self.role, self.looks, self.colors = role, looks, colors
+
+    def pair(self, ini):
+        stages = _duck_stages(ini, self.chain)
+        if stages is None:
+            return None
+        color = "nat"
+        if stages:
+            hit = next((v for v, name in self.colors.items() if name == stages[0]), None)
+            if hit:
+                color, stages = hit, stages[1:]
+        if not stages:
+            return ("off", color)
+        look = next((v for v, name in self.looks.items() if name == stages[0]), None) if len(stages) == 1 else None
+        return (look, color) if look else None
+
+    def compose(self, look, color):
+        return ([self.colors[color]] if color != "nat" else []) + ([self.looks[look]] if look != "off" else [])
+
+    def read(self, ini):
+        got = self.pair(ini)
+        return got[self.role] if got else None
+
+    def game_read(self, ini):
+        return self.read(ini) if "Enabled" in ini.get(self.chain, {}) else None
+
+    def writes(self, value, ini):
+        cur = list(self.pair(ini) or ("off", "nat"))
+        cur[self.role] = value
+        return _duck_chain_writes(ini, self.chain, self.compose(*cur))
+
+    def game_writes(self, value, ini, base):
+        return _duck_chain_writes(ini, self.chain, self.compose(value, (self.pair(base) or ("off", "nat"))[1]))
+
+    def game_clear(self, ini):
+        return _duck_chain_clear(ini, self.chain)
+
+    def write(self, path, value):
+        _io_apply(path, *self.writes(value, ini_read(path)))
+
+
+def duck_game_color_sync(native):
+    """Spiel mit eigenem Stil: Seine Kette ersetzt bei DuckStation die allgemeine – die allgemeine Farbe nachziehen."""
+    io, gi = _DUCK_LOOK_IO, ini_read(native)
+    if "Enabled" not in gi.get(io.chain, {}):
+        return
+    mine, base = io.pair(gi), ini_read(DUCK_INI)
+    if mine and mine[1] != (io.pair(base) or ("off", "nat"))[1]:
+        _io_apply(native, *io.game_writes(mine[0], gi, base))
+
+
+def duck_shaders_install():
+    """Eigene Shader in den Shader-Ordner von DuckStation legen ([Folders] Shaders, sonst <Daten>/shaders) – dort sucht es
+    zuerst (postprocessing.cpp TryLoadingShader). Vor jedem Start, nur was fehlt oder sich geaendert hat."""
+    dst = DUCK_INI.parent / (ini_read(DUCK_INI).get("Folders", {}).get("Shaders") or "shaders")
+    for src in sorted(DUCK_OWN_SHADERS.glob("*.glsl")):
+        try:
+            data = src.read_bytes()
+            out = dst / src.name
+            if not out.is_file() or out.read_bytes() != data:
+                dst.mkdir(parents=True, exist_ok=True)
+                out.write_bytes(data)
+        except OSError as e:
+            log("DuckStation: Shader", src.name, e)
 
 
 class _MgbaShader:
-    """Shader von mGBA: [ports.qt] shader = Ordner des Shaders (ShaderSelector.cpp), leer = keiner. Nur die von
-    VoidStation mitgelieferten zaehlen. "orig" (Original-Farben) merkt sich VoidStation in EMU_OWN, weil der Shader dafuer
-    je Spiel wechselt (mgba_look_game): GBA Color, GBC Color oder bei Game-Boy-Spielen keiner."""
+    """Shader von mGBA: [ports.qt] shader = Ordner des Shaders (ShaderSelector.cpp), leer = keiner. Was gewaehlt ist, merkt
+    sich VoidStation in EMU_OWN ([gba] look = Wert, shader = zuletzt eingetragener Pfad), weil der Pfad je Spiel wechseln kann:
+    "Original-Farben" nimmt GBA Color, GBC Color oder bei Game-Boy-Spielen keinen, und ein Spiel kann einen eigenen Stil
+    haben (emu-games.json). Steht in mGBA etwas anderes als zuletzt eingetragen, hat der Nutzer dort gewaehlt – das gilt."""
+    ORIG = {".gbc": "gbc-color", ".gb": ""}        # .gb: Das Display des ersten Game Boy hatte keine Farben zu korrigieren
 
-    ORIG = ("gba-color", "gbc-color")
+    def __init__(self, folders):
+        self.folders = folders                       # {Wert: Ordner unter MGBA_SHADERS ohne ".shader"}
+        self.values = {"off", "orig"} | set(folders)
 
-    def __init__(self, names):
-        self.names = names
+    def path(self, value, ext=""):
+        name = self.ORIG.get(ext, "gba-color") if value == "orig" else self.folders.get(value, "")
+        return str(MGBA_SHADERS / f"{name}.shader") if name else ""
+
+    def derive(self, cur):
+        if not cur:
+            return "off"
+        p = Path(cur)
+        if str(p.parent) != str(MGBA_SHADERS):
+            return None
+        name = p.name.removesuffix(".shader")
+        if name in ("gba-color", "gbc-color"):
+            return "orig"
+        return next((v for v, folder in self.folders.items() if folder == name), None)
 
     def read(self, ini):
-        path = ini.get("ports.qt", {}).get("shader", "").strip()
-        p = Path(path)
-        ours = bool(path) and str(p.parent) == str(MGBA_SHADERS)
-        name = p.name.removesuffix(".shader") if path else ""
-        if ini_read(EMU_OWN).get("gba", {}).get("look") == "orig" and (not path or (ours and name in self.ORIG)):
-            return "orig"
-        if not path:
-            return "off"
-        return name if ours and name in self.names else None
+        cur = ini.get("ports.qt", {}).get("shader", "").strip()
+        own = ini_read(EMU_OWN).get("gba", {})
+        if "look" in own and cur == own.get("shader", ""):
+            return own["look"] if own["look"] in self.values else None
+        return self.derive(cur)
 
     def write(self, path, value):
-        ini_update(EMU_OWN, "gba", {"look": value})
-        shader = "" if value == "off" else str(MGBA_SHADERS / f"{'gba-color' if value == 'orig' else value}.shader")
+        shader = self.path(value)
+        ini_update(EMU_OWN, "gba", {"look": value, "shader": shader})
         ini_update(path, "ports.qt", {"shader": shader})
 
 
 def mgba_look_game(game):
-    """Original-Farben: Shader passend zum Spiel, das jetzt startet (.gba GBA Color, .gbc GBC Color, .gb ohne – das
-    Display des ersten Game Boy hatte keine Farben zu korrigieren). Aufruf mit EMU_LOCK."""
-    if ini_read(EMU_OWN).get("gba", {}).get("look") != "orig":
-        return
-    name = {".gbc": "gbc-color", ".gb": ""}.get(Path(game).suffix.lower(), "gba-color") if game else "gba-color"
-    shader = str(MGBA_SHADERS / f"{name}.shader") if name else ""
-    if ini_read(MGBA_CONFIG).get("ports.qt", {}).get("shader", "") != shader:
+    """Vor jedem Start von mGBA den Shader fuer dieses Spiel eintragen: die Wahl fuer das Spiel, sonst die allgemeine
+    (Original-Farben je nach Endung). Hat der Nutzer in mGBA selbst einen Shader gewaehlt, wird das die allgemeine Wahl
+    (ein fremder bleibt als Pfad gemerkt und kommt nach einem Spiel mit eigenem Stil zurueck). Aufruf mit EMU_LOCK."""
+    io = _MGBA_LOOK_IO
+    own = dict(ini_read(EMU_OWN).get("gba", {}))
+    cur = ini_read(MGBA_CONFIG).get("ports.qt", {}).get("shader", "").strip()
+    if "look" not in own or cur != own.get("shader", ""):
+        own["look"], own["keep"] = io.derive(cur) or "custom", cur
+    mine = emu_opts_game("gba", os.path.basename(game)).get("look") if game else None
+    ext = Path(game).suffix.lower() if game else ""
+    want = mine or own["look"]
+    shader = io.path(want, ext) if want in io.values else own.get("keep", "")
+    if shader != cur:
         ini_update(MGBA_CONFIG, "ports.qt", {"shader": shader})
-        log(f"mGBA: Original-Farben: {name or 'ohne Shader'}")
+        log(f"mGBA: Bildstil {want}{' (Spiel)' if mine else ''}: {Path(shader).name or 'ohne Shader'}")
+    ini_update(EMU_OWN, "gba", {"look": own["look"], "keep": own.get("keep", ""), "shader": shader})
 
 
 _OFF = {"v": "off", "k": "common.off"}
+_KLAR = {"k": "emuopt.v.klar"}                 # eigener Stil von VoidStation (launcher/shaders/LIESMICH.txt)
 DUCK_LOOKS = [                                 # (Wert, ShaderName, Beschriftung: Schluessel "k" oder fester Name "t")
+    ("klar", "voidstation-klar", _KLAR),
     ("crt-lottes", "crt-lottes", {"t": "CRT-Lottes"}),
     ("crt-lottes2", "CRTLottes2", {"t": "CRT-Lottes 2"}),
     ("crt-hyllian", "dolphinfx/crt/CRT-HYLLIAN", {"t": "CRT-Hyllian"}),
@@ -10110,10 +10322,27 @@ DUCK_LOOKS = [                                 # (Wert, ShaderName, Beschriftung
     ("xbr", "dolphinfx/edge-smoothing/XBR", {"t": "xBR"}),
     ("super-xbr", "edge-smoothing/super-xbr", {"t": "Super-xBR"}),
 ]
+# Farbe: bei DuckStation eigene Shader mit festen Werten, bei PCSX2 dessen ShadeBoost (Wert / 50 = Faktor) – dieselbe
+# Formel (shadeboost.glsl), dieselben Zahlen, also derselbe Eindruck auf beiden. "Warm" o. Ae. kann ShadeBoost nicht.
+DUCK_COLORS = {"vivid": "voidstation-kraeftig", "bright": "voidstation-hell"}
+_COLOR_CHOICES = [{"v": "nat", "k": "emuopt.v.natural"}, {"v": "vivid", "k": "emuopt.v.vivid"},
+                  {"v": "bright", "k": "emuopt.v.bright"}]
+
+
+def _shadeboost(on, brightness=50, contrast=50, saturation=50, gamma=50):
+    if not on:
+        return {"ShadeBoost": "false"}
+    return {"ShadeBoost": "true", "ShadeBoost_Brightness": str(brightness), "ShadeBoost_Contrast": str(contrast),
+            "ShadeBoost_Saturation": str(saturation), "ShadeBoost_Gamma": str(gamma)}
+
+
+PCSX2_COLORS = [dict(_COLOR_CHOICES[0], set=_shadeboost(False)),
+                dict(_COLOR_CHOICES[1], set=_shadeboost(True, contrast=54, saturation=60)),
+                dict(_COLOR_CHOICES[2], set=_shadeboost(True, brightness=54, gamma=55))]
 PCSX2_LOOKS = [{"v": "0", "k": "common.off"}, {"v": "5", "t": "Lottes CRT"}, {"v": "1", "k": "emuopt.v.scanlines"},
                {"v": "2", "k": "emuopt.v.diagonal"}, {"v": "3", "k": "emuopt.v.triangular"},
                {"v": "4", "k": "emuopt.v.wave"}, {"v": "6", "t": "4×RGSS"}, {"v": "7", "t": "N×AGSS"}]
-MGBA_LOOKS = [                                 # Ordner unter launcher/shaders/mgba ohne ".shader"
+MGBA_LOOKS = [                                 # (Wert = Ordner unter launcher/shaders/mgba ohne ".shader", Beschriftung)
     ("agb001", {"t": "AGB-001"}), ("ags001", {"t": "AGS-001"}), ("sp101-color", {"t": "GBA SP 101"}),
     ("nso-gba-color", {"t": "NSO GBA"}), ("nso-gbc-color", {"t": "NSO GBC"}), ("gb-micro-color", {"t": "GB Micro"}),
     ("dslite-color", {"t": "DS Lite"}), ("nds-color", {"t": "Nintendo DS"}), ("wiiu", {"t": "Wii U"}),
@@ -10122,7 +10351,7 @@ MGBA_LOOKS = [                                 # Ordner unter launcher/shaders/m
     ("motion_blur", {"k": "emuopt.v.motionBlur"}), ("vignette", {"k": "emuopt.v.vignette"}),
     ("pixelate", {"t": "Pixelate"}), ("vba_pixelate", {"t": "VBA Pixelate"}), ("scale2x", {"t": "Scale2x"}),
     ("scale4x", {"t": "Scale4x"}), ("hq2x", {"t": "hq2x"}), ("xbr-lv2", {"t": "xBR-lv2"}), ("xbr-lv3", {"t": "xBR-lv3"}),
-    ("mmpx", {"t": "MMPX"}), ("omniscale", {"t": "OmniScale"}), ("fish", {"t": "fish"}),
+    ("mmpx", {"t": "MMPX"}), ("fish", {"t": "fish"}),       # OmniScale braucht "outputSize", das mGBA 0.10.5 nicht kennt
 ]
 DOSBOX_LOOKS = [
     {"v": "sharp", "k": "emuopt.v.sharp"}, {"v": "nearest", "k": "emuopt.v.nearest"},
@@ -10134,8 +10363,12 @@ DOSBOX_LOOKS = [
     {"v": "scaler/advmame3x", "t": "AdvMAME3x"}, {"v": "scaler/advinterp2x", "t": "AdvInterp2x"},
     {"v": "scaler/advinterp3x", "t": "AdvInterp3x"},
 ]
-_DUCK_LOOK_IO = _DuckChain("PostProcessing", {v: s for v, s, _ in DUCK_LOOKS})
-_DUCK_FXAA_IO = _DuckChain("InternalPostProcessing", {"on": "anti-aliasing/fxaa"})
+_DUCK_LOOK_IO = _DuckDisplay(0, {v: name for v, name, _ in DUCK_LOOKS}, DUCK_COLORS)
+_DUCK_COLOR_IO = _DuckDisplay(1, {v: name for v, name, _ in DUCK_LOOKS}, DUCK_COLORS)
+# Vor dem Hochrechnen aufs Display, in der Renderaufloesung: guenstiger. "auto" und "on" schreiben dasselbe; auf Automatik
+# nehmen Spielprofile die Glaettung bei Pixelgrafik heraus (gameprofiles.PSX_CATEGORIES)
+_DUCK_FXAA_IO = _DuckSingle("InternalPostProcessing", {"auto": "anti-aliasing/fxaa", "on": "anti-aliasing/fxaa"})
+_MGBA_LOOK_IO = _MgbaShader(dict({"klar": "voidstation-klar"}, **{v: v for v, _ in MGBA_LOOKS}))
 
 
 EMU_OPTS: dict[str, Any] = {
@@ -10157,8 +10390,9 @@ EMU_OPTS: dict[str, Any] = {
             _opt("fps", "pcsx2", "fps", _OPT_TF, "false", game=True, hidden=True, own=True),
         ]),
         ("look", [
-            _opt("fxaa", "EmuCore/GS", "fxaa", _OPT_TF, "false"),
-            _opt("look", "EmuCore/GS", "TVShader", PCSX2_LOOKS, "0"),
+            _opt("fxaa", "EmuCore/GS", "fxaa", _OPT_TF, "false", game=True),
+            _opt("color", "EmuCore/GS", "ShadeBoost", PCSX2_COLORS, "nat"),
+            _opt("look", "EmuCore/GS", "TVShader", PCSX2_LOOKS, "0", game=True),
         ]),
         ("play", [
             _opt("fastBoot", "EmuCore", "EnableFastBoot", _OPT_TF, "true"),
@@ -10191,10 +10425,12 @@ EMU_OPTS: dict[str, Any] = {
         ]),
         ("look", [
             # In der Kette vor der Ausgabe (InternalPostProcessing, Renderaufloesung) statt am fertigen Bild: guenstiger
-            _opt("fxaa", "InternalPostProcessing", "Enabled", [{"v": "on", "k": "common.on"}, _OFF], "off",
-                 io=_DUCK_FXAA_IO),
+            _opt("fxaa", "InternalPostProcessing", "Enabled", [
+                {"v": "auto", "k": "emuopt.v.auto", "auto": True}, {"v": "on", "k": "common.on"}, _OFF], "off",
+                 game=True, io=_DUCK_FXAA_IO),
+            _opt("color", "PostProcessing", "Enabled", _COLOR_CHOICES, "nat", io=_DUCK_COLOR_IO),
             _opt("look", "PostProcessing", "Enabled", [_OFF] + [dict(lab, v=v) for v, _, lab in DUCK_LOOKS], "off",
-                 io=_DUCK_LOOK_IO),
+                 game=True, io=_DUCK_LOOK_IO),
         ]),
         ("play", [
             _opt("fastBoot", "BIOS", "PatchFastBoot", _OPT_TF, "false"),
@@ -10216,8 +10452,8 @@ EMU_OPTS: dict[str, Any] = {
             _opt("sgb", "ports.qt", "sgb.borders", _OPT_10, "1"),
         ]),
         ("look", [
-            _opt("look", "ports.qt", "shader", [_OFF, {"v": "orig", "k": "emuopt.v.orig"}] +
-                 [dict(lab, v=v) for v, lab in MGBA_LOOKS], "off", io=_MgbaShader([v for v, _ in MGBA_LOOKS])),
+            _opt("look", "ports.qt", "shader", [_OFF, dict(_KLAR, v="klar"), {"v": "orig", "k": "emuopt.v.orig"}] +
+                 [dict(lab, v=v) for v, lab in MGBA_LOOKS], "off", game=True, io=_MGBA_LOOK_IO),
         ]),
         ("play", [
             _opt("resume", "ports.qt", ["autosave", "autoload"], _OPT_10, "1"),
@@ -10237,7 +10473,7 @@ EMU_OPTS: dict[str, Any] = {
             _opt("fullscreen", "sdl", "fullscreen", _OPT_TF, "true"),
         ]),
         ("look", [
-            _opt("shader", "render", "glshader", DOSBOX_LOOKS, "crt-auto", label="look"),
+            _opt("shader", "render", "glshader", DOSBOX_LOOKS, "crt-auto", game=True, label="look"),
         ]),
         ("play", [
             _opt("speed", "cpu", ["cpu_cycles", "cpu_cycles_protected"], [
@@ -10317,7 +10553,7 @@ def _opt_defaults_for(tile):
     if tile == "duckstation":
         d = {"cdSpeed": "4", "fmvSmooth": "true", "textures": "true", "wsPatch": "true", "fps": "true"}
         if gpu != "none":
-            d.update({"res": "4" if gpu == "dgpu" else "2", "pgxp": "true", "fxaa": "on"})
+            d.update({"res": "4" if gpu == "dgpu" else "2", "pgxp": "true", "fxaa": "auto"})
         return d
     if tile == "dosbox":                # Fernseher: scharfe Pixel statt nachgemachter Roehre (DOSBox' eigener Standard)
         return {"shader": "sharp"}
@@ -10346,9 +10582,16 @@ def _opt_game_choice(opt, value):
     return None if c and c.get("auto") else c
 
 
+def _opt_secs(opt, choice, ini=None):
+    """Was eine Moeglichkeit schreibt, je Abschnitt: {Abschnitt: {Schluessel: Wert}}."""
+    if opt["io"]:
+        return opt["io"].writes(choice["v"], ini or {})[0] if hasattr(opt["io"], "writes") else {"": {"": choice["v"]}}
+    return {opt["section"]: _opt_writes(opt, choice)}
+
+
 def _opt_plain(opt, choice):
     """Zu einer "auto"-Moeglichkeit die gewoehnliche, die dasselbe schreibt."""
-    return next((c for c in opt["choices"] if not c.get("auto") and _opt_writes(opt, c) == _opt_writes(opt, choice)), choice)
+    return next((c for c in opt["choices"] if not c.get("auto") and _opt_secs(opt, c) == _opt_secs(opt, choice)), choice)
 
 
 def _opt_fixed(tile, opt, st):
@@ -10630,6 +10873,10 @@ def _game_ini_read(tile, opt, ini):
     if tile == "pcsx2" and opt["id"] == "widescreen":    # PCSX2 verwirft den Schalter in Spiel-Dateien (ClearInvalidPerGameConfiguration)
         have = ini_multi_get(ini, "Patches", ["Enable", "Disable"], _is_ws_patch)
         return "true" if have["Enable"] else "false" if have["Disable"] else None
+    if opt["io"]:
+        v = opt["io"].game_read(ini_read(ini))
+        c = _opt_choice(opt, v) if v is not None else None
+        return _opt_plain(opt, c)["v"] if c and c.get("auto") else v
     sec = ini_read(ini).get(opt["section"], {})
     if not any(k in sec for k in opt["keys"]):
         return None
@@ -10644,6 +10891,12 @@ def _game_ini_write(tile, opt, ini, value):
     if tile == "pcsx2" and opt["id"] == "widescreen":
         ini_multi_set(ini, "Patches", {"Enable": PCSX2_WS_PATCH if value == "true" else None,
                                        "Disable": PCSX2_WS_PATCH if value == "false" else None}, _is_ws_patch)
+    elif opt["io"]:
+        have = ini_read(ini)
+        if value is None:
+            _io_apply(ini, {}, opt["io"].game_clear(have))
+        else:
+            _io_apply(ini, *opt["io"].game_writes(value, have, ini_read(EMU_OPTS[tile]["file"]())))
     elif value is None:
         ini_update(ini, opt["section"], {}, remove=opt["keys"])
     else:
@@ -10684,7 +10937,7 @@ def emu_opts_game_writes(tile, game):
     """[(Abschnitt, {Schluessel: Wert})] der Optionen eines Spiels."""
     idx = _OPT_INDEX[tile]
     return [(idx[k]["section"], _opt_writes(idx[k], _opt_choice(idx[k], v))) for k, v in emu_opts_game(tile, game).items()
-            if not idx[k]["own"]]
+            if not idx[k]["own"] and not idx[k]["io"]]
 
 
 def emu_opts_restore(tile, st):
@@ -11023,12 +11276,13 @@ def _opts_apply_profile(tile, game, native, profile, st):
             continue
         if not _opt_auto_on(tile, opt, st):
             continue
-        vals = _opt_writes(opt, _opt_choice(opt, v))
-        if vals == _opt_writes(opt, _opt_choice(opt, EMU_AUTO[tile][oid])):
+        secs = _opt_secs(opt, _opt_choice(opt, v), ini)
+        if secs == _opt_secs(opt, _opt_choice(opt, EMU_AUTO[tile][oid]), ini):
             continue                                     # das Profil will, was ohnehin gilt
-        for k, w in vals.items():
-            rec.setdefault(opt["section"], {})[k] = [ini.get(opt["section"], {}).get(k), w]
-        ini_update(path, opt["section"], vals)
+        for sec, vals in secs.items():
+            for k, w in vals.items():
+                rec.setdefault(sec, {})[k] = [ini.get(sec, {}).get(k), w]
+            ini_update(path, sec, vals)
         done[oid] = v
     if done:
         st["opt_game"][tile] = rec
@@ -11087,6 +11341,10 @@ def emu_opts_prepare(tid, args):
         _opts_apply_defaults(tid, st)
         if tid == "gba":
             mgba_look_game(game)
+        elif tid == "duckstation":
+            duck_shaders_install()
+            if native:
+                duck_game_color_sync(native)
         emu_textures_prepare(tid)
         if native and game:
             _game_sync(tid, os.path.basename(game), native)
@@ -11105,6 +11363,20 @@ def _opt_mute_now(tile, st):
         return bool(want)
     path, sec, key = EMU_MUTE[tile]()[:3]
     return ini_read(path).get(sec, {}).get(key, "0").strip().lower() not in ("0", "", "false", "off", "no")
+
+
+_LOOK_PREVIEWS: dict[str, bool] = {}
+
+
+def look_preview(tile, opt, choice, group):
+    """{"p": Pfad} zum Vorschaubild einer Moeglichkeit in der Spalte Bildstil, {} wenn es keins gibt."""
+    if group != "look":
+        return {}
+    f = LOOK_PREVIEWS / tile / f"{opt['id']}-{str(choice['v']).replace('/', '_')}.jpg"
+    key = str(f)
+    if key not in _LOOK_PREVIEWS:
+        _LOOK_PREVIEWS[key] = f.is_file()
+    return {"p": key} if _LOOK_PREVIEWS[key] else {}
 
 
 def emu_opts_payload(tile, game=None):
@@ -11135,7 +11407,8 @@ def emu_opts_payload(tile, game=None):
         for gid, opts in order:
             if game:                                     # ein echter Breitbild-Patch ersetzt bei dem Spiel den Schalter fuer den Hack
                 shown = [o for o in opts if o["game"] and (o["id"] in plan if o["id"] in patches else
-                                                           not (o["id"] == "widescreen" and "wsPatch" in plan))]
+                                                           not (o["id"] == "widescreen" and "wsPatch" in plan))
+                         and (not o["io"] or native or tile == "gba")]
             else:
                 shown = [o for o in opts if not o["hidden"]] if mode == "custom" else []
             for o in shown:
@@ -11148,7 +11421,8 @@ def emu_opts_payload(tile, game=None):
                 else:
                     values[o["id"]] = _opt_shown(tile, o, st, ini)
             rows = [dict({"id": o["id"], "choices": [
-                {x: c[x] for x in ("v", "k", "t") if x in c} for c in o["choices"] if not (game and c.get("auto"))]},
+                dict({x: c[x] for x in ("v", "k", "t") if x in c}, **look_preview(tile, o, c, gid))
+                for c in o["choices"] if not (game and c.get("auto"))]},
                 **({"label": o["label"]} if o["label"] else {})) for o in shown]
             if not game and gid == "play":
                 rows.insert(0, {"id": "mode", "choices": _OPT_MODE})
@@ -11200,6 +11474,8 @@ def emu_opts_set(tile, oid, value, game=None):
             return emu_opts_payload(tile, rel)
         if _DISC_NAME.fullmatch(name):
             raise ValueError("Diese Disc hat keine Seriennummer")
+        if opt["io"] and tile != "gba":
+            raise ValueError("Fuer dieses Spiel nicht einstellbar")
         with EMU_LOCK:
             d = emu_games_load()
             own = d.setdefault(tile, {}).setdefault(name, {})
@@ -14814,6 +15090,12 @@ class Handler(BaseHTTPRequestHandler):
                 s = settings_load(); s["match_rate"] = on; settings_save(s)
                 log("Bildrate an Video anpassen:", "an" if on else "aus")
                 DISPLAY_RATE.reapply()
+                return self._json(200, settings_payload())
+            if parts == ["api", "settings", "gamefx"]:
+                try:
+                    game_fx_set(str(self._body().get("mode")))
+                except ValueError as e:
+                    return self._json(400, {"error": str(e)})
                 return self._json(200, settings_payload())
             if parts == ["api", "display", "video"]:
                 b = self._body()
