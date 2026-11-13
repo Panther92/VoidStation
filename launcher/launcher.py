@@ -8620,6 +8620,11 @@ def snes9x_prepare(ctx):
 
 # -- Nestopia 1.53 (FLTK, SDL2-Joystick; input.conf [nespad1j], fltkui/inputmanager.cpp; mINI: Kleinschreibung)
 NESTOPIA_INPUT = Path.home() / ".config/nestopia/input.conf"
+# Einstellungsdateien fuer die Optionen (EMU_OPTS) und Stumm (EMU_MUTE)
+NESTOPIA_CONF = NESTOPIA_INPUT.with_name("nestopia.conf")
+SCUMMVM_INI = Path.home() / ".config/scummvm/scummvm.ini"
+VICE_RC = Path.home() / ".config/vice/vicerc"
+STELLA_DB = Path.home() / ".config/stella/stella.sqlite3"       # OSystemStandalone.cxx: StellaDb(basedir, "stella")
 
 
 def nestopia_value(ctx, b):
@@ -9981,10 +9986,21 @@ EMU_MUTE = {"gba": lambda: (MGBA_CONFIG, "ports.qt", "mute", "1", "0"),
             "duckstation": lambda: (DUCK_INI, "Audio", "OutputMuted", "true", "false"),
             "dosbox": lambda: (dosbox_primary(), "mixer", "nosound", "true", "false"),
             "ppsspp": lambda: (PPSSPP_INI, "Sound", "Enable", "False", "True"),
-            "dolphin": lambda: (dolphin_dir() / "Dolphin.ini", "DSP", "Muted", "True", "False")}
+            "dolphin": lambda: (dolphin_dir() / "Dolphin.ini", "DSP", "Muted", "True", "False"),
+            "snes9x": lambda: (snes9x_conf(), "Sound", "MuteSound", "true", "false"),
+            "nestopia": lambda: (NESTOPIA_CONF, "frontend", "a_mute", "1", "0"),
+            "scummvm": lambda: (SCUMMVM_INI, "scummvm", "mute", "true", "false"),
+            "vice": lambda: (VICE_RC, "C64SC", "Sound", "0", "1")}
 # vorher gilt die Datei dem Emulator als neu; Cemu: settings.xml legt first_run an (sonst fehlten dort die Spielordner)
+# RMG: GLideN64 verwirft eine GLideN64.ini ohne "version" (GLideNUI/Settings.cpp) – erst nach dessen erstem Start.
+# MAME: mame.ini legt das Skript von Void an (mame_setup). Stella: Die Datenbank legt Stella selbst an.
+# melonDS: eine alte melonDS.ini uebernimmt es beim ersten Start selbst in die neue Datei.
 EMU_READY = {"duckstation": lambda: duck_ready(), "pcsx2": lambda: pcsx2_ready(),
-             "cemu": lambda: (emu_dir("cemu") / "settings.xml").exists()}
+             "cemu": lambda: (emu_dir("cemu") / "settings.xml").exists(),
+             "rmg": lambda: "version" in ini_read(rmg_gliden()).get("General", {}),
+             "mame": lambda: (MAME_DIR / "mame.ini").exists(),
+             "stella": lambda: STELLA_DB.is_file(),
+             "melonds": lambda: MELONDS_TOML.exists() or not (MELONDS_TOML.parent / "melonDS.ini").exists()}
 
 
 def emu_ready(tile):
@@ -10491,6 +10507,219 @@ _AUTO0 = {"v": "0", "k": "emuopt.v.auto"}
 _PPSSPP_LOOK_IO = _PpssppShader([n for n, _ in PPSSPP_LOOKS])
 
 
+# ---- RMG, Flycast, xemu, melonDS, Snes9x, Nestopia, MAME, ScummVM, VICE, Stella (Paul, 13.11.2026: "Alle 10") ----
+# Schluessel geprueft am 13.11.2026: RMG (GLideN64 mit eigener Oberflaeche: GLideNUI/Settings.cpp, Config.cpp/.h),
+# Flycast (master) core/cfg/option.cpp, xemu (master) config_spec.yml, melonDS 1.1 frontend/qt_sdl/Config.cpp,
+# Snes9x 1.60 gtk/src/gtk_config.cpp + gtk_display.h, Nestopia 1.53.2 fltkui/setmanager.cpp + jg.cpp, MAME 0.282
+# emuopts.cpp, osdobj_common.cpp, bgfx/chains, ScummVM 2026.1.0 base/commandLine.cpp, graphics/scaler, opengl-graphics.cpp,
+# VICE 3.9 video/video-resources.c, video.h, vicii-resources.c, Stella 6.5.3 emucore/Settings.cxx, repository/sqlite.
+_OPT_YN = [{"v": "yes", "k": "common.on"}, {"v": "no", "k": "common.off"}]          # Flycast
+
+
+def rmg_gliden():
+    return emu_dir("rmg") / "GLideN64.ini"
+
+
+class _QtProfile:
+    """GLideN64.ini (QSettings): [General] profile nennt den Abschnitt mit den Einstellungen (Vorgabe "User"), darin
+    Schluessel wie "video\\fxaa". fallback: laesst sich je Spiel fuer einen Start eintragen."""
+    fallback = True
+
+    def __init__(self, key, default):
+        self.key, self.default = key, default
+
+    def _sec(self, ini):
+        return qt_unquote(ini.get("General", {}).get("profile", "")) or "User"
+
+    def read(self, ini):
+        return qt_unquote(ini.get(self._sec(ini), {}).get(self.key, self.default))
+
+    def writes(self, value, ini):
+        return {self._sec(ini or ini_read(rmg_gliden())): {self.key: value}}, {}
+
+    def write(self, path, value):
+        _io_apply(path, *self.writes(value, ini_read(path)))
+
+
+class _IniStore:
+    """Ein Abschnitt einer INI-Datei, deren Zeilen hinten Kommentare tragen (snes9x.conf: "AspectRatio = 2  # 0: …",
+    conffile.cpp)."""
+
+    def __init__(self, path, section):
+        self.path, self.section = path, section
+
+    def values(self, keys):
+        return {k: v.split("#", 1)[0].strip() for k, v in ini_read(self.path()).get(self.section, {}).items() if k in keys}
+
+    def put(self, updates):
+        ini_update(self.path(), self.section, updates)
+
+
+class _TomlStore:
+    """melonDS.toml, xemu.toml: ganz lesen, Werte an ihren Pfaden setzen, ganz schreiben (toml_dump)."""
+
+    def __init__(self, load, save):
+        self._load, self._save = load, save
+
+    def values(self, keys):
+        root = self._load()
+        if root is None:
+            return None
+        out = {}
+        for path in keys:
+            node: Any = root
+            for name in path:
+                node = node.get(name) if isinstance(node, dict) else None
+            if node is not None:
+                out[path] = node
+        return out
+
+    def put(self, updates):
+        root = self._load()
+        if root is None:
+            return
+        for path, value in updates.items():
+            node = root
+            for name in path[:-1]:
+                node = node.setdefault(name, {})
+            node[path[-1]] = value
+        self._save(root)
+
+
+def _melonds_load():
+    import tomllib
+    try:
+        return tomllib.loads(MELONDS_TOML.read_text(encoding="utf-8")) if MELONDS_TOML.exists() else {}
+    except (OSError, ValueError) as e:
+        log("melonDS.toml nicht lesbar:", e)
+        return None
+
+
+def _melonds_save(root):
+    MELONDS_TOML.parent.mkdir(parents=True, exist_ok=True)
+    tmp = MELONDS_TOML.with_suffix(".vs-tmp")
+    tmp.write_text(toml_dump(root), encoding="utf-8")
+    tmp.replace(MELONDS_TOML)
+
+
+class _MameStore:
+    """mame.ini: je Zeile "name   wert", Kommentare mit #."""
+
+    def values(self, keys):
+        out = {}
+        try:
+            for line in (MAME_DIR / "mame.ini").read_text(encoding="utf-8", errors="replace").splitlines():
+                parts = line.split(None, 1)
+                if parts and not parts[0].startswith("#") and parts[0] in keys:
+                    out[parts[0]] = parts[1].strip() if len(parts) > 1 else ""
+        except OSError:
+            pass
+        return out
+
+    def put(self, updates):
+        path, todo, out = MAME_DIR / "mame.ini", dict(updates), []
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return
+        for line in lines:
+            parts = line.split(None, 1)
+            out.append(f"{parts[0]:<25} {todo.pop(parts[0])}" if parts and parts[0] in todo else line)
+        out += [f"{k:<25} {v}" for k, v in todo.items()]
+        tmp = path.with_name("mame.ini.vs-tmp")
+        tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
+        tmp.replace(path)
+
+
+class _StellaStore:
+    """Einstellungen von Stella: Tabelle settings (setting, value) in dessen SQLite-Datenbank."""
+
+    def values(self, keys):
+        if not STELLA_DB.is_file():
+            return {}
+        import sqlite3
+        try:
+            con = sqlite3.connect(f"file:{STELLA_DB}?mode=ro", uri=True, timeout=2)
+            try:
+                return {k: v for k, v in con.execute("SELECT setting, value FROM settings") if k in keys}
+            finally:
+                con.close()
+        except sqlite3.Error as e:
+            log("Stella: Datenbank:", e)
+            return None
+
+    def put(self, updates):
+        if not STELLA_DB.is_file():
+            return
+        import sqlite3
+        try:
+            con = sqlite3.connect(STELLA_DB, timeout=2)
+            try:
+                with con:
+                    con.executemany("INSERT OR REPLACE INTO settings (setting, value) VALUES (?, ?)", [(k, str(v)) for k, v in updates.items()])
+            finally:
+                con.close()
+        except sqlite3.Error as e:
+            log("Stella: Datenbank:", e)
+
+
+class _Mapped:
+    """Option in einem Speicher mit eigenem Format (TOML, mame.ini, SQLite). mapping: {Wert: {Schluessel: Inhalt}} – gewaehlt
+    ist der erste Wert, dessen Inhalte alle passen; fehlt ein Schluessel im Speicher, gilt defaults. Inhalt als Liste:
+    geschrieben wird der erste, beim Lesen gilt jeder (Stella: "true" oder "1"). Nur allgemein."""
+
+    def __init__(self, store, mapping, defaults):
+        self.store, self.mapping, self.defaults = store, mapping, defaults
+
+    @staticmethod
+    def _same(a, b):
+        if isinstance(b, list):
+            return any(_Mapped._same(a, x) for x in b)
+        return a == b if isinstance(a, bool) or isinstance(b, bool) else _opt_norm(a) == _opt_norm(b)
+
+    def read(self, ini):
+        cur = self.store.values(set(self.defaults))
+        if cur is None:
+            return None
+        return next((value for value, want in self.mapping.items()
+                     if all(self._same(cur.get(k, self.defaults[k]), v) for k, v in want.items())), None)
+
+    def write(self, path, value):
+        self.store.put({k: v[0] if isinstance(v, list) else v for k, v in self.mapping[value].items()})
+
+
+_XEMU = _TomlStore(lambda: xemu_load(), lambda root: xemu_save(root))
+_MELON = _TomlStore(_melonds_load, _melonds_save)
+_MAME, _STELLA, _S9X = _MameStore(), _StellaStore(), _IniStore(lambda: snes9x_conf(), "Display")
+_ST_ON, _ST_OFF = ["true", "1"], ["false", "0"]                     # Stella: Variant(bool) schreibt 1/0, die Vorgaben stehen als Wort
+
+
+def _map(oid, store, rows, defaults, default, **kw):
+    """rows: [(Wert, Beschriftung, {Schluessel: Inhalt})]"""
+    return _opt(oid, "", oid, [dict(lab, v=v) for v, lab, _ in rows], default,
+                io=_Mapped(store, {v: m for v, _, m in rows}, defaults), **kw)
+
+
+def _one(oid, store, key, rows, default_content, default, **kw):
+    """Ein Schluessel: rows [(Wert, Beschriftung, Inhalt)]"""
+    return _map(oid, store, [(v, lab, {key: c}) for v, lab, c in rows], {key: default_content}, default, **kw)
+
+
+def _gl64(oid, key, choices, default, **kw):
+    return _opt(oid, "User", key, choices, default, io=_QtProfile(key, default), **kw)
+
+
+_ON, _OFFK, _ORIG, _STRETCH = {"k": "common.on"}, {"k": "common.off"}, {"k": "emuopt.v.original"}, {"k": "emuopt.v.stretch"}
+_MELON_3D, _MELON_SCALE, _MELON_GL = ("3D", "Renderer"), ("3D", "GL", "ScaleFactor"), ("Screen", "UseGL")
+_MELON_LAY, _MELON_SIZE = ("Instance0", "Window0", "ScreenLayout"), ("Instance0", "Window0", "ScreenSizing")
+_XEMU_FIT, _XEMU_AR = ("display", "ui", "fit"), ("display", "ui", "aspect_ratio")
+SNES9X_FILTERS = [("7", {"k": "emuopt.v.scanlines"}), ("6", {"t": "NTSC"}), ("1", {"t": "Super Eagle"}), ("2", {"t": "2xSaI"}),
+                  ("3", {"t": "Super 2xSaI"}), ("4", {"t": "EPX"}), ("5", {"t": "EPX Smooth"}), ("11", {"t": "HQ2x"}),
+                  ("12", {"t": "HQ3x"}), ("13", {"t": "HQ4x"}), ("14", {"t": "2xBRZ"}), ("15", {"t": "3xBRZ"}), ("16", {"t": "4xBRZ"})]
+SCUMMVM_SCALERS = [("hq", "HQ"), ("edge", "Edge"), ("advmame", "AdvMAME"), ("sai", "2xSaI"), ("supersai", "Super 2xSaI"),
+                   ("supereagle", "Super Eagle"), ("pm", "PM"), ("dotmatrix", "DotMatrix"), ("tv", "TV")]
+
+
 def _az(oid, section, key, choices, default, **kw):
     return _opt(oid, section, key, choices, default, io=_QtIni(section, key, default), **kw)
 
@@ -10706,6 +10935,166 @@ EMU_OPTS: dict[str, Any] = {
                 {"v": "1", "t": "OpenGL"}, {"v": "2", "t": "Vulkan"}, {"v": "0", "t": "Software"}], "1"),
         ]),
     ]},
+    # RMG: Bild macht GLideN64 (mit RMG gebaut, eigene GLideN64.ini). 0 = so gross wie das Fenster (dessen Vorgabe)
+    "rmg": {"file": rmg_gliden, "groups": [
+        ("picture", [
+            _gl64("res", "frameBufferEmulation\\nativeResFactor", [_AUTO0] + _opt_res([2, 3, 4]), "0", game=True),
+            _gl64("aspect", "frameBufferEmulation\\aspect", [           # Config.h Aspect
+                {"v": "1", "t": "4:3"}, {"v": "2", "t": "16:9"}, {"v": "0", "k": "emuopt.v.stretch"}], "1", game=True),
+        ]),
+        ("look", [
+            _gl64("msaa", "video\\multisampling", [
+                {"v": "0", "k": "common.off"}, {"v": "2", "t": "2×"}, {"v": "4", "t": "4×"}, {"v": "8", "t": "8×"}], "0"),
+            _gl64("fxaa", "video\\fxaa", _OPT_10, "0"),
+        ]),
+        ("play", []),
+    ]},
+    "flycast": {"file": lambda: FLYCAST_CFG, "groups": [
+        ("picture", [
+            _opt("res", "config", "rend.Resolution", [                      # Hoehe in Zeilen, 480 = wie die Konsole
+                {"v": "480", "k": "emuopt.v.original"}, {"v": "960", "t": "2×"}, {"v": "1440", "t": "3×"},
+                {"v": "1920", "t": "4×"}], "480", game=True),
+            _opt("widescreen", "config", "rend.WideScreen", _OPT_YN, "no", game=True),
+            _opt("integer", "config", "rend.IntegerScale", _OPT_YN, "no"),
+            _opt("smooth", "config", "rend.LinearInterpolation", _OPT_YN, "yes"),
+            _opt("aniso", "config", "rend.AnisotropicFiltering", [
+                {"v": "1", "k": "common.off"}, {"v": "2", "t": "2×"}, {"v": "4", "t": "4×"}, {"v": "8", "t": "8×"},
+                {"v": "16", "t": "16×"}], "1"),
+        ]),
+        ("look", [
+            _opt("texscale", "config", "rend.TextureUpscale2", [
+                {"v": "1", "k": "common.off"}, {"v": "2", "t": "xBRZ 2×"}, {"v": "4", "t": "xBRZ 4×"},
+                {"v": "6", "t": "xBRZ 6×"}], "1"),
+        ]),
+        ("play", [
+            _opt("renderer", "config", "pvr.rend", [{"v": "0", "t": "OpenGL"}, {"v": "4", "t": "Vulkan"}], "0"),  # types.h RenderType
+        ]),
+    ]},
+    "xemu": {"file": lambda: XEMU_TOML, "groups": [
+        ("picture", [
+            _one("res", _XEMU, ("display", "quality", "surface_scale"),
+                 [("1", _ORIG, 1), ("2", {"t": "2×"}, 2), ("3", {"t": "3×"}, 3), ("4", {"t": "4×"}, 4)], 1, "1"),
+            _map("aspect", _XEMU, [
+                ("auto", {"k": "emuopt.v.auto"}, {_XEMU_FIT: "scale", _XEMU_AR: "auto"}),
+                ("4:3", {"t": "4:3"}, {_XEMU_FIT: "scale", _XEMU_AR: "4x3"}),
+                ("16:9", {"t": "16:9"}, {_XEMU_FIT: "scale", _XEMU_AR: "16x9"}),
+                ("stretch", _STRETCH, {_XEMU_FIT: "stretch"})], {_XEMU_FIT: "scale", _XEMU_AR: "auto"}, "auto"),
+            _one("smooth", _XEMU, ("display", "filtering"), [("true", _ON, "linear"), ("false", _OFFK, "nearest")], "linear", "true"),
+        ]),
+        ("play", [
+            _one("renderer", _XEMU, ("display", "renderer"), [("OPENGL", {"t": "OpenGL"}, "OPENGL"), ("VULKAN", {"t": "Vulkan"}, "VULKAN")],
+                 "OPENGL", "OPENGL"),
+        ]),
+    ]},
+    # melonDS: Mehr als die Aufloesung der Konsole geht nur mit dem OpenGL-Renderer (3D.Renderer 1); "Original" ist der
+    # Software-Renderer (dessen Vorgabe, am genauesten)
+    "melonds": {"file": lambda: MELONDS_TOML, "groups": [
+        ("picture", [
+            _map("res", _MELON, [("1", _ORIG, {_MELON_3D: 0})] + [
+                (str(n), {"t": f"{n}×"}, {_MELON_3D: 1, _MELON_SCALE: n, _MELON_GL: True}) for n in (2, 3, 4)],
+                 {_MELON_3D: 0, _MELON_SCALE: 1, _MELON_GL: True}, "1"),
+            _map("layout", _MELON, [
+                ("std", {"k": "emuopt.v.layStd"}, {_MELON_LAY: 0, _MELON_SIZE: 0}),
+                ("large", {"k": "emuopt.v.layLarge"}, {_MELON_LAY: 2, _MELON_SIZE: 1}),
+                ("side", {"k": "emuopt.v.laySide"}, {_MELON_LAY: 2, _MELON_SIZE: 0}),
+                ("single", {"k": "emuopt.v.laySingle"}, {_MELON_SIZE: 4}),
+                ("hybrid", {"k": "emuopt.v.layHybrid"}, {_MELON_LAY: 3, _MELON_SIZE: 0})],
+                 {_MELON_LAY: 0, _MELON_SIZE: 0}, "std"),
+            _one("swap", _MELON, ("Instance0", "Window0", "ScreenSwap"), [("true", _ON, True), ("false", _OFFK, False)], False, "false"),
+            _one("integer", _MELON, ("Instance0", "Window0", "IntegerScaling"), [("true", _ON, True), ("false", _OFFK, False)],
+                 False, "false"),
+            _one("smooth", _MELON, ("Screen", "Filter"), [("true", _ON, True), ("false", _OFFK, False)], True, "true"),
+        ]),
+        ("play", []),
+    ]},
+    "snes9x": {"file": snes9x_conf, "groups": [
+        ("picture", [
+            _map("aspect", _S9X, [                                          # gtk_config.cpp: 0 unkorrigiert, 2 = 4:3
+                ("4:3", {"t": "4:3"}, {"AspectRatio": "2", "MaintainAspectRatio": "true", "ScaleToFit": "true"}),
+                ("square", {"k": "emuopt.v.square"}, {"AspectRatio": "0", "MaintainAspectRatio": "true", "ScaleToFit": "true"}),
+                ("stretch", _STRETCH, {"MaintainAspectRatio": "false", "ScaleToFit": "true"})],
+                 {"AspectRatio": "2", "MaintainAspectRatio": "true", "ScaleToFit": "true"}, "4:3"),
+            _one("smooth", _S9X, "BilinearFilter", [("true", _ON, "true"), ("false", _OFFK, "false")], "false", "false"),
+        ]),
+        ("look", [
+            _one("filter", _S9X, "SoftwareScaleFilter", [("0", _OFFK, "0")] + [(v, lab, v) for v, lab in SNES9X_FILTERS],
+                 "0", "0"),                                                 # gtk_display.h FILTER_*
+        ]),
+        ("play", []),
+    ]},
+    "nestopia": {"file": lambda: NESTOPIA_CONF, "groups": [
+        ("picture", [
+            _opt("aspect", "frontend", "v_aspect", [
+                _AUTO0, {"v": "2", "t": "4:3"}, {"v": "1", "k": "emuopt.v.square"}], "0"),
+        ]),
+        ("look", [
+            _opt("filter", "frontend", "v_postproc", [                      # setmanager.cpp: 2 = Sharp Bilinear (Vorgabe)
+                {"v": "2", "k": "emuopt.v.sharp"}, {"v": "0", "k": "emuopt.v.nearest"}, {"v": "1", "k": "emuopt.v.soft"},
+                {"v": "3", "k": "emuopt.v.crt"}, {"v": "4", "t": "MMPX"}, {"v": "5", "t": "OmniScale"}], "2"),
+            _opt("ntsc", "nestopia", "ntsc_filter", _OPT_10, "0"),
+        ]),
+        ("play", []),
+    ]},
+    # MAME: Stile sind BGFX-Ketten (bgfx/chains) und brauchen "video bgfx"; "Aus" stellt auf opengl, wie es das Skript
+    # von Void beim Anlegen der mame.ini eintraegt
+    "mame": {"file": lambda: MAME_DIR / "mame.ini", "groups": [
+        ("picture", [
+            _one("aspect", _MAME, "keepaspect", [("1", _ORIG, "1"), ("0", _STRETCH, "0")], "1", "1"),
+            _one("integer", _MAME, "unevenstretch", [("true", _ON, "0"), ("false", _OFFK, "1")], "1", "false"),
+            _one("smooth", _MAME, "filter", [("true", _ON, "1"), ("false", _OFFK, "0")], "1", "true"),
+        ]),
+        ("look", [
+            _map("look", _MAME, [("off", _OFFK, {"video": "opengl"})] + [
+                (c, {"t": t}, {"video": "bgfx", "bgfx_screen_chains": c}) for c, t in (
+                    ("crt-geom", "CRT-Geom"), ("crt-geom-deluxe", "CRT-Geom Deluxe"), ("hlsl", "HLSL"), ("lcd-grid", "LCD"))],
+                 {"video": "opengl", "bgfx_screen_chains": "default"}, "off"),
+        ]),
+        ("play", []),
+    ]},
+    "scummvm": {"file": lambda: SCUMMVM_INI, "groups": [
+        ("picture", [
+            _opt("aspect", "scummvm", "stretch_mode", [                     # opengl-graphics.cpp s_supportedStretchModes
+                {"v": "default", "k": "emuopt.v.auto"}, {"v": "fit_force_aspect", "t": "4:3"},
+                {"v": "pixel-perfect", "k": "emuopt.v.nearest"}, {"v": "stretch", "k": "emuopt.v.stretch"}], "default"),
+            _opt("smooth", "scummvm", "filtering", _OPT_TF, "false"),
+        ]),
+        ("look", [
+            _opt("filter", "scummvm", "scaler", [{"v": "default", "k": "common.off"}] +
+                 [{"v": v, "t": t} for v, t in SCUMMVM_SCALERS], "default"),
+        ]),
+        ("play", []),
+    ]},
+    # VICE (x64sc): vicerc haelt nur, was von der Vorgabe abweicht; Abschnitt [C64SC]
+    "vice": {"file": lambda: VICE_RC, "groups": [
+        ("picture", [
+            _opt("aspect", "C64SC", "VICIIAspectMode", [                    # video.h VIDEO_ASPECT_MODE_*
+                {"v": "2", "k": "emuopt.v.original"}, {"v": "0", "k": "emuopt.v.stretch"}], "2"),
+            _opt("border", "C64SC", "VICIIBorderMode", [                    # 0 normal, 3 ohne Rand
+                {"v": "0", "k": "emuopt.v.standard"}, {"v": "3", "k": "common.off"}], "0"),
+            _opt("upscale", "C64SC", "VICIIGLFilter", [                     # video.h VIDEO_GLFILTER_*
+                {"v": "2", "k": "emuopt.v.bicubic"}, {"v": "1", "k": "emuopt.v.soft"}, {"v": "0", "k": "emuopt.v.nearest"}], "2"),
+        ]),
+        ("look", [
+            _opt("filter", "C64SC", "VICIIFilter", [                        # video.h VIDEO_FILTER_*: 1 = Roehre (Vorgabe)
+                {"v": "1", "k": "emuopt.v.crt"}, {"v": "0", "k": "common.off"}, {"v": "2", "t": "Scale2x"}], "1"),
+        ]),
+        ("play", []),
+    ]},
+    # Stella: Einstellungen stehen in einer Datenbank (STELLA_DB, _StellaStore) – als "Datei" der Kachel dient nichts
+    "stella": {"file": lambda: Path(os.devnull), "groups": [
+        ("picture", [
+            _one("aspect", _STELLA, "tia.fs_stretch", [("false", _ORIG, _ST_OFF), ("true", _STRETCH, _ST_ON)], "false", "false"),
+            _one("smooth", _STELLA, "tia.inter", [("true", _ON, _ST_ON), ("false", _OFFK, _ST_OFF)], "false", "false"),
+        ]),
+        ("look", [
+            _one("filter", _STELLA, "tv.filter", [                            # NTSCFilter.hxx Preset
+                ("0", _OFFK, "0"), ("1", {"t": "RGB"}, "1"), ("2", {"t": "S-Video"}, "2"), ("3", {"t": "Composite"}, "3"),
+                ("4", {"t": "Bad adjust"}, "4")], "0", "0"),
+            _one("scanlines", _STELLA, "tv.scanlines", [
+                ("0", _OFFK, "0"), ("25", {"t": "25 %"}, "25"), ("50", {"t": "50 %"}, "50"), ("75", {"t": "75 %"}, "75")], "0", "0"),
+        ]),
+        ("play", []),
+    ]},
 }
 _OPT_INDEX = {t: {o["id"]: o for _, opts in spec["groups"] for o in opts} for t, spec in EMU_OPTS.items()}
 
@@ -10777,6 +11166,10 @@ def _opt_defaults_for(tile):
     if tile == "dolphin":
         return {"res": "3"} if gpu == "dgpu" else {"res": "2"} if gpu == "igp" else {}
     if tile == "azahar":
+        return {"res": "4"} if gpu == "dgpu" else {"res": "2"} if gpu == "igp" else {}
+    if tile == "flycast":               # Dreamcast 640×480
+        return {"res": "1440"} if gpu == "dgpu" else {"res": "960"} if gpu == "igp" else {}
+    if tile == "melonds":               # DS 256×192 je Bildschirm; mehr braucht den OpenGL-Renderer
         return {"res": "4"} if gpu == "dgpu" else {"res": "2"} if gpu == "igp" else {}
     return {}
 
