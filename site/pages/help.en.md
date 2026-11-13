@@ -7,6 +7,8 @@ Controls, updates, the shared folder and the most common questions. Something mi
 - **Questions, ideas, experiences:** in the [Discussions on GitHub](https://github.com/Panther92/VoidStation/discussions). In *Q&A*, answers can be marked as the solution, so others find them later.
 - **Something is broken:** open an [issue on GitHub](https://github.com/Panther92/VoidStation/issues). What helps is listed under [Reporting bugs](seite:contribute#bugs).
 
+**Error report:** Settings → System → Error report → **Create report** (or `vsctl report` in a terminal, which also works over SSH when the interface is stuck) collects version, hardware and logs in one text file on the network share under `vs-reports`. Passwords, Wi-Fi names, the second half of MAC addresses, public IP addresses and e-mail addresses are removed. Nothing is sent anywhere: look at the file (**View contents** or from your PC) and attach it to your issue. The ten newest reports are kept, VoidStation clears out older ones. `vsctl report --print` only shows the report without saving it.
+
 Reading needs no account; posting needs a free GitHub account.
 
 ## Controls {#controls}

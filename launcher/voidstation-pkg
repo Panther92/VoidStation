@@ -497,6 +497,18 @@ main() {
     kernelpurge)                            # alte Kernel weg, wenn der neueste laeuft
       kernel_purge
       ;;
+    syslog)                                 # nur lesen, fuer den Fehlerbericht (vsreport.py, entfernt dort Passwoerter
+                                            # und WLAN-Daten): Kernel-Fehler/-Warnungen, Installer-Protokoll, socklog
+      echo "@@ dmesg"
+      dmesg -T --level=emerg,alert,crit,err,warn 2>/dev/null | tail -n 300
+      if [ -f /var/log/voidstation-install.log ]; then
+        echo "@@ install.log"; tail -n 300 /var/log/voidstation-install.log
+      fi
+      if [ -f /var/log/socklog/everything/current ]; then
+        echo "@@ socklog"; tail -n 200 /var/log/socklog/everything/current
+      fi
+      return 0
+      ;;
     perf)                                   # CPU-Takt beim Spielen (Launcher): on | off | status, s. voidstation-tune
       case "$1" in
         on|off|status) ;;
@@ -538,7 +550,7 @@ main() {
       esac
       ;;
     *)
-      echo "Benutzung: voidstation-pkg install|remove|markauto <paket>... | sync | update | check [--nosync] | mirror status|auto | selfupdate [--markers] | gpu32 [--nosync] | kernelpurge | perf on|off|status | mullvad install|update|remove|status|latest | channel stable|main|auto | xserver ensure|repair|status | ssh on|off|status | bluetooth on|off|status | suspend"
+      echo "Benutzung: voidstation-pkg install|remove|markauto <paket>... | sync | update | check [--nosync] | mirror status|auto | selfupdate [--markers] | gpu32 [--nosync] | kernelpurge | syslog | perf on|off|status | mullvad install|update|remove|status|latest | channel stable|main|auto | xserver ensure|repair|status | ssh on|off|status | bluetooth on|off|status | suspend"
       return 2
       ;;
   esac

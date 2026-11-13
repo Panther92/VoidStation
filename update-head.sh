@@ -127,7 +127,7 @@ chmod +x "$TV/launcher.py" "$TV/launcher-start.py" "$TV/home.sh" "$TV/vsctl" "$T
 # Python-Bytecode mit Pruefsumme statt Dateizeit: build.sh setzt feste Dateizeiten, ein gleich grosser neuer Stand
 # saehe fuer Python sonst unveraendert aus. Scheitert es, uebersetzt Python beim naechsten Start selbst.
 rm -rf "$TV/__pycache__" "$TV/qt/__pycache__"
-python3 -m compileall -q --invalidation-mode checked-hash "$TV/launcher.py" "$TV/tvindex.py" "$TV/discid.py" "$TV/gameprofiles.py" "$TV/vsx11.py" "$TV/qt" || warn "Bytecode nicht vorbereitet"
+python3 -m compileall -q --invalidation-mode checked-hash "$TV/launcher.py" "$TV/tvindex.py" "$TV/discid.py" "$TV/gameprofiles.py" "$TV/vsx11.py" "$TV/vsreport.py" "$TV/qt" || warn "Bytecode nicht vorbereitet"
 echo "__VS_VERSION__" > "$TV/VERSION"
 echo '__VS_VERSION_B64__' | base64 -d > "$TV/version.json" 2>/dev/null || true
 cp "$TV/openbox/"{rc.xml,menu.xml,autostart} "$HOMEDIR/.config/openbox/"
@@ -520,12 +520,15 @@ ROMs/<system>/bios  BIOS-Dateien aus der eigenen Konsole – was hineingehoert, 
 Musik, Videos   eigene Medien (Kachel "Videos & Musik")
 Bilder          fuer den Bildbetrachter
 Screenshots     Bildschirmfotos (F12, Start + Select am Controller oder Befehl vsshot)
+vs-reports      Fehlerberichte (Einstellungen → System → Fehlerbericht oder Befehl vsctl report)
 EOF
 # BIOS liegt seit Oktober 2026 je System in ROMs/<system>/bios (der Launcher verschiebt alte Dateien selbst)
 sed -i 's|^BIOS  .*|ROMs/<system>/bios  BIOS-Dateien aus der eigenen Konsole – was hineingehoert, steht im Hinweis im Ordner|' \
   "$SHARE/LIESMICH.txt" 2>/dev/null || true
 grep -q '^Screenshots ' "$SHARE/LIESMICH.txt" 2>/dev/null || \
   printf '%s\n' 'Screenshots     Bildschirmfotos (F12, Start + Select am Controller oder Befehl vsshot)' >> "$SHARE/LIESMICH.txt" 2>/dev/null || true
+grep -q '^vs-reports ' "$SHARE/LIESMICH.txt" 2>/dev/null || \
+  printf '%s\n' 'vs-reports      Fehlerberichte (Einstellungen → System → Fehlerbericht oder Befehl vsctl report)' >> "$SHARE/LIESMICH.txt" 2>/dev/null || true
 rmdir "$SHARE/BIOS" 2>/dev/null || true
 chown -R "$VSUSER:$VSUSER" "$SHARE"
 

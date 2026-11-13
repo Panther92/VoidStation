@@ -44,6 +44,7 @@ from pathlib import Path
 from typing import Any
 
 import tvindex
+import vsreport
 import vsx11
 from tvindex import TV_LETTERS, TV_PAGE, tv_fold, tv_letter  # noqa: F401
 
@@ -15807,6 +15808,16 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "home"]:
                 raise_home()
                 return self._json(200, {"running": APPS.running()})
+            if parts == ["api", "report"]:             # Einstellungen → System → Fehlerbericht (vsctl report: vsreport.py direkt)
+                try:
+                    rep = vsreport.create(status={"running": APPS.running(), "front": APPS.front()})
+                except RuntimeError:
+                    return self._json(409, {"error": "busy"})
+                except OSError as e:
+                    log("Fehlerbericht fehlgeschlagen:", e)
+                    return self._json(500, {"error": str(e)})
+                log(f"Fehlerbericht ({rep['seconds']} s, {rep['size']} Bytes):", rep["name"])
+                return self._json(200, {k: rep[k] for k in ("name", "size", "overview", "logs")})
             if parts == ["api", "shot"]:               # vsshot bzw. F12: Bildschirmfoto nach share/Screenshots
                 path, err = screenshot("vsshot")
                 return self._json(200 if path else 500, {"path": str(path) if path else "", "error": err})

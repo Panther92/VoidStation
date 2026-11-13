@@ -13,7 +13,7 @@ Ideally as an [issue on GitHub](https://github.com/Panther92/VoidStation/issues)
 - the VoidStation version (shown in the update dialog and in the news)
 - the device (CPU, graphics) and how VoidStation was installed
 - what you did, what should have happened and what happened instead
-- logs from `~/.local/share/voidstation/logs/` or the installer log
+- an error report (Settings → System → Error report or `vsctl report`, saved on the network share under `vs-reports`, see [Help](seite:help#support)) – it contains version, device and logs, without passwords or Wi-Fi data
 
 ## Translating {#translating}
 

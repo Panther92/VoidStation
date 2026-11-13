@@ -7,6 +7,8 @@ Bedienung, Updates, Freigabe und die häufigsten Fragen. Fehlt etwas? Dann [frag
 - **Fragen, Ideen, Erfahrungen:** in den [Discussions auf GitHub](https://github.com/Panther92/VoidStation/discussions). Unter *Q&A* lassen sich Antworten als Lösung markieren, so finden andere sie später wieder.
 - **Etwas funktioniert nicht:** als [Issue auf GitHub](https://github.com/Panther92/VoidStation/issues). Was dabei hilft, steht unter [Fehler melden](seite:contribute#fehler).
 
+**Fehlerbericht:** Einstellungen → System → Fehlerbericht → **Bericht erstellen** (oder `vsctl report` im Terminal, geht auch per SSH, wenn die Oberfläche hängt) sammelt Version, Hardware und Protokolle in einer Textdatei in der Freigabe unter `vs-reports`. Passwörter, WLAN-Namen, die hintere Hälfte von MAC-Adressen, öffentliche IP-Adressen und E-Mail-Adressen sind entfernt. Verschickt wird nichts: Schau die Datei an (**Inhalt ansehen** oder vom PC aus) und häng sie an dein Issue. Die zehn neuesten Berichte bleiben liegen, ältere räumt VoidStation weg. `vsctl report --print` zeigt den Bericht nur an, ohne ihn zu speichern.
+
 Zum Lesen brauchst du kein Konto, zum Schreiben ein kostenloses GitHub-Konto.
 
 ## Bedienung {#bedienung}

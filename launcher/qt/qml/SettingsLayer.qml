@@ -514,6 +514,31 @@ Layer {
         }, fail)
     }
 
+    // Fehlerbericht: Version, Hardware, Protokolle nach share/vs-reports (vsreport.py), ohne Passwoerter und WLAN-Daten.
+    // Danach Dialog mit Dateiname; "Inhalt ansehen" zeigt alles ausser den Protokollen und listet diese auf.
+    property bool reportBusy: false
+    function makeReport() {
+        if (reportBusy) return
+        reportBusy = true
+        toastBox.show(Ui.t("report.busy"), false, 120000)
+        Api.post("/api/report", {}, function (r) {
+            reportBusy = false
+            toastBox.hide()
+            app.dialog(Ui.t("report.doneTitle"),
+                       Ui.t("report.doneText", { path: "share/vs-reports/" + r.name, size: Ui.num(Math.max(1, Math.round(r.size / 1024))) + " KB" }),
+                       [[Ui.t("report.show"), function () { Qt.callLater(function () { showReport(r) }) }], [Ui.t("common.close")]])
+        }, function (e) {
+            reportBusy = false
+            toastBox.hide()
+            if (e === "busy") app.toast(Ui.t("common.busy"))
+            else fail(e)
+        })
+    }
+    function showReport(r) {
+        var logs = (r.logs || []).map(function (l) { return "\u2022 " + l.name + " \u2013 " + Ui.t("report.lines", { n: Ui.num(l.lines) }) }).join("\n")
+        app.dialog(Ui.t("report.contentTitle"), r.overview + (logs ? "\n\n" + Ui.t("report.logs") + "\n" + logs : ""), [[Ui.t("common.close")]])
+    }
+
     headRight: NowLine {
         main: s.sett ? (s.ip || Ui.t("settings.offline")) : ""
         sub: s.sett && s.ip ? s.sett.net.hostname : ""
@@ -975,6 +1000,12 @@ Layer {
                     model: [true, false]
                     Pill { property string key: "ssh" + modelData; text: Ui.t(modelData ? "common.on" : "common.off"); on: !!s.sett && !!s.sett.ssh === modelData; onTriggered: s.setSsh(modelData) }
                 }
+            }
+        }
+        SetGroup {
+            visible: s.cat === "system" && !!s.sett; availH: s.colH; title: Ui.t("settings.report")
+            SetRow {
+                Pill { property string key: "report"; text: Ui.t("report.create"); onTriggered: s.makeReport() }
             }
         }
     }

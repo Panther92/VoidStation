@@ -8,6 +8,9 @@
 # vsctl version         -> installierte VoidStation-Version, Build und Update-Kanal
 # vsctl channel [testing|stable] -> Update-Kanal zeigen bzw. wechseln. Testing (Entwicklerstand) gibt es
 #                          seit 2026.11 nur noch hier, mit Rueckfrage – nicht mehr im Installer/in den Einstellungen
+# vsctl report [--print] -> Fehlerbericht (Version, Hardware, Protokolle; ohne Passwoerter und WLAN-Daten) nach
+#                          ~/share/vs-reports – wie Einstellungen → System; --print: nur ausgeben. Braucht die
+#                          Oberflaeche nicht (geht auch per SSH, wenn die Startseite haengt)
 # vsctl / vsctl help    -> diese Uebersicht
 # Tab-Vervollstaendigung (Befehle, Kachel-IDs): /etc/bash/bashrc.d/voidstation.sh
 URL=http://127.0.0.1:8765/api
@@ -23,6 +26,7 @@ vsctl – VoidStation von der Kommandozeile steuern
   vsctl update         alle Updates wie Einstellungen → Updates (-v: mit Protokoll)
   vsctl version        installierte Version, Build und Update-Kanal
   vsctl channel        Update-Kanal zeigen (testing | stable: wechseln)
+  vsctl report         Fehlerbericht nach ~/share/vs-reports (--print: nur anzeigen)
 EOF
 }
 
@@ -189,6 +193,7 @@ case "$1" in
   update) update "$2"; exit $? ;;
   version|--version|-V) version; exit $? ;;
   channel) shift; channel "$@"; exit $? ;;
+  report) shift; python3 "$TV/vsreport.py" "$@"; exit $? ;;
   ""|help|-h|--help) usage; exit 0 ;;
   *) echo "vsctl: unbekannter Befehl \"$1\"" >&2; usage >&2; exit 1 ;;
 esac

@@ -13,7 +13,7 @@ Am besten als [Issue auf GitHub](https://github.com/Panther92/VoidStation/issues
 - die VoidStation-Version (steht im Update-Dialog und in den News)
 - das Gerät (Prozessor, Grafik) und wie VoidStation installiert wurde
 - was du gemacht hast, was passieren sollte und was passiert ist
-- Protokolle aus `~/.local/share/voidstation/logs/` bzw. das Installer-Protokoll
+- ein Fehlerbericht (Einstellungen → System → Fehlerbericht oder `vsctl report`, liegt dann in der Freigabe unter `vs-reports`, siehe [Hilfe](seite:help#support)) – er enthält Version, Gerät und Protokolle, ohne Passwörter und WLAN-Daten
 
 ## Übersetzen {#uebersetzen}
 

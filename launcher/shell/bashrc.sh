@@ -67,9 +67,11 @@ _vsctl() {
   local cur=${COMP_WORDS[COMP_CWORD]} ids
   COMPREPLY=()
   if [ "$COMP_CWORD" = 1 ]; then
-    mapfile -t COMPREPLY < <(compgen -W "home launch status update version channel help" -- "$cur")
+    mapfile -t COMPREPLY < <(compgen -W "home launch status update version channel report help" -- "$cur")
   elif [ "$COMP_CWORD" = 2 ] && [ "${COMP_WORDS[1]}" = channel ]; then
     mapfile -t COMPREPLY < <(compgen -W "stable testing" -- "$cur")
+  elif [ "$COMP_CWORD" = 2 ] && [ "${COMP_WORDS[1]}" = report ]; then
+    mapfile -t COMPREPLY < <(compgen -W "--print" -- "$cur")
   elif [ "$COMP_CWORD" = 2 ] && [ "${COMP_WORDS[1]}" = launch ]; then
     ids="$(sed -n 's/^ *"id": *"\([^"]*\)".*/\1/p' "$HOME/.local/share/voidstation/tiles.json" 2>/dev/null)"
     mapfile -t COMPREPLY < <(compgen -W "$ids" -- "$cur")
