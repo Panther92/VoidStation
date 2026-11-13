@@ -7275,24 +7275,35 @@ class ROMManager:
         "dosbox": "dos",
         "scummvm": "scummvm",
         "retroarch": "retroarch",
+        "mednafen": "megadrive",  # dazu mastersystem, gamegear, saturn, pcengine (SYSTEM_FOLDERS)
     }
     SYSTEM_TO_TILE = {v: k for k, v in TILE_TO_SYSTEM.items()}
     SYSTEM_TO_TILE["gbc"] = "gba"
+    SYSTEM_TO_TILE["wii"] = "dolphin"
+    # Mednafen: je Ordner das Modul, das -force_module bekommt (Endungen wie .bin oder .cue sind sonst nicht eindeutig)
+    MEDNAFEN_MODULES = {"megadrive": "md", "mastersystem": "sms", "gamegear": "gg", "saturn": "ss", "pcengine": "pce"}
+    SYSTEM_TO_TILE.update({f: "mednafen" for f in MEDNAFEN_MODULES})
     # Weitere Ordner, die eine Kachel mit anzeigt (erster Ordner = Hauptordner der Kachel).
     # mGBA spielt auch Game Boy (Color): Spiele aus ROMs/gba und ROMs/gbc stehen in einer Liste.
+    # Dolphin spielt GameCube und Wii: ROMs/gamecube und ROMs/wii in einer Liste.
     SYSTEM_FOLDERS = {
         "gba": ["gba", "gbc"],
+        "gamecube": ["gamecube", "wii"],
+        "megadrive": list(MEDNAFEN_MODULES),
     }
+    # Dolphin 2609 (DolphinQt/MainWindow.cpp, Datei oeffnen): ohne .elf/.dol/.dff/.json (keine Spiele) und .bin/.nfs
+    _DOLPHIN_EXT = [".iso", ".rvz", ".gcm", ".gcz", ".ciso", ".wia", ".wbfs", ".wad", ".tgc", ".m3u"]
 
     EXTENSIONS = {
         "gba": [".gba", ".gbc", ".gb", ".zip", ".7z"],
         "gbc": [".gbc", ".gb", ".zip", ".7z"],
         "snes": [".sfc", ".smc", ".zip", ".7z"],
         "nes": [".nes", ".zip", ".7z"],
-        "psx": [".iso", ".cue", ".bin", ".chd", ".pbp"],
+        "psx": [".iso", ".cue", ".bin", ".chd", ".pbp", ".m3u"],       # .m3u: Liste der CDs eines Spiels (system.cpp)
         "psp": [".iso", ".cso", ".pbp"],
         "nds": [".nds", ".zip"],
-        "gamecube": [".iso", ".rvz", ".gcm"],
+        "gamecube": _DOLPHIN_EXT,
+        "wii": _DOLPHIN_EXT,
         "dreamcast": [".cdi", ".gdi", ".chd"],
         "n64": [".z64", ".n64", ".v64", ".zip", ".7z"],
         "ps2": [".iso", ".chd", ".cso", ".zso", ".cue", ".gz", ".elf"],
@@ -7301,8 +7312,13 @@ class ROMManager:
         "wiiu": [".wua", ".wux", ".wud", ".rpx"],
         "c64": [".d64", ".t64", ".prg", ".crt"],
         "atari2600": [".a26", ".bin"],
-        "megadrive": [".md", ".bin", ".smd", ".gen", ".zip", ".7z"],
-        "genesis": [".md", ".bin", ".smd", ".gen", ".zip", ".7z"],
+        # Mednafen 1.32.1: md/system.cpp, sms/system.cpp, pce/pce.cpp KnownExtensions; CDs mednafen.cpp KnownCDExtensions
+        # (kein .chd, kein .iso); .zip packt es selbst aus, .7z nicht
+        "megadrive": [".md", ".bin", ".gen", ".smd", ".zip"],
+        "mastersystem": [".sms", ".zip"],
+        "gamegear": [".gg", ".zip"],
+        "saturn": [".cue", ".ccd", ".toc", ".m3u"],
+        "pcengine": [".pce", ".sgx", ".cue", ".ccd", ".toc", ".m3u", ".zip"],
         "scummvm": [".scummvm"],
         "dos": [".conf", ".exe", ".bat", ".com"],
         "mame": [".zip", ".7z"],
@@ -7320,6 +7336,13 @@ class ROMManager:
         if canon == "scummvm":                    # Spiel = Ordner (eine .scummvm-Datei liegt darin)
             d = target if target.is_dir() else target.parent
             return (["--fullscreen"] if emu_fullscreen_wanted("scummvm") else []) + [f"--path={d}", "--auto-detect"]
+        if canon == "megadrive":                  # Mednafen: Modul nach Ordner; -video.fs merkt es sich sonst vom letzten Mal
+            try:
+                mod = self.MEDNAFEN_MODULES.get(target.relative_to(self.rom_dir).parts[0])
+            except (ValueError, IndexError):
+                mod = None
+            return ((["-force_module", mod] if mod else [])
+                    + ["-video.fs", "1" if emu_fullscreen_wanted("mednafen") else "0", str(target)])
         if canon == "retroarch":
             core = retroarch_core(target)
             if not core:
@@ -7339,7 +7362,6 @@ class ROMManager:
         "dreamcast": ["~/.local/share/voidstation/apps/flycast/AppRun"],
         "gamecube": ["dolphin-emu"],
         "megadrive": ["mednafen"],
-        "genesis": ["mednafen"],
     }
 
     def __init__(self):
@@ -7428,6 +7450,28 @@ class ROMManager:
                 out.append(q)
         return out
 
+    @staticmethod
+    def m3u_discs(m3u):
+        """Abbilder, die eine .m3u-Liste nennt (eine Datei je Zeile, # = Kommentar), als Pfade neben der Liste."""
+        try:
+            txt = m3u.read_bytes()[:65536].decode("utf-8-sig", "replace")
+        except OSError:
+            return []
+        out = []
+        for line in txt.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            q = m3u.parent / line.replace("\\", "/")
+            if not q.is_file():                      # unter Windows geschrieben: Gross-/Kleinschreibung der Platte
+                try:
+                    q = next((x for x in q.parent.iterdir() if x.name.casefold() == q.name.casefold()), q)
+                except OSError:
+                    pass
+            if q.is_file() and q != m3u and q not in out:
+                out.append(q)
+        return out
+
     def rom_file(self, folder, filename):
         """Spieldatei bzw. -ordner aus dem Namen der Spieleliste (relativ zu ROMs/<folder>, auch "Ordner/Spiel.cue")
         -> Pfad oder None. Nie ausserhalb des Ordners."""
@@ -7489,6 +7533,12 @@ class ROMManager:
                 if f.suffix.lower() == ".cue":
                     tracks[f] = self.cue_tracks(f)
             hidden = {t for ts in tracks.values() for t in ts}
+            # .m3u: Die Liste ist das Spiel, ihre CDs (samt deren Spuren) stehen nicht eigens in der Liste
+            for f in files:
+                if f.suffix.lower() == ".m3u":
+                    discs = self.m3u_discs(f)
+                    tracks[f] = [q for d in discs for q in [d] + (tracks.get(d) or self.cue_tracks(d) if d.suffix.lower() == ".cue" else [])]
+                    hidden.update(tracks[f])
             # .bin ohne Blatt: Spuren eines Spiels ("… (Track 2).bin") stehen nicht eigens in der Liste, die erste Spur
             # steht fuer das Spiel (Name ohne "(Track 1)", Groesse aller Spuren)
             for first, ts in self.bin_sets(files, hidden).items():
@@ -7978,6 +8028,12 @@ EMU_LAYOUTS: dict[str, Any] = {
         ("B", "south"), ("A", "east"), ("Y", "west"), ("X", "north"), ("L", "l1"), ("R", "r1"), ("L2", "l2"),
         ("R2", "r2"), ("L3", "l3"), ("R3", "r3"), ("Start", "start"), ("Select", "select"), *_DPAD,
         ("save", ""), ("load", ""), ("ff", ""), ("rewind", "")]},
+    # Mednafen: ein Pad fuer alle Systeme – Sega-Pad mit sechs Tasten (Saturn: dazu L/R). A/B/C liegen wie auf dem
+    # Original in einer Reihe (links, unten, rechts), X/Y/Z darueber auf L1, oben, R1. Master System und Game Gear:
+    # 1 = B, 2 = C; PC Engine: II = B, I = C, Select = Mode, Run = Start (MEDNAFEN_PADS)
+    "mednafen": {"name": "Mednafen", "sub": "Sega · PC Engine", "console": "saturn", "notes": ["mednafen"], "buttons": [
+        ("A", "west"), ("B", "south"), ("C", "east"), ("X", "l1"), ("Y", "north"), ("Z", "r1"), ("L", "l2"), ("R", "r2"),
+        ("Start", "start"), ("Mode", "select"), *_DPAD, ("save", ""), ("load", ""), ("ff", "")]},
 }
 EMU_ACTIONS = {"save", "load", "rewind", "ff"}
 # Was VoidStation fuer die Extras an das Fenster des Emulators schickt (tap = einmal, hold = solange gedrueckt).
@@ -7990,7 +8046,7 @@ EMU_ACTIONS = {"save", "load", "rewind", "ff"}
 #   Umschalt+F5 speichern, sobald F5 einem Schnappschuss zugeordnet ist – macht VoidStation) · Azahar 2126 (Schnell-
 #   speichern/-laden und Turbo ohne Vorgabe, setzt VoidStation) · MAME 0.282 inpttype.ipp (Umschalt+F6/F7 Schnell-
 #   speichern/-laden, Einfg vorspulen) · RetroArch 1.22 config.def.keybinds.h (F2/F4, L halten, R zurueckspulen)
-#   · DOSBox: alle Tasten – der Controller tippt auf der Tastatur
+#   · DOSBox: alle Tasten – der Controller tippt auf der Tastatur · Mednafen 1.32 drivers/input.cpp (F5/F7, ` halten)
 EMU_KEYS = {
     "gba": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab"), "rewind": ("hold", "Scroll_Lock")},
     "snes9x": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab")},
@@ -8005,6 +8061,7 @@ EMU_KEYS = {
     "xemu": {"save": ("tap", "shift+F5"), "load": ("tap", "F5")},
     "azahar": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("toggle", "ctrl+t")},
     "mame": {"save": ("tap", "shift+F6"), "load": ("tap", "shift+F7"), "ff": ("hold", "Insert")},
+    "mednafen": {"save": ("tap", "F5"), "load": ("tap", "F7"), "ff": ("hold", "grave")},
     "retroarch": {"save": ("tap", "F2"), "load": ("tap", "F4"), "ff": ("hold", "l"), "rewind": ("hold", "r")},
     "dosbox": {"Space": ("hold", "space"), "Ctrl": ("hold", "Control_L"), "Alt": ("hold", "Alt_L"),
                "Shift": ("hold", "Shift_L"), "Enter": ("hold", "Return"), "Esc": ("hold", "Escape"),
@@ -8898,7 +8955,7 @@ def flycast_prepare(ctx):
 ROMS_DIR = Path.home() / "share" / "ROMs"
 BIOS_OLD = Path.home() / "share" / "BIOS"        # bis Oktober 2026 ein gemeinsamer Ordner – bios_migrate raeumt ihn auf
 BIOS_SYSTEMS = {"psx": True, "ps2": True, "xbox": True,                       # Ordner -> Pflicht?
-                "dreamcast": False, "nds": False, "gba": False, "gbc": False}
+                "dreamcast": False, "nds": False, "gba": False, "gbc": False, "saturn": True, "pcengine": False}
 BIOS_NOT = {".txt", ".md", ".nfo", ".url", ".htm", ".html", ".pdf", ".jpg", ".jpeg", ".png", ".ini", ".cfg", ".zip",
             ".7z", ".rar"}                       # Hinweise und Beiwerk zaehlen nie als BIOS (z. B. 512-Byte-Textdatei)
 GB_BOOT = {0xC2F5CC97: "gb", 0x59C8598E: "gb", 0xE6920754: "gb", 0xEC8A83B9: "sgb", 0x53D0DD63: "sgb",
@@ -8925,6 +8982,23 @@ def _gb_boot(f, n):
         return None
 
 
+# Saturn: SHA-256 der BIOS-Fassungen, die Mednafen kennt (ss/ss.cpp BIOSDB) – Japan bzw. Nordamerika/Europa
+SS_BIOS = {"cc1e1b7f88f1c6e6fc35994bae2c2292e06fdae258c79eb26a1f1391e72914a8": "jp",
+           "ae4058627bb5db9be6d8d83c6be95a4aa981acc8a89042e517e73317886c8bc2": "jp",
+           "dcfef4b99605f872b6c3b6d05c045385cdea3d1b702906a0ed930df7bcb7deac": "jp",
+           "87293093fad802fcff31fcab427a16caff1acbc5184899b8383b360fd58efb73": "eu",
+           "96e106f740ab448cf89f0dd49dfbac7fe5391cb6bd6e14ad5e3061c13330266f": "eu"}
+
+
+def _ss_bios(f, n):
+    if n != 0x80000:
+        return None
+    try:
+        return SS_BIOS.get(hashlib.sha256(f.read_bytes()).hexdigest())
+    except OSError:
+        return None
+
+
 BIOS_KINDS = {  # Art -> (Ordner unter share/ROMs, Test(Datei, Groesse))
     "psx": ("psx", lambda f, n: n == 0x80000),
     # PS2: Hauptteil (.bin, vom Dumper oft .ROM0); .rom1/.rom2/.erom (DVD-Player usw.) laedt PCSX2 selbst dazu
@@ -8941,6 +9015,9 @@ BIOS_KINDS = {  # Art -> (Ordner unter share/ROMs, Test(Datei, Groesse))
     "gb": ("gbc", lambda f, n: _gb_boot(f, n) == "gb"),
     "sgb": ("gbc", lambda f, n: _gb_boot(f, n) == "sgb"),
     "gbc": ("gbc", lambda f, n: _gb_boot(f, n) == "gbc"),
+    "ss_jp": ("saturn", lambda f, n: _ss_bios(f, n) == "jp"),
+    "ss_eu": ("saturn", lambda f, n: _ss_bios(f, n) == "eu"),
+    "pcecd": ("pcengine", lambda f, n: n in (0x40000, 0x40200)),       # System Card, mit oder ohne 512-Byte-Kopf
 }
 
 
@@ -9012,6 +9089,16 @@ def bios_status(tile):
         files = xemu_files(xemu_load())
         miss = [k for k in ("mcpx", "flash", "hdd") if not files.get(k) and not bios_find(k)]
         return {"ok": not miss, "missing": miss, "folder": "xbox"}
+    if tile == "mednafen":                             # nur der Saturn braucht ein BIOS – melden, sobald Spiele da sind
+        if not ROMS.scan(ROMS.rom_dir / "saturn", set(ROMS.EXTENSIONS["saturn"])):
+            return None
+        cur = mednafen_read({"filesys.path_firmware", "ss.bios_jp", "ss.bios_na_eu"})
+        fw = Path(cur.get("filesys.path_firmware") or "firmware").expanduser()
+        fw = fw if fw.is_absolute() else MEDNAFEN_DIR / fw
+        ok = bool(bios_find("ss_jp") or bios_find("ss_eu")) or any(
+            (f if f.is_absolute() else fw / f).is_file()
+            for f in (Path(cur.get(k) or d).expanduser() for k, d in (("ss.bios_jp", "sega_101.bin"), ("ss.bios_na_eu", "mpr-17933.bin"))))
+        return {"ok": ok, "missing": [] if ok else ["bios"], "folder": "saturn"}
     return None
 
 
@@ -9048,6 +9135,8 @@ def bios_prepare(tile):
             melonds_bios()
         elif tile == "flycast":
             flycast_bios()
+        elif tile == "mednafen":
+            mednafen_bios()
 
 
 # mGBA 0.10: [ports.qt] gba.bios / gb.bios / sgb.bios / gbc.bios (SettingsView.cpp), Rueckfall <config>/<art>_bios.bin
@@ -9954,10 +10043,156 @@ def emu_paths_refresh():
 emu_paths_refresh()
 
 
+# -- Mednafen 1.32.1 (Void-Paket; kein eigenes Menue – Einstellungen nur in ~/.mednafen/mednafen.cfg, je Zeile
+#    "<name> <wert>", settings.cpp; eine unvollstaendige Datei ergaenzt es beim Beenden selbst).
+#    Controller: Joystick-Geraete des Kernels (/dev/input/js*, drivers/Joystick_Linux.cpp), Bindung
+#    "joystick 0x<Kennung> button_3" bzw. "abs_1-" (drivers/input.cpp BCGToString, Joystick.cpp BNToString).
+MEDNAFEN_DIR = Path.home() / ".mednafen"
+MEDNAFEN_CFG = MEDNAFEN_DIR / "mednafen.cfg"
+MEDNAFEN_SYSFS = Path("/sys/class/input")
+_MDFN_DIRS = {"up": "Up", "down": "Down", "left": "Left", "right": "Right"}
+# Geraet in Mednafen -> {dessen Taste: Taste der Skizze}; md: je nach Spiel 3 oder 6 Tasten (md.input.auto), gamepad2 = 2 Tasten
+MEDNAFEN_PADS = {
+    "md.input.port1.gamepad": {"a": "A", "b": "B", "c": "C", "start": "Start"},
+    "md.input.port1.gamepad2": {"a": "A", "b": "B", "start": "Start"},
+    "md.input.port1.gamepad6": {"a": "A", "b": "B", "c": "C", "x": "X", "y": "Y", "z": "Z", "start": "Start", "mode": "Mode"},
+    "sms.input.port1.gamepad": {"fire1": "B", "fire2": "C", "pause": "Start"},
+    "gg.input.builtin.gamepad": {"button1": "B", "button2": "C", "start": "Start"},
+    "ss.input.port1.gamepad": {"a": "A", "b": "B", "c": "C", "x": "X", "y": "Y", "z": "Z", "ls": "L", "rs": "R", "start": "Start"},
+    "pce.input.port1.gamepad": {"ii": "B", "i": "C", "select": "Mode", "run": "Start"},
+}
+
+
+def mednafen_read(keys=None):
+    out: dict[str, str] = {}
+    try:
+        lines = MEDNAFEN_CFG.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        k, sep, v = line.partition(" ")
+        if sep and k and k[0] not in ";#" and (keys is None or k in keys):
+            out[k] = v
+    return out
+
+
+def mednafen_write(updates):
+    """Einstellungen setzen; alles andere (auch die Kommentarzeilen) bleibt."""
+    todo, out = {k: str(v) for k, v in updates.items()}, []
+    try:
+        lines = MEDNAFEN_CFG.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        k = line.partition(" ")[0]
+        out.append(f"{k} {todo.pop(k)}" if k in todo and line[:1] not in (";", "#") else line)
+    out += [f"{k} {v}" for k, v in todo.items()]
+    MEDNAFEN_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = MEDNAFEN_CFG.with_suffix(".vs-tmp")
+    tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
+    tmp.replace(MEDNAFEN_CFG)
+
+
+def js_indices(pad):
+    """(Tasten, Achsen) eines Gamepads als {evdev-Code: Nummer}, gezaehlt wie /dev/input/js* (Kernel joydev.c): Tasten ab
+    BTN_JOYSTICK, dann BTN_MISC bis davor; Achsen in der Reihenfolge der Codes – das Steuerkreuz zaehlt dort als Achse mit."""
+    from evdev import ecodes as E
+    keys = pad["keys"]
+    order = sorted(k for k in keys if E.BTN_JOYSTICK <= k <= E.KEY_MAX) + sorted(k for k in keys if E.BTN_MISC <= k < E.BTN_JOYSTICK)
+    return {k: i for i, k in enumerate(order)}, {a: i for i, a in enumerate(sorted(pad["axes"]))}
+
+
+def mednafen_pad_ids(pads):
+    """{Pfad: Kennung} wie Mednafen sie bildet (Joystick_Linux.cpp): Bus, Hersteller, Produkt, Version aus sysfs, dann Zahl
+    der Achsen und Tasten; gleiche Geraete zaehlt es in der Reihenfolge der js-Nummern hoch (Joystick.cpp). Ohne
+    js-Geraet (Modul joydev fehlt) sieht Mednafen den Controller nicht."""
+    rows = []
+    for pad in pads:
+        dev = MEDNAFEN_SYSFS / Path(pad["path"]).name / "device"
+        try:
+            js = next((int(q.name[2:]) for q in dev.iterdir() if re.fullmatch(r"js\d+", q.name)), None)
+            ids = [int((dev / "id" / n).read_text().strip(), 16) & 0xFFFF for n in ("bustype", "vendor", "product", "version")]
+        except (OSError, ValueError):
+            continue
+        if js is None:
+            continue
+        btn, ax = js_indices(pad)
+        rows.append((js, pad["path"], ids[0] << 48 | ids[1] << 32 | ids[2] << 16 | ids[3], len(ax) << 48 | len(btn) << 32))
+    out: dict = {}
+    seen: dict = {}
+    for _, path, hi, lo in sorted(rows):
+        n = seen.get((hi, lo), 0)
+        seen[(hi, lo)] = n + 1
+        out[path] = f"0x{hi:016x}{(lo + n) & 0xFFFFFFFFFFFFFFFF:016x}"
+    return out
+
+
+def mednafen_value(b, jid, btn, ax):
+    from evdev import ecodes as E
+    if not b:
+        return None
+    if "key" in b and b["key"] in btn:
+        return f"joystick {jid} button_{btn[b['key']]}"
+    code = b.get("abs") if "abs" in b else {"x": E.ABS_HAT0X, "y": E.ABS_HAT0Y}.get(b.get("hat"))
+    if code in ax:
+        return f"joystick {jid} abs_{ax[code]}{'+' if b['dir'] > 0 else '-'}"
+    return None
+
+
+def mednafen_prepare(ctx):
+    from evdev import ecodes as E
+    jid = mednafen_pad_ids(gamepads()).get(ctx["pad"]["path"])
+    if not jid:
+        log("Mednafen: kein Joystick-Geraet (js) zum Controller – Belegung bleibt")
+        return
+    btn, ax = js_indices(ctx["pad"])
+    val = {b: mednafen_value(ctx["bmap"].get(b), jid, btn, ax) for b, _ in EMU_LAYOUTS["mednafen"]["buttons"] if b not in EMU_ACTIONS}
+    # linker Stick steuert mit, soweit seine Achsen nicht schon belegt sind
+    used = {v for v in val.values() if v}
+    for name, code, sign in (("Up", E.ABS_Y, "-"), ("Down", E.ABS_Y, "+"), ("Left", E.ABS_X, "-"), ("Right", E.ABS_X, "+")):
+        stick = f"joystick {jid} abs_{ax[code]}{sign}" if code in ax else None
+        if stick and stick not in used:
+            val[name] = f"{val[name]} || {stick}" if val.get(name) else stick
+    wanted = {}
+    for dev, keys in MEDNAFEN_PADS.items():
+        for k, b in {**_MDFN_DIRS, **keys}.items():
+            if val.get(b):
+                wanted[f"{dev}.{k}"] = val[b]
+    have = mednafen_read(set(wanted))
+    split = {k: [x.strip() for x in v.split(" || ")] for k, v in have.items()}
+    cur = {k: " || ".join(x for x in parts if x.startswith("joystick ")) for k, parts in split.items()}
+    if not keymap_once("mednafen", "pad", cur, wanted, ctx["custom"]):
+        return
+    # Tastatur-Belegung von Mednafen bleibt davor stehen
+    mednafen_write({k: " || ".join([x for x in split.get(k, []) if x and not x.startswith("joystick ")] + [v])
+                    for k, v in wanted.items()})
+    log("Mednafen: Controller-Belegung", jid)
+
+
+def mednafen_bios():
+    """Saturn-BIOS und PC-Engine-CD-BIOS aus der Freigabe eintragen, wenn Mednafen an seinem Ort nichts findet."""
+    cur = mednafen_read({"filesys.path_firmware", "ss.bios_jp", "ss.bios_na_eu", "pce.cdbios"})
+    fw = Path(cur.get("filesys.path_firmware") or "firmware").expanduser()
+    fw = fw if fw.is_absolute() else MEDNAFEN_DIR / fw
+    put = {}
+    for key, default, kind in (("ss.bios_jp", "sega_101.bin", "ss_jp"), ("ss.bios_na_eu", "mpr-17933.bin", "ss_eu"),
+                               ("pce.cdbios", "syscard3.pce", "pcecd")):
+        f = Path(cur.get(key) or default).expanduser()
+        if (f if f.is_absolute() else fw / f).is_file():
+            continue
+        hit = bios_find(kind)
+        if hit:
+            put[key] = str(hit[0])
+    if put:
+        mednafen_write(put)
+        log("Mednafen: BIOS", put)
+
+
 KEYMAP_WRITERS = {"duckstation": duckstation_prepare, "snes9x": snes9x_prepare, "nestopia": nestopia_prepare,
                   "ppsspp": ppsspp_prepare, "melonds": melonds_prepare, "dolphin": dolphin_prepare,
                   "flycast": flycast_prepare, "pcsx2": pcsx2_prepare, "rmg": rmg_prepare, "xemu": xemu_prepare,
-                  "azahar": azahar_prepare, "cemu": cemu_prepare, "mame": mame_prepare, "retroarch": retroarch_prepare}
+                  "azahar": azahar_prepare, "cemu": cemu_prepare, "mame": mame_prepare, "retroarch": retroarch_prepare,
+                  "mednafen": mednafen_prepare}
 # Hinweise der Tastenbelegung, die nur gelten, solange der Emulator noch nicht eingerichtet ist
 KEYMAP_NOTE_READY = {"duckstation": lambda: duck_ready(), "pcsx2": lambda: pcsx2_ready()}
 
@@ -10691,6 +10926,28 @@ class _Mapped:
 _XEMU = _TomlStore(lambda: xemu_load(), lambda root: xemu_save(root))
 _MELON = _TomlStore(_melonds_load, _melonds_save)
 _MAME, _STELLA, _S9X = _MameStore(), _StellaStore(), _IniStore(lambda: snes9x_conf(), "Display")
+
+
+class _MdfnStore:
+    """mednafen.cfg ("<name> <wert>")."""
+
+    def values(self, keys):
+        return mednafen_read(set(keys))
+
+    def put(self, updates):
+        mednafen_write(updates)
+
+
+_MDFN = _MdfnStore()
+_MDFN_SYS = ("md", "sms", "gg", "ss", "pce")
+# videoip: Vorgabe je System (drivers/video.cpp: 1, wo das System die Aufloesung wechseln kann)
+_MDFN_IP = {"md": "1", "sms": "0", "gg": "0", "ss": "1", "pce": "1"}
+
+
+def _mdfn(oid, key, rows, default_content, default, **kw):
+    """Dieselbe Einstellung fuer alle fuenf Systeme: rows [(Wert, Beschriftung, Inhalt)]"""
+    return _map(oid, _MDFN, [(v, lab, {f"{m}.{key}": c for m in _MDFN_SYS}) for v, lab, c in rows],
+                {f"{m}.{key}": default_content for m in _MDFN_SYS}, default, **kw)
 _ST_ON, _ST_OFF = ["true", "1"], ["false", "0"]                     # Stella: Variant(bool) schreibt 1/0, die Vorgaben stehen als Wort
 
 
@@ -11080,6 +11337,32 @@ EMU_OPTS: dict[str, Any] = {
         ]),
         ("play", []),
     ]},
+    # Mednafen: je System eigene Schluessel (md.stretch, ss.stretch …) – die Karte stellt alle fuenf gleich
+    "mednafen": {"file": lambda: Path(os.devnull), "groups": [
+        ("picture", [
+            _mdfn("aspect", "stretch", [                                    # drivers/video.cpp StretchMode_List
+                ("aspect_mult2", {"k": "emuopt.v.nearest"}, "aspect_mult2"), ("aspect", _ORIG, "aspect"),
+                ("full", _STRETCH, "full")], "aspect_mult2", "aspect_mult2"),
+            _map("smooth", _MDFN, [
+                ("auto", {"k": "emuopt.v.auto"}, {f"{m}.videoip": v for m, v in _MDFN_IP.items()}),
+                ("true", _ON, {f"{m}.videoip": "1" for m in _MDFN_SYS}),
+                ("false", _OFFK, {f"{m}.videoip": "0" for m in _MDFN_SYS})],
+                 {f"{m}.videoip": v for m, v in _MDFN_IP.items()}, "auto"),
+        ]),
+        ("look", [
+            _mdfn("look", "shader", [                                       # Shader_List
+                ("none", _OFFK, "none"), ("autoipsharper", {"k": "emuopt.v.sharp"}, "autoipsharper"),
+                ("scale2x", {"t": "Scale2x"}, "scale2x"), ("sabr", {"t": "SABR"}, "sabr"),
+                ("goat", {"k": "emuopt.v.crt"}, "goat")], "none", "none"),
+            _mdfn("filter", "special", [("none", _OFFK, "none")] + [                 # Special_List
+                (v, {"t": t}, v) for v, t in (("hq2x", "HQ2x"), ("hq3x", "HQ3x"), ("hq4x", "HQ4x"), ("scale2x", "Scale2x"),
+                                              ("scale3x", "Scale3x"), ("scale4x", "Scale4x"), ("2xsai", "2xSaI"),
+                                              ("super2xsai", "Super 2xSaI"), ("supereagle", "Super Eagle"))], "none", "none"),
+            _mdfn("scanlines", "scanlines", [
+                ("0", _OFFK, "0"), ("25", {"t": "25 %"}, "25"), ("50", {"t": "50 %"}, "50"), ("75", {"t": "75 %"}, "75")], "0", "0"),
+        ]),
+        ("play", []),
+    ]},
     # Stella: Einstellungen stehen in einer Datenbank (STELLA_DB, _StellaStore) – als "Datei" der Kachel dient nichts
     "stella": {"file": lambda: Path(os.devnull), "groups": [
         ("picture", [
@@ -11387,6 +11670,8 @@ def _disc_key(tile, path, st):
 def _disc_id(tile, path):
     """Seriennummer bzw. (Seriennummer, CRC) eines Abbilds; gemerkt je Datei, Groesse und Zeit. None = nicht lesbar."""
     cache = Path.home() / ".cache/voidstation/disc-ids.json"
+    if path.suffix.lower() == ".m3u":                    # Liste der CDs: Die erste steht fuer das Spiel
+        path = (ROMManager.m3u_discs(path) or [path])[0]
     try:
         st = path.stat()
     except OSError:
@@ -12167,7 +12452,8 @@ EMU_FULLSCREEN: dict[str, tuple] = {"mgba-qt": ("-f", "ctrl+f"), "duckstation": 
 # Dasselbe je Kachel fuer Flatpaks (Programm ist dort "flatpak"): PCSX2 (QtHost.cpp "-fullscreen", Alt+Enter),
 # RMG (main.cpp "-f", Alt+Enter), xemu (QEMU "-full-screen", F11), Azahar (citra_qt.cpp "-f", F11), Cemu
 # (LaunchSettings.cpp "-f", MainWindow.cpp F11). Die Option steht vor der Spieldatei (und ROM_ARGS).
-EMU_FULLSCREEN_TILE: dict[str, tuple] = {"pcsx2": ("-fullscreen", "alt+Return"), "rmg": ("-f", "alt+Return"), "xemu": ("-full-screen", "F11"),
+EMU_FULLSCREEN_TILE: dict[str, tuple] = {"mednafen": (None, "alt+Return"),      # Schalter mit Wert: s. ROMManager.rom_args
+                                         "pcsx2": ("-fullscreen", "alt+Return"), "rmg": ("-f", "alt+Return"), "xemu": ("-full-screen", "F11"),
                        "azahar": ("-f", "F11"), "cemu": ("-f", "F11")}
 # Emulatoren mit einem einzigen Fenster ohne eigene Vollbild-Startoption: Vollbild ueber den Fenstermanager
 EMU_WM_FULLSCREEN = {"snes9x", "nestopia", "melonds", "stella", "vice", "retroarch"}
@@ -12347,7 +12633,9 @@ def emu_prepare(tid, args):
     if game and emu_fullscreen_wanted(tid):
         spec = EMU_FULLSCREEN_TILE.get(tid) if (flat or kind == tid) else None
         spec = spec or EMU_FULLSCREEN.get(kind)
-        if spec and flat:
+        if spec and not spec[0]:
+            pass
+        elif spec and flat:
             if spec[0] not in args:                 # vor der Spieldatei samt ihrer Option (ROM_ARGS)
                 n = 1 + len(next((v for v in ROMS.ROM_ARGS.values() if list(args[-1 - len(v):-1]) == v), []))
                 args = list(args[:-n]) + [spec[0]] + list(args[-n:])
@@ -12589,8 +12877,9 @@ class RomCovers:
         "gba": "Nintendo - Game Boy Advance", "gbc": "Nintendo - Game Boy Color", "gb": "Nintendo - Game Boy",
         "snes": "Nintendo - Super Nintendo Entertainment System", "nes": "Nintendo - Nintendo Entertainment System",
         "psx": "Sony - PlayStation", "psp": "Sony - PlayStation Portable", "nds": "Nintendo - Nintendo DS",
-        "gamecube": "Nintendo - GameCube", "dreamcast": "Sega - Dreamcast", "n64": "Nintendo - Nintendo 64",
-        "megadrive": "Sega - Mega Drive - Genesis", "genesis": "Sega - Mega Drive - Genesis",
+        "gamecube": "Nintendo - GameCube", "wii": "Nintendo - Wii", "dreamcast": "Sega - Dreamcast", "n64": "Nintendo - Nintendo 64",
+        "megadrive": "Sega - Mega Drive - Genesis", "mastersystem": "Sega - Master System - Mark III",
+        "gamegear": "Sega - Game Gear", "saturn": "Sega - Saturn", "pcengine": "NEC - PC Engine - TurboGrafx 16",
         "atari2600": "Atari - 2600", "c64": "Commodore - 64", "ps2": "Sony - PlayStation 2", "xbox": "Microsoft - Xbox",
         "3ds": "Nintendo - Nintendo 3DS",
         "dos": "DOS", "scummvm": "ScummVM", "mame": "MAME",
@@ -15367,6 +15656,7 @@ class Handler(BaseHTTPRequestHandler):
                 r["cover"] = ROM_COVERS.url(r)
             return self._json(200, {"system": ROMS.canonical_system(system), "folders": ROMS.folders(system),
                                     "count": len(roms), "roms": roms, "keymap": system in EMU_LAYOUTS,
+                                    "noMenu": ROMS.canonical_system(system) == "megadrive",    # Mednafen hat kein Menue
                                     "bios": bios_status(system),
                                     "opts": system in EMU_OPTS, "gameOpts": emu_opts_has_game(system),
                                     "disc": DVD.game_for(system), "chd": CHD.status(system),

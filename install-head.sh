@@ -448,8 +448,9 @@ if ! sh /usr/local/sbin/voidstation-pkg xserver ensure; then
 fi
 
 say "Extra: Freigabe-Ordner $SHARE"
-for d in ROMs/gba ROMs/gbc ROMs/nes ROMs/snes ROMs/psx ROMs/psp ROMs/nds ROMs/gamecube ROMs/dreamcast \
+for d in ROMs/gba ROMs/gbc ROMs/nes ROMs/snes ROMs/psx ROMs/psp ROMs/nds ROMs/gamecube ROMs/wii ROMs/dreamcast \
          ROMs/dos ROMs/c64 ROMs/atari2600 ROMs/scummvm ROMs/ps2 ROMs/n64 ROMs/xbox ROMs/3ds ROMs/wiiu ROMs/mame \
+         ROMs/megadrive ROMs/mastersystem ROMs/gamegear ROMs/saturn ROMs/pcengine \
          Musik Videos Bilder Screenshots; do
   mkdir -p "$SHARE/$d"
 done

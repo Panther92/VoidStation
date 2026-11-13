@@ -144,6 +144,7 @@ def emuopts_payload(emu, game):
 
 
 def keymap_payload(emu="gba"):
+    emu = os.environ.get("VS_KEYMAP") or emu            # VS_KEYMAP=mednafen: Skizze einer anderen Kachel ansehen
     lay = EMU_LAYOUTS.get(emu) or EMU_LAYOUTS["gba"]
     own = KEYMAP["own"].setdefault(emu, {})
     cur = {b: own.get(b, r) for b, r in lay["buttons"]}

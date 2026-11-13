@@ -152,6 +152,27 @@ Item {
                 { id: "Start", t: "Start", x: 50, y: 50, w: 9, h: 4, r: 2 }
             ].concat(dpad(24, 43, 5)).concat(diamond(78, 37, 7, 6.2, ["Y", "Y"], ["A", "A"], ["X", "X"], ["B", "B"]))
         },
+        // Sega-Pad mit sechs Tasten (Saturn, Mega Drive): flach und rund, Kreuz links, A/B/C unten und X/Y/Z darueber,
+        // L/R oben, Start in der Mitte, Mode rechts oben an der Kante
+        saturn: {
+            w: 100, h: 56,
+            body: "M22 8H78C91 8 99 17 99 29C99 42 91 51 79 51C71 51 67 46 62 43H38C33 46 29 51 21 51"
+                + "C9 51 1 42 1 29C1 17 9 8 22 8Z",
+            screen: { x: 37, y: 13, w: 26, h: 11, r: 1, plain: true },
+            deco: [],
+            keys: [
+                { id: "L", t: "L", x: 20, y: 6, w: 20, h: 4, r: 2 },
+                { id: "R", t: "R", x: 80, y: 6, w: 20, h: 4, r: 2 },
+                { id: "Mode", t: "Mode", x: 57, y: 6, w: 10, h: 3.4, r: 1.7 },
+                { id: "Start", t: "Start", x: 50, y: 33, w: 10, h: 3.6, r: 1.8 },
+                { id: "X", t: "X", x: 66, y: 22, w: 6, h: 6, r: 3 },
+                { id: "Y", t: "Y", x: 75, y: 19, w: 6, h: 6, r: 3 },
+                { id: "Z", t: "Z", x: 84, y: 17, w: 6, h: 6, r: 3 },
+                { id: "A", t: "A", x: 69, y: 32.5, w: 7.6, h: 7.6, r: 3.8 },
+                { id: "B", t: "B", x: 79, y: 29.5, w: 7.6, h: 7.6, r: 3.8 },
+                { id: "C", t: "C", x: 89, y: 27.5, w: 7.6, h: 7.6, r: 3.8 }
+            ].concat(dpad(22, 29, 5.2))
+        },
         // Nintendo 64: drei Griffe, Stick auf dem mittleren (Z dahinter), Kreuz links, A/B und vier C-Tasten rechts
         n64: {
             w: 100, h: 80,
