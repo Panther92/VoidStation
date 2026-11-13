@@ -91,6 +91,34 @@ EMUOPT_LIST: list[tuple[str, list[tuple[str, bool, list[dict[str, Any]]]]]] = [(
     ("speed", True, [{"v": "std", "k": "emuopt.v.standard"}, {"v": "xt", "t": "XT"}, {"v": "286", "t": "286"}, {"v": "386", "t": "386"}, {"v": "486", "t": "486"}, {"v": "pentium", "t": "Pentium"}, {"v": "max", "t": "Max"}]),
     ("soundCard", True, [{"v": "sb16", "t": "Sound Blaster 16"}, {"v": "sbpro2", "t": "Sound Blaster Pro 2"}, {"v": "sb1", "t": "Sound Blaster 1.0"}]),
 ])]
+# Spalte Bildstil mit den echten Listen aus launcher.py; VS_LOOK=duckstation|pcsx2|gba|dosbox (Standard duckstation)
+_looks: dict[str, Any] = {"BASE": REPO / "launcher", "Path": Path}
+exec(_src[_src.index("_OFF = {"):_src.index("_DUCK_LOOK_IO = ")], _looks)
+_LOOK_EMU = os.environ.get("VS_LOOK", "duckstation")
+_LOOK_CHOICES = {
+    "duckstation": [_looks["_OFF"]] + [dict(lab, v=v) for v, _, lab in _looks["DUCK_LOOKS"]],
+    "pcsx2": _looks["PCSX2_LOOKS"],
+    "gba": [_looks["_OFF"], dict(_looks["_KLAR"], v="klar"), {"v": "orig", "k": "emuopt.v.orig"}]
+    + [dict(lab, v=v) for v, lab in _looks["MGBA_LOOKS"]],
+    "dosbox": _looks["DOSBOX_LOOKS"],
+}[_LOOK_EMU]
+_LOOK_ID = "shader" if _LOOK_EMU == "dosbox" else "look"
+
+
+def _look_p(oid, choices):
+    """Vorschaubild je Moeglichkeit wie launcher.py look_preview"""
+    out = []
+    for c in choices:
+        f = REPO / "launcher" / "shaders" / "previews" / _LOOK_EMU / f"{oid}-{str(c['v']).replace('/', '_')}.jpg"
+        out.append(dict(c, p=str(f)) if f.is_file() else c)
+    return out
+
+
+_FXAA = {"duckstation": [{"v": "auto", "k": "emuopt.v.auto", "auto": True}, {"v": "on", "k": "common.on"}, _looks["_OFF"]],
+         "pcsx2": EMUOPT_TF}.get(_LOOK_EMU)
+EMUOPT_LIST.append(("look", ([("fxaa", True, _look_p("fxaa", _FXAA)), ("color", False, _look_p("color", _looks["_COLOR_CHOICES"]))]
+                             if _FXAA else []) + [(_LOOK_ID, True, _look_p(_LOOK_ID, _LOOK_CHOICES))]))
+EMUOPTS.update({"fxaa": _FXAA[0]["v"] if _FXAA else "", "color": "nat"})
 
 
 def emuopts_payload(emu, game):
@@ -100,7 +128,7 @@ def emuopts_payload(emu, game):
     groups, values = [], {}
     # wie launcher.py emu_opts_payload: allgemein links "Allgemein" (Schalter VoidStation-Einstellungen | Anpassen, die
     # uebrigen Zeilen erst mit "Anpassen"), rechts "Bild"; je Spiel Bild, dann Spiel, ohne "Automatik"
-    for gid, opts in (EMUOPT_LIST if game else EMUOPT_LIST[::-1]):
+    for gid, opts in (EMUOPT_LIST if game else sorted(EMUOPT_LIST, key=lambda g: g[0] != "play")):
         shown = [o for o in opts if (o[1] if game else mode == "custom" and o[0] != "mute") and (not only or o[0] in only)]
         rows = [{"id": o[0], "choices": [{k: v for k, v in c.items() if k != "auto"} for c in o[2] if not (game and c.get("auto"))]}
                 for o in shown]
@@ -116,6 +144,7 @@ def emuopts_payload(emu, game):
 
 
 def keymap_payload(emu="gba"):
+    emu = os.environ.get("VS_KEYMAP") or emu            # VS_KEYMAP=mednafen: Skizze einer anderen Kachel ansehen
     lay = EMU_LAYOUTS.get(emu) or EMU_LAYOUTS["gba"]
     own = KEYMAP["own"].setdefault(emu, {})
     cur = {b: own.get(b, r) for b, r in lay["buttons"]}
@@ -962,6 +991,9 @@ class H(S.H):
                                                    default=max(d["rates"].get(d["current"], [60.0])))
             if p.endswith("/matchrate"):
                 S.SETTINGS["match_rate"] = bool(body.get("on"))
+            if p.endswith("/gamefx"):
+                S.SETTINGS["game_fx"] = {"mode": body.get("mode"), "ready": os.environ.get("VS_GAMEFX") != "install",
+                                         "busy": False, "failed": os.environ.get("VS_GAMEFX") == "failed"}
             return self.j(settings())
         return self.j({})
 

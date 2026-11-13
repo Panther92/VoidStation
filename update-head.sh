@@ -364,6 +364,7 @@ pk = {"flatpak"}
 # Eingabemethode fuer Japanisch, Koreanisch, Chinesisch (IME_PKGS/IME_ENGINES in launcher.py)
 pk.update(["fcitx5", "fcitx5-gtk+3", "fcitx5-gtk4", "fcitx5-qt6", "fcitx5-hangul", "fcitx5-chinese-addons",
            "fcitx5-chewing", "fcitx5-mozc", "fcitx5-anthy"])
+pk.add("vkBasalt")                                # Bild in Spielen (launcher.py GAME_FX), kommt erst beim Einschalten
 for a in c["apps"]:
     s = a["source"]
     if arch and isinstance(a.get("arch"), list) and arch not in a["arch"]:
@@ -505,8 +506,9 @@ print("ok")
 PYEOF
 
 say "6/8  Freigabe-Ordner $SHARE"
-for d in ROMs/gba ROMs/gbc ROMs/nes ROMs/snes ROMs/psx ROMs/psp ROMs/nds ROMs/gamecube ROMs/dreamcast \
+for d in ROMs/gba ROMs/gbc ROMs/nes ROMs/snes ROMs/psx ROMs/psp ROMs/nds ROMs/gamecube ROMs/wii ROMs/dreamcast \
          ROMs/dos ROMs/c64 ROMs/atari2600 ROMs/scummvm ROMs/ps2 ROMs/n64 ROMs/xbox ROMs/3ds ROMs/wiiu ROMs/mame \
+         ROMs/megadrive ROMs/mastersystem ROMs/gamegear ROMs/saturn ROMs/pcengine \
          Musik Videos Bilder Screenshots; do
   mkdir -p "$SHARE/$d"
 done

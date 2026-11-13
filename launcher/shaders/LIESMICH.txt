@@ -1,0 +1,28 @@
+Shader und Vorschaubilder, die VoidStation fuer die Emulatoren mitliefert
+======================================================================
+
+Auswahl in VoidStation: Spieleliste -> Optionen -> Anpassen -> Bildstil, je Spiel mit Y auf dem Spiel
+(launcher.py: EMU_OPTS, DUCK_LOOKS, MGBA_LOOKS, DOSBOX_LOOKS, PCSX2_LOOKS).
+
+mgba/  Shader von mGBA, unveraendert aus dem Quelltext von mGBA uebernommen
+       (github.com/mgba-emu/mgba, Ordner res/shaders, Stand d58ea8a vom 12.11.2026).
+       Grund: Void liefert mGBA 0.10.5 als Paket mgba-qt; dessen Shader liegen im Paket mgba (SDL-Fassung) und
+       enthalten die neueren Farbprofile (GBC Color, GBA SP 101, NSO, DS) und Skalierer (MMPX) noch nicht. Das Format
+       ist dasselbe (manifest.ini + GLSL), mGBA 0.10.5 liest alle Schluessel, die darin vorkommen.
+       Nicht dabei: omniscale.shader – braucht die Variable "outputSize", die es erst in neueren mGBA-Fassungen gibt.
+       Lizenzen: wie in den Dateien angegeben (MIT bzw. gemeinfrei), mGBA selbst MPL-2.0.
+       "Original-Farben" nimmt je Spiel GBA Color (.gba) bzw. GBC Color (.gbc); Game-Boy-Spiele (.gb) bleiben ohne.
+
+mgba/voidstation-klar.shader   eigener Shader (GPL-3.0-or-later): scharfe, gleich grosse Pixel auch bei krummen
+       Vergroesserungen. Bei ganzzahliger Vergroesserung gleich dem Bild ohne Shader.
+
+duckstation/  eigene Shader fuer DuckStation (GPL-3.0-or-later). Der Launcher legt sie vor jedem Start in den
+       Shader-Ordner von DuckStation (duck_shaders_install).
+       voidstation-klar.glsl      "VoidStation klar": schaerft je nach Kontrast der Umgebung nach (wie CAS)
+       voidstation-kraeftig.glsl  Farbe "Kraeftig"   } dieselbe Rechnung und dieselben Werte wie ShadeBoost von PCSX2
+       voidstation-hell.glsl      Farbe "Hell"       } (launcher.py PCSX2_COLORS), damit PS1 und PS2 gleich aussehen
+
+previews/<Kachel>/<Option>-<Wert>.jpg   Vorschaubilder fuer die Karte (launcher.py look_preview).
+       Erzeugt von tools/look-previews.py: eine selbst gezeichnete Testszene, durch die echten Shader der Emulatoren
+       gerechnet (Software-OpenGL). Keine Spielgrafik. Ohne Bild bleiben die ReShade-Shader von DuckStation (*.fx),
+       die sich so nicht ausfuehren lassen. Nach Aenderungen an den Listen oder Shadern neu erzeugen.

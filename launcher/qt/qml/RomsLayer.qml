@@ -59,8 +59,10 @@ Layer {
     }
     // Y auf einem Spiel: Optionen nur fuer dieses Spiel (Bildformat, bei DOS Tempo und Soundkarte)
     function secondary() { if (gameOpts && Nav.current && Nav.current.rom && !Nav.current.rom.noOpts) emuopts.openFor(tile, Nav.current.rom) }
-    function focusFirst() { Qt.callLater(function () { var it = Nav.collect(trk); app.setFocus(it.length ? it[0] : startEmu, true) }) }
-    function firstFocus() { var it = Nav.collect(trk); return it.length ? it[0] : startEmu }
+    // Mednafen hat kein eigenes Menue (romData.noMenu): dann gibt es "Emulator starten" nicht
+    readonly property Item barFirst: startEmu.visible ? startEmu : keysPill
+    function focusFirst() { Qt.callLater(function () { var it = Nav.collect(trk); app.setFocus(it.length ? it[0] : barFirst, true) }) }
+    function firstFocus() { var it = Nav.collect(trk); return it.length ? it[0] : barFirst }
     // Spiel starten: Liste zu (zurueck auf der Startseite steht die Kachel als laufend da), Startbild wie bei
     // jeder Kachel – das Spiel laeuft unter der Kennung der Kachel
     function launchRom(r) {
@@ -104,9 +106,9 @@ Layer {
     }
     headRight: NowLine { main: rl.sysName; sub: Ui.t("roms.count", { count: rl.files.length }) }
     bar: [
-        Pill { id: startEmu; text: Ui.t("roms.startEmu"); onTriggered: { var t = rl.tile; app.closeLayer(rl); app.launch(t) } },
+        Pill { id: startEmu; visible: !(rl.romData && rl.romData.noMenu); text: Ui.t("roms.startEmu"); onTriggered: { var t = rl.tile; app.closeLayer(rl); app.launch(t) } },
         // Tastenbelegung des Emulators (KeymapLayer) – nur fuer Emulatoren, die VoidStation belegen kann
-        Pill { property string key: "romkeys"; visible: !!rl.romData && !!rl.romData.keymap; iconName: "gamepad"; text: Ui.t("keymap.title"); onTriggered: keymap.openFor(rl.tile) },
+        Pill { id: keysPill; property string key: "romkeys"; visible: !!rl.romData && !!rl.romData.keymap; iconName: "gamepad"; text: Ui.t("keymap.title"); onTriggered: keymap.openFor(rl.tile) },
         // Wichtigste Einstellungen des Emulators (EmuOptsLayer) – nur fuer Emulatoren mit Optionen (launcher.py EMU_OPTS)
         Pill { property string key: "romopts"; visible: !!rl.romData && !!rl.romData.opts; iconName: "gear"; text: Ui.t("emuopt.title"); onTriggered: emuopts.openFor(rl.tile, null) },
         // bin/cue-Spiele in CHD umwandeln (ChdCard) – nur, wenn es welche gibt oder gerade umgewandelt wird

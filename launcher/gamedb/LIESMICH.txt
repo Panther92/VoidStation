@@ -18,10 +18,12 @@ Zeilen, deren Titel mit # beginnt, sind Anmerkungen.
 psx.csv   titel;aliase;kategorie;sicher;notiz
   titel      wie in DuckStations Datenbank (dort heissen die Fassungen aller Regionen meist gleich)
   aliase     andere Titel: andere Regionen, uebliche Dateinamen
-  kategorie  3d            alles aus Flaechen                       -> Texturen glaetten: an
-             vorgerendert  3D-Figuren vor gemalten Hintergruenden   -> an
-             3d-sprites    3D-Welt, Figuren oder Schrift als Pixel  -> aus (Pixelgrafik bliebe sonst verwaschen)
-             2d            alles Pixelgrafik                        -> aus
+  kategorie  3d            alles aus Flaechen                       -> Texturen glaetten: an    Kanten glaetten: an
+             vorgerendert  3D-Figuren vor gemalten Hintergruenden   -> an                       an
+             3d-sprites    3D-Welt, Figuren oder Schrift als Pixel  -> aus                      aus
+             2d            alles Pixelgrafik                        -> aus                      aus
+             (Pixelgrafik bliebe mit geglaetteten Texturen verwaschen; "Kanten glaetten" (FXAA) zeichnet Schrift und
+             Pixelfiguren weich. Beides gilt nur, solange die Option allgemein auf "Automatik" steht.)
   Erkannt am Titel zur Seriennummer (DuckStations gamedb.yaml, wird nur gelesen), sonst am Datei- oder Ordnernamen.
   Nicht in der Liste: nur Genres, die praktisch immer reines 3D sind (Rennspiele, Ego-Shooter, Flugsimulation).
 

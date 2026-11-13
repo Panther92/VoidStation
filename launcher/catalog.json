@@ -661,6 +661,26 @@
       }
     },
     {
+      "id": "mednafen",
+      "name": "Mednafen",
+      "cat": "Emulatoren",
+      "desc": "Sega Master System, Mega Drive, Game Gear und Saturn, dazu PC Engine. Hat kein eigenes Menü – Spiele startest du aus der Spieleliste. Der Saturn braucht einen schnellen Rechner und ein BIOS.",
+      "source": {
+        "type": "xbps",
+        "pkg": "mednafen"
+      },
+      "cmd": [
+        "mednafen"
+      ],
+      "tile": {
+        "group": "Spiele",
+        "size": "medium",
+        "color": "#2f3f5c",
+        "icon": "gamepad",
+        "sub": "Sega · PC Engine"
+      }
+    },
+    {
       "id": "dosbox",
       "name": "DOSBox Staging",
       "cat": "Emulatoren",

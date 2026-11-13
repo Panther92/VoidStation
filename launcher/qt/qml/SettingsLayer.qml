@@ -300,6 +300,13 @@ Layer {
             app.toast(Ui.t(on ? "settings.matchRateOnToast" : "settings.matchRateOffToast"))
         }, fail)
     }
+    function setGameFx(mode) {
+        if (!sett.game_fx || sett.game_fx.mode === mode) return
+        Api.post("/api/settings/gamefx", { mode: mode }, function (j) {
+            update(function () { sett = j })
+            if (mode !== "off" && j.game_fx && !j.game_fx.ready) app.toast(Ui.t("settings.gameFxInstall"))
+        }, fail)
+    }
     function hz(r) { return Ui.num(Math.round(r * 100) / 100, 2) }
     function devLabel(d) {
         switch (d.kind) {
@@ -652,6 +659,25 @@ Layer {
                 }
             }
             Info { html: Ui.esc(Ui.t("settings.matchRateHint")) }
+        }
+        SetGroup {
+            visible: s.cat === "display" && !!s.sett && !!s.sett.game_fx; availH: s.colH; title: Ui.t("settings.gameFx")
+            SetRow {
+                Repeater {
+                    model: ["off", "cas", "smaa"]
+                    Pill {
+                        property string key: "gfx" + modelData
+                        text: Ui.t(modelData === "off" ? "common.off" : "settings.gameFx." + modelData)
+                        on: !!s.sett && !!s.sett.game_fx && s.sett.game_fx.mode === modelData
+                        maxWidth: Ui.screenW * 0.4
+                        onTriggered: s.setGameFx(modelData)
+                    }
+                }
+            }
+            Info {
+                visible: !!s.sett && !!s.sett.game_fx && s.sett.game_fx.mode !== "off" && !s.sett.game_fx.ready
+                html: Ui.esc(Ui.t(!!s.sett && !!s.sett.game_fx && s.sett.game_fx.failed ? "settings.gameFxFailed" : "settings.gameFxInstall"))
+            }
         }
         // Design
         SetGroup {

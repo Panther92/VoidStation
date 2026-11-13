@@ -4,6 +4,8 @@
 // getrennt von der Liste, damit beim Umschalten nichts neu aufgebaut wird und der Fokus bleibt, wo er ist.
 // Allgemein steht oben der Schalter "VoidStation-Einstellungen | Anpassen" (Option "mode"): Erst mit "Anpassen" schickt der
 // Launcher die uebrigen Zeilen – nur dieser Schalter baut die Liste neu auf.
+// Spalte "Bildstil": Hat die Moeglichkeit unter dem Fokus ein Vorschaubild (Feld "p", launcher.py look_preview), zeigt eine
+// Karte unten auf der anderen Bildschirmseite es an – in ganzzahliger Vergroesserung, damit Zeilen- und Punktraster stimmen.
 import QtQuick
 import VS
 
@@ -86,6 +88,8 @@ Layer {
                             model: eo.choicesOf(row.o)
                             Pill {
                                 property string key: "eo" + row.o.id + index
+                                property bool inLook: grp.g.id === "look"
+                                property string preview: modelData.p || ""
                                 text: modelData.t || Ui.t(modelData.k)
                                 on: eo.isOn(row.o.id, modelData.v)
                                 maxWidth: eo.colW
@@ -102,6 +106,46 @@ Layer {
                     lineHeight: 1.35
                 }
             }
+        }
+    }
+
+    Rectangle {
+        id: pv
+        readonly property var cur: Nav.current
+        readonly property bool want: eo.open && !!cur && cur.inLook === true && cur.preview !== ""
+        // Steht "Bildstil" ganz links (Optionen eines Spiels), kommt das Bild nach rechts – sonst nach links
+        readonly property bool atRight: !!eo.od && eo.od.groups.length > 0 && eo.od.groups[0].id === "look"
+        readonly property int k: Math.max(1, Math.floor(Ui.screenW * 0.36 / 480))
+        visible: opacity > 0
+        opacity: want ? 1 : 0
+        Behavior on opacity { NumberAnimation { duration: 120 } }
+        x: atRight ? eo.stage.width - width - Ui.padX : Ui.padX
+        y: eo.stage.height - height - 8 * Ui.f
+        width: img.width + 2 * border.width
+        height: img.height + cap.height + 2 * border.width
+        color: Ui.c.bgMain
+        border.width: 2
+        border.color: Ui.c.borderFocus
+        Image {
+            id: img
+            x: pv.border.width; y: pv.border.width
+            source: pv.cur && pv.cur.inLook === true && pv.cur.preview ? "file://" + pv.cur.preview : ""
+            width: implicitWidth * pv.k; height: implicitHeight * pv.k
+            smooth: false
+            cache: false
+            asynchronous: false
+        }
+        Txt {
+            id: cap
+            anchors.top: img.bottom
+            x: pv.border.width + 8 * Ui.f
+            width: img.width - 16 * Ui.f
+            height: implicitHeight + 10 * Ui.f
+            verticalAlignment: Text.AlignVCenter
+            text: Ui.t("emuopt.preview") + (pv.cur && pv.cur.text ? " · " + pv.cur.text : "")
+            color: Ui.c.textFaint
+            font.pixelSize: 13 * Ui.f
+            elide: Text.ElideRight
         }
     }
 }

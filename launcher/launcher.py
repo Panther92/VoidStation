@@ -357,6 +357,7 @@ class AppManager:
         args, emu_env, wm_fs = emu_prepare(tid, args)   # Emulatoren: Vorgaben, Vollbild, Controller
         penv = app_env()
         penv.update(emu_env)
+        penv.update(game_fx_env(tid))
         penv.update(env or {})
         self.pause_background(keep=tid)                 # anderes Programm kommt nach vorn: Emulatoren anhalten
         proc = subprocess.Popen(args, cwd=str(Path.home()), stdin=subprocess.DEVNULL, env=penv,
@@ -1300,7 +1301,7 @@ def dosbox_midi_conf():
             _DOSBOX_SF_TRIED.append(1)
 
             def fetch():
-                r = run(["sudo", "-n", PKG_HELPER, "install", "soundfont-fluid"])
+                r = run(["sudo", "-n", PKG_HELPER, "install", "soundfont-fluid"], timeout=1800)     # rund 140 MB
                 log("DOSBox: Soundfont fuer General MIDI", "installiert" if r and r.returncode == 0 else "nicht installiert")
             threading.Thread(target=fetch, daemon=True).start()
     except Exception as e:  # noqa: BLE001 – darf den Start nie verhindern
@@ -5066,6 +5067,73 @@ def catalog_app(app_id):
 SYS_ARCH = "i686" if os.uname().machine in ("i386", "i486", "i586", "i686") else os.uname().machine
 
 
+# ---- Bild in Spielen (Paul, 13.11.2026: "ein Look fuer alle Vulkan-Programme") ----------------------------------
+# vkBasalt (Void-Paket, Zlib-Lizenz) ist eine Vulkan-Schicht, die das fertige Bild eines Programms nachbearbeitet. Sie
+# liegt als "implicit layer" im System und wird je Prozess mit ENABLE_VKBASALT=1 eingeschaltet (vkBasalt.json,
+# enable_environment); VKBASALT_CONFIG_FILE zeigt auf die Einstellungen, die VoidStation schreibt.
+# Einstellungen -> Anzeige -> "Bild in Spielen": Aus (Vorgabe) | Schaerfen (CAS) | Schaerfen + Kanten glaetten (SMAA, CAS).
+# Gilt fuer Kacheln aus dem Katalog der Kategorien Emulatoren, Gaming, Spiele – ausser GAME_FX_SKIP (PCSX2 und
+# DuckStation schaerfen und glaetten selbst, doppelt waere zu viel; mGBA und DOSBox nutzen OpenGL). Wirkt nur, wo ein
+# Programm ueber Vulkan zeichnet; OpenGL-Programme merken nichts davon. Nur 64 Bit; 32-Bit-Spiele in Steam bleiben aussen
+# vor (dafuer braeuchte es vkBasalt-32bit). Das Paket kommt erst, wenn jemand die Einstellung einschaltet.
+GAME_FX = {"off": "", "cas": "cas", "smaa": "smaa:cas"}
+GAME_FX_CATS = ("Emulatoren", "Gaming", "Spiele")
+GAME_FX_SKIP = ("pcsx2", "duckstation", "gba", "dosbox")      # schaerfen/glaetten selbst bzw. zeichnen nicht ueber Vulkan
+VKBASALT_LAYER = Path("/usr/share/vulkan/implicit_layer.d/vkBasalt.json")
+VKBASALT_CONF = Path.home() / ".config/voidstation/vkBasalt.conf"
+_GAME_FX_JOB: dict[str, Any] = {"busy": False, "failed": False}
+
+
+def game_fx(s=None):
+    v = (settings_load() if s is None else s).get("game_fx")
+    return v if v in GAME_FX else "off"
+
+
+def game_fx_state(s=None):
+    """Fuer die Einstellungsseite: None, wo es die Einstellung nicht gibt (32 Bit, Live-System)."""
+    if SYS_ARCH != "x86_64" or Path("/etc/voidstation-live").exists():
+        return None
+    return {"mode": game_fx(s), "ready": VKBASALT_LAYER.is_file(), "busy": _GAME_FX_JOB["busy"], "failed": _GAME_FX_JOB["failed"]}
+
+
+def game_fx_set(mode):
+    if mode not in GAME_FX or game_fx_state() is None:
+        raise ValueError("Unbekannter Wert")
+    s = settings_load()
+    s["game_fx"] = mode
+    settings_save(s)
+    log("Bild in Spielen:", mode)
+    if mode != "off" and not VKBASALT_LAYER.is_file() and not _GAME_FX_JOB["busy"]:
+        _GAME_FX_JOB.update(busy=True, failed=False)
+
+        def fetch():
+            r = run(["sudo", "-n", PKG_HELPER, "install", "vkBasalt"], timeout=900)
+            ok = bool(r and r.returncode == 0 and VKBASALT_LAYER.is_file())
+            _GAME_FX_JOB.update(busy=False, failed=not ok)
+            log("vkBasalt", "installiert" if ok else "nicht installiert: " + ((r.stdout + r.stderr).strip()[-200:] if r else "Zeit abgelaufen"))
+        threading.Thread(target=fetch, daemon=True).start()
+
+
+def game_fx_env(tid):
+    """Umgebung fuer den Start einer Kachel: {} oder die Schalter fuer vkBasalt. Darf den Start nie verhindern."""
+    try:
+        effects = GAME_FX[game_fx()]
+        if not effects or tid in GAME_FX_SKIP or SYS_ARCH != "x86_64" or not VKBASALT_LAYER.is_file():
+            return {}
+        app = catalog_app(tid)
+        if not app or app.get("cat") not in GAME_FX_CATS:
+            return {}
+        # toggleKey: Vorgabe waere "Pos1" – eine Taste, die niemand aus Versehen trifft
+        text = f"effects = {effects}\ncasSharpness = 0.4\nsmaaEdgeDetection = luma\nenableOnLaunch = True\ntoggleKey = Scroll_Lock\n"
+        if not VKBASALT_CONF.is_file() or VKBASALT_CONF.read_text(encoding="utf-8") != text:
+            VKBASALT_CONF.parent.mkdir(parents=True, exist_ok=True)
+            VKBASALT_CONF.write_text(text, encoding="utf-8")
+        return {"ENABLE_VKBASALT": "1", "VKBASALT_CONFIG_FILE": str(VKBASALT_CONF)}
+    except Exception as e:  # noqa: BLE001
+        log(f"{tid}: Bild in Spielen:", e)
+        return {}
+
+
 def app_archs(a):
     """Architekturen, fuer die es eine App gibt; None = alle. "arch" im Katalog geht vor, sonst aus der Quelle:
     Flathub baut kein 32-Bit-x86 mehr, AppImages im Katalog sind 64 Bit, Widevine (Netflix & Co.) gibt es unter
@@ -7076,6 +7144,7 @@ def settings_payload():
             "sysupd_days": sysupd_days(s), "sysupd_choices": SYSUPD_DAYS, "music_volume": music_volume(),
             "padmouse": bool(s.get("padmouse", True)),
             "rate": s.get("rate"), "match_rate": bool(s.get("match_rate")), "region": region(s),
+            "game_fx": game_fx_state(s),
             "osk": {"choice": s.get("osk_layout") if s.get("osk_layout") in OSK_LAYOUTS else "auto",
                     "mode": s.get("osk_mode") if s.get("osk_mode") in OSK_MODES else "auto"}}
 
@@ -7293,24 +7362,35 @@ class ROMManager:
         "dosbox": "dos",
         "scummvm": "scummvm",
         "retroarch": "retroarch",
+        "mednafen": "megadrive",  # dazu mastersystem, gamegear, saturn, pcengine (SYSTEM_FOLDERS)
     }
     SYSTEM_TO_TILE = {v: k for k, v in TILE_TO_SYSTEM.items()}
     SYSTEM_TO_TILE["gbc"] = "gba"
+    SYSTEM_TO_TILE["wii"] = "dolphin"
+    # Mednafen: je Ordner das Modul, das -force_module bekommt (Endungen wie .bin oder .cue sind sonst nicht eindeutig)
+    MEDNAFEN_MODULES = {"megadrive": "md", "mastersystem": "sms", "gamegear": "gg", "saturn": "ss", "pcengine": "pce"}
+    SYSTEM_TO_TILE.update({f: "mednafen" for f in MEDNAFEN_MODULES})
     # Weitere Ordner, die eine Kachel mit anzeigt (erster Ordner = Hauptordner der Kachel).
     # mGBA spielt auch Game Boy (Color): Spiele aus ROMs/gba und ROMs/gbc stehen in einer Liste.
+    # Dolphin spielt GameCube und Wii: ROMs/gamecube und ROMs/wii in einer Liste.
     SYSTEM_FOLDERS = {
         "gba": ["gba", "gbc"],
+        "gamecube": ["gamecube", "wii"],
+        "megadrive": list(MEDNAFEN_MODULES),
     }
+    # Dolphin 2609 (DolphinQt/MainWindow.cpp, Datei oeffnen): ohne .elf/.dol/.dff/.json (keine Spiele) und .bin/.nfs
+    _DOLPHIN_EXT = [".iso", ".rvz", ".gcm", ".gcz", ".ciso", ".wia", ".wbfs", ".wad", ".tgc", ".m3u"]
 
     EXTENSIONS = {
         "gba": [".gba", ".gbc", ".gb", ".zip", ".7z"],
         "gbc": [".gbc", ".gb", ".zip", ".7z"],
         "snes": [".sfc", ".smc", ".zip", ".7z"],
         "nes": [".nes", ".zip", ".7z"],
-        "psx": [".iso", ".cue", ".bin", ".chd", ".pbp"],
+        "psx": [".iso", ".cue", ".bin", ".chd", ".pbp", ".m3u"],       # .m3u: Liste der CDs eines Spiels (system.cpp)
         "psp": [".iso", ".cso", ".pbp"],
         "nds": [".nds", ".zip"],
-        "gamecube": [".iso", ".rvz", ".gcm"],
+        "gamecube": _DOLPHIN_EXT,
+        "wii": _DOLPHIN_EXT,
         "dreamcast": [".cdi", ".gdi", ".chd"],
         "n64": [".z64", ".n64", ".v64", ".zip", ".7z"],
         "ps2": [".iso", ".chd", ".cso", ".zso", ".cue", ".gz", ".elf"],
@@ -7319,8 +7399,13 @@ class ROMManager:
         "wiiu": [".wua", ".wux", ".wud", ".rpx"],
         "c64": [".d64", ".t64", ".prg", ".crt"],
         "atari2600": [".a26", ".bin"],
-        "megadrive": [".md", ".bin", ".smd", ".gen", ".zip", ".7z"],
-        "genesis": [".md", ".bin", ".smd", ".gen", ".zip", ".7z"],
+        # Mednafen 1.32.1: md/system.cpp, sms/system.cpp, pce/pce.cpp KnownExtensions; CDs mednafen.cpp KnownCDExtensions
+        # (kein .chd, kein .iso); .zip packt es selbst aus, .7z nicht
+        "megadrive": [".md", ".bin", ".gen", ".smd", ".zip"],
+        "mastersystem": [".sms", ".zip"],
+        "gamegear": [".gg", ".zip"],
+        "saturn": [".cue", ".ccd", ".toc", ".m3u"],
+        "pcengine": [".pce", ".sgx", ".cue", ".ccd", ".toc", ".m3u", ".zip"],
         "scummvm": [".scummvm"],
         "dos": [".conf", ".exe", ".bat", ".com"],
         "mame": [".zip", ".7z"],
@@ -7338,6 +7423,13 @@ class ROMManager:
         if canon == "scummvm":                    # Spiel = Ordner (eine .scummvm-Datei liegt darin)
             d = target if target.is_dir() else target.parent
             return (["--fullscreen"] if emu_fullscreen_wanted("scummvm") else []) + [f"--path={d}", "--auto-detect"]
+        if canon == "megadrive":                  # Mednafen: Modul nach Ordner; -video.fs merkt es sich sonst vom letzten Mal
+            try:
+                mod = self.MEDNAFEN_MODULES.get(target.relative_to(self.rom_dir).parts[0])
+            except (ValueError, IndexError):
+                mod = None
+            return ((["-force_module", mod] if mod else [])
+                    + ["-video.fs", "1" if emu_fullscreen_wanted("mednafen") else "0", str(target)])
         if canon == "retroarch":
             core = retroarch_core(target)
             if not core:
@@ -7357,7 +7449,6 @@ class ROMManager:
         "dreamcast": ["~/.local/share/voidstation/apps/flycast/AppRun"],
         "gamecube": ["dolphin-emu"],
         "megadrive": ["mednafen"],
-        "genesis": ["mednafen"],
     }
 
     def __init__(self):
@@ -7446,6 +7537,28 @@ class ROMManager:
                 out.append(q)
         return out
 
+    @staticmethod
+    def m3u_discs(m3u):
+        """Abbilder, die eine .m3u-Liste nennt (eine Datei je Zeile, # = Kommentar), als Pfade neben der Liste."""
+        try:
+            txt = m3u.read_bytes()[:65536].decode("utf-8-sig", "replace")
+        except OSError:
+            return []
+        out = []
+        for line in txt.splitlines():
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            q = m3u.parent / line.replace("\\", "/")
+            if not q.is_file():                      # unter Windows geschrieben: Gross-/Kleinschreibung der Platte
+                try:
+                    q = next((x for x in q.parent.iterdir() if x.name.casefold() == q.name.casefold()), q)
+                except OSError:
+                    pass
+            if q.is_file() and q != m3u and q not in out:
+                out.append(q)
+        return out
+
     def rom_file(self, folder, filename):
         """Spieldatei bzw. -ordner aus dem Namen der Spieleliste (relativ zu ROMs/<folder>, auch "Ordner/Spiel.cue")
         -> Pfad oder None. Nie ausserhalb des Ordners."""
@@ -7507,6 +7620,12 @@ class ROMManager:
                 if f.suffix.lower() == ".cue":
                     tracks[f] = self.cue_tracks(f)
             hidden = {t for ts in tracks.values() for t in ts}
+            # .m3u: Die Liste ist das Spiel, ihre CDs (samt deren Spuren) stehen nicht eigens in der Liste
+            for f in files:
+                if f.suffix.lower() == ".m3u":
+                    discs = self.m3u_discs(f)
+                    tracks[f] = [q for d in discs for q in [d] + (tracks.get(d) or self.cue_tracks(d) if d.suffix.lower() == ".cue" else [])]
+                    hidden.update(tracks[f])
             # .bin ohne Blatt: Spuren eines Spiels ("… (Track 2).bin") stehen nicht eigens in der Liste, die erste Spur
             # steht fuer das Spiel (Name ohne "(Track 1)", Groesse aller Spuren)
             for first, ts in self.bin_sets(files, hidden).items():
@@ -7996,6 +8115,12 @@ EMU_LAYOUTS: dict[str, Any] = {
         ("B", "south"), ("A", "east"), ("Y", "west"), ("X", "north"), ("L", "l1"), ("R", "r1"), ("L2", "l2"),
         ("R2", "r2"), ("L3", "l3"), ("R3", "r3"), ("Start", "start"), ("Select", "select"), *_DPAD,
         ("save", ""), ("load", ""), ("ff", ""), ("rewind", "")]},
+    # Mednafen: ein Pad fuer alle Systeme – Sega-Pad mit sechs Tasten (Saturn: dazu L/R). A/B/C liegen wie auf dem
+    # Original in einer Reihe (links, unten, rechts), X/Y/Z darueber auf L1, oben, R1. Master System und Game Gear:
+    # 1 = B, 2 = C; PC Engine: II = B, I = C, Select = Mode, Run = Start (MEDNAFEN_PADS)
+    "mednafen": {"name": "Mednafen", "sub": "Sega · PC Engine", "console": "saturn", "notes": ["mednafen"], "buttons": [
+        ("A", "west"), ("B", "south"), ("C", "east"), ("X", "l1"), ("Y", "north"), ("Z", "r1"), ("L", "l2"), ("R", "r2"),
+        ("Start", "start"), ("Mode", "select"), *_DPAD, ("save", ""), ("load", ""), ("ff", "")]},
 }
 EMU_ACTIONS = {"save", "load", "rewind", "ff"}
 # Was VoidStation fuer die Extras an das Fenster des Emulators schickt (tap = einmal, hold = solange gedrueckt).
@@ -8008,7 +8133,7 @@ EMU_ACTIONS = {"save", "load", "rewind", "ff"}
 #   Umschalt+F5 speichern, sobald F5 einem Schnappschuss zugeordnet ist – macht VoidStation) · Azahar 2126 (Schnell-
 #   speichern/-laden und Turbo ohne Vorgabe, setzt VoidStation) · MAME 0.282 inpttype.ipp (Umschalt+F6/F7 Schnell-
 #   speichern/-laden, Einfg vorspulen) · RetroArch 1.22 config.def.keybinds.h (F2/F4, L halten, R zurueckspulen)
-#   · DOSBox: alle Tasten – der Controller tippt auf der Tastatur
+#   · DOSBox: alle Tasten – der Controller tippt auf der Tastatur · Mednafen 1.32 drivers/input.cpp (F5/F7, ` halten)
 EMU_KEYS = {
     "gba": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab"), "rewind": ("hold", "Scroll_Lock")},
     "snes9x": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("hold", "Tab")},
@@ -8023,6 +8148,7 @@ EMU_KEYS = {
     "xemu": {"save": ("tap", "shift+F5"), "load": ("tap", "F5")},
     "azahar": {"save": ("tap", "shift+F1"), "load": ("tap", "F1"), "ff": ("toggle", "ctrl+t")},
     "mame": {"save": ("tap", "shift+F6"), "load": ("tap", "shift+F7"), "ff": ("hold", "Insert")},
+    "mednafen": {"save": ("tap", "F5"), "load": ("tap", "F7"), "ff": ("hold", "grave")},
     "retroarch": {"save": ("tap", "F2"), "load": ("tap", "F4"), "ff": ("hold", "l"), "rewind": ("hold", "r")},
     "dosbox": {"Space": ("hold", "space"), "Ctrl": ("hold", "Control_L"), "Alt": ("hold", "Alt_L"),
                "Shift": ("hold", "Shift_L"), "Enter": ("hold", "Return"), "Esc": ("hold", "Escape"),
@@ -8638,6 +8764,11 @@ def snes9x_prepare(ctx):
 
 # -- Nestopia 1.53 (FLTK, SDL2-Joystick; input.conf [nespad1j], fltkui/inputmanager.cpp; mINI: Kleinschreibung)
 NESTOPIA_INPUT = Path.home() / ".config/nestopia/input.conf"
+# Einstellungsdateien fuer die Optionen (EMU_OPTS) und Stumm (EMU_MUTE)
+NESTOPIA_CONF = NESTOPIA_INPUT.with_name("nestopia.conf")
+SCUMMVM_INI = Path.home() / ".config/scummvm/scummvm.ini"
+VICE_RC = Path.home() / ".config/vice/vicerc"
+STELLA_DB = Path.home() / ".config/stella/stella.sqlite3"       # OSystemStandalone.cxx: StellaDb(basedir, "stella")
 
 
 def nestopia_value(ctx, b):
@@ -8666,6 +8797,7 @@ def nestopia_prepare(ctx):
 
 # -- PPSSPP 1.20 (SDL2-GameController; PSP/SYSTEM/controls.ini [ControlMapping], Core/KeyMap.cpp, SDL/SDLJoystick.cpp)
 PPSSPP_CTRL = Path.home() / ".config/ppsspp/PSP/SYSTEM/controls.ini"
+PPSSPP_INI = PPSSPP_CTRL.with_name("ppsspp.ini")
 PPSSPP_PAD = {"y": 188, "a": 189, "b": 190, "x": 191, "rb": 192, "lb": 193, "back": 196, "start": 197, "l3": 106,
               "r3": 107, "up": 19, "down": 20, "left": 21, "right": 22, "lt": 4008, "rt": 4010}   # NKCODE / 4000+Achse*2
 # Vorgaben von PPSSPP (RestoreDefault: Tastatur QWERTY + DEFAULT_MAPPING_PAD), aus KeyMapDefaults.cpp erzeugt. Fehlt
@@ -8910,7 +9042,7 @@ def flycast_prepare(ctx):
 ROMS_DIR = Path.home() / "share" / "ROMs"
 BIOS_OLD = Path.home() / "share" / "BIOS"        # bis Oktober 2026 ein gemeinsamer Ordner – bios_migrate raeumt ihn auf
 BIOS_SYSTEMS = {"psx": True, "ps2": True, "xbox": True,                       # Ordner -> Pflicht?
-                "dreamcast": False, "nds": False, "gba": False, "gbc": False}
+                "dreamcast": False, "nds": False, "gba": False, "gbc": False, "saturn": True, "pcengine": False}
 BIOS_NOT = {".txt", ".md", ".nfo", ".url", ".htm", ".html", ".pdf", ".jpg", ".jpeg", ".png", ".ini", ".cfg", ".zip",
             ".7z", ".rar"}                       # Hinweise und Beiwerk zaehlen nie als BIOS (z. B. 512-Byte-Textdatei)
 GB_BOOT = {0xC2F5CC97: "gb", 0x59C8598E: "gb", 0xE6920754: "gb", 0xEC8A83B9: "sgb", 0x53D0DD63: "sgb",
@@ -8937,6 +9069,23 @@ def _gb_boot(f, n):
         return None
 
 
+# Saturn: SHA-256 der BIOS-Fassungen, die Mednafen kennt (ss/ss.cpp BIOSDB) – Japan bzw. Nordamerika/Europa
+SS_BIOS = {"cc1e1b7f88f1c6e6fc35994bae2c2292e06fdae258c79eb26a1f1391e72914a8": "jp",
+           "ae4058627bb5db9be6d8d83c6be95a4aa981acc8a89042e517e73317886c8bc2": "jp",
+           "dcfef4b99605f872b6c3b6d05c045385cdea3d1b702906a0ed930df7bcb7deac": "jp",
+           "87293093fad802fcff31fcab427a16caff1acbc5184899b8383b360fd58efb73": "eu",
+           "96e106f740ab448cf89f0dd49dfbac7fe5391cb6bd6e14ad5e3061c13330266f": "eu"}
+
+
+def _ss_bios(f, n):
+    if n != 0x80000:
+        return None
+    try:
+        return SS_BIOS.get(hashlib.sha256(f.read_bytes()).hexdigest())
+    except OSError:
+        return None
+
+
 BIOS_KINDS = {  # Art -> (Ordner unter share/ROMs, Test(Datei, Groesse))
     "psx": ("psx", lambda f, n: n == 0x80000),
     # PS2: Hauptteil (.bin, vom Dumper oft .ROM0); .rom1/.rom2/.erom (DVD-Player usw.) laedt PCSX2 selbst dazu
@@ -8953,6 +9102,9 @@ BIOS_KINDS = {  # Art -> (Ordner unter share/ROMs, Test(Datei, Groesse))
     "gb": ("gbc", lambda f, n: _gb_boot(f, n) == "gb"),
     "sgb": ("gbc", lambda f, n: _gb_boot(f, n) == "sgb"),
     "gbc": ("gbc", lambda f, n: _gb_boot(f, n) == "gbc"),
+    "ss_jp": ("saturn", lambda f, n: _ss_bios(f, n) == "jp"),
+    "ss_eu": ("saturn", lambda f, n: _ss_bios(f, n) == "eu"),
+    "pcecd": ("pcengine", lambda f, n: n in (0x40000, 0x40200)),       # System Card, mit oder ohne 512-Byte-Kopf
 }
 
 
@@ -9024,6 +9176,16 @@ def bios_status(tile):
         files = xemu_files(xemu_load())
         miss = [k for k in ("mcpx", "flash", "hdd") if not files.get(k) and not bios_find(k)]
         return {"ok": not miss, "missing": miss, "folder": "xbox"}
+    if tile == "mednafen":                             # nur der Saturn braucht ein BIOS – melden, sobald Spiele da sind
+        if not ROMS.scan(ROMS.rom_dir / "saturn", set(ROMS.EXTENSIONS["saturn"])):
+            return None
+        cur = mednafen_read({"filesys.path_firmware", "ss.bios_jp", "ss.bios_na_eu"})
+        fw = Path(cur.get("filesys.path_firmware") or "firmware").expanduser()
+        fw = fw if fw.is_absolute() else MEDNAFEN_DIR / fw
+        ok = bool(bios_find("ss_jp") or bios_find("ss_eu")) or any(
+            (f if f.is_absolute() else fw / f).is_file()
+            for f in (Path(cur.get(k) or d).expanduser() for k, d in (("ss.bios_jp", "sega_101.bin"), ("ss.bios_na_eu", "mpr-17933.bin"))))
+        return {"ok": ok, "missing": [] if ok else ["bios"], "folder": "saturn"}
     return None
 
 
@@ -9060,6 +9222,8 @@ def bios_prepare(tile):
             melonds_bios()
         elif tile == "flycast":
             flycast_bios()
+        elif tile == "mednafen":
+            mednafen_bios()
 
 
 # mGBA 0.10: [ports.qt] gba.bios / gb.bios / sgb.bios / gbc.bios (SettingsView.cpp), Rueckfall <config>/<art>_bios.bin
@@ -9966,10 +10130,156 @@ def emu_paths_refresh():
 emu_paths_refresh()
 
 
+# -- Mednafen 1.32.1 (Void-Paket; kein eigenes Menue – Einstellungen nur in ~/.mednafen/mednafen.cfg, je Zeile
+#    "<name> <wert>", settings.cpp; eine unvollstaendige Datei ergaenzt es beim Beenden selbst).
+#    Controller: Joystick-Geraete des Kernels (/dev/input/js*, drivers/Joystick_Linux.cpp), Bindung
+#    "joystick 0x<Kennung> button_3" bzw. "abs_1-" (drivers/input.cpp BCGToString, Joystick.cpp BNToString).
+MEDNAFEN_DIR = Path.home() / ".mednafen"
+MEDNAFEN_CFG = MEDNAFEN_DIR / "mednafen.cfg"
+MEDNAFEN_SYSFS = Path("/sys/class/input")
+_MDFN_DIRS = {"up": "Up", "down": "Down", "left": "Left", "right": "Right"}
+# Geraet in Mednafen -> {dessen Taste: Taste der Skizze}; md: je nach Spiel 3 oder 6 Tasten (md.input.auto), gamepad2 = 2 Tasten
+MEDNAFEN_PADS = {
+    "md.input.port1.gamepad": {"a": "A", "b": "B", "c": "C", "start": "Start"},
+    "md.input.port1.gamepad2": {"a": "A", "b": "B", "start": "Start"},
+    "md.input.port1.gamepad6": {"a": "A", "b": "B", "c": "C", "x": "X", "y": "Y", "z": "Z", "start": "Start", "mode": "Mode"},
+    "sms.input.port1.gamepad": {"fire1": "B", "fire2": "C", "pause": "Start"},
+    "gg.input.builtin.gamepad": {"button1": "B", "button2": "C", "start": "Start"},
+    "ss.input.port1.gamepad": {"a": "A", "b": "B", "c": "C", "x": "X", "y": "Y", "z": "Z", "ls": "L", "rs": "R", "start": "Start"},
+    "pce.input.port1.gamepad": {"ii": "B", "i": "C", "select": "Mode", "run": "Start"},
+}
+
+
+def mednafen_read(keys=None):
+    out: dict[str, str] = {}
+    try:
+        lines = MEDNAFEN_CFG.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        k, sep, v = line.partition(" ")
+        if sep and k and k[0] not in ";#" and (keys is None or k in keys):
+            out[k] = v
+    return out
+
+
+def mednafen_write(updates):
+    """Einstellungen setzen; alles andere (auch die Kommentarzeilen) bleibt."""
+    todo, out = {k: str(v) for k, v in updates.items()}, []
+    try:
+        lines = MEDNAFEN_CFG.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        lines = []
+    for line in lines:
+        k = line.partition(" ")[0]
+        out.append(f"{k} {todo.pop(k)}" if k in todo and line[:1] not in (";", "#") else line)
+    out += [f"{k} {v}" for k, v in todo.items()]
+    MEDNAFEN_DIR.mkdir(parents=True, exist_ok=True)
+    tmp = MEDNAFEN_CFG.with_suffix(".vs-tmp")
+    tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
+    tmp.replace(MEDNAFEN_CFG)
+
+
+def js_indices(pad):
+    """(Tasten, Achsen) eines Gamepads als {evdev-Code: Nummer}, gezaehlt wie /dev/input/js* (Kernel joydev.c): Tasten ab
+    BTN_JOYSTICK, dann BTN_MISC bis davor; Achsen in der Reihenfolge der Codes – das Steuerkreuz zaehlt dort als Achse mit."""
+    from evdev import ecodes as E
+    keys = pad["keys"]
+    order = sorted(k for k in keys if E.BTN_JOYSTICK <= k <= E.KEY_MAX) + sorted(k for k in keys if E.BTN_MISC <= k < E.BTN_JOYSTICK)
+    return {k: i for i, k in enumerate(order)}, {a: i for i, a in enumerate(sorted(pad["axes"]))}
+
+
+def mednafen_pad_ids(pads):
+    """{Pfad: Kennung} wie Mednafen sie bildet (Joystick_Linux.cpp): Bus, Hersteller, Produkt, Version aus sysfs, dann Zahl
+    der Achsen und Tasten; gleiche Geraete zaehlt es in der Reihenfolge der js-Nummern hoch (Joystick.cpp). Ohne
+    js-Geraet (Modul joydev fehlt) sieht Mednafen den Controller nicht."""
+    rows = []
+    for pad in pads:
+        dev = MEDNAFEN_SYSFS / Path(pad["path"]).name / "device"
+        try:
+            js = next((int(q.name[2:]) for q in dev.iterdir() if re.fullmatch(r"js\d+", q.name)), None)
+            ids = [int((dev / "id" / n).read_text().strip(), 16) & 0xFFFF for n in ("bustype", "vendor", "product", "version")]
+        except (OSError, ValueError):
+            continue
+        if js is None:
+            continue
+        btn, ax = js_indices(pad)
+        rows.append((js, pad["path"], ids[0] << 48 | ids[1] << 32 | ids[2] << 16 | ids[3], len(ax) << 48 | len(btn) << 32))
+    out: dict = {}
+    seen: dict = {}
+    for _, path, hi, lo in sorted(rows):
+        n = seen.get((hi, lo), 0)
+        seen[(hi, lo)] = n + 1
+        out[path] = f"0x{hi:016x}{(lo + n) & 0xFFFFFFFFFFFFFFFF:016x}"
+    return out
+
+
+def mednafen_value(b, jid, btn, ax):
+    from evdev import ecodes as E
+    if not b:
+        return None
+    if "key" in b and b["key"] in btn:
+        return f"joystick {jid} button_{btn[b['key']]}"
+    code = b.get("abs") if "abs" in b else {"x": E.ABS_HAT0X, "y": E.ABS_HAT0Y}.get(b.get("hat"))
+    if code in ax:
+        return f"joystick {jid} abs_{ax[code]}{'+' if b['dir'] > 0 else '-'}"
+    return None
+
+
+def mednafen_prepare(ctx):
+    from evdev import ecodes as E
+    jid = mednafen_pad_ids(gamepads()).get(ctx["pad"]["path"])
+    if not jid:
+        log("Mednafen: kein Joystick-Geraet (js) zum Controller – Belegung bleibt")
+        return
+    btn, ax = js_indices(ctx["pad"])
+    val = {b: mednafen_value(ctx["bmap"].get(b), jid, btn, ax) for b, _ in EMU_LAYOUTS["mednafen"]["buttons"] if b not in EMU_ACTIONS}
+    # linker Stick steuert mit, soweit seine Achsen nicht schon belegt sind
+    used = {v for v in val.values() if v}
+    for name, code, sign in (("Up", E.ABS_Y, "-"), ("Down", E.ABS_Y, "+"), ("Left", E.ABS_X, "-"), ("Right", E.ABS_X, "+")):
+        stick = f"joystick {jid} abs_{ax[code]}{sign}" if code in ax else None
+        if stick and stick not in used:
+            val[name] = f"{val[name]} || {stick}" if val.get(name) else stick
+    wanted = {}
+    for dev, keys in MEDNAFEN_PADS.items():
+        for k, b in {**_MDFN_DIRS, **keys}.items():
+            if val.get(b):
+                wanted[f"{dev}.{k}"] = val[b]
+    have = mednafen_read(set(wanted))
+    split = {k: [x.strip() for x in v.split(" || ")] for k, v in have.items()}
+    cur = {k: " || ".join(x for x in parts if x.startswith("joystick ")) for k, parts in split.items()}
+    if not keymap_once("mednafen", "pad", cur, wanted, ctx["custom"]):
+        return
+    # Tastatur-Belegung von Mednafen bleibt davor stehen
+    mednafen_write({k: " || ".join([x for x in split.get(k, []) if x and not x.startswith("joystick ")] + [v])
+                    for k, v in wanted.items()})
+    log("Mednafen: Controller-Belegung", jid)
+
+
+def mednafen_bios():
+    """Saturn-BIOS und PC-Engine-CD-BIOS aus der Freigabe eintragen, wenn Mednafen an seinem Ort nichts findet."""
+    cur = mednafen_read({"filesys.path_firmware", "ss.bios_jp", "ss.bios_na_eu", "pce.cdbios"})
+    fw = Path(cur.get("filesys.path_firmware") or "firmware").expanduser()
+    fw = fw if fw.is_absolute() else MEDNAFEN_DIR / fw
+    put = {}
+    for key, default, kind in (("ss.bios_jp", "sega_101.bin", "ss_jp"), ("ss.bios_na_eu", "mpr-17933.bin", "ss_eu"),
+                               ("pce.cdbios", "syscard3.pce", "pcecd")):
+        f = Path(cur.get(key) or default).expanduser()
+        if (f if f.is_absolute() else fw / f).is_file():
+            continue
+        hit = bios_find(kind)
+        if hit:
+            put[key] = str(hit[0])
+    if put:
+        mednafen_write(put)
+        log("Mednafen: BIOS", put)
+
+
 KEYMAP_WRITERS = {"duckstation": duckstation_prepare, "snes9x": snes9x_prepare, "nestopia": nestopia_prepare,
                   "ppsspp": ppsspp_prepare, "melonds": melonds_prepare, "dolphin": dolphin_prepare,
                   "flycast": flycast_prepare, "pcsx2": pcsx2_prepare, "rmg": rmg_prepare, "xemu": xemu_prepare,
-                  "azahar": azahar_prepare, "cemu": cemu_prepare, "mame": mame_prepare, "retroarch": retroarch_prepare}
+                  "azahar": azahar_prepare, "cemu": cemu_prepare, "mame": mame_prepare, "retroarch": retroarch_prepare,
+                  "mednafen": mednafen_prepare}
 # Hinweise der Tastenbelegung, die nur gelten, solange der Emulator noch nicht eingerichtet ist
 KEYMAP_NOTE_READY = {"duckstation": lambda: duck_ready(), "pcsx2": lambda: pcsx2_ready()}
 
@@ -9996,8 +10306,23 @@ def keymap_prepare(tile):
 EMU_MUTE = {"gba": lambda: (MGBA_CONFIG, "ports.qt", "mute", "1", "0"),
             "pcsx2": lambda: (PCSX2_INI, "SPU2/Output", "OutputMuted", "true", "false"),
             "duckstation": lambda: (DUCK_INI, "Audio", "OutputMuted", "true", "false"),
-            "dosbox": lambda: (dosbox_primary(), "mixer", "nosound", "true", "false")}
-EMU_READY = {"duckstation": lambda: duck_ready(), "pcsx2": lambda: pcsx2_ready()}   # vorher gilt die Datei dem Emulator als neu
+            "dosbox": lambda: (dosbox_primary(), "mixer", "nosound", "true", "false"),
+            "ppsspp": lambda: (PPSSPP_INI, "Sound", "Enable", "False", "True"),
+            "dolphin": lambda: (dolphin_dir() / "Dolphin.ini", "DSP", "Muted", "True", "False"),
+            "snes9x": lambda: (snes9x_conf(), "Sound", "MuteSound", "true", "false"),
+            "nestopia": lambda: (NESTOPIA_CONF, "frontend", "a_mute", "1", "0"),
+            "scummvm": lambda: (SCUMMVM_INI, "scummvm", "mute", "true", "false"),
+            "vice": lambda: (VICE_RC, "C64SC", "Sound", "0", "1")}
+# vorher gilt die Datei dem Emulator als neu; Cemu: settings.xml legt first_run an (sonst fehlten dort die Spielordner)
+# RMG: GLideN64 verwirft eine GLideN64.ini ohne "version" (GLideNUI/Settings.cpp) – erst nach dessen erstem Start.
+# MAME: mame.ini legt das Skript von Void an (mame_setup). Stella: Die Datenbank legt Stella selbst an.
+# melonDS: eine alte melonDS.ini uebernimmt es beim ersten Start selbst in die neue Datei.
+EMU_READY = {"duckstation": lambda: duck_ready(), "pcsx2": lambda: pcsx2_ready(),
+             "cemu": lambda: (emu_dir("cemu") / "settings.xml").exists(),
+             "rmg": lambda: "version" in ini_read(rmg_gliden()).get("General", {}),
+             "mame": lambda: (MAME_DIR / "mame.ini").exists(),
+             "stella": lambda: STELLA_DB.is_file(),
+             "melonds": lambda: MELONDS_TOML.exists() or not (MELONDS_TOML.parent / "melonDS.ini").exists()}
 
 
 def emu_ready(tile):
@@ -10043,6 +10368,8 @@ def emu_mute_apply(tile):
 # Emulators selbst, damit beide dasselbe zeigen. Schluessel und Werte geprueft an den Quelltexten (November 2026):
 # PCSX2 Pcsx2Config.cpp/Config.h, DuckStation settings.cpp, mGBA 0.10 core/config.c + Qt, DOSBox Staging 0.82.2
 # (Void-Paket; glshader gilt in 0.83 weiter, aber als veraltet).
+# PPSSPP, Dolphin, Cemu, Azahar: s. weiter unten bei _OtherIni. Je Spiel gibt es dort nur den Rueckfall (Wert gilt fuer
+# einen Start in der Haupteinstellung) – ihre eigenen Spiel-Einstellungen braeuchten je Format das Lesen der Spielkennung.
 #
 # "game": auch je Spiel waehlbar. DOSBox: kommt in die Datei, die VoidStation vor jedem Start schreibt. PCSX2/DuckStation:
 # in deren eigene Spiel-Einstellungen (gamesettings/<Seriennummer>…ini, s. emu_game_ini; Seriennummer aus dem Abbild, discid.py).
@@ -10064,20 +10391,23 @@ def emu_mute_apply(tile):
 # Zurueck auf VoidStation-Einstellungen: Werte merken (opt_saved), Vorgaben eintragen; "Anpassen" holt die gemerkten zurueck.
 EMU_GAME_OPTS = Path.home() / ".config/voidstation/emu-games.json"       # {Kachel: {Spieldatei: {Option: Wert}}}
 _OPT_MODE = [{"v": "vs", "k": "emuopt.v.vs"}, {"v": "custom", "k": "emuopt.v.custom"}]
-EMU_AUTO = {"duckstation": {"texfilter": "auto"}, "dosbox": {"speed": "std"}}   # {Kachel: {Option: Stufe, auf der Profile gelten}}
+EMU_AUTO = {"duckstation": {"texfilter": "auto", "fxaa": "auto"}, "dosbox": {"speed": "std"}}   # {Kachel: {Option: Stufe, auf der Profile gelten}}
 EMU_OWN = BASE / "emu-own.ini"                         # Schalter von VoidStation selbst: [<Kachel>] <Option> = Wert
 _OPT_TF = [{"v": "true", "k": "common.on"}, {"v": "false", "k": "common.off"}]
 _OPT_10 = [{"v": "1", "k": "common.on"}, {"v": "0", "k": "common.off"}]
 
 
-def _opt(oid, section, key, choices, default, game=False, hidden=False, own=False, label=None):
+def _opt(oid, section, key, choices, default, game=False, hidden=False, own=False, label=None, io=None):
     """hidden: gehoert zu den VoidStation-Einstellungen (Vorgabe, wird beim Zurueckstellen mitgesetzt), hat auf der Karte
     aber keine eigene Zeile – wer daran drehen will, tut das im Emulator.
     own: kein Schluessel des Emulators, sondern ein Schalter von VoidStation selbst (EMU_OWN, Abschnitt = Kachel) – fuer
     die Patches je Spiel (EMU_PATCHES), fuer die die Emulatoren keinen allgemeinen Schalter haben.
-    label: Beschriftung einer anderen Option uebernehmen (emuopt.<label>)."""
+    label: Beschriftung einer anderen Option uebernehmen (emuopt.<label>).
+    io: eigenes Lesen/Schreiben fuer Optionen, die mehr als einen Abschnitt beruehren (Shader-Ketten von DuckStation,
+    Shader-Pfad von mGBA): Objekt mit read(ini) -> Wert oder None und write(path, value); fuer DuckStation dazu
+    writes/game_read/game_writes/game_clear (Spiel-Datei, Spielprofile)."""
     return {"id": oid, "section": section, "keys": key if isinstance(key, list) else [key], "choices": choices,
-            "default": default, "game": game, "hidden": hidden, "own": own, "label": label}
+            "default": default, "game": game, "hidden": hidden, "own": own, "label": label, "io": io}
 
 
 def _opt_res(values):
@@ -10086,6 +10416,660 @@ def _opt_res(values):
 
 def _opt_cycles(real, protected):
     return {"cpu_cycles": real, "cpu_cycles_protected": protected}
+
+
+# ---- Bildstil: Shader der Emulatoren (Paul, 13.11.2026: "die Presets, die von Haus aus von den Emulatoren kommen") ----
+# Eine Zeile "Stil" in der Spalte Bildstil (Karte "Anpassen"), dazu bei PS1/PS2 "Kanten glaetten" (FXAA, Vorgabe von
+# VoidStation, sobald es eine GPU gibt). Angeboten wird, was ein Bild gestaltet; Werkzeuge (Kalibrierung, Spiegeln,
+# Tiefenpuffer anzeigen, Schwarzbilder fuer 120 Hz, Farbsehschwaeche simulieren …) bleiben im Emulator.
+# Namen der Shader am Quelltext geprueft (13.11.2026): DuckStation data/resources/shaders (GLSL: Pfad ohne .glsl,
+# ReShade: Pfad unter reshade/Shaders ohne .fx, postprocessing.cpp TryLoadingShader), PCSX2 TVShader 0–7
+# (GraphicsPostProcessingSettingsTab.ui), mGBA res/shaders (mitgeliefert, s. launcher/shaders/LIESMICH.txt),
+# DOSBox Staging 0.82.2 glshader (render.cpp, shader_manager.cpp MapShaderName).
+_TRUE = ("true", "1", "yes", "on")
+SHADER_DIR = BASE / "shaders"
+MGBA_SHADERS = SHADER_DIR / "mgba"                    # Shader von mGBA und "voidstation-*.shader" (eigene)
+DUCK_OWN_SHADERS = SHADER_DIR / "duckstation"         # eigene Shader fuer DuckStation (*.glsl), s. duck_shaders_install
+LOOK_PREVIEWS = SHADER_DIR / "previews"               # Vorschaubilder je Stil: <Kachel>/<Option>-<Wert>.jpg (tools/look-previews.py)
+
+
+def _io_apply(path, sets, drops=None):
+    """{Abschnitt: {Schluessel: Wert}} schreiben und {Abschnitt: [Schluessel]} entfernen; nichts anlegen, wo nichts zu tun ist."""
+    drops = drops or {}
+    have = ini_read(path) if drops else {}
+    for sec in list(sets) + [x for x in drops if x not in sets]:
+        rm = [k for k in drops.get(sec, ()) if k in have.get(sec, {})]
+        if sets.get(sec) or rm:
+            ini_update(path, sec, sets.get(sec, {}), remove=rm)
+
+
+def _duck_stages(ini, chain):
+    """Shader der eingeschalteten Stufen einer Nachbearbeitungs-Kette von DuckStation (postprocessing.cpp: [<Kette>] Enabled,
+    StageCount, [<Kette>/Stage<n>] ShaderName, StageEnabled). [] = Kette aus oder leer, None = nicht lesbar."""
+    main = ini.get(chain, {})
+    try:
+        count = int(main.get("StageCount", "0") or 0)
+    except ValueError:
+        return None
+    if main.get("Enabled", "false").strip().lower() not in _TRUE:
+        return []
+    out = []
+    for i in range(1, count + 1):
+        stage = ini.get(f"{chain}/Stage{i}", {})
+        if stage.get("StageEnabled", "true").strip().lower() in _TRUE:
+            out.append(stage.get("ShaderName", "").strip())
+    return out
+
+
+def _duck_chain_writes(ini, chain, shaders):
+    """Kette auf genau diese Shader stellen -> (setzen, entfernen). Wechselt in einer Stufe der Shader, fliegen die Regler
+    des alten heraus (sonst traegt der neue fremde Werte)."""
+    if not shaders:
+        return {chain: {"Enabled": "false"}}, {}
+    sets = {chain: {"Enabled": "true", "StageCount": str(len(shaders))}}
+    drops = {}
+    for i, name in enumerate(shaders, 1):
+        sec = f"{chain}/Stage{i}"
+        old = ini.get(sec, {})
+        sets[sec] = {"ShaderName": name, "StageEnabled": "true"}
+        if old.get("ShaderName") != name:
+            drops[sec] = [k for k in old if k not in ("ShaderName", "StageEnabled")]
+    return sets, drops
+
+
+def _duck_chain_clear(ini, chain):
+    return {sec: list(vals) for sec, vals in ini.items() if sec == chain or sec.startswith(chain + "/Stage")}
+
+
+class _DuckSingle:
+    """Ein Shader als einzige Stufe einer Kette ("off" = Kette aus) – fuer "Kanten glaetten" in [InternalPostProcessing].
+    Mehrere Werte duerfen denselben Shader meinen (Automatik und An); gelesen wird der erste. Hat der Nutzer im Emulator
+    eine andere Kette gebaut, ist kein Knopf an (None); erst eine Wahl hier ersetzt sie.
+    Je Spiel: Steht in der Spiel-Datei [<Kette>] Enabled, nimmt DuckStation die ganze Kette von dort
+    (video_presenter.cpp GetPostProcessingSettingsInterface)."""
+
+    def __init__(self, chain, shaders):
+        self.chain, self.shaders = chain, shaders
+
+    def read(self, ini):
+        stages = _duck_stages(ini, self.chain)
+        if stages is None:
+            return None
+        if not stages:
+            return "off"
+        return next((v for v, name in self.shaders.items() if [name] == stages), None)
+
+    def game_read(self, ini):
+        return self.read(ini) if "Enabled" in ini.get(self.chain, {}) else None
+
+    def writes(self, value, ini):
+        return _duck_chain_writes(ini, self.chain, [] if value == "off" else [self.shaders[value]])
+
+    def game_writes(self, value, ini, base):
+        return self.writes(value, ini)
+
+    def game_clear(self, ini):
+        return _duck_chain_clear(ini, self.chain)
+
+    def write(self, path, value):
+        _io_apply(path, *self.writes(value, ini_read(path)))
+
+
+class _DuckDisplay:
+    """"Stil" (role 0) und "Farbe" (role 1) teilen sich die Kette [PostProcessing]: erst die Farbe, dann der Stil.
+    Lesbar ist nur, was genau so aufgebaut ist – sonst ist kein Knopf an. Je Spiel gibt es nur den Stil; die Kette des
+    Spiels bekommt die allgemeine Farbe davor (duck_game_color_sync zieht sie vor jedem Start nach)."""
+    chain = "PostProcessing"
+
+    def __init__(self, role, looks, colors):
+        self.role, self.looks, self.colors = role, looks, colors
+
+    def pair(self, ini):
+        stages = _duck_stages(ini, self.chain)
+        if stages is None:
+            return None
+        color = "nat"
+        if stages:
+            hit = next((v for v, name in self.colors.items() if name == stages[0]), None)
+            if hit:
+                color, stages = hit, stages[1:]
+        if not stages:
+            return ("off", color)
+        look = next((v for v, name in self.looks.items() if name == stages[0]), None) if len(stages) == 1 else None
+        return (look, color) if look else None
+
+    def compose(self, look, color):
+        return ([self.colors[color]] if color != "nat" else []) + ([self.looks[look]] if look != "off" else [])
+
+    def read(self, ini):
+        got = self.pair(ini)
+        return got[self.role] if got else None
+
+    def game_read(self, ini):
+        return self.read(ini) if "Enabled" in ini.get(self.chain, {}) else None
+
+    def writes(self, value, ini):
+        cur = list(self.pair(ini) or ("off", "nat"))
+        cur[self.role] = value
+        return _duck_chain_writes(ini, self.chain, self.compose(*cur))
+
+    def game_writes(self, value, ini, base):
+        return _duck_chain_writes(ini, self.chain, self.compose(value, (self.pair(base) or ("off", "nat"))[1]))
+
+    def game_clear(self, ini):
+        return _duck_chain_clear(ini, self.chain)
+
+    def write(self, path, value):
+        _io_apply(path, *self.writes(value, ini_read(path)))
+
+
+def duck_game_color_sync(native):
+    """Spiel mit eigenem Stil: Seine Kette ersetzt bei DuckStation die allgemeine – die allgemeine Farbe nachziehen."""
+    io, gi = _DUCK_LOOK_IO, ini_read(native)
+    if "Enabled" not in gi.get(io.chain, {}):
+        return
+    mine, base = io.pair(gi), ini_read(DUCK_INI)
+    if mine and mine[1] != (io.pair(base) or ("off", "nat"))[1]:
+        _io_apply(native, *io.game_writes(mine[0], gi, base))
+
+
+def duck_shaders_install():
+    """Eigene Shader in den Shader-Ordner von DuckStation legen ([Folders] Shaders, sonst <Daten>/shaders) – dort sucht es
+    zuerst (postprocessing.cpp TryLoadingShader). Vor jedem Start, nur was fehlt oder sich geaendert hat."""
+    dst = DUCK_INI.parent / (ini_read(DUCK_INI).get("Folders", {}).get("Shaders") or "shaders")
+    for src in sorted(DUCK_OWN_SHADERS.glob("*.glsl")):
+        try:
+            data = src.read_bytes()
+            out = dst / src.name
+            if not out.is_file() or out.read_bytes() != data:
+                dst.mkdir(parents=True, exist_ok=True)
+                out.write_bytes(data)
+        except OSError as e:
+            log("DuckStation: Shader", src.name, e)
+
+
+class _MgbaShader:
+    """Shader von mGBA: [ports.qt] shader = Ordner des Shaders (ShaderSelector.cpp), leer = keiner. Was gewaehlt ist, merkt
+    sich VoidStation in EMU_OWN ([gba] look = Wert, shader = zuletzt eingetragener Pfad), weil der Pfad je Spiel wechseln kann:
+    "Original-Farben" nimmt GBA Color, GBC Color oder bei Game-Boy-Spielen keinen, und ein Spiel kann einen eigenen Stil
+    haben (emu-games.json). Steht in mGBA etwas anderes als zuletzt eingetragen, hat der Nutzer dort gewaehlt – das gilt."""
+    ORIG = {".gbc": "gbc-color", ".gb": ""}        # .gb: Das Display des ersten Game Boy hatte keine Farben zu korrigieren
+
+    def __init__(self, folders):
+        self.folders = folders                       # {Wert: Ordner unter MGBA_SHADERS ohne ".shader"}
+        self.values = {"off", "orig"} | set(folders)
+
+    def path(self, value, ext=""):
+        name = self.ORIG.get(ext, "gba-color") if value == "orig" else self.folders.get(value, "")
+        return str(MGBA_SHADERS / f"{name}.shader") if name else ""
+
+    def derive(self, cur):
+        if not cur:
+            return "off"
+        p = Path(cur)
+        if str(p.parent) != str(MGBA_SHADERS):
+            return None
+        name = p.name.removesuffix(".shader")
+        if name in ("gba-color", "gbc-color"):
+            return "orig"
+        return next((v for v, folder in self.folders.items() if folder == name), None)
+
+    def read(self, ini):
+        cur = ini.get("ports.qt", {}).get("shader", "").strip()
+        own = ini_read(EMU_OWN).get("gba", {})
+        if "look" in own and cur == own.get("shader", ""):
+            return own["look"] if own["look"] in self.values else None
+        return self.derive(cur)
+
+    def write(self, path, value):
+        shader = self.path(value)
+        ini_update(EMU_OWN, "gba", {"look": value, "shader": shader})
+        ini_update(path, "ports.qt", {"shader": shader})
+
+
+def mgba_look_game(game):
+    """Vor jedem Start von mGBA den Shader fuer dieses Spiel eintragen: die Wahl fuer das Spiel, sonst die allgemeine
+    (Original-Farben je nach Endung). Hat der Nutzer in mGBA selbst einen Shader gewaehlt, wird das die allgemeine Wahl
+    (ein fremder bleibt als Pfad gemerkt und kommt nach einem Spiel mit eigenem Stil zurueck). Aufruf mit EMU_LOCK."""
+    io = _MGBA_LOOK_IO
+    own = dict(ini_read(EMU_OWN).get("gba", {}))
+    cur = ini_read(MGBA_CONFIG).get("ports.qt", {}).get("shader", "").strip()
+    if "look" not in own or cur != own.get("shader", ""):
+        own["look"], own["keep"] = io.derive(cur) or "custom", cur
+    mine = emu_opts_game("gba", os.path.basename(game)).get("look") if game else None
+    ext = Path(game).suffix.lower() if game else ""
+    want = mine or own["look"]
+    shader = io.path(want, ext) if want in io.values else own.get("keep", "")
+    if shader != cur:
+        ini_update(MGBA_CONFIG, "ports.qt", {"shader": shader})
+        log(f"mGBA: Bildstil {want}{' (Spiel)' if mine else ''}: {Path(shader).name or 'ohne Shader'}")
+    ini_update(EMU_OWN, "gba", {"look": own["look"], "keep": own.get("keep", ""), "shader": shader})
+
+
+_OFF = {"v": "off", "k": "common.off"}
+_KLAR = {"k": "emuopt.v.klar"}                 # eigener Stil von VoidStation (launcher/shaders/LIESMICH.txt)
+DUCK_LOOKS = [                                 # (Wert, ShaderName, Beschriftung: Schluessel "k" oder fester Name "t")
+    ("klar", "voidstation-klar", _KLAR),
+    ("crt-lottes", "crt-lottes", {"t": "CRT-Lottes"}),
+    ("crt-lottes2", "CRTLottes2", {"t": "CRT-Lottes 2"}),
+    ("crt-hyllian", "dolphinfx/crt/CRT-HYLLIAN", {"t": "CRT-Hyllian"}),
+    ("crt-newpixie", "CRT-NewPixie", {"t": "CRT-NewPixie"}),
+    ("scanlines", "dolphinfx/scanlines", {"k": "emuopt.v.scanlines"}),
+    ("scanlines-4x2", "scanline-modern-4x2", {"t": "Scanlines 4×2"}),
+    ("scanlines-ex", "scanline-modern-ex", {"t": "Scanlines EX"}),
+    ("scanlines-abs", "scanlines-abs", {"t": "Scanlines abs"}),
+    ("ntsc", "ntsc/ntsc-adaptive-lite", {"t": "NTSC"}),
+    ("sharpen", "simple-sharpen", {"k": "emuopt.v.sharpen"}),
+    ("bicubic", "interpolation/bicubic", {"k": "emuopt.v.bicubic"}),
+    ("deband", "Deband", {"k": "emuopt.v.deband"}),
+    ("grain", "FilmGrain2", {"k": "emuopt.v.grain"}),
+    ("pixellate", "dolphinfx/pixel-art/PIXELLATE", {"t": "Pixellate"}),
+    ("ddt", "dolphinfx/edge-smoothing/DDT", {"t": "DDT"}),
+    ("xbr", "dolphinfx/edge-smoothing/XBR", {"t": "xBR"}),
+    ("super-xbr", "edge-smoothing/super-xbr", {"t": "Super-xBR"}),
+]
+# Farbe: bei DuckStation eigene Shader mit festen Werten, bei PCSX2 dessen ShadeBoost (Wert / 50 = Faktor) – dieselbe
+# Formel (shadeboost.glsl), dieselben Zahlen, also derselbe Eindruck auf beiden. "Warm" o. Ae. kann ShadeBoost nicht.
+DUCK_COLORS = {"vivid": "voidstation-kraeftig", "bright": "voidstation-hell"}
+_COLOR_CHOICES = [{"v": "nat", "k": "emuopt.v.natural"}, {"v": "vivid", "k": "emuopt.v.vivid"},
+                  {"v": "bright", "k": "emuopt.v.bright"}]
+
+
+def _shadeboost(on, brightness=50, contrast=50, saturation=50, gamma=50):
+    if not on:
+        return {"ShadeBoost": "false"}
+    return {"ShadeBoost": "true", "ShadeBoost_Brightness": str(brightness), "ShadeBoost_Contrast": str(contrast),
+            "ShadeBoost_Saturation": str(saturation), "ShadeBoost_Gamma": str(gamma)}
+
+
+PCSX2_COLORS = [dict(_COLOR_CHOICES[0], set=_shadeboost(False)),
+                dict(_COLOR_CHOICES[1], set=_shadeboost(True, contrast=54, saturation=60)),
+                dict(_COLOR_CHOICES[2], set=_shadeboost(True, brightness=54, gamma=55))]
+PCSX2_LOOKS = [{"v": "0", "k": "common.off"}, {"v": "5", "t": "Lottes CRT"}, {"v": "1", "k": "emuopt.v.scanlines"},
+               {"v": "2", "k": "emuopt.v.diagonal"}, {"v": "3", "k": "emuopt.v.triangular"},
+               {"v": "4", "k": "emuopt.v.wave"}, {"v": "6", "t": "4×RGSS"}, {"v": "7", "t": "N×AGSS"}]
+MGBA_LOOKS = [                                 # (Wert = Ordner unter launcher/shaders/mgba ohne ".shader", Beschriftung)
+    ("agb001", {"t": "AGB-001"}), ("ags001", {"t": "AGS-001"}), ("sp101-color", {"t": "GBA SP 101"}),
+    ("nso-gba-color", {"t": "NSO GBA"}), ("nso-gbc-color", {"t": "NSO GBC"}), ("gb-micro-color", {"t": "GB Micro"}),
+    ("dslite-color", {"t": "DS Lite"}), ("nds-color", {"t": "Nintendo DS"}), ("wiiu", {"t": "Wii U"}),
+    ("lcd", {"t": "LCD"}), ("gbc-lcd", {"t": "GBC-LCD"}), ("tv-mode", {"k": "emuopt.v.tv"}),
+    ("scanlines", {"k": "emuopt.v.scanlines"}), ("soften", {"k": "emuopt.v.soft"}),
+    ("motion_blur", {"k": "emuopt.v.motionBlur"}), ("vignette", {"k": "emuopt.v.vignette"}),
+    ("pixelate", {"t": "Pixelate"}), ("vba_pixelate", {"t": "VBA Pixelate"}), ("scale2x", {"t": "Scale2x"}),
+    ("scale4x", {"t": "Scale4x"}), ("hq2x", {"t": "hq2x"}), ("xbr-lv2", {"t": "xBR-lv2"}), ("xbr-lv3", {"t": "xBR-lv3"}),
+    ("mmpx", {"t": "MMPX"}), ("fish", {"t": "fish"}),       # OmniScale braucht "outputSize", das mGBA 0.10.5 nicht kennt
+]
+DOSBOX_LOOKS = [
+    {"v": "sharp", "k": "emuopt.v.sharp"}, {"v": "nearest", "k": "emuopt.v.nearest"},
+    {"v": "bilinear", "k": "emuopt.v.soft"}, {"v": "interpolation/catmull-rom", "t": "Catmull-Rom"},
+    {"v": "crt-auto", "k": "emuopt.v.crt"}, {"v": "crt-auto-machine", "k": "emuopt.v.crtMachine"},
+    {"v": "crt-auto-arcade", "k": "emuopt.v.crtArcade"}, {"v": "crt-auto-arcade-sharp", "k": "emuopt.v.crtArcadeSharp"},
+    {"v": "scaler/xbr-lv3", "t": "xBR-lv3"}, {"v": "scaler/xbr-lv2-3d", "t": "xBR-lv2 3D"},
+    {"v": "scaler/xbr-lv2-noblend", "t": "xBR-lv2 noblend"}, {"v": "scaler/advmame2x", "t": "AdvMAME2x"},
+    {"v": "scaler/advmame3x", "t": "AdvMAME3x"}, {"v": "scaler/advinterp2x", "t": "AdvInterp2x"},
+    {"v": "scaler/advinterp3x", "t": "AdvInterp3x"},
+]
+_DUCK_LOOK_IO = _DuckDisplay(0, {v: name for v, name, _ in DUCK_LOOKS}, DUCK_COLORS)
+_DUCK_COLOR_IO = _DuckDisplay(1, {v: name for v, name, _ in DUCK_LOOKS}, DUCK_COLORS)
+# Vor dem Hochrechnen aufs Display, in der Renderaufloesung: guenstiger. "auto" und "on" schreiben dasselbe; auf Automatik
+# nehmen Spielprofile die Glaettung bei Pixelgrafik heraus (gameprofiles.PSX_CATEGORIES)
+_DUCK_FXAA_IO = _DuckSingle("InternalPostProcessing", {"auto": "anti-aliasing/fxaa", "on": "anti-aliasing/fxaa"})
+_MGBA_LOOK_IO = _MgbaShader(dict({"klar": "voidstation-klar"}, **{v: v for v, _ in MGBA_LOOKS}))
+
+
+# ---- PPSSPP, Dolphin, Cemu, Azahar (Paul, 13.11.2026: "zur Vereinheitlichung eine vollstaendige Optionsseite") ----
+# Schluessel geprueft am 13.11.2026: PPSSPP v1.20.4 (Void-Paket) Core/Config.cpp + assets/shaders/defaultshaders.ini,
+# Dolphin 2609 (Void-Paket) Core/Config/GraphicsSettings.cpp, MainSettings.cpp, VideoCommon/VideoConfig.h, Data/Sys/Shaders,
+# Cemu (main) src/config/CemuConfig.cpp/.h, Azahar (master) src/common/settings.h, citra_qt/configuration/config.cpp.
+_OPT_TFC = [{"v": "True", "k": "common.on"}, {"v": "False", "k": "common.off"}]     # PPSSPP, Dolphin: True/False
+
+
+class _OtherIni:
+    """Schluessel in einer anderen Datei als der der Kachel (Dolphin: Dolphin.ini neben GFX.ini). Nur allgemein."""
+
+    def __init__(self, path, section, key, default):
+        self.path, self.section, self.key, self.default = path, section, key, default
+
+    def read(self, ini):
+        return ini_read(self.path()).get(self.section, {}).get(self.key, self.default)
+
+    def write(self, path, value):
+        ini_update(self.path(), self.section, {self.key: value})
+
+
+class _QtIni:
+    """Qt-Einstellungsdatei von Azahar: Neben jedem Schluessel steht "<Schluessel>\\default"; ist das true, gilt die
+    Vorgabe des Programms, egal was im Schluessel steht (config.cpp ReadBasicSetting). Geschrieben wird beides, wie
+    Azahar es selbst tut. fallback: laesst sich je Spiel fuer einen Start in die Haupteinstellung eintragen."""
+    fallback = True
+
+    def __init__(self, section, key, default):
+        self.section, self.key, self.default = section, key, default
+
+    def read(self, ini):
+        sec = ini.get(self.section, {})
+        if self.key not in sec or sec.get(self.key + "\\default", "false").strip().lower() == "true":
+            return self.default
+        return qt_unquote(sec[self.key])
+
+    def writes(self, value, ini):
+        return {self.section: {self.key: value, self.key + "\\default": "true" if value == self.default else "false"}}, {}
+
+    def write(self, path, value):
+        _io_apply(path, *self.writes(value, {}))
+
+
+class _CemuXml:
+    """Wert in Cemus settings.xml (<content><Graphic><api>…). Die Datei muss es schon geben (EMU_READY)."""
+
+    def __init__(self, path, default):
+        self.path, self.default = path, default
+
+    def read(self, ini):
+        try:
+            node = ET.parse(emu_dir("cemu") / "settings.xml").getroot().find("/".join(self.path))
+        except (OSError, ET.ParseError):
+            return self.default
+        return (node.text or "").strip() if node is not None and (node.text or "").strip() else self.default
+
+    def write(self, path, value):
+        try:
+            tree = ET.parse(path)
+        except (OSError, ET.ParseError) as e:
+            log("Cemu: settings.xml:", e)
+            return
+        node = tree.getroot()
+        for name in self.path:
+            nxt = node.find(name)
+            node = ET.SubElement(node, name) if nxt is None else nxt
+        node.text = value
+        tmp = path.with_name(path.name + ".vs-tmp")
+        tree.write(tmp, encoding="UTF-8", xml_declaration=True)
+        tmp.replace(path)
+
+
+class _PpssppShader:
+    """Nachbearbeitung von PPSSPP: [PostShaderList] PostShader1…n = Name des Shaders (Abschnitt in defaultshaders.ini),
+    "Off" zaehlt nicht (Config.cpp). Hier: genau einer oder keiner; eine laengere Kette des Nutzers -> kein Knopf an."""
+
+    def __init__(self, names):
+        self.names = set(names)
+
+    def read(self, ini):
+        chain = [v.strip() for k, v in sorted(ini.get("PostShaderList", {}).items())
+                 if k.startswith("PostShader") and v.strip() and v.strip() != "Off"]
+        if not chain:
+            return "off"
+        return chain[0] if len(chain) == 1 and chain[0] in self.names else None
+
+    def write(self, path, value):
+        drop = [k for k in ini_read(path).get("PostShaderList", {}) if k.startswith("PostShader") and k != "PostShader1"]
+        ini_update(path, "PostShaderList", {"PostShader1": "Off" if value == "off" else value}, remove=drop)
+
+
+PPSSPP_LOOKS = [                               # (Abschnitt in defaultshaders.ini, Beschriftung); ohne Stereo-Shader
+    ("PSPColor", {"k": "emuopt.v.orig"}), ("FXAA", {"t": "FXAA"}), ("Sharpen", {"k": "emuopt.v.sharpen"}),
+    ("FSR-RCAS", {"t": "FSR (RCAS)"}), ("FSR-EASU", {"t": "FSR (EASU)"}), ("UpscaleSharpBilinear", {"t": "Sharp Bilinear"}),
+    ("UpscaleBicubic", {"k": "emuopt.v.bicubic"}), ("UpscaleSpline36", {"t": "Spline36"}), ("SSAA(Gauss)", {"t": "SSAA (Gauss)"}),
+    ("VideoSmoothingAA", {"t": "Video AA"}), ("AAColor", {"t": "AA-Color"}), ("Natural", {"t": "Natural Colors"}),
+    ("NaturalA", {"t": "Natural Colors (No Blur)"}), ("ColorCorrection", {"t": "Color Correction"}),
+    ("CRT", {"t": "CRT"}), ("Scanlines", {"k": "emuopt.v.scanlines"}), ("LCDPersistence", {"t": "LCD Persistence"}),
+    ("Vignette", {"k": "emuopt.v.vignette"}), ("Bloom", {"t": "Bloom"}), ("BloomNoBlur", {"t": "Bloom (no blur)"}),
+    ("FakeReflections", {"t": "Fake Reflections"}), ("Cartoon", {"t": "Cartoon"}), ("4xHqGLSL", {"t": "4xHQ"}),
+    ("5xBR", {"t": "5xBR"}), ("5xBR-lv2", {"t": "5xBR lv2"}),
+]
+# Dateien in Dolphins Sys/Shaders ohne ".glsl" – so heissen sie auch in Dolphin selbst. Nicht dabei: die Werkzeuge
+# default_pre_post_process, AutoHDR, PerceptualHDR, swap_RGB_*
+DOLPHIN_LOOKS = ["FXAA", "integer_scaling", "brighten", "darkerbrighter", "sunset", "sepia", "grayscale", "grayscale2",
+                 "16bit", "32bit", "posterize", "posterize2", "primarycolors", "auto_toon", "auto_toon2", "sketchy",
+                 "emboss", "invertedoutline", "bad_bloom", "lens_distortion", "asciiart", "nightvision", "nightvision2",
+                 "nightvision2scanlines", "acidmetal", "acidtrip", "acidtrip2", "chrismas", "cool1", "fire", "fire2",
+                 "firewater", "invert", "invert_blue", "mad_world", "spookey1", "spookey2", "toxic"]
+_AUTO0 = {"v": "0", "k": "emuopt.v.auto"}
+_PPSSPP_LOOK_IO = _PpssppShader([n for n, _ in PPSSPP_LOOKS])
+
+
+# ---- RMG, Flycast, xemu, melonDS, Snes9x, Nestopia, MAME, ScummVM, VICE, Stella (Paul, 13.11.2026: "Alle 10") ----
+# Schluessel geprueft am 13.11.2026: RMG (GLideN64 mit eigener Oberflaeche: GLideNUI/Settings.cpp, Config.cpp/.h),
+# Flycast (master) core/cfg/option.cpp, xemu (master) config_spec.yml, melonDS 1.1 frontend/qt_sdl/Config.cpp,
+# Snes9x 1.60 gtk/src/gtk_config.cpp + gtk_display.h, Nestopia 1.53.2 fltkui/setmanager.cpp + jg.cpp, MAME 0.282
+# emuopts.cpp, osdobj_common.cpp, bgfx/chains, ScummVM 2026.1.0 base/commandLine.cpp, graphics/scaler, opengl-graphics.cpp,
+# VICE 3.9 video/video-resources.c, video.h, vicii-resources.c, Stella 6.5.3 emucore/Settings.cxx, repository/sqlite.
+_OPT_YN = [{"v": "yes", "k": "common.on"}, {"v": "no", "k": "common.off"}]          # Flycast
+
+
+def rmg_gliden():
+    return emu_dir("rmg") / "GLideN64.ini"
+
+
+class _QtProfile:
+    """GLideN64.ini (QSettings): [General] profile nennt den Abschnitt mit den Einstellungen (Vorgabe "User"), darin
+    Schluessel wie "video\\fxaa". fallback: laesst sich je Spiel fuer einen Start eintragen."""
+    fallback = True
+
+    def __init__(self, key, default):
+        self.key, self.default = key, default
+
+    def _sec(self, ini):
+        return qt_unquote(ini.get("General", {}).get("profile", "")) or "User"
+
+    def read(self, ini):
+        return qt_unquote(ini.get(self._sec(ini), {}).get(self.key, self.default))
+
+    def writes(self, value, ini):
+        return {self._sec(ini or ini_read(rmg_gliden())): {self.key: value}}, {}
+
+    def write(self, path, value):
+        _io_apply(path, *self.writes(value, ini_read(path)))
+
+
+class _IniStore:
+    """Ein Abschnitt einer INI-Datei, deren Zeilen hinten Kommentare tragen (snes9x.conf: "AspectRatio = 2  # 0: …",
+    conffile.cpp)."""
+
+    def __init__(self, path, section):
+        self.path, self.section = path, section
+
+    def values(self, keys):
+        return {k: v.split("#", 1)[0].strip() for k, v in ini_read(self.path()).get(self.section, {}).items() if k in keys}
+
+    def put(self, updates):
+        ini_update(self.path(), self.section, updates)
+
+
+class _TomlStore:
+    """melonDS.toml, xemu.toml: ganz lesen, Werte an ihren Pfaden setzen, ganz schreiben (toml_dump)."""
+
+    def __init__(self, load, save):
+        self._load, self._save = load, save
+
+    def values(self, keys):
+        root = self._load()
+        if root is None:
+            return None
+        out = {}
+        for path in keys:
+            node: Any = root
+            for name in path:
+                node = node.get(name) if isinstance(node, dict) else None
+            if node is not None:
+                out[path] = node
+        return out
+
+    def put(self, updates):
+        root = self._load()
+        if root is None:
+            return
+        for path, value in updates.items():
+            node = root
+            for name in path[:-1]:
+                node = node.setdefault(name, {})
+            node[path[-1]] = value
+        self._save(root)
+
+
+def _melonds_load():
+    import tomllib
+    try:
+        return tomllib.loads(MELONDS_TOML.read_text(encoding="utf-8")) if MELONDS_TOML.exists() else {}
+    except (OSError, ValueError) as e:
+        log("melonDS.toml nicht lesbar:", e)
+        return None
+
+
+def _melonds_save(root):
+    MELONDS_TOML.parent.mkdir(parents=True, exist_ok=True)
+    tmp = MELONDS_TOML.with_suffix(".vs-tmp")
+    tmp.write_text(toml_dump(root), encoding="utf-8")
+    tmp.replace(MELONDS_TOML)
+
+
+class _MameStore:
+    """mame.ini: je Zeile "name   wert", Kommentare mit #."""
+
+    def values(self, keys):
+        out = {}
+        try:
+            for line in (MAME_DIR / "mame.ini").read_text(encoding="utf-8", errors="replace").splitlines():
+                parts = line.split(None, 1)
+                if parts and not parts[0].startswith("#") and parts[0] in keys:
+                    out[parts[0]] = parts[1].strip() if len(parts) > 1 else ""
+        except OSError:
+            pass
+        return out
+
+    def put(self, updates):
+        path, todo, out = MAME_DIR / "mame.ini", dict(updates), []
+        try:
+            lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            return
+        for line in lines:
+            parts = line.split(None, 1)
+            out.append(f"{parts[0]:<25} {todo.pop(parts[0])}" if parts and parts[0] in todo else line)
+        out += [f"{k:<25} {v}" for k, v in todo.items()]
+        tmp = path.with_name("mame.ini.vs-tmp")
+        tmp.write_text("\n".join(out) + "\n", encoding="utf-8")
+        tmp.replace(path)
+
+
+class _StellaStore:
+    """Einstellungen von Stella: Tabelle settings (setting, value) in dessen SQLite-Datenbank."""
+
+    def values(self, keys):
+        if not STELLA_DB.is_file():
+            return {}
+        import sqlite3
+        try:
+            con = sqlite3.connect(f"file:{STELLA_DB}?mode=ro", uri=True, timeout=2)
+            try:
+                return {k: v for k, v in con.execute("SELECT setting, value FROM settings") if k in keys}
+            finally:
+                con.close()
+        except sqlite3.Error as e:
+            log("Stella: Datenbank:", e)
+            return None
+
+    def put(self, updates):
+        if not STELLA_DB.is_file():
+            return
+        import sqlite3
+        try:
+            con = sqlite3.connect(STELLA_DB, timeout=2)
+            try:
+                with con:
+                    con.executemany("INSERT OR REPLACE INTO settings (setting, value) VALUES (?, ?)", [(k, str(v)) for k, v in updates.items()])
+            finally:
+                con.close()
+        except sqlite3.Error as e:
+            log("Stella: Datenbank:", e)
+
+
+class _Mapped:
+    """Option in einem Speicher mit eigenem Format (TOML, mame.ini, SQLite). mapping: {Wert: {Schluessel: Inhalt}} – gewaehlt
+    ist der erste Wert, dessen Inhalte alle passen; fehlt ein Schluessel im Speicher, gilt defaults. Inhalt als Liste:
+    geschrieben wird der erste, beim Lesen gilt jeder (Stella: "true" oder "1"). Nur allgemein."""
+
+    def __init__(self, store, mapping, defaults):
+        self.store, self.mapping, self.defaults = store, mapping, defaults
+
+    @staticmethod
+    def _same(a, b):
+        if isinstance(b, list):
+            return any(_Mapped._same(a, x) for x in b)
+        return a == b if isinstance(a, bool) or isinstance(b, bool) else _opt_norm(a) == _opt_norm(b)
+
+    def read(self, ini):
+        cur = self.store.values(set(self.defaults))
+        if cur is None:
+            return None
+        return next((value for value, want in self.mapping.items()
+                     if all(self._same(cur.get(k, self.defaults[k]), v) for k, v in want.items())), None)
+
+    def write(self, path, value):
+        self.store.put({k: v[0] if isinstance(v, list) else v for k, v in self.mapping[value].items()})
+
+
+_XEMU = _TomlStore(lambda: xemu_load(), lambda root: xemu_save(root))
+_MELON = _TomlStore(_melonds_load, _melonds_save)
+_MAME, _STELLA, _S9X = _MameStore(), _StellaStore(), _IniStore(lambda: snes9x_conf(), "Display")
+
+
+class _MdfnStore:
+    """mednafen.cfg ("<name> <wert>")."""
+
+    def values(self, keys):
+        return mednafen_read(set(keys))
+
+    def put(self, updates):
+        mednafen_write(updates)
+
+
+_MDFN = _MdfnStore()
+_MDFN_SYS = ("md", "sms", "gg", "ss", "pce")
+# videoip: Vorgabe je System (drivers/video.cpp: 1, wo das System die Aufloesung wechseln kann)
+_MDFN_IP = {"md": "1", "sms": "0", "gg": "0", "ss": "1", "pce": "1"}
+
+
+def _mdfn(oid, key, rows, default_content, default, **kw):
+    """Dieselbe Einstellung fuer alle fuenf Systeme: rows [(Wert, Beschriftung, Inhalt)]"""
+    return _map(oid, _MDFN, [(v, lab, {f"{m}.{key}": c for m in _MDFN_SYS}) for v, lab, c in rows],
+                {f"{m}.{key}": default_content for m in _MDFN_SYS}, default, **kw)
+_ST_ON, _ST_OFF = ["true", "1"], ["false", "0"]                     # Stella: Variant(bool) schreibt 1/0, die Vorgaben stehen als Wort
+
+
+def _map(oid, store, rows, defaults, default, **kw):
+    """rows: [(Wert, Beschriftung, {Schluessel: Inhalt})]"""
+    return _opt(oid, "", oid, [dict(lab, v=v) for v, lab, _ in rows], default,
+                io=_Mapped(store, {v: m for v, _, m in rows}, defaults), **kw)
+
+
+def _one(oid, store, key, rows, default_content, default, **kw):
+    """Ein Schluessel: rows [(Wert, Beschriftung, Inhalt)]"""
+    return _map(oid, store, [(v, lab, {key: c}) for v, lab, c in rows], {key: default_content}, default, **kw)
+
+
+def _gl64(oid, key, choices, default, **kw):
+    return _opt(oid, "User", key, choices, default, io=_QtProfile(key, default), **kw)
+
+
+_ON, _OFFK, _ORIG, _STRETCH = {"k": "common.on"}, {"k": "common.off"}, {"k": "emuopt.v.original"}, {"k": "emuopt.v.stretch"}
+_MELON_3D, _MELON_SCALE, _MELON_GL = ("3D", "Renderer"), ("3D", "GL", "ScaleFactor"), ("Screen", "UseGL")
+_MELON_LAY, _MELON_SIZE = ("Instance0", "Window0", "ScreenLayout"), ("Instance0", "Window0", "ScreenSizing")
+_XEMU_FIT, _XEMU_AR = ("display", "ui", "fit"), ("display", "ui", "aspect_ratio")
+SNES9X_FILTERS = [("7", {"k": "emuopt.v.scanlines"}), ("6", {"t": "NTSC"}), ("1", {"t": "Super Eagle"}), ("2", {"t": "2xSaI"}),
+                  ("3", {"t": "Super 2xSaI"}), ("4", {"t": "EPX"}), ("5", {"t": "EPX Smooth"}), ("11", {"t": "HQ2x"}),
+                  ("12", {"t": "HQ3x"}), ("13", {"t": "HQ4x"}), ("14", {"t": "2xBRZ"}), ("15", {"t": "3xBRZ"}), ("16", {"t": "4xBRZ"})]
+SCUMMVM_SCALERS = [("hq", "HQ"), ("edge", "Edge"), ("advmame", "AdvMAME"), ("sai", "2xSaI"), ("supersai", "Super 2xSaI"),
+                   ("supereagle", "Super Eagle"), ("pm", "PM"), ("dotmatrix", "DotMatrix"), ("tv", "TV")]
+
+
+def _az(oid, section, key, choices, default, **kw):
+    return _opt(oid, section, key, choices, default, io=_QtIni(section, key, default), **kw)
+
+
+def _cemu(oid, key, choices, default, **kw):
+    return _opt(oid, "Graphic", key, choices, default, io=_CemuXml(("Graphic", key), default), **kw)
 
 
 EMU_OPTS: dict[str, Any] = {
@@ -10105,6 +11089,11 @@ EMU_OPTS: dict[str, Any] = {
             _opt("textures", "EmuCore/GS", "LoadTextureReplacements", _OPT_TF, "false", hidden=True),
             # Bildraten-Patch aus PCSX2' patches.zip, je Spiel eingetragen (EMU_PATCHES, _patches_apply)
             _opt("fps", "pcsx2", "fps", _OPT_TF, "false", game=True, hidden=True, own=True),
+        ]),
+        ("look", [
+            _opt("fxaa", "EmuCore/GS", "fxaa", _OPT_TF, "false", game=True),
+            _opt("color", "EmuCore/GS", "ShadeBoost", PCSX2_COLORS, "nat"),
+            _opt("look", "EmuCore/GS", "TVShader", PCSX2_LOOKS, "0", game=True),
         ]),
         ("play", [
             _opt("fastBoot", "EmuCore", "EnableFastBoot", _OPT_TF, "true"),
@@ -10135,6 +11124,15 @@ EMU_OPTS: dict[str, Any] = {
             _opt("wsPatch", "duckstation", "wsPatch", _OPT_TF, "false", game=True, hidden=True, own=True, label="widescreen"),
             _opt("fps", "duckstation", "fps", _OPT_TF, "false", game=True, hidden=True, own=True),
         ]),
+        ("look", [
+            # In der Kette vor der Ausgabe (InternalPostProcessing, Renderaufloesung) statt am fertigen Bild: guenstiger
+            _opt("fxaa", "InternalPostProcessing", "Enabled", [
+                {"v": "auto", "k": "emuopt.v.auto", "auto": True}, {"v": "on", "k": "common.on"}, _OFF], "off",
+                 game=True, io=_DUCK_FXAA_IO),
+            _opt("color", "PostProcessing", "Enabled", _COLOR_CHOICES, "nat", io=_DUCK_COLOR_IO),
+            _opt("look", "PostProcessing", "Enabled", [_OFF] + [dict(lab, v=v) for v, _, lab in DUCK_LOOKS], "off",
+                 game=True, io=_DUCK_LOOK_IO),
+        ]),
         ("play", [
             _opt("fastBoot", "BIOS", "PatchFastBoot", _OPT_TF, "false"),
             _opt("resume", "Main", "SaveStateOnExit", _OPT_TF, "true"),
@@ -10154,6 +11152,10 @@ EMU_OPTS: dict[str, Any] = {
             _opt("blend", "ports.qt", "interframeBlending", _OPT_10, "0"),
             _opt("sgb", "ports.qt", "sgb.borders", _OPT_10, "1"),
         ]),
+        ("look", [
+            _opt("look", "ports.qt", "shader", [_OFF, dict(_KLAR, v="klar"), {"v": "orig", "k": "emuopt.v.orig"}] +
+                 [dict(lab, v=v) for v, lab in MGBA_LOOKS], "off", game=True, io=_MGBA_LOOK_IO),
+        ]),
         ("play", [
             _opt("resume", "ports.qt", ["autosave", "autoload"], _OPT_10, "1"),
             _opt("rewind", "ports.qt", "rewindEnable", _OPT_10, "0"),
@@ -10164,15 +11166,15 @@ EMU_OPTS: dict[str, Any] = {
     ]},
     "dosbox": {"file": lambda: dosbox_primary(), "groups": [
         ("picture", [
-            _opt("shader", "render", "glshader", [
-                {"v": "crt-auto", "k": "emuopt.v.crt"}, {"v": "sharp", "k": "emuopt.v.sharp"},
-                {"v": "bilinear", "k": "emuopt.v.soft"}], "crt-auto"),
             _opt("aspect", "render", "aspect", [
                 {"v": "auto", "t": "4:3"}, {"v": "square-pixels", "k": "emuopt.v.square"},
                 {"v": "stretch", "k": "emuopt.v.stretch"}], "auto"),
             _opt("integer", "render", "integer_scaling", [
                 {"v": "auto", "k": "emuopt.v.auto"}, {"v": "off", "k": "common.off"}], "auto"),
             _opt("fullscreen", "sdl", "fullscreen", _OPT_TF, "true"),
+        ]),
+        ("look", [
+            _opt("shader", "render", "glshader", DOSBOX_LOOKS, "crt-auto", game=True, label="look"),
         ]),
         ("play", [
             _opt("speed", "cpu", ["cpu_cycles", "cpu_cycles_protected"], [
@@ -10190,6 +11192,278 @@ EMU_OPTS: dict[str, Any] = {
                 {"v": "off", "k": "common.off"}, {"v": "small", "k": "emuopt.v.small"},
                 {"v": "medium", "k": "emuopt.v.medium"}, {"v": "large", "k": "emuopt.v.large"}], "off"),
         ]),
+    ]},
+    "ppsspp": {"file": lambda: PPSSPP_INI, "groups": [
+        ("picture", [
+            # 0 = so gross wie das Fenster; PPSSPP waehlt ohne Eintrag 2-fach, sobald der Bildschirm 1000 Punkte breit ist
+            _opt("res", "Graphics", "InternalResolution", [_AUTO0] + _opt_res([2, 3, 4, 5]), "2", game=True),
+            _opt("aspect", "DisplayLayout.Landscape", "DisplayStretch", [
+                {"v": "False", "k": "emuopt.v.original"}, {"v": "True", "k": "emuopt.v.stretch"}], "False", game=True),
+            _opt("integer", "DisplayLayout.Landscape", "DisplayIntegerScale", _OPT_TFC, "False"),
+            _opt("aniso", "Graphics", "AnisotropyLevel", [
+                {"v": "0", "k": "common.off"}, {"v": "1", "t": "2×"}, {"v": "2", "t": "4×"}, {"v": "3", "t": "8×"},
+                {"v": "4", "t": "16×"}], "4"),
+        ]),
+        ("look", [
+            # Zahl der Abtastungen ist 1 << Wert; wirkt nur mit Vulkan
+            _opt("msaa", "Graphics", "MultiSampleLevel", [
+                {"v": "0", "k": "common.off"}, {"v": "1", "t": "2×"}, {"v": "2", "t": "4×"}, {"v": "3", "t": "8×"}], "0"),
+            _opt("look", "PostShaderList", "PostShader1", [_OFF] + [dict(lab, v=v) for v, lab in PPSSPP_LOOKS], "off",
+                 io=_PPSSPP_LOOK_IO),
+        ]),
+        ("play", [
+            # PPSSPP schreibt "<Nummer> (<Name>)" und liest die Nummer (ConfigTranslator)
+            _opt("renderer", "Graphics", "GraphicsBackend", [
+                {"v": "3 (VULKAN)", "t": "Vulkan"}, {"v": "0 (OPENGL)", "t": "OpenGL"}], "3 (VULKAN)"),
+        ]),
+    ]},
+    "dolphin": {"file": lambda: dolphin_dir() / "GFX.ini", "groups": [
+        ("picture", [
+            _opt("res", "Settings", "InternalResolution", [_AUTO0] + _opt_res([2, 3, 4, 5, 6]), "1", game=True),
+            _opt("aspect", "Settings", "AspectRatio", [                     # VideoConfig.h AspectMode
+                _AUTO0, {"v": "2", "t": "4:3"}, {"v": "1", "t": "16:9"}, {"v": "3", "k": "emuopt.v.stretch"}], "0", game=True),
+            _opt("widescreen", "Settings", "wideScreenHack", _OPT_TFC, "False", game=True),
+            _opt("aniso", "Enhancements", "MaxAnisotropy", [                # AnisotropicFilteringMode: -1 = wie das Spiel
+                {"v": "-1", "k": "emuopt.v.standard"}, {"v": "1", "t": "2×"}, {"v": "2", "t": "4×"}, {"v": "3", "t": "8×"},
+                {"v": "4", "t": "16×"}], "-1"),
+        ]),
+        ("look", [
+            _opt("msaa", "Settings", "MSAA", [
+                {"v": "1", "k": "common.off"}, {"v": "2", "t": "2×"}, {"v": "4", "t": "4×"}, {"v": "8", "t": "8×"}], "1"),
+            _opt("look", "Enhancements", "PostProcessingShader", [dict(_OFF, set={"PostProcessingShader": ""})] +
+                 [{"v": n, "t": n} for n in DOLPHIN_LOOKS], "off", game=True),
+        ]),
+        ("play", [
+            # ShaderCompilationMode 2 = AsynchronousUberShaders: kein Stocken, waehrend Dolphin Shader uebersetzt
+            _opt("asyncShaders", "Settings", "ShaderCompilationMode", [
+                {"v": "2", "k": "common.on"}, {"v": "0", "k": "common.off"}], "0"),
+            _opt("renderer", "Core", "GFXBackend", [
+                {"v": "OGL", "t": "OpenGL"}, {"v": "Vulkan", "t": "Vulkan"}, {"v": "Software Renderer", "t": "Software"}],
+                 "OGL", io=_OtherIni(lambda: dolphin_dir() / "Dolphin.ini", "Core", "GFXBackend", "OGL")),
+        ]),
+    ]},
+    # Cemu: keine allgemeine Aufloesung – die stellen bei der Wii U Grafikpakete je Spiel ein (in Cemu selbst)
+    "cemu": {"file": lambda: emu_dir("cemu") / "settings.xml", "groups": [
+        ("picture", [
+            _cemu("aspect", "FullscreenScaling", [
+                {"v": "0", "k": "emuopt.v.original"}, {"v": "1", "k": "emuopt.v.stretch"}], "0"),
+        ]),
+        ("look", [
+            _cemu("upscale", "UpscaleFilter", [                             # CemuConfig.h: 0 linear … 3 naechster Nachbar
+                {"v": "0", "k": "emuopt.v.soft"}, {"v": "1", "k": "emuopt.v.bicubic"}, {"v": "2", "t": "Hermite"},
+                {"v": "3", "k": "emuopt.v.nearest"}], "2"),
+        ]),
+        ("play", [
+            _cemu("asyncShaders", "AsyncCompile", _OPT_TF, "true"),
+            _cemu("renderer", "api", [{"v": "1", "t": "Vulkan"}, {"v": "0", "t": "OpenGL"}], "1"),
+        ]),
+    ]},
+    "azahar": {"file": lambda: AZAHAR_INI, "groups": [
+        ("picture", [
+            _az("res", "Renderer", "resolution_factor", [_AUTO0] + _opt_res([2, 3, 4, 5]), "1", game=True),
+            _az("layout", "Layout", "layout_option", [                      # settings.h LayoutOption (4 = eigene Fenster)
+                {"v": "0", "k": "emuopt.v.layStd"}, {"v": "2", "k": "emuopt.v.layLarge"}, {"v": "3", "k": "emuopt.v.laySide"},
+                {"v": "1", "k": "emuopt.v.laySingle"}, {"v": "5", "k": "emuopt.v.layHybrid"}], "0", game=True),
+            _az("swap", "Layout", "swap_screen", _OPT_TF, "false", game=True),
+            _az("integer", "Renderer", "use_integer_scaling", _OPT_TF, "false"),
+            _az("smooth", "Layout", "filter_mode", _OPT_TF, "true"),
+        ]),
+        ("look", [
+            _az("texscale", "Renderer", "texture_filter", [                 # settings.h TextureFilter
+                {"v": "0", "k": "common.off"}, {"v": "2", "k": "emuopt.v.bicubic"}, {"v": "1", "t": "Anime4K"},
+                {"v": "3", "t": "ScaleForce"}, {"v": "4", "t": "xBRZ"}, {"v": "5", "t": "MMPX"}], "0"),
+        ]),
+        ("play", [
+            _az("asyncShaders", "Renderer", "async_shader_compilation", _OPT_TF, "false"),
+            _az("renderer", "Renderer", "graphics_api", [
+                {"v": "1", "t": "OpenGL"}, {"v": "2", "t": "Vulkan"}, {"v": "0", "t": "Software"}], "1"),
+        ]),
+    ]},
+    # RMG: Bild macht GLideN64 (mit RMG gebaut, eigene GLideN64.ini). 0 = so gross wie das Fenster (dessen Vorgabe)
+    "rmg": {"file": rmg_gliden, "groups": [
+        ("picture", [
+            _gl64("res", "frameBufferEmulation\\nativeResFactor", [_AUTO0] + _opt_res([2, 3, 4]), "0", game=True),
+            _gl64("aspect", "frameBufferEmulation\\aspect", [           # Config.h Aspect
+                {"v": "1", "t": "4:3"}, {"v": "2", "t": "16:9"}, {"v": "0", "k": "emuopt.v.stretch"}], "1", game=True),
+        ]),
+        ("look", [
+            _gl64("msaa", "video\\multisampling", [
+                {"v": "0", "k": "common.off"}, {"v": "2", "t": "2×"}, {"v": "4", "t": "4×"}, {"v": "8", "t": "8×"}], "0"),
+            _gl64("fxaa", "video\\fxaa", _OPT_10, "0"),
+        ]),
+        ("play", []),
+    ]},
+    "flycast": {"file": lambda: FLYCAST_CFG, "groups": [
+        ("picture", [
+            _opt("res", "config", "rend.Resolution", [                      # Hoehe in Zeilen, 480 = wie die Konsole
+                {"v": "480", "k": "emuopt.v.original"}, {"v": "960", "t": "2×"}, {"v": "1440", "t": "3×"},
+                {"v": "1920", "t": "4×"}], "480", game=True),
+            _opt("widescreen", "config", "rend.WideScreen", _OPT_YN, "no", game=True),
+            _opt("integer", "config", "rend.IntegerScale", _OPT_YN, "no"),
+            _opt("smooth", "config", "rend.LinearInterpolation", _OPT_YN, "yes"),
+            _opt("aniso", "config", "rend.AnisotropicFiltering", [
+                {"v": "1", "k": "common.off"}, {"v": "2", "t": "2×"}, {"v": "4", "t": "4×"}, {"v": "8", "t": "8×"},
+                {"v": "16", "t": "16×"}], "1"),
+        ]),
+        ("look", [
+            _opt("texscale", "config", "rend.TextureUpscale2", [
+                {"v": "1", "k": "common.off"}, {"v": "2", "t": "xBRZ 2×"}, {"v": "4", "t": "xBRZ 4×"},
+                {"v": "6", "t": "xBRZ 6×"}], "1"),
+        ]),
+        ("play", [
+            _opt("renderer", "config", "pvr.rend", [{"v": "0", "t": "OpenGL"}, {"v": "4", "t": "Vulkan"}], "0"),  # types.h RenderType
+        ]),
+    ]},
+    "xemu": {"file": lambda: XEMU_TOML, "groups": [
+        ("picture", [
+            _one("res", _XEMU, ("display", "quality", "surface_scale"),
+                 [("1", _ORIG, 1), ("2", {"t": "2×"}, 2), ("3", {"t": "3×"}, 3), ("4", {"t": "4×"}, 4)], 1, "1"),
+            _map("aspect", _XEMU, [
+                ("auto", {"k": "emuopt.v.auto"}, {_XEMU_FIT: "scale", _XEMU_AR: "auto"}),
+                ("4:3", {"t": "4:3"}, {_XEMU_FIT: "scale", _XEMU_AR: "4x3"}),
+                ("16:9", {"t": "16:9"}, {_XEMU_FIT: "scale", _XEMU_AR: "16x9"}),
+                ("stretch", _STRETCH, {_XEMU_FIT: "stretch"})], {_XEMU_FIT: "scale", _XEMU_AR: "auto"}, "auto"),
+            _one("smooth", _XEMU, ("display", "filtering"), [("true", _ON, "linear"), ("false", _OFFK, "nearest")], "linear", "true"),
+        ]),
+        ("play", [
+            _one("renderer", _XEMU, ("display", "renderer"), [("OPENGL", {"t": "OpenGL"}, "OPENGL"), ("VULKAN", {"t": "Vulkan"}, "VULKAN")],
+                 "OPENGL", "OPENGL"),
+        ]),
+    ]},
+    # melonDS: Mehr als die Aufloesung der Konsole geht nur mit dem OpenGL-Renderer (3D.Renderer 1); "Original" ist der
+    # Software-Renderer (dessen Vorgabe, am genauesten)
+    "melonds": {"file": lambda: MELONDS_TOML, "groups": [
+        ("picture", [
+            _map("res", _MELON, [("1", _ORIG, {_MELON_3D: 0})] + [
+                (str(n), {"t": f"{n}×"}, {_MELON_3D: 1, _MELON_SCALE: n, _MELON_GL: True}) for n in (2, 3, 4)],
+                 {_MELON_3D: 0, _MELON_SCALE: 1, _MELON_GL: True}, "1"),
+            _map("layout", _MELON, [
+                ("std", {"k": "emuopt.v.layStd"}, {_MELON_LAY: 0, _MELON_SIZE: 0}),
+                ("large", {"k": "emuopt.v.layLarge"}, {_MELON_LAY: 2, _MELON_SIZE: 1}),
+                ("side", {"k": "emuopt.v.laySide"}, {_MELON_LAY: 2, _MELON_SIZE: 0}),
+                ("single", {"k": "emuopt.v.laySingle"}, {_MELON_SIZE: 4}),
+                ("hybrid", {"k": "emuopt.v.layHybrid"}, {_MELON_LAY: 3, _MELON_SIZE: 0})],
+                 {_MELON_LAY: 0, _MELON_SIZE: 0}, "std"),
+            _one("swap", _MELON, ("Instance0", "Window0", "ScreenSwap"), [("true", _ON, True), ("false", _OFFK, False)], False, "false"),
+            _one("integer", _MELON, ("Instance0", "Window0", "IntegerScaling"), [("true", _ON, True), ("false", _OFFK, False)],
+                 False, "false"),
+            _one("smooth", _MELON, ("Screen", "Filter"), [("true", _ON, True), ("false", _OFFK, False)], True, "true"),
+        ]),
+        ("play", []),
+    ]},
+    "snes9x": {"file": snes9x_conf, "groups": [
+        ("picture", [
+            _map("aspect", _S9X, [                                          # gtk_config.cpp: 0 unkorrigiert, 2 = 4:3
+                ("4:3", {"t": "4:3"}, {"AspectRatio": "2", "MaintainAspectRatio": "true", "ScaleToFit": "true"}),
+                ("square", {"k": "emuopt.v.square"}, {"AspectRatio": "0", "MaintainAspectRatio": "true", "ScaleToFit": "true"}),
+                ("stretch", _STRETCH, {"MaintainAspectRatio": "false", "ScaleToFit": "true"})],
+                 {"AspectRatio": "2", "MaintainAspectRatio": "true", "ScaleToFit": "true"}, "4:3"),
+            _one("smooth", _S9X, "BilinearFilter", [("true", _ON, "true"), ("false", _OFFK, "false")], "false", "false"),
+        ]),
+        ("look", [
+            _one("filter", _S9X, "SoftwareScaleFilter", [("0", _OFFK, "0")] + [(v, lab, v) for v, lab in SNES9X_FILTERS],
+                 "0", "0"),                                                 # gtk_display.h FILTER_*
+        ]),
+        ("play", []),
+    ]},
+    "nestopia": {"file": lambda: NESTOPIA_CONF, "groups": [
+        ("picture", [
+            _opt("aspect", "frontend", "v_aspect", [
+                _AUTO0, {"v": "2", "t": "4:3"}, {"v": "1", "k": "emuopt.v.square"}], "0"),
+        ]),
+        ("look", [
+            _opt("filter", "frontend", "v_postproc", [                      # setmanager.cpp: 2 = Sharp Bilinear (Vorgabe)
+                {"v": "2", "k": "emuopt.v.sharp"}, {"v": "0", "k": "emuopt.v.nearest"}, {"v": "1", "k": "emuopt.v.soft"},
+                {"v": "3", "k": "emuopt.v.crt"}, {"v": "4", "t": "MMPX"}, {"v": "5", "t": "OmniScale"}], "2"),
+            _opt("ntsc", "nestopia", "ntsc_filter", _OPT_10, "0"),
+        ]),
+        ("play", []),
+    ]},
+    # MAME: Stile sind BGFX-Ketten (bgfx/chains) und brauchen "video bgfx"; "Aus" stellt auf opengl, wie es das Skript
+    # von Void beim Anlegen der mame.ini eintraegt
+    "mame": {"file": lambda: MAME_DIR / "mame.ini", "groups": [
+        ("picture", [
+            _one("aspect", _MAME, "keepaspect", [("1", _ORIG, "1"), ("0", _STRETCH, "0")], "1", "1"),
+            _one("integer", _MAME, "unevenstretch", [("true", _ON, "0"), ("false", _OFFK, "1")], "1", "false"),
+            _one("smooth", _MAME, "filter", [("true", _ON, "1"), ("false", _OFFK, "0")], "1", "true"),
+        ]),
+        ("look", [
+            _map("look", _MAME, [("off", _OFFK, {"video": "opengl"})] + [
+                (c, {"t": t}, {"video": "bgfx", "bgfx_screen_chains": c}) for c, t in (
+                    ("crt-geom", "CRT-Geom"), ("crt-geom-deluxe", "CRT-Geom Deluxe"), ("hlsl", "HLSL"), ("lcd-grid", "LCD"))],
+                 {"video": "opengl", "bgfx_screen_chains": "default"}, "off"),
+        ]),
+        ("play", []),
+    ]},
+    "scummvm": {"file": lambda: SCUMMVM_INI, "groups": [
+        ("picture", [
+            _opt("aspect", "scummvm", "stretch_mode", [                     # opengl-graphics.cpp s_supportedStretchModes
+                {"v": "default", "k": "emuopt.v.auto"}, {"v": "fit_force_aspect", "t": "4:3"},
+                {"v": "pixel-perfect", "k": "emuopt.v.nearest"}, {"v": "stretch", "k": "emuopt.v.stretch"}], "default"),
+            _opt("smooth", "scummvm", "filtering", _OPT_TF, "false"),
+        ]),
+        ("look", [
+            _opt("filter", "scummvm", "scaler", [{"v": "default", "k": "common.off"}] +
+                 [{"v": v, "t": t} for v, t in SCUMMVM_SCALERS], "default"),
+        ]),
+        ("play", []),
+    ]},
+    # VICE (x64sc): vicerc haelt nur, was von der Vorgabe abweicht; Abschnitt [C64SC]
+    "vice": {"file": lambda: VICE_RC, "groups": [
+        ("picture", [
+            _opt("aspect", "C64SC", "VICIIAspectMode", [                    # video.h VIDEO_ASPECT_MODE_*
+                {"v": "2", "k": "emuopt.v.original"}, {"v": "0", "k": "emuopt.v.stretch"}], "2"),
+            _opt("border", "C64SC", "VICIIBorderMode", [                    # 0 normal, 3 ohne Rand
+                {"v": "0", "k": "emuopt.v.standard"}, {"v": "3", "k": "common.off"}], "0"),
+            _opt("upscale", "C64SC", "VICIIGLFilter", [                     # video.h VIDEO_GLFILTER_*
+                {"v": "2", "k": "emuopt.v.bicubic"}, {"v": "1", "k": "emuopt.v.soft"}, {"v": "0", "k": "emuopt.v.nearest"}], "2"),
+        ]),
+        ("look", [
+            _opt("filter", "C64SC", "VICIIFilter", [                        # video.h VIDEO_FILTER_*: 1 = Roehre (Vorgabe)
+                {"v": "1", "k": "emuopt.v.crt"}, {"v": "0", "k": "common.off"}, {"v": "2", "t": "Scale2x"}], "1"),
+        ]),
+        ("play", []),
+    ]},
+    # Mednafen: je System eigene Schluessel (md.stretch, ss.stretch …) – die Karte stellt alle fuenf gleich
+    "mednafen": {"file": lambda: Path(os.devnull), "groups": [
+        ("picture", [
+            _mdfn("aspect", "stretch", [                                    # drivers/video.cpp StretchMode_List
+                ("aspect_mult2", {"k": "emuopt.v.nearest"}, "aspect_mult2"), ("aspect", _ORIG, "aspect"),
+                ("full", _STRETCH, "full")], "aspect_mult2", "aspect_mult2"),
+            _map("smooth", _MDFN, [
+                ("auto", {"k": "emuopt.v.auto"}, {f"{m}.videoip": v for m, v in _MDFN_IP.items()}),
+                ("true", _ON, {f"{m}.videoip": "1" for m in _MDFN_SYS}),
+                ("false", _OFFK, {f"{m}.videoip": "0" for m in _MDFN_SYS})],
+                 {f"{m}.videoip": v for m, v in _MDFN_IP.items()}, "auto"),
+        ]),
+        ("look", [
+            _mdfn("look", "shader", [                                       # Shader_List
+                ("none", _OFFK, "none"), ("autoipsharper", {"k": "emuopt.v.sharp"}, "autoipsharper"),
+                ("scale2x", {"t": "Scale2x"}, "scale2x"), ("sabr", {"t": "SABR"}, "sabr"),
+                ("goat", {"k": "emuopt.v.crt"}, "goat")], "none", "none"),
+            _mdfn("filter", "special", [("none", _OFFK, "none")] + [                 # Special_List
+                (v, {"t": t}, v) for v, t in (("hq2x", "HQ2x"), ("hq3x", "HQ3x"), ("hq4x", "HQ4x"), ("scale2x", "Scale2x"),
+                                              ("scale3x", "Scale3x"), ("scale4x", "Scale4x"), ("2xsai", "2xSaI"),
+                                              ("super2xsai", "Super 2xSaI"), ("supereagle", "Super Eagle"))], "none", "none"),
+            _mdfn("scanlines", "scanlines", [
+                ("0", _OFFK, "0"), ("25", {"t": "25 %"}, "25"), ("50", {"t": "50 %"}, "50"), ("75", {"t": "75 %"}, "75")], "0", "0"),
+        ]),
+        ("play", []),
+    ]},
+    # Stella: Einstellungen stehen in einer Datenbank (STELLA_DB, _StellaStore) – als "Datei" der Kachel dient nichts
+    "stella": {"file": lambda: Path(os.devnull), "groups": [
+        ("picture", [
+            _one("aspect", _STELLA, "tia.fs_stretch", [("false", _ORIG, _ST_OFF), ("true", _STRETCH, _ST_ON)], "false", "false"),
+            _one("smooth", _STELLA, "tia.inter", [("true", _ON, _ST_ON), ("false", _OFFK, _ST_OFF)], "false", "false"),
+        ]),
+        ("look", [
+            _one("filter", _STELLA, "tv.filter", [                            # NTSCFilter.hxx Preset
+                ("0", _OFFK, "0"), ("1", {"t": "RGB"}, "1"), ("2", {"t": "S-Video"}, "2"), ("3", {"t": "Composite"}, "3"),
+                ("4", {"t": "Bad adjust"}, "4")], "0", "0"),
+            _one("scanlines", _STELLA, "tv.scanlines", [
+                ("0", _OFFK, "0"), ("25", {"t": "25 %"}, "25"), ("50", {"t": "50 %"}, "50"), ("75", {"t": "75 %"}, "75")], "0", "0"),
+        ]),
+        ("play", []),
     ]},
 }
 _OPT_INDEX = {t: {o["id"]: o for _, opts in spec["groups"] for o in opts} for t, spec in EMU_OPTS.items()}
@@ -10246,14 +11520,27 @@ def _opt_defaults_for(tile):
             d.update({"res": "2", "aniso": "16"})
         if gpu != "none" and emu_cpu_class() == "strong":     # doppelte Bildrate, oft mit uebertakteter PS2-CPU: kostet Rechenzeit
             d["fps"] = "true"
+        if gpu != "none":               # Kanten glaetten (Paul, 13.11.2026: Vorgabe von VoidStation); kostet kaum etwas
+            d["fxaa"] = "true"
         return d
     if tile == "duckstation":
         d = {"cdSpeed": "4", "fmvSmooth": "true", "textures": "true", "wsPatch": "true", "fps": "true"}
         if gpu != "none":
-            d.update({"res": "4" if gpu == "dgpu" else "2", "pgxp": "true"})
+            d.update({"res": "4" if gpu == "dgpu" else "2", "pgxp": "true", "fxaa": "auto"})
         return d
     if tile == "dosbox":                # Fernseher: scharfe Pixel statt nachgemachter Roehre (DOSBox' eigener Standard)
         return {"shader": "sharp"}
+    # Aufloesung nach Grafikleistung (Annahme, nicht gemessen): PSP 480×272, GameCube 640×528, 3DS 400×240 je Bildschirm
+    if tile == "ppsspp":
+        return {"res": "4"} if gpu == "dgpu" else {"res": "1"} if gpu == "none" else {}
+    if tile == "dolphin":
+        return {"res": "3"} if gpu == "dgpu" else {"res": "2"} if gpu == "igp" else {}
+    if tile == "azahar":
+        return {"res": "4"} if gpu == "dgpu" else {"res": "2"} if gpu == "igp" else {}
+    if tile == "flycast":               # Dreamcast 640×480
+        return {"res": "1440"} if gpu == "dgpu" else {"res": "960"} if gpu == "igp" else {}
+    if tile == "melonds":               # DS 256×192 je Bildschirm; mehr braucht den OpenGL-Renderer
+        return {"res": "4"} if gpu == "dgpu" else {"res": "2"} if gpu == "igp" else {}
     return {}
 
 
@@ -10279,9 +11566,16 @@ def _opt_game_choice(opt, value):
     return None if c and c.get("auto") else c
 
 
+def _opt_secs(opt, choice, ini=None):
+    """Was eine Moeglichkeit schreibt, je Abschnitt: {Abschnitt: {Schluessel: Wert}}."""
+    if opt["io"]:
+        return opt["io"].writes(choice["v"], ini or {})[0] if hasattr(opt["io"], "writes") else {"": {"": choice["v"]}}
+    return {opt["section"]: _opt_writes(opt, choice)}
+
+
 def _opt_plain(opt, choice):
     """Zu einer "auto"-Moeglichkeit die gewoehnliche, die dasselbe schreibt."""
-    return next((c for c in opt["choices"] if not c.get("auto") and _opt_writes(opt, c) == _opt_writes(opt, choice)), choice)
+    return next((c for c in opt["choices"] if not c.get("auto") and _opt_secs(opt, c) == _opt_secs(opt, choice)), choice)
 
 
 def _opt_fixed(tile, opt, st):
@@ -10297,6 +11591,8 @@ def _opt_auto_on(tile, opt, st):
 def _opt_value(tile, opt, ini=None):
     """Aktuell gewaehlte Moeglichkeit laut Datei des Emulators, der Standard, wenn nichts drinsteht, oder None (etwas
     anderes, das sich hier nicht waehlen laesst – dann ist keiner der Knoepfe an)."""
+    if opt["io"]:
+        return opt["io"].read(ini_read(EMU_OPTS[tile]["file"]()) if ini is None else ini)
     if opt["own"]:
         ini = ini_read(EMU_OWN)
     sec = (ini_read(EMU_OPTS[tile]["file"]()) if ini is None else ini).get(opt["section"], {})
@@ -10418,6 +11714,9 @@ def emu_opts_mode_set(tile, mode):
 
 
 def _opt_write(tile, opt, value):
+    if opt["io"]:
+        opt["io"].write(EMU_OPTS[tile]["file"](), value)
+        return
     ini_update(EMU_OWN if opt["own"] else EMU_OPTS[tile]["file"](), opt["section"], _opt_writes(opt, _opt_choice(opt, value)))
 
 
@@ -10458,6 +11757,8 @@ def _disc_key(tile, path, st):
 def _disc_id(tile, path):
     """Seriennummer bzw. (Seriennummer, CRC) eines Abbilds; gemerkt je Datei, Groesse und Zeit. None = nicht lesbar."""
     cache = Path.home() / ".cache/voidstation/disc-ids.json"
+    if path.suffix.lower() == ".m3u":                    # Liste der CDs: Die erste steht fuer das Spiel
+        path = (ROMManager.m3u_discs(path) or [path])[0]
     try:
         st = path.stat()
     except OSError:
@@ -10558,6 +11859,10 @@ def _game_ini_read(tile, opt, ini):
     if tile == "pcsx2" and opt["id"] == "widescreen":    # PCSX2 verwirft den Schalter in Spiel-Dateien (ClearInvalidPerGameConfiguration)
         have = ini_multi_get(ini, "Patches", ["Enable", "Disable"], _is_ws_patch)
         return "true" if have["Enable"] else "false" if have["Disable"] else None
+    if opt["io"]:
+        v = opt["io"].game_read(ini_read(ini))
+        c = _opt_choice(opt, v) if v is not None else None
+        return _opt_plain(opt, c)["v"] if c and c.get("auto") else v
     sec = ini_read(ini).get(opt["section"], {})
     if not any(k in sec for k in opt["keys"]):
         return None
@@ -10572,6 +11877,12 @@ def _game_ini_write(tile, opt, ini, value):
     if tile == "pcsx2" and opt["id"] == "widescreen":
         ini_multi_set(ini, "Patches", {"Enable": PCSX2_WS_PATCH if value == "true" else None,
                                        "Disable": PCSX2_WS_PATCH if value == "false" else None}, _is_ws_patch)
+    elif opt["io"]:
+        have = ini_read(ini)
+        if value is None:
+            _io_apply(ini, {}, opt["io"].game_clear(have))
+        else:
+            _io_apply(ini, *opt["io"].game_writes(value, have, ini_read(EMU_OPTS[tile]["file"]())))
     elif value is None:
         ini_update(ini, opt["section"], {}, remove=opt["keys"])
     else:
@@ -10611,8 +11922,9 @@ def emu_opts_game(tile, game):
 def emu_opts_game_writes(tile, game):
     """[(Abschnitt, {Schluessel: Wert})] der Optionen eines Spiels."""
     idx = _OPT_INDEX[tile]
-    return [(idx[k]["section"], _opt_writes(idx[k], _opt_choice(idx[k], v))) for k, v in emu_opts_game(tile, game).items()
-            if not idx[k]["own"]]
+    return [(sec, vals) for k, v in emu_opts_game(tile, game).items()
+            if not idx[k]["own"] and (not idx[k]["io"] or getattr(idx[k]["io"], "fallback", False))
+            for sec, vals in _opt_secs(idx[k], _opt_choice(idx[k], v)).items()]
 
 
 def emu_opts_restore(tile, st):
@@ -10951,12 +12263,13 @@ def _opts_apply_profile(tile, game, native, profile, st):
             continue
         if not _opt_auto_on(tile, opt, st):
             continue
-        vals = _opt_writes(opt, _opt_choice(opt, v))
-        if vals == _opt_writes(opt, _opt_choice(opt, EMU_AUTO[tile][oid])):
+        secs = _opt_secs(opt, _opt_choice(opt, v), ini)
+        if secs == _opt_secs(opt, _opt_choice(opt, EMU_AUTO[tile][oid]), ini):
             continue                                     # das Profil will, was ohnehin gilt
-        for k, w in vals.items():
-            rec.setdefault(opt["section"], {})[k] = [ini.get(opt["section"], {}).get(k), w]
-        ini_update(path, opt["section"], vals)
+        for sec, vals in secs.items():
+            for k, w in vals.items():
+                rec.setdefault(sec, {})[k] = [ini.get(sec, {}).get(k), w]
+            ini_update(path, sec, vals)
         done[oid] = v
     if done:
         st["opt_game"][tile] = rec
@@ -11013,6 +12326,12 @@ def emu_opts_prepare(tid, args):
             if opt and _opt_choice(opt, v):
                 _opt_write(tid, opt, v)
         _opts_apply_defaults(tid, st)
+        if tid == "gba":
+            mgba_look_game(game)
+        elif tid == "duckstation":
+            duck_shaders_install()
+            if native:
+                duck_game_color_sync(native)
         emu_textures_prepare(tid)
         if native and game:
             _game_sync(tid, os.path.basename(game), native)
@@ -11029,8 +12348,23 @@ def _opt_mute_now(tile, st):
     want = st.get("mute", {}).get(tile)
     if want is not None:                               # vorgemerkt (Emulator lief noch nie oder laeuft gerade)
         return bool(want)
-    path, sec, key = EMU_MUTE[tile]()[:3]
-    return ini_read(path).get(sec, {}).get(key, "0").strip().lower() not in ("0", "", "false", "off", "no")
+    path, sec, key, yes, _ = EMU_MUTE[tile]()
+    cur = ini_read(path).get(sec, {}).get(key)
+    return cur is not None and _opt_norm(cur) == _opt_norm(yes)
+
+
+_LOOK_PREVIEWS: dict[str, bool] = {}
+
+
+def look_preview(tile, opt, choice, group):
+    """{"p": Pfad} zum Vorschaubild einer Moeglichkeit in der Spalte Bildstil, {} wenn es keins gibt."""
+    if group != "look":
+        return {}
+    f = LOOK_PREVIEWS / tile / f"{opt['id']}-{str(choice['v']).replace('/', '_')}.jpg"
+    key = str(f)
+    if key not in _LOOK_PREVIEWS:
+        _LOOK_PREVIEWS[key] = f.is_file()
+    return {"p": key} if _LOOK_PREVIEWS[key] else {}
 
 
 def emu_opts_payload(tile, game=None):
@@ -11061,7 +12395,8 @@ def emu_opts_payload(tile, game=None):
         for gid, opts in order:
             if game:                                     # ein echter Breitbild-Patch ersetzt bei dem Spiel den Schalter fuer den Hack
                 shown = [o for o in opts if o["game"] and (o["id"] in plan if o["id"] in patches else
-                                                           not (o["id"] == "widescreen" and "wsPatch" in plan))]
+                                                           not (o["id"] == "widescreen" and "wsPatch" in plan))
+                         and (not o["io"] or native or tile == "gba" or getattr(o["io"], "fallback", False))]
             else:
                 shown = [o for o in opts if not o["hidden"]] if mode == "custom" else []
             for o in shown:
@@ -11074,7 +12409,8 @@ def emu_opts_payload(tile, game=None):
                 else:
                     values[o["id"]] = _opt_shown(tile, o, st, ini)
             rows = [dict({"id": o["id"], "choices": [
-                {x: c[x] for x in ("v", "k", "t") if x in c} for c in o["choices"] if not (game and c.get("auto"))]},
+                dict({x: c[x] for x in ("v", "k", "t") if x in c}, **look_preview(tile, o, c, gid))
+                for c in o["choices"] if not (game and c.get("auto"))]},
                 **({"label": o["label"]} if o["label"] else {})) for o in shown]
             if not game and gid == "play":
                 rows.insert(0, {"id": "mode", "choices": _OPT_MODE})
@@ -11126,6 +12462,8 @@ def emu_opts_set(tile, oid, value, game=None):
             return emu_opts_payload(tile, rel)
         if _DISC_NAME.fullmatch(name):
             raise ValueError("Diese Disc hat keine Seriennummer")
+        if opt["io"] and tile != "gba" and not getattr(opt["io"], "fallback", False):
+            raise ValueError("Fuer dieses Spiel nicht einstellbar")
         with EMU_LOCK:
             d = emu_games_load()
             own = d.setdefault(tile, {}).setdefault(name, {})
@@ -11201,7 +12539,8 @@ EMU_FULLSCREEN: dict[str, tuple] = {"mgba-qt": ("-f", "ctrl+f"), "duckstation": 
 # Dasselbe je Kachel fuer Flatpaks (Programm ist dort "flatpak"): PCSX2 (QtHost.cpp "-fullscreen", Alt+Enter),
 # RMG (main.cpp "-f", Alt+Enter), xemu (QEMU "-full-screen", F11), Azahar (citra_qt.cpp "-f", F11), Cemu
 # (LaunchSettings.cpp "-f", MainWindow.cpp F11). Die Option steht vor der Spieldatei (und ROM_ARGS).
-EMU_FULLSCREEN_TILE: dict[str, tuple] = {"pcsx2": ("-fullscreen", "alt+Return"), "rmg": ("-f", "alt+Return"), "xemu": ("-full-screen", "F11"),
+EMU_FULLSCREEN_TILE: dict[str, tuple] = {"mednafen": (None, "alt+Return"),      # Schalter mit Wert: s. ROMManager.rom_args
+                                         "pcsx2": ("-fullscreen", "alt+Return"), "rmg": ("-f", "alt+Return"), "xemu": ("-full-screen", "F11"),
                        "azahar": ("-f", "F11"), "cemu": ("-f", "F11")}
 # Emulatoren mit einem einzigen Fenster ohne eigene Vollbild-Startoption: Vollbild ueber den Fenstermanager
 EMU_WM_FULLSCREEN = {"snes9x", "nestopia", "melonds", "stella", "vice", "retroarch"}
@@ -11381,7 +12720,9 @@ def emu_prepare(tid, args):
     if game and emu_fullscreen_wanted(tid):
         spec = EMU_FULLSCREEN_TILE.get(tid) if (flat or kind == tid) else None
         spec = spec or EMU_FULLSCREEN.get(kind)
-        if spec and flat:
+        if spec and not spec[0]:
+            pass
+        elif spec and flat:
             if spec[0] not in args:                 # vor der Spieldatei samt ihrer Option (ROM_ARGS)
                 n = 1 + len(next((v for v in ROMS.ROM_ARGS.values() if list(args[-1 - len(v):-1]) == v), []))
                 args = list(args[:-n]) + [spec[0]] + list(args[-n:])
@@ -11623,8 +12964,9 @@ class RomCovers:
         "gba": "Nintendo - Game Boy Advance", "gbc": "Nintendo - Game Boy Color", "gb": "Nintendo - Game Boy",
         "snes": "Nintendo - Super Nintendo Entertainment System", "nes": "Nintendo - Nintendo Entertainment System",
         "psx": "Sony - PlayStation", "psp": "Sony - PlayStation Portable", "nds": "Nintendo - Nintendo DS",
-        "gamecube": "Nintendo - GameCube", "dreamcast": "Sega - Dreamcast", "n64": "Nintendo - Nintendo 64",
-        "megadrive": "Sega - Mega Drive - Genesis", "genesis": "Sega - Mega Drive - Genesis",
+        "gamecube": "Nintendo - GameCube", "wii": "Nintendo - Wii", "dreamcast": "Sega - Dreamcast", "n64": "Nintendo - Nintendo 64",
+        "megadrive": "Sega - Mega Drive - Genesis", "mastersystem": "Sega - Master System - Mark III",
+        "gamegear": "Sega - Game Gear", "saturn": "Sega - Saturn", "pcengine": "NEC - PC Engine - TurboGrafx 16",
         "atari2600": "Atari - 2600", "c64": "Commodore - 64", "ps2": "Sony - PlayStation 2", "xbox": "Microsoft - Xbox",
         "3ds": "Nintendo - Nintendo 3DS",
         "dos": "DOS", "scummvm": "ScummVM", "mame": "MAME",
@@ -14401,6 +15743,7 @@ class Handler(BaseHTTPRequestHandler):
                 r["cover"] = ROM_COVERS.url(r)
             return self._json(200, {"system": ROMS.canonical_system(system), "folders": ROMS.folders(system),
                                     "count": len(roms), "roms": roms, "keymap": system in EMU_LAYOUTS,
+                                    "noMenu": ROMS.canonical_system(system) == "megadrive",    # Mednafen hat kein Menue
                                     "bios": bios_status(system),
                                     "opts": system in EMU_OPTS, "gameOpts": emu_opts_has_game(system),
                                     "disc": DVD.game_for(system), "chd": CHD.status(system),
@@ -14740,6 +16083,12 @@ class Handler(BaseHTTPRequestHandler):
                 s = settings_load(); s["match_rate"] = on; settings_save(s)
                 log("Bildrate an Video anpassen:", "an" if on else "aus")
                 DISPLAY_RATE.reapply()
+                return self._json(200, settings_payload())
+            if parts == ["api", "settings", "gamefx"]:
+                try:
+                    game_fx_set(str(self._body().get("mode")))
+                except ValueError as e:
+                    return self._json(400, {"error": str(e)})
                 return self._json(200, settings_payload())
             if parts == ["api", "display", "video"]:
                 b = self._body()

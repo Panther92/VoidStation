@@ -26,11 +26,13 @@ DIR = Path(__file__).resolve().parent / "gamedb"
 # texfilter glaettet die Texturen der 3D-Flaechen. Sprites (Schrift, Menues, 2D-Figuren als Rechtecke) haben in
 # DuckStation einen eigenen Filter, der aus bleibt. Wo Figuren oder Schrift als texturierte Flaechen gezeichnet
 # werden (3d-sprites) oder alles 2D ist, bleibt der Filter aus – sonst verschwimmt die Pixelgrafik.
+# fxaa (Kanten glaetten, allgemein auf "Automatik"): glaettet Treppen an den Kanten von 3D-Flaechen. Auf Pixelgrafik
+# zeichnet es Schrift und Figuren weich – deshalb aus, wo die das Bild bestimmt.
 PSX_CATEGORIES: dict[str, dict[str, str]] = {
-    "3d": {"texfilter": "BilinearBinAlpha"},
-    "vorgerendert": {"texfilter": "BilinearBinAlpha"},      # 3D-Figuren vor gemalten Hintergruenden
-    "3d-sprites": {"texfilter": "Nearest"},
-    "2d": {"texfilter": "Nearest"},
+    "3d": {"texfilter": "BilinearBinAlpha", "fxaa": "on"},
+    "vorgerendert": {"texfilter": "BilinearBinAlpha", "fxaa": "on"},      # 3D-Figuren vor gemalten Hintergruenden
+    "3d-sprites": {"texfilter": "Nearest", "fxaa": "off"},
+    "2d": {"texfilter": "Nearest", "fxaa": "off"},
 }
 # Spiele, die nicht in der Liste stehen: nur Genres aus DuckStations Datenbank, die praktisch immer reines 3D sind.
 # Alles andere bleibt, wie es allgemein eingestellt ist.
