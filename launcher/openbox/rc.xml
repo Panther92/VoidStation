@@ -42,9 +42,9 @@
     <!-- Zwischen offenen Fenstern wechseln -->
     <keybind key="A-Tab"><action name="NextWindow"><dialog>none</dialog></action></keybind>
     <!-- Lautstaerke -->
-    <keybind key="XF86AudioRaiseVolume"><action name="Execute"><command>sh -c '$HOME/.local/share/voidstation/vsctl volume up'</command></action></keybind>
-    <keybind key="XF86AudioLowerVolume"><action name="Execute"><command>sh -c '$HOME/.local/share/voidstation/vsctl volume down'</command></action></keybind>
-    <keybind key="XF86AudioMute"><action name="Execute"><command>sh -c '$HOME/.local/share/voidstation/vsctl volume mute'</command></action></keybind>
+    <keybind key="XF86AudioRaiseVolume"><action name="Execute"><command>wpctl set-volume -l 1.0 @DEFAULT_AUDIO_SINK@ 5%+</command></action></keybind>
+    <keybind key="XF86AudioLowerVolume"><action name="Execute"><command>wpctl set-volume @DEFAULT_AUDIO_SINK@ 5%-</command></action></keybind>
+    <keybind key="XF86AudioMute"><action name="Execute"><command>wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle</command></action></keybind>
   </keyboard>
 
   <mouse>

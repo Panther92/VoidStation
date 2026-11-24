@@ -73,6 +73,13 @@ def _headless_muted() -> bool:
     )
 
 
+def _boot_id() -> str:
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 class SoundEngine:
     """Thread-sicherer Event-Audioplayer mit mtime-Cache, Rate-Limiting und Backoff."""
 
@@ -318,15 +325,35 @@ class SoundEngine:
         except OSError:
             return False
 
-    def play_startup_once(self, wait_pipewire: float = 3.5) -> None:
-        """Spielt den Start-Ton genau einmal je Sitzung (nicht bei vs.restart())."""
+    def play_startup_once(
+        self,
+        wait_pipewire: float = 3.5,
+        *,
+        runtime_dir: Path | None = None,
+        boot_id: str | None = None,
+    ) -> None:
+        """Spielt den Start-Ton genau einmal je Systemstart (ueberlebt kein Reboot, nicht bei vs.restart())."""
         if _headless_muted():
             return
-        rt = os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/voidstation-runtime-{os.getuid()}"
-        mark = Path(rt) / "voidstation-started"
+        rt = runtime_dir if runtime_dir is not None else Path(
+            os.environ.get("XDG_RUNTIME_DIR") or f"/tmp/voidstation-runtime-{os.getuid()}"
+        )
+        mark = rt / "voidstation-started"
+        bid = _boot_id() if boot_id is None else boot_id
         try:
-            fd = os.open(mark, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
-            os.close(fd)
+            rt.mkdir(parents=True, exist_ok=True)
+            if bid:
+                try:
+                    if mark.read_text(encoding="utf-8").strip() == bid:
+                        return
+                except OSError:
+                    pass
+                tmp = mark.with_name(f".{mark.name}.{os.getpid()}.tmp")
+                tmp.write_text(bid + "\n", encoding="utf-8")
+                os.replace(tmp, mark)
+            else:
+                fd = os.open(mark, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+                os.close(fd)
         except FileExistsError:
             return
         except OSError:
@@ -334,7 +361,7 @@ class SoundEngine:
 
         def _worker() -> None:
             if sys.platform.startswith("linux"):
-                sock = Path(rt) / "pipewire-0"
+                sock = rt / "pipewire-0"
                 deadline = time.monotonic() + wait_pipewire
                 while not sock.exists() and time.monotonic() < deadline:
                     time.sleep(0.15)

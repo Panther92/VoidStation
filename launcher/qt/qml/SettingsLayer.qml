@@ -847,7 +847,8 @@ Layer {
                 }
             }
             Info {
-                html: Ui.esc(Ui.t("audio.soundsHint")) + (s.sndConf.custom > 0 ? "<br><b>" + Ui.esc(Ui.t(s.sndConf.custom === 1 ? "audio.soundsCustomOne" : "audio.soundsCustomMany", { n: Ui.num(s.sndConf.custom) })) + "</b>" : "")
+                visible: s.sndConf.custom > 0
+                html: Ui.esc(Ui.t(s.sndConf.custom === 1 ? "audio.soundsCustomOne" : "audio.soundsCustomMany", { n: Ui.num(s.sndConf.custom) }))
             }
         }
         // Netzwerk

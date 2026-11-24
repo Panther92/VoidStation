@@ -136,7 +136,6 @@ Window {
             if (first || moved) { mouseGX = gx; mouseGY = gy }
             if (!moved || !Nav.alive(item, layerRoot) || Nav.current === item) return
             setFocus(item)
-            vs.playSound("navigate")
         }
         function playItemSound(item) {
             if (!item) return
@@ -172,7 +171,7 @@ Window {
             Api.post("/api/volume/" + dir, null, function (v) {
                 if (v) {
                     volOsd.show(v.level, v.muted)
-                    if (!v.muted) vs.playSound(dir === "mute" ? "toggle" : "volume")
+                    if (!v.muted && (!app.st || app.st.paused || app.st.idle)) vs.playSound(dir === "mute" ? "toggle" : "volume")
                 }
             })
         }

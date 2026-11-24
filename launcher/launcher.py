@@ -15884,9 +15884,7 @@ class Handler(BaseHTTPRequestHandler):
         # den wir nie beantworten -> nur die eigene Startseite darf Aktionen ausloesen.
         if not self._host_ok() or self.headers.get("X-TV") != "1":
             return self._send(403)
-        url = urllib.parse.urlparse(self.path)
-        parts = url.path.strip("/").split("/")
-        qs = urllib.parse.parse_qs(url.query)
+        parts = self.path.strip("/").split("/")
         try:
             if parts[:2] == ["api", "launch"] and len(parts) == 3:
                 tile = find_tile(parts[2])
@@ -16339,11 +16337,7 @@ class Handler(BaseHTTPRequestHandler):
                                capture_output=True, text=True, timeout=30)
                 return self._json(200, BLUETOOTH.status())
             if parts[:2] == ["api", "volume"] and len(parts) == 3:
-                res = volume_set(parts[2]) or {}
-                if qs.get("sound") == ["1"] and res.get("level") is not None and not res.get("muted"):
-                    sound_sync()
-                    SOUND.play("toggle" if parts[2] == "mute" else "volume")
-                return self._json(200, res)
+                return self._json(200, volume_set(parts[2]) or {})
             if parts == ["api", "power", "suspend"]:
                 if not can_suspend():
                     return self._json(400, {"error": "Standby wird hier nicht unterstuetzt"})

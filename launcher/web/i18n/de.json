@@ -201,7 +201,6 @@
   "audio.soundsPreset.retro": "Retro",
   "audio.soundsPreset.minimal": "Minimal",
   "audio.soundsVol": "Lautstärke",
-  "audio.soundsHint": "Kurze Töne beim Navigieren, Bestätigen und bei Hinweisen. Eigene Dateien (.wav, .ogg, .flac) in ~/.local/share/voidstation/sounds/ überschreiben die Standardtöne und bleiben bei Updates erhalten.",
   "audio.soundsCustomOne": "1 eigener Ton aktiv",
   "audio.soundsCustomMany": "{n} eigene Töne aktiv",
   "settings.volume": "Lautstärke",

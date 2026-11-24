@@ -201,7 +201,6 @@
   "audio.soundsPreset.retro": "Retro",
   "audio.soundsPreset.minimal": "Minimal",
   "audio.soundsVol": "Volume",
-  "audio.soundsHint": "Short sounds when navigating, confirming, and on notifications. Custom files (.wav, .ogg, .flac) in ~/.local/share/voidstation/sounds/ override the defaults and survive updates.",
   "audio.soundsCustomOne": "1 custom sound active",
   "audio.soundsCustomMany": "{n} custom sounds active",
   "settings.volume": "Volume",

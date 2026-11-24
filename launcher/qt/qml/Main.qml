@@ -225,7 +225,6 @@ Window {
             if (splashTile || !Nav.alive(item, layerRoot) || Nav.current === item) return
             if (item.noHoverFocus) return
             setFocus(item)
-            vs.playSound("navigate")
         }
         function mouseClick(item, button) {
             if (splashTile) return splashToBackground()
