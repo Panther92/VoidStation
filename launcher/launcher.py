@@ -440,6 +440,7 @@ class AppManager:
         return self.start(tid, args)
 
     def start(self, tid, args, env=None):
+        args = prepare_browser_args(tid, list(args))
         log("starte", tid, args)
         logdir = BASE / "logs"
         logdir.mkdir(exist_ok=True)
@@ -15750,10 +15751,138 @@ VPN = Vpn()
 CRX_DIR = Path("/usr/local/share/voidstation/chromium")     # Tastatur-Erweiterung fuer Chromium/Brave, s. crxpack.py
 
 
+def _tile_meta(tile_id: str, tile: dict[str, Any] | None = None) -> tuple[str, int | None, bool, list[str] | None]:
+    try:
+        app = catalog_app(tile_id)
+    except (OSError, ValueError):
+        app = None
+    cat = str((tile or {}).get("cat") or (app or {}).get("cat") or "")
+    raw_age = (tile or {}).get("age_rating")
+    if raw_age is None and app:
+        raw_age = app.get("age_rating")
+    age_rating = int(raw_age) if isinstance(raw_age, (int, float)) else None
+    raw_cmd = (tile or {}).get("cmd") if (tile or {}).get("cmd") is not None else (app or {}).get("cmd")
+    cmd = [str(x) for x in raw_cmd] if isinstance(raw_cmd, list) else None
+    is_browser = vsaccount.parental.is_browser_tile(tile_id, cat, cmd)
+    return cat, age_rating, is_browser, cmd
+
+
+def parental_catalog_meta() -> tuple[list[str], list[dict[str, Any]]]:
+    try:
+        cat_data = catalog()
+        cats = [str(c) for c in (cat_data.get("categories") or []) if str(c)]
+    except (OSError, ValueError):
+        cats = []
+    tiles_out: list[dict[str, Any]] = []
+    try:
+        cfg = load_config()
+    except (OSError, ValueError):
+        cfg = {"groups": []}
+    for grp in cfg.get("groups", []):
+        for t in grp.get("tiles", []):
+            tid = str(t.get("id") or "").strip()
+            if not tid or tid in vsaccount.parental.ALWAYS_VISIBLE_TILES or tid in vsaccount.parental.ADMIN_ONLY_TILES:
+                continue
+            cat, age_rating, is_browser, _cmd = _tile_meta(tid, t)
+            tiles_out.append({
+                "id": tid,
+                "label": t.get("label") or tid,
+                "cat": cat,
+                "is_browser": is_browser,
+                "age_rating": vsaccount.parental.effective_age_rating(tid, cat, age_rating),
+            })
+    return cats, tiles_out
+
+
+def prepare_browser_args(tid: str, args: list[str], svc: vsaccount.AccountService | None = None) -> list[str]:
+    """Isoliert Browser-Profile fuer Kinder- und Gast-Sitzungen unter accounts/data/<id>/browser/<app>."""
+    if not args:
+        return args
+    svc = svc or accounts()
+    sess = svc.get_session()
+    if sess.locked or not (sess.role == "child" or sess.is_guest):
+        return args
+    exe = Path(str(args[0])).name.lower()
+    if exe in ("firefox", "librewolf"):
+        pdir = svc.browser_profile_dir(tid)
+        uj = pdir / "user.js"
+        if not uj.exists():
+            chunks: list[str] = []
+            files = ("user-common.js", "user-youtube.js") if tid == "youtube" else ("user-common.js",)
+            for name in files:
+                src = BASE / "firefox" / name
+                if src.is_file():
+                    try:
+                        chunks.append(src.read_text(encoding="utf-8"))
+                    except OSError:
+                        pass
+            uj.write_text("\n".join(chunks) + ("\n" if chunks else ""), encoding="utf-8")
+        rest: list[str] = []
+        i = 1
+        while i < len(args):
+            if args[i] == "--profile":
+                i += 2
+                continue
+            if args[i].startswith("--profile=") or args[i] == "--no-remote":
+                i += 1
+                continue
+            rest.append(args[i])
+            i += 1
+        return [args[0], "--no-remote", "--profile", str(pdir), *rest]
+    if exe in ("chromium", "brave", "brave-browser", "google-chrome") or tid == "braveorigin":
+        pdir = svc.browser_profile_dir(tid)
+        rest = []
+        i = 1
+        while i < len(args):
+            if args[i] == "--user-data-dir":
+                i += 2
+                continue
+            if args[i].startswith("--user-data-dir="):
+                i += 1
+                continue
+            rest.append(args[i])
+            i += 1
+        return [args[0], f"--user-data-dir={pdir}", *rest]
+    return args
+
+
+def gentle_pause_for_lock() -> None:
+    """Pausiert laufende Player/Radio/Emulatoren ohne Datenverlust und holt die Startseite nach vorn."""
+    try:
+        if "tv" in APPS.running():
+            threading.Thread(target=PLAYERS.send, args=("tv", {"cmd": "pause"}), daemon=True).start()
+    except NameError:
+        pass
+    try:
+        if RADIO.status().get("station") and not RADIO.paused():
+            RADIO.toggle()
+    except Exception:
+        pass
+    try:
+        media_notify("pause")
+    except Exception:
+        pass
+    try:
+        raise_home()
+    except Exception:
+        pass
+
+
+def _handle_parental_event(ev: dict[str, Any]) -> None:
+    kind = str(ev.get("ev") or "")
+    payload = {k: v for k, v in ev.items() if k != "ev"}
+    if kind == "account_locked":
+        gentle_pause_for_lock()
+        OSK_FIELD.notice("account_locked", **payload)
+    elif kind == "account_warn":
+        OSK_FIELD.notice("account_warn", **payload)
+
+
 def account_status_summary() -> dict[str, Any]:
     svc = accounts()
     sess = svc.get_session()
     policy = svc.get_device_policy()
+    p_status = svc.parental.status_for_session()
     return {
         "id": sess.account_id,
         "name": sess.display_name,
@@ -15765,6 +15894,14 @@ def account_status_summary() -> dict[str, Any]:
         "picker_required": sess.picker_required,
         "guest_enabled": policy.guest_enabled,
         "count": len(svc.list_accounts()),
+        "parental": {
+            "restricted": p_status["restricted"],
+            "locked": p_status["locked"],
+            "reason": p_status["reason"],
+            "remaining_seconds": p_status["remaining_seconds"],
+            "allow_power_menu": p_status["allow_power_menu"],
+            "allow_yt_search": p_status["allow_yt_search"],
+        },
     }
 
 
@@ -15831,6 +15968,22 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(404, {"error": exc.code, "msg": exc.message})
         return self._json(400, {"error": exc.code, "msg": exc.message})
 
+    def _send_parental_denied(self, dec: vsaccount.ParentalDecision) -> None:
+        self._json(403, {
+            "error": dec.code or "account.blocked",
+            "reason": dec.reason,
+            "tile_id": dec.tile_id,
+            "override_allowed": dec.override_allowed,
+            "remaining_seconds": dec.remaining_seconds,
+        })
+
+    def _check_action(self, action: str) -> bool:
+        dec = accounts().parental.check_action(action)
+        if not dec.allowed:
+            self._send_parental_denied(dec)
+            return False
+        return True
+
     def _require_admin(self) -> vsaccount.SessionState | None:
         sess = accounts().get_session()
         if sess.locked:
@@ -15859,6 +16012,7 @@ class Handler(BaseHTTPRequestHandler):
                     "ok": True,
                     "session": sess.to_public_dict(),
                     "prefs": svc.load_profile_prefs(DEFAULTS),
+                    "parental": svc.parental.status_for_session(),
                 })
 
             if parts == ["api", "session", "lock"]:
@@ -15876,6 +16030,7 @@ class Handler(BaseHTTPRequestHandler):
                     "ok": True,
                     "session": sess.to_public_dict(),
                     "prefs": svc.load_profile_prefs(DEFAULTS),
+                    "parental": svc.parental.status_for_session(),
                 })
 
             if parts == ["api", "accounts", "create"]:
@@ -16018,6 +16173,54 @@ class Handler(BaseHTTPRequestHandler):
                     "device_policy": policy.to_dict(),
                     "session": new_sess.to_public_dict(),
                 })
+
+            if parts == ["api", "accounts", "parental"]:
+                if self._require_admin() is None:
+                    return
+                aid = str(b.get("account_id") or b.get("id") or "").strip()
+                if not aid:
+                    raise ValidationError("account.err.notFound", "Account id required")
+                pol_data = b["policy"] if isinstance(b.get("policy"), dict) else b
+                saved = svc.set_parental_policy(aid, pol_data)
+                return self._json(200, {
+                    "ok": True,
+                    "policy": saved.to_dict(),
+                    "status": svc.parental.status_for_session(aid),
+                })
+
+            if parts == ["api", "accounts", "parental", "override"]:
+                action = str(b.get("action") or "").strip()
+                tile_id = str(b.get("tile_id") or "").strip()
+                try:
+                    minutes = int(b.get("minutes") or 0)
+                except (TypeError, ValueError) as exc:
+                    raise ValidationError("account.err.invalid", "Invalid minutes") from exc
+                admin_id = str(b.get("admin_id") or "").strip() or None
+                child_id = str(b.get("child_id") or "").strip() or None
+                factor = str(b.get("factor") or "").strip().lower()
+                if not factor:
+                    if "pin" in b and b["pin"] is not None:
+                        factor = "pin"
+                    elif "password" in b and b["password"] is not None:
+                        factor = "password"
+                if "secret" in b and b["secret"] is not None:
+                    secret = str(b["secret"])
+                elif factor == "pin":
+                    secret = str(b.get("pin") or "")
+                elif factor == "password":
+                    secret = str(b.get("password") or "")
+                else:
+                    secret = ""
+                res = svc.verify_parent_override(
+                    factor=factor,
+                    secret=secret,
+                    action=action,
+                    admin_id=admin_id,
+                    child_id=child_id,
+                    tile_id=tile_id,
+                    minutes=minutes,
+                )
+                return self._json(200, res)
         except AccountError as exc:
             return self._account_error(exc)
         return self._send(404)
@@ -16061,7 +16264,13 @@ class Handler(BaseHTTPRequestHandler):
             if what == "img":
                 data = YT.img(vid=g("v"), url=g("u"))
                 return self._send(200, data, "image/jpeg") if data else self._send(404)
-            res = {"state": YT.state, "home": YT.home, "history": YT.history, "later": YT.later,
+            if what == "search" and not self._check_action("yt_search"):
+                return
+            if what == "state":
+                st = dict(YT.state())
+                st["allow_search"] = accounts().parental.check_action("yt_search").allowed
+                return self._json(200, st)
+            res = {"home": YT.home, "history": YT.history, "later": YT.later,
                    "subs": lambda: {"items": YT.subs()},
                    "feed": lambda: YT.feed_get(300, force=g("force") == "1"),
                    "search": lambda: YT.search(g("q"), g("kind") or "video"),
@@ -16110,6 +16319,7 @@ class Handler(BaseHTTPRequestHandler):
                 "device_policy": svc.get_device_policy().to_dict(),
                 "accounts_count": len(svc.list_accounts()),
                 "migrated": svc.migration_report.migrated,
+                "parental": svc.parental.status_for_session(),
             })
         if path == "/api/accounts":
             if not self._api_token_ok():
@@ -16120,6 +16330,41 @@ class Handler(BaseHTTPRequestHandler):
                 "session": svc.get_session().to_public_dict(),
                 "device_policy": svc.get_device_policy().to_dict(),
             })
+        if path == "/api/accounts/parental":
+            if not self._api_token_ok():
+                return self._json(403, {"error": "forbidden"})
+            svc = accounts()
+            sess = svc.get_session()
+            if sess.locked:
+                return self._json(403, {"error": "account.err.locked", "msg": "Session is locked"})
+            qs = urllib.parse.parse_qs(url.query)
+            req_id = qs.get("account_id", [""])[0].strip()
+            cats, tiles = parental_catalog_meta()
+            if req_id:
+                if sess.role != "admin" and (sess.is_guest or req_id != sess.account_id):
+                    return self._json(403, {"error": "account.err.adminRequired", "msg": "Admin account required"})
+                try:
+                    pol = svc.get_parental_policy(req_id).to_dict()
+                    st = svc.parental.status_for_session(req_id)
+                except AccountError as exc:
+                    return self._account_error(exc)
+                return self._json(200, {"policy": pol, "status": st, "categories": cats, "tiles": tiles})
+            if sess.role == "admin" and not sess.is_guest:
+                children = [a for a in svc.list_accounts() if a.role == "child"]
+                return self._json(200, {
+                    "policies": {c.id: svc.get_parental_policy(c.id).to_dict() for c in children},
+                    "statuses": {c.id: svc.parental.status_for_session(c.id) for c in children},
+                    "categories": cats,
+                    "tiles": tiles,
+                })
+            if sess.role == "child" and not sess.is_guest:
+                return self._json(200, {
+                    "policy": svc.get_parental_policy(sess.account_id).to_dict(),
+                    "status": svc.parental.status_for_session(sess.account_id),
+                    "categories": cats,
+                    "tiles": tiles,
+                })
+            return self._json(403, {"error": "account.err.adminRequired", "msg": "Admin account required"})
         if path == "/api/status":
             running = APPS.running()
             return self._json(200, {"running": running, "starting": APPS.starting(), "radio": RADIO.status(),
@@ -16302,13 +16547,38 @@ class Handler(BaseHTTPRequestHandler):
             except (OSError, ValueError):
                 return self._send(404)
             hints = {a["id"]: a["start_hint"] for a in catalog()["apps"] if a.get("start_hint")}
+            svc = accounts()
+            sess = svc.get_session()
+            p_status = svc.parental.status_for_session()
+            filter_tiles = not sess.locked and (sess.role == "child" or (sess.is_guest and p_status["restricted"]))
+            filtered_groups = []
             for g in c.get("groups", []):
+                kept = []
                 for t in g.get("tiles", []):
-                    if t.get("id") in hints and not t.get("start_hint"):
-                        t["start_hint"] = hints[t["id"]]
-            sess = accounts().get_session()
+                    tid = str(t.get("id") or "")
+                    if tid in hints and not t.get("start_hint"):
+                        t["start_hint"] = hints[tid]
+                    if filter_tiles:
+                        cat, age_rating, is_browser, cmd = _tile_meta(tid, t)
+                        dec = svc.parental.check_tile(
+                            tid,
+                            cat=cat,
+                            age_rating=age_rating,
+                            is_browser=is_browser,
+                            cmd=cmd,
+                            ignore_time=True,
+                        )
+                        if not dec.allowed:
+                            continue
+                    kept.append(t)
+                if kept:
+                    g2 = dict(g)
+                    g2["tiles"] = kept
+                    filtered_groups.append(g2)
+            c["groups"] = filtered_groups
             if sess.display_name:
                 c["user"] = sess.display_name
+            c["parental_locked"] = bool(p_status["locked"])
             return self._json(200, c)
         self._send(404)
 
@@ -16323,6 +16593,19 @@ class Handler(BaseHTTPRequestHandler):
                 tile = find_tile(parts[2])
                 if not tile:
                     return self._json(404, {"error": "unbekannte Kachel"})
+                tid = str(tile.get("id") or parts[2])
+                cat, age_rating, is_browser, cmd = _tile_meta(tid, tile)
+                dec = accounts().parental.check_tile(
+                    tid,
+                    cat=cat,
+                    age_rating=age_rating,
+                    is_browser=is_browser,
+                    cmd=cmd,
+                    consume_once=True,
+                    already_running=bool(APPS._get(tid)),
+                )
+                if not dec.allowed:
+                    return self._send_parental_denied(dec)
                 return self._json(200, {"result": APPS.launch(tile), "running": APPS.running()})
             if parts[:2] == ["api", "close"] and len(parts) == 3:
                 APPS.close(parts[2])
@@ -16332,6 +16615,8 @@ class Handler(BaseHTTPRequestHandler):
                 raise_home()
                 return self._json(200, {"running": APPS.running()})
             if parts == ["api", "report"]:             # Einstellungen → System → Fehlerbericht (vsctl report: vsreport.py direkt)
+                if not self._check_action("settings_system"):
+                    return
                 try:
                     rep = vsreport.create(status={"running": APPS.running(), "front": APPS.front()})
                 except RuntimeError:
@@ -16349,6 +16634,8 @@ class Handler(BaseHTTPRequestHandler):
             if parts[:2] in (["api", "session"], ["api", "accounts"]):
                 return self._account_post(parts, self._body())
             if parts[:2] == ["api", "vpn"] and len(parts) == 3:
+                if not self._check_action("settings_system"):
+                    return
                 b = self._body()
                 try:
                     act = parts[2]
@@ -16371,6 +16658,9 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "nowplaying", "control"]:
                 return self._json(200, now_control(str(self._body().get("action", ""))))
             if parts == ["api", "radio", "play"]:
+                dec = accounts().parental.check_tile("radio", cat="Medien", consume_once=True)
+                if not dec.allowed:
+                    return self._send_parental_denied(dec)
                 RADIO.play(self._body())
                 return self._json(200, RADIO.status())
             if parts == ["api", "radio", "stop"]:
@@ -16389,6 +16679,9 @@ class Handler(BaseHTTPRequestHandler):
                 favs_save(favs)
                 return self._json(200, favs)
             if parts == ["api", "tv", "play"]:
+                dec = accounts().parental.check_tile("tv", cat="Medien", consume_once=True, already_running=bool(APPS._get("tv")))
+                if not dec.allowed:
+                    return self._send_parental_denied(dec)
                 b = self._body()
                 return self._json(200, TV.play(str(b.get("key", "")), b.get("ctx")))
             if parts == ["api", "tv", "tune"]:              # Player schaltet um
@@ -16402,6 +16695,10 @@ class Handler(BaseHTTPRequestHandler):
             if parts[:2] == ["api", "yt"]:                        # YouTube Light
                 b = self._body()
                 act = "/".join(parts[2:])
+                if act == "resolve" and not self._check_action("yt_play"):
+                    return
+                if act == "update" and not self._check_action("apps_manage"):
+                    return
                 res = {"settings": lambda: YT.save_settings(b),
                        "resolve": lambda: YT.resolve(str(b.get("id") or ""), str(b.get("quality") or ""),
                                                      str(b.get("lang") or "de")),
@@ -16488,6 +16785,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(409, {"error": str(e)})
                 return self._send(404)
             if parts == ["api", "settings", "ssh"]:
+                if not self._check_action("settings_system"):
+                    return
                 on = bool(self._body().get("on"))
                 r = subprocess.run(["sudo", "-n", PKG_HELPER, "ssh", "on" if on else "off"],
                                    capture_output=True, text=True, timeout=180)
@@ -16496,6 +16795,8 @@ class Handler(BaseHTTPRequestHandler):
                 log("Fernzugriff (SSH):", "an" if on else "aus")
                 return self._json(200, {"ssh": ssh_state()})
             if parts == ["api", "selfupdate", "channel"]:
+                if not self._check_action("apps_manage"):
+                    return
                 # Seit 2026.11 nur noch zurueck zu Stable; Testing gibt es nur im Terminal (vsctl channel testing)
                 ch = str(self._body().get("channel", ""))
                 if ch != "stable":
@@ -16506,6 +16807,8 @@ class Handler(BaseHTTPRequestHandler):
                 vs_update_status(force=True)
                 return self._json(200, updates_state())
             if parts == ["api", "apps", "localtile"]:
+                if not self._check_action("apps_manage"):
+                    return
                 b = self._body()
                 try:
                     local_tile(str(b.get("id", "")), bool(b.get("on")))
@@ -16513,6 +16816,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(404, {"error": str(e)})
                 return self._json(200, apps_payload())
             if parts[:2] == ["api", "apps"] and len(parts) == 3:
+                if not self._check_action("apps_manage"):
+                    return
                 act = parts[2]
                 try:
                     if act in ("install", "remove"):
@@ -16534,6 +16839,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(409, {"error": str(e)})
                 return self._json(200, JOBS.current())
             if parts == ["api", "settings", "sysupd"]:
+                if not self._check_action("settings_system"):
+                    return
                 days = self._body().get("days")
                 if days not in SYSUPD_DAYS:
                     return self._json(400, {"error": "ungueltige Frist"})
@@ -16580,6 +16887,8 @@ class Handler(BaseHTTPRequestHandler):
                 log("Bildschirmtastatur:", s.get("osk_layout") or "nach Sprache", s.get("osk_mode"))
                 return self._json(200, settings_payload())
             if parts == ["api", "settings", "padmouse"]:
+                if not self._check_action("settings_system"):
+                    return
                 on = bool(self._body().get("on"))
                 s = settings_load(); s["padmouse"] = on; settings_save(s)
                 log("Controller-Maus:", "an" if on else "aus")
@@ -16619,6 +16928,8 @@ class Handler(BaseHTTPRequestHandler):
                 restart_home_later()
                 return self._json(200, settings_payload())
             if parts == ["api", "settings", "resolution"]:
+                if not self._check_action("settings_system"):
+                    return
                 b = self._body()
                 mode = str(b.get("mode", ""))
                 outs = [o for o in xrandr_info() if mode in o["modes"]]
@@ -16638,12 +16949,16 @@ class Handler(BaseHTTPRequestHandler):
                 s = settings_load(); s["resolution"] = mode; s["rate"] = rate; settings_save(s)
                 return self._json(200, settings_payload())
             if parts == ["api", "settings", "matchrate"]:
+                if not self._check_action("settings_system"):
+                    return
                 on = bool(self._body().get("on"))
                 s = settings_load(); s["match_rate"] = on; settings_save(s)
                 log("Bildrate an Video anpassen:", "an" if on else "aus")
                 DISPLAY_RATE.reapply()
                 return self._json(200, settings_payload())
             if parts == ["api", "settings", "gamefx"]:
+                if not self._check_action("settings_system"):
+                    return
                 try:
                     game_fx_set(str(self._body().get("mode")))
                 except ValueError as e:
@@ -16666,6 +16981,8 @@ class Handler(BaseHTTPRequestHandler):
                 s = settings_load(); s["audio_auto"] = bool(self._body().get("on")); settings_save(s)
                 return self._json(200, settings_payload())
             if parts == ["api", "net", "prefer"]:
+                if not self._check_action("settings_system"):
+                    return
                 try:
                     net_mode_set(str(self._body().get("mode", "")))
                 except ValueError as e:
@@ -16673,6 +16990,8 @@ class Handler(BaseHTTPRequestHandler):
                 time.sleep(2)                     # Routen stehen nach reapply erst nach einem Moment
                 return self._json(200, settings_payload())
             if parts in (["api", "net", "disconnect"], ["api", "net", "connect"]):
+                if not self._check_action("settings_system"):
+                    return
                 kind = self._body().get("type")
                 if kind not in ("wired", "wifi") or (parts[2] == "connect" and kind != "wired"):
                     return self._json(400, {"error": "unbekannte Verbindungsart"})
@@ -16682,6 +17001,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self._json(502, {"error": str(e)})
                 return self._json(200, settings_payload())
             if parts == ["api", "wifi", "connect"]:
+                if not self._check_action("settings_system"):
+                    return
                 b = self._body()
                 if not b.get("ssid"):
                     return self._json(400, {"error": "kein Netz gewaehlt"})
@@ -16717,6 +17038,19 @@ class Handler(BaseHTTPRequestHandler):
             if parts == ["api", "roms", "launch"]:
                 b = self._body()
                 sys_id = str(b.get("system", ""))
+                emu_tid = ROMS.SYSTEM_TO_TILE.get(sys_id, sys_id)
+                cat, age_rating, is_browser, cmd = _tile_meta(emu_tid)
+                dec = accounts().parental.check_tile(
+                    emu_tid,
+                    cat=cat or "Emulatoren",
+                    age_rating=age_rating,
+                    is_browser=is_browser,
+                    cmd=cmd,
+                    consume_once=True,
+                    already_running=bool(APPS._get(emu_tid)),
+                )
+                if not dec.allowed:
+                    return self._send_parental_denied(dec)
                 filename = str(b.get("file") or b.get("filename") or b.get("path") or "")
                 folder = str(b.get("folder") or "") or None
                 try:
@@ -16727,33 +17061,45 @@ class Handler(BaseHTTPRequestHandler):
                 except (ValueError, RuntimeError) as e:
                     return self._json(400, {"error": str(e)})
             if parts == ["api", "bluetooth", "scan"]:
+                if not self._check_action("settings_system"):
+                    return
                 BLUETOOTH.start_scan()
                 return self._json(200, BLUETOOTH.status())
             if parts == ["api", "bluetooth", "pair"]:
+                if not self._check_action("settings_system"):
+                    return
                 mac = str(self._body().get("mac", ""))
                 if not BLUETOOTH.MAC_RE.match(mac):
                     return self._json(400, {"error": "ungueltige Geraeteadresse"})
                 ok, err = BLUETOOTH.pair(mac)
                 return self._json(200, {"ok": ok, "error": err, "status": BLUETOOTH.status()})
             if parts == ["api", "bluetooth", "connect"]:
+                if not self._check_action("settings_system"):
+                    return
                 mac = str(self._body().get("mac", ""))
                 if not BLUETOOTH.MAC_RE.match(mac):
                     return self._json(400, {"error": "ungueltige Geraeteadresse"})
                 ok, err = BLUETOOTH.connect(mac)
                 return self._json(200, {"ok": ok, "error": err, "status": BLUETOOTH.status()})
             if parts == ["api", "bluetooth", "disconnect"]:
+                if not self._check_action("settings_system"):
+                    return
                 mac = str(self._body().get("mac", ""))
                 if not BLUETOOTH.MAC_RE.match(mac):
                     return self._json(400, {"error": "ungueltige Geraeteadresse"})
                 ok = BLUETOOTH.disconnect(mac)
                 return self._json(200, {"ok": ok, "status": BLUETOOTH.status()})
             if parts == ["api", "bluetooth", "remove"]:
+                if not self._check_action("settings_system"):
+                    return
                 mac = str(self._body().get("mac", ""))
                 if not BLUETOOTH.MAC_RE.match(mac):
                     return self._json(400, {"error": "ungueltige Geraeteadresse"})
                 ok = BLUETOOTH.remove(mac)
                 return self._json(200, {"ok": ok, "status": BLUETOOTH.status()})
             if parts == ["api", "bluetooth", "rename"]:
+                if not self._check_action("settings_system"):
+                    return
                 b = self._body()
                 mac = str(b.get("mac", ""))
                 if not BLUETOOTH.MAC_RE.match(mac):
@@ -16761,11 +17107,15 @@ class Handler(BaseHTTPRequestHandler):
                 ok = BLUETOOTH.rename(mac, b.get("name", ""))
                 return self._json(200, {"ok": ok, "status": BLUETOOTH.status()})
             if parts == ["api", "bluetooth", "power"]:
+                if not self._check_action("settings_system"):
+                    return
                 b = self._body()
                 on = b.get("powered") if "powered" in b else b.get("on")
                 ok = BLUETOOTH.power(bool(on))
                 return self._json(200, {"ok": ok, "status": BLUETOOTH.status()})
             if parts == ["api", "bluetooth", "service"]:
+                if not self._check_action("settings_system"):
+                    return
                 b = self._body()
                 on = (b.get("action") == "start") if "action" in b else bool(b.get("on"))
                 subprocess.run(["sudo", "-n", PKG_HELPER, "bluetooth", "on" if on else "off"],
@@ -16774,6 +17124,8 @@ class Handler(BaseHTTPRequestHandler):
             if parts[:2] == ["api", "volume"] and len(parts) == 3:
                 return self._json(200, volume_set(parts[2]) or {})
             if parts == ["api", "power", "suspend"]:
+                if not self._check_action("power_menu"):
+                    return
                 if not can_suspend():
                     return self._json(400, {"error": "Standby wird hier nicht unterstuetzt"})
                 RADIO.stop()                           # wie beim Fernseher: Ton aus; Programme bleiben offen
@@ -16782,6 +17134,8 @@ class Handler(BaseHTTPRequestHandler):
                 threading.Timer(0.8, lambda: subprocess.Popen(POWER["suspend"])).start()
                 return self._json(200, {"ok": True})
             if parts[:2] == ["api", "power"] and len(parts) == 3 and parts[2] in POWER:
+                if not self._check_action("power_menu"):
+                    return
                 act = parts[2]
                 def _do_power() -> None:
                     RADIO.stop()
@@ -17076,6 +17430,7 @@ def main():
     BOOT_BUILD = vs_version().get("build")
     init_api_token()
     init_accounts()
+    accounts().parental.start_tracker(_handle_parental_event, interval=vsaccount.USAGE_TICK_SECONDS)
     resume_leftovers()
     signal.signal(signal.SIGTERM, on_term)
     app_prefs()

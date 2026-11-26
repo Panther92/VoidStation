@@ -15,9 +15,17 @@ Rectangle {
     property string pwError: ""
     property var onSuccessCb: null
     property var customSubmitCb: null
+    property bool overrideMode: false
+    property string overrideReason: ""
+    property string overrideTileId: ""
+    property string overrideTileName: ""
+    property string overrideAction: "allow_once"   // allow_once | add_minutes
+    property int overrideMinutes: 15
+    property bool allowSwitchProfile: false
 
     readonly property bool hasPin: !!(account && account.has_pin)
     readonly property bool hasPassword: !!(account && account.has_password)
+    readonly property bool isTimeBlock: overrideMode && (overrideReason === "daily_limit" || overrideReason === "bedtime")
 
     z: 30
     color: Ui.c.surfaceOverlay
@@ -32,6 +40,13 @@ Rectangle {
 
     function openFor(acc, opts) {
         opts = opts || {}
+        overrideMode = false
+        overrideReason = ""
+        overrideTileId = ""
+        overrideTileName = ""
+        overrideAction = "allow_once"
+        overrideMinutes = 15
+        allowSwitchProfile = false
         account = acc || null
         dialogTitle = opts.title || ""
         onSuccessCb = opts.onSuccess || null
@@ -46,6 +61,68 @@ Rectangle {
         open = true
         app.updateLayer()
         focusActiveMode()
+    }
+
+    function findParentAdmin() {
+        var list = app.accountsList || []
+        var childPid = ""
+        if (app.session && !app.session.is_guest) {
+            for (var i = 0; i < list.length; i++) {
+                if (list[i].id === app.session.account_id && list[i].parent_id) {
+                    childPid = list[i].parent_id
+                    break
+                }
+            }
+        }
+        var firstAdmin = null
+        var firstAuthAdmin = null
+        for (var j = 0; j < list.length; j++) {
+            var a = list[j]
+            if (a.role !== "admin" || a.active === false) continue
+            if (!firstAdmin) firstAdmin = a
+            if (a.auth_configured && !firstAuthAdmin) firstAuthAdmin = a
+            if (childPid && a.id === childPid && a.auth_configured) return a
+        }
+        return firstAuthAdmin || firstAdmin
+    }
+
+    function openForOverride(opts) {
+        opts = opts || {}
+        var openWith = function (adminAcc) {
+            overrideMode = true
+            overrideReason = opts.reason || "tile_blocked"
+            overrideTileId = opts.tileId || ""
+            overrideTileName = opts.tileName || ""
+            overrideAction = (overrideReason === "daily_limit" || overrideReason === "bedtime") ? "add_minutes" : "allow_once"
+            overrideMinutes = 15
+            allowSwitchProfile = opts.allowSwitchProfile !== false
+            account = adminAcc || null
+            dialogTitle = Ui.t("account.parentPin")
+            onSuccessCb = opts.onSuccess || null
+            customSubmitCb = null
+            busy = false
+            pwCooldown = 0
+            pwError = (!adminAcc || (!adminAcc.has_pin && !adminAcc.has_password)) ? Ui.t("account.err.parentAuthRequired") : ""
+            pwField.value = ""
+            pwField.password = true
+            pinPad.reset()
+            mode = (adminAcc && adminAcc.has_pin) ? "pin" : "password"
+            open = true
+            app.updateLayer()
+            focusActiveMode()
+        }
+        var adm = findParentAdmin()
+        if (adm) {
+            openWith(adm)
+            return
+        }
+        Api.get("/api/accounts", function (r) {
+            if (r && r.accounts) {
+                app.accountsList = r.accounts
+                app.accountsCount = r.accounts.length
+            }
+            openWith(findParentAdmin())
+        }, function () { openWith(null) })
     }
 
     function close() {
@@ -153,6 +230,27 @@ Rectangle {
             })
             return
         }
+        if (overrideMode) {
+            var ovBody = {
+                admin_id: account.id,
+                factor: factor,
+                action: overrideAction,
+                tile_id: overrideTileId,
+                minutes: overrideMinutes
+            }
+            if (factor === "pin") ovBody.pin = secret
+            else ovBody.password = secret
+            Api.post("/api/accounts/parental/override", ovBody, function (res) {
+                busy = false
+                pinPad.busy = false
+                if (res && res.parental) app.parentalStatus = res.parental
+                finishSuccess(res)
+            }, function (err, data, status) {
+                busy = false
+                handleError(err, data, status)
+            })
+            return
+        }
         var body = { account_id: account.id }
         if (factor === "pin") body.pin = secret
         else body.password = secret
@@ -249,6 +347,52 @@ Rectangle {
                 color: Ui.c.textSecondary
             }
 
+            // Kindersicherungs-Hinweis & Override-Auswahl
+            Rectangle {
+                visible: ad.overrideMode
+                width: parent.width
+                height: ovCol.implicitHeight + 16 * Ui.f
+                color: Ui.c.statusWarnBg
+                border.width: 1
+                border.color: Ui.c.statusWarnBorder
+
+                Column {
+                    id: ovCol
+                    x: 12 * Ui.f
+                    y: 8 * Ui.f
+                    width: parent.width - 24 * Ui.f
+                    spacing: 8 * Ui.f
+                    Txt {
+                        width: parent.width
+                        wrapMode: Text.WordWrap
+                        elide: Text.ElideNone
+                        font.pixelSize: 14 * Ui.f
+                        color: Ui.c.statusWarnText
+                        text: Ui.t("parental.reason." + ad.overrideReason, { name: ad.overrideTileName || ad.overrideTileId }, Ui.t("account.err.blocked"))
+                    }
+                    Row {
+                        visible: ad.isTimeBlock
+                        spacing: 8 * Ui.f
+                        Repeater {
+                            model: [15, 30, 60]
+                            Pill {
+                                text: Ui.t("parental.extraMinutes", { min: modelData })
+                                on: ad.overrideMinutes === modelData
+                                sound: "toggle"
+                                onTriggered: ad.overrideMinutes = modelData
+                            }
+                        }
+                    }
+                    Txt {
+                        visible: !ad.isTimeBlock
+                        width: parent.width
+                        font.pixelSize: 13 * Ui.f
+                        color: Ui.c.textSecondary
+                        text: Ui.t("parental.allowOnce")
+                    }
+                }
+            }
+
             // PIN-Ansicht
             PinPad {
                 id: pinPad
@@ -326,6 +470,15 @@ Rectangle {
                     visible: ad.hasPin && ad.hasPassword
                     text: Ui.t(ad.mode === "pin" ? "account.usePassword" : "account.usePin")
                     onTriggered: ad.toggleMode()
+                }
+                Btn {
+                    id: switchProfileBtn
+                    visible: ad.overrideMode && ad.allowSwitchProfile
+                    text: Ui.t("account.switch")
+                    onTriggered: {
+                        ad.close()
+                        app.openAccountPicker()
+                    }
                 }
                 Btn {
                     id: cancelBtn

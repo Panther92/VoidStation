@@ -160,13 +160,40 @@ ACCOUNT_SESSION: dict[str, Any] = {
     "elevated_until": 0,
 }
 
+PARENTAL_POLICIES: dict[str, dict[str, Any]] = {
+    "acc-leo": {
+        "account_id": "acc-leo",
+        "mode": "allowlist",
+        "allowed_tiles": ["tv", "radio", "media", "gba"],
+        "blocked_tiles": ["terminal", "files"],
+        "blocked_cats": ["Werkzeuge"],
+        "max_age_rating": 12,
+        "daily_limit_min": 60,
+        "bedtime_start": "20:00",
+        "bedtime_end": "07:00",
+        "allow_yt_search": False,
+        "allow_browser": False,
+        "allow_power_menu": False,
+        "updated_at": 1760000300,
+    }
+}
+
 
 def account_summary(session: dict[str, Any] | None = None,
                     policy: dict[str, Any] | None = None,
-                    accounts: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+                    accounts: list[dict[str, Any]] | None = None,
+                    parental: dict[str, Any] | None = None) -> dict[str, Any]:
     sess = session or ACCOUNT_SESSION
     pol = policy or ACCOUNT_POLICY
     accs = ACCOUNTS if accounts is None else accounts
+    p_sum = parental or {
+        "restricted": False,
+        "locked": False,
+        "reason": "",
+        "remaining_seconds": None,
+        "allow_power_menu": True,
+        "allow_yt_search": True,
+    }
     return {
         "id": sess["account_id"],
         "name": sess["display_name"],
@@ -178,6 +205,7 @@ def account_summary(session: dict[str, Any] | None = None,
         "picker_required": bool(sess["picker_required"]),
         "guest_enabled": bool(pol["guest_enabled"]),
         "count": len(accs),
+        "parental": p_sum,
     }
 
 

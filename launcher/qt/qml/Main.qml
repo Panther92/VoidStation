@@ -53,6 +53,7 @@ Window {
         property bool started: false
         property bool shown: false                // Kacheln gezeichnet: Ladebild weg
         property var session: null
+        property var parentalStatus: null
         property var devicePolicy: null
         property var accountsList: []
         property int accountsCount: 0
@@ -339,6 +340,30 @@ Window {
                 mouseHint.showText("camera", st.ok ? Ui.t("shot.saved") : Ui.t("shot.failed"))
                 return
             }
+            if (st.ev === "account_warn") {
+                vs.playSound("notify")
+                var mins = st.minutes || Math.max(1, Math.ceil((st.remaining_seconds || 60) / 60))
+                var wmsg = Ui.t(st.reason === "bedtime" ? "parental.warnBedtime" : "parental.warnLimit", { minutes: mins })
+                mouseHint.showText("lock", wmsg)
+                toast(wmsg)
+                return
+            }
+            if (st.ev === "account_locked") {
+                vs.playSound("error")
+                closeProfileOverlays()
+                poll()
+                authDlg.openForOverride({
+                    reason: st.reason || "daily_limit",
+                    allowSwitchProfile: true,
+                    onSuccess: function (res) {
+                        if (res && res.parental) app.parentalStatus = res.parental
+                        app.poll()
+                        app.load()
+                        app.toast(Ui.t("parental.extraMinutesGranted"))
+                    }
+                })
+                return
+            }
             var mode = sett && sett.osk ? sett.osk.mode : "auto"
             if (st.ev === "typed") {
                 if (vs.kbdIdle() < 0.6) return                    // das waren unsere eigenen Tastendruecke
@@ -442,6 +467,7 @@ Window {
                     session = r.session
                     lastAccountId = (r.session.is_guest ? "guest" : r.session.account_id) || ""
                 }
+                if (r.parental !== undefined) parentalStatus = r.parental
                 if (r.device_policy) devicePolicy = r.device_policy
                 if (r.accounts_count !== undefined) accountsCount = r.accounts_count
                 if (initial && r.migrated && !migratedNoticeShown) {
@@ -467,6 +493,7 @@ Window {
                        || (session && (session.display_name !== a.name || session.avatar !== a.avatar || session.color !== a.color || session.role !== a.role))
             lastAccountId = nextKey
             if (a.count !== undefined) accountsCount = a.count
+            if (a.parental !== undefined) parentalStatus = a.parental
             if (!session) {
                 session = {
                     account_id: a.id, display_name: a.name, role: a.role,
@@ -517,6 +544,7 @@ Window {
                 session = res.session
                 lastAccountId = (res.session.is_guest ? "guest" : res.session.account_id) || ""
             }
+            if (res && res.parental !== undefined) parentalStatus = res.parental
             if (res && res.prefs) {
                 var p = res.prefs
                 if (p.scale) Ui.scale = p.scale
@@ -558,7 +586,45 @@ Window {
 
         // ------------------------------------------------------------ Programme
         readonly property var emuSystems: ["gba", "snes", "snes9x", "nes", "nestopia", "psx", "duckstation", "psp", "ppsspp", "nds", "melonds", "dreamcast", "flycast", "gamecube", "wii", "dolphin", "c64", "vice", "atari2600", "stella", "ps2", "pcsx2", "n64", "rmg", "xbox", "xemu", "3ds", "azahar", "wiiu", "cemu", "mame", "dos", "dosbox", "scummvm", "retroarch", "mednafen", "megadrive", "mastersystem", "gamegear", "saturn", "pcengine"]
+        function handleBlockedError(err, data, status, tile, retryFn) {
+            if (status !== 403 || err !== "account.blocked") return false
+            var reason = (data && data.reason) ? String(data.reason) : "tile_blocked"
+            var tName = tile ? (Ui.l(tile.label) || tile.id) : ((data && data.tile_id) ? String(data.tile_id) : "")
+            if (data && data.override_allowed) {
+                var isTime = reason === "daily_limit" || reason === "bedtime"
+                authDlg.openForOverride({
+                    reason: reason,
+                    tileId: tile ? tile.id : ((data && data.tile_id) ? String(data.tile_id) : ""),
+                    tileName: tName,
+                    allowSwitchProfile: true,
+                    onSuccess: function (res) {
+                        if (res && res.parental) app.parentalStatus = res.parental
+                        app.poll()
+                        app.toast(Ui.t(isTime ? "parental.extraMinutesGranted" : "parental.overrideGranted"))
+                        if (retryFn) retryFn()
+                    }
+                })
+            } else {
+                toast(Ui.t("parental.reason." + reason, { name: tName }, Ui.t("account.err.blocked")), true)
+            }
+            return true
+        }
         function tileActivate(t, el) {
+            if (parentalStatus && parentalStatus.locked && t.type !== "settings" && t.type !== "clock") {
+                authDlg.openForOverride({
+                    reason: parentalStatus.reason || "daily_limit",
+                    tileId: t.id,
+                    tileName: Ui.l(t.label) || t.id,
+                    allowSwitchProfile: true,
+                    onSuccess: function (res) {
+                        if (res && res.parental) app.parentalStatus = res.parental
+                        app.poll()
+                        app.toast(Ui.t("parental.extraMinutesGranted"))
+                        app.tileActivate(t, el)
+                    }
+                })
+                return
+            }
             if (t.type === "radio") return openLayer(radio)
             if (t.type === "settings") return openLayer(settings)
             if (t.type === "tv") return openLayer(tv)
@@ -582,9 +648,10 @@ Window {
             launching = true
             Api.post("/api/launch/" + encodeURIComponent(t.id), null, function (r) {
                 if (r && r.running) running = r.running
-            }, function () {
-                toast(Ui.t("home.launchFailed", { name: Ui.l(t.label) || Ui.t("common.program") }), true)
+            }, function (err, data, status) {
                 hideSplash()
+                if (!handleBlockedError(err, data, status, t, function () { launch(t) }))
+                    toast(Ui.t("home.launchFailed", { name: Ui.l(t.label) || Ui.t("common.program") }), true)
             })
             unlaunch.restart()
         }
@@ -861,7 +928,14 @@ Window {
                                 }
                                 Txt {
                                     visible: !!app.session && (app.session.is_guest || app.session.role === "child")
-                                    text: app.session ? Ui.t("account.role." + app.session.role) : ""
+                                    text: {
+                                        if (!app.session) return ""
+                                        if (app.session.role === "child" && app.parentalStatus && app.parentalStatus.remaining_seconds !== null && app.parentalStatus.remaining_seconds !== undefined) {
+                                            var mins = Math.max(0, Math.ceil(app.parentalStatus.remaining_seconds / 60))
+                                            return Ui.t("parental.chipRemaining", { role: Ui.t("account.role.child"), minutes: mins })
+                                        }
+                                        return Ui.t("account.role." + app.session.role)
+                                    }
                                     font.pixelSize: 12 * Ui.f
                                     color: Ui.c.textDim
                                     elide: Text.ElideNone

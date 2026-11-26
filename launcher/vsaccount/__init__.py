@@ -26,6 +26,16 @@ from .models import (
     SessionState,
     ValidationError,
 )
+from .parental import (
+    AGE_RATINGS,
+    BROWSER_TILE_IDS,
+    EXTRA_MINUTE_CHOICES,
+    USAGE_TICK_SECONDS,
+    WARN_THRESHOLD_SECONDS,
+    ParentalController,
+    ParentalDecision,
+    validate_policy_data,
+)
 from .storage import (
     API_TOKEN_FILENAME,
     API_TOKEN_HEADER,
@@ -38,6 +48,7 @@ from .storage import (
 from .store import AccountStore
 
 __all__ = [
+    "AGE_RATINGS",
     "API_TOKEN_FILENAME",
     "API_TOKEN_HEADER",
     "Account",
@@ -45,20 +56,27 @@ __all__ = [
     "AccountService",
     "AuthError",
     "AuthResult",
+    "BROWSER_TILE_IDS",
     "DevicePolicy",
+    "EXTRA_MINUTE_CHOICES",
     "IdentityLink",
     "MigrationReport",
     "NotFoundError",
+    "ParentalController",
+    "ParentalDecision",
     "ParentalPolicy",
     "PolicyError",
     "SessionState",
+    "USAGE_TICK_SECONDS",
     "ValidationError",
+    "WARN_THRESHOLD_SECONDS",
     "api_token_path",
     "ensure_api_token",
     "is_weak_pin",
     "read_api_token",
     "validate_password",
     "validate_pin",
+    "validate_policy_data",
     "verify_api_token",
 ]
 
@@ -85,6 +103,13 @@ class AccountService:
         self.store = AccountStore(self.accounts_dir, clock=self._clock)
         self.migration_report = migrate_legacy_if_needed(self.base_dir, self.store, self.storage)
         self._session = self._initial_session()
+        self.parental = ParentalController(
+            self.store,
+            self.get_session,
+            self.get_device_policy,
+            clock=self._clock,
+            lock=self._lock,
+        )
         self._closed = False
         atexit.register(self._atexit_cleanup)
 
@@ -142,6 +167,7 @@ class AccountService:
             if self._closed:
                 return
             self._closed = True
+            self.parental.stop_tracker()
             self.storage.cleanup_guest_dir()
             self.store.close()
 
@@ -295,9 +321,11 @@ class AccountService:
                 actor_id=self._session.account_id,
             )
             if was_current:
+                prev_id = self._session.account_id
                 self._session = self._initial_session()
                 self._session.locked = True
                 self._session.picker_required = True
+                self.parental.on_session_changed(prev_id, self._session.account_id, locked=True)
 
     # --- Authentifizierung & Cooldown ---
     def set_credential(self, account_id: str, factor: str, secret: str) -> Account:
@@ -441,6 +469,7 @@ class AccountService:
             if self._session.is_guest:
                 self.storage.cleanup_guest_dir()
 
+            prev_id = self._session.account_id
             self.storage.profile_dir(acc.id)
             self._session = SessionState(
                 account_id=acc.id,
@@ -453,6 +482,7 @@ class AccountService:
                 picker_required=False,
                 elevated_until=0,
             )
+            self.parental.on_session_changed(prev_id, acc.id, locked=False)
             self.store.append_audit("session_switched", account_id=acc.id, actor_id=acc.id)
             return self._session
 
@@ -462,6 +492,7 @@ class AccountService:
             policy = self.store.get_device_policy()
             if not policy.guest_enabled:
                 raise PolicyError("account.err.guestDisabled", "Guest mode is disabled")
+            prev_id = self._session.account_id
             self.storage.prepare_guest_dir()
             self._session = SessionState(
                 account_id=GUEST_ACCOUNT_ID,
@@ -474,12 +505,14 @@ class AccountService:
                 picker_required=False,
                 elevated_until=0,
             )
+            self.parental.on_session_changed(prev_id, GUEST_ACCOUNT_ID, locked=False)
             self.store.append_audit("guest_started", account_id=GUEST_ACCOUNT_ID)
             return self._session
 
     def lock_session(self) -> SessionState:
         with self._lock:
             self._ensure_open()
+            prev_id = self._session.account_id
             if self._session.is_guest:
                 self.storage.cleanup_guest_dir()
                 fallback = self._initial_session()
@@ -506,6 +539,7 @@ class AccountService:
                     picker_required=True,
                     elevated_until=0,
                 )
+            self.parental.on_session_changed(prev_id, self._session.account_id, locked=True)
             self.store.append_audit("session_locked", account_id=self._session.account_id)
             return self._session
 
@@ -556,7 +590,7 @@ class AccountService:
                 is_guest=self._session.is_guest,
             )
 
-    # --- Kindersicherung (Persistenz in Stufe 1) ---
+    # --- Kindersicherung ---
     def get_parental_policy(self, account_id: str) -> ParentalPolicy:
         with self._lock:
             self._ensure_open()
@@ -568,14 +602,87 @@ class AccountService:
     def set_parental_policy(self, account_id: str, policy_data: dict[str, Any]) -> ParentalPolicy:
         with self._lock:
             self._ensure_open()
-            policy = ParentalPolicy.from_dict(account_id, policy_data)
+            policy = validate_policy_data(account_id, policy_data)
             saved = self.store.set_parental_policy(policy)
+            self.parental.on_policy_updated(account_id)
             self.store.append_audit(
                 "parental_updated",
                 account_id=account_id,
                 actor_id=self._session.account_id,
             )
             return saved
+
+    def verify_parent_override(
+        self,
+        *,
+        factor: str,
+        secret: str,
+        action: str,
+        admin_id: str | None = None,
+        child_id: str | None = None,
+        tile_id: str = "",
+        minutes: int = 0,
+    ) -> dict[str, Any]:
+        """Prueft Eltern-PIN/Passwort (inkl. Cooldown/Hard-Lock) und erteilt eine temporaere Freigabe."""
+        with self._lock:
+            self._ensure_open()
+            target_child_id = (child_id or "").strip() or (
+                self._session.account_id if not self._session.is_guest else ""
+            )
+            child = self.store.get_account(target_child_id) if target_child_id else None
+            if not child or not child.active or child.role != "child":
+                raise PolicyError("account.err.invalid", "Child account required for override")
+
+            all_accounts = self.store.list_accounts()
+            admins = [a for a in all_accounts if a.role == "admin" and a.active]
+            admin: Account | None = None
+            if admin_id:
+                cand = self.store.get_account(admin_id.strip())
+                if not cand or not cand.active or cand.role != "admin":
+                    raise PolicyError("account.err.adminRequired", "Admin account required")
+                admin = cand
+            else:
+                if child.parent_id:
+                    cand = next((a for a in admins if a.id == child.parent_id and (a.has_pin or a.has_password)), None)
+                    if cand:
+                        admin = cand
+                if admin is None:
+                    admin = next((a for a in admins if a.has_pin or a.has_password), None)
+
+            if admin is None or not (admin.has_pin or admin.has_password):
+                raise PolicyError("account.err.parentAuthRequired", "Parent PIN or password required")
+
+            use_factor = factor.strip().lower()
+            if use_factor not in FACTORS:
+                raise ValidationError("account.err.invalid", "Invalid factor")
+
+            res = self.authenticate(admin.id, use_factor, secret)
+            if not res.ok:
+                raise AuthError(res.error, res.error, retry_after=res.retry_after)
+
+            act = action.strip().lower()
+            if act == "allow_once":
+                self.parental.grant_allow_once(child.id, tile_id)
+            elif act == "add_minutes":
+                self.parental.grant_extra_minutes(child.id, int(minutes))
+            else:
+                raise ValidationError("account.err.invalid", "Invalid override action")
+
+            self.store.append_audit(
+                "parental_override",
+                account_id=child.id,
+                actor_id=admin.id,
+                detail={"action": act, "tile_id": tile_id, "minutes": int(minutes)},
+            )
+            return {
+                "ok": True,
+                "action": act,
+                "account_id": child.id,
+                "admin_id": admin.id,
+                "tile_id": tile_id,
+                "minutes": int(minutes),
+                "parental": self.parental.status_for_session(child.id),
+            }
 
     def audit_entries(self, limit: int = 50) -> list[dict[str, Any]]:
         with self._lock:

@@ -617,6 +617,55 @@ class AccountStore:
             assert res is not None
             return res
 
+    def get_daily_usage(self, account_id: str, day: str) -> tuple[int, int]:
+        """Liefert (used_seconds, bonus_seconds) fuer einen Kalendertag."""
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT used_seconds, bonus_seconds FROM usage_daily WHERE account_id = ? AND day = ?",
+                (account_id, day),
+            ).fetchone()
+            if not row:
+                return 0, 0
+            return int(row["used_seconds"]), int(row["bonus_seconds"])
+
+    def add_usage_seconds(self, account_id: str, day: str, delta_seconds: int) -> tuple[int, int]:
+        """Addiert Nutzungssekunden atomar fuer einen Kalendertag."""
+        delta = int(delta_seconds)
+        with self._lock:
+            if not self.get_account(account_id):
+                raise NotFoundError("account.err.notFound", "Account not found")
+            if delta > 0:
+                self._conn.execute(
+                    "INSERT INTO usage_daily(account_id, day, used_seconds, bonus_seconds) VALUES (?, ?, ?, 0) "
+                    "ON CONFLICT(account_id, day) DO UPDATE SET "
+                    "used_seconds = usage_daily.used_seconds + excluded.used_seconds",
+                    (account_id, day, delta),
+                )
+            return self.get_daily_usage(account_id, day)
+
+    def add_bonus_seconds(self, account_id: str, day: str, delta_seconds: int) -> tuple[int, int]:
+        """Addiert Eltern-Bonussekunden atomar fuer einen Kalendertag."""
+        delta = int(delta_seconds)
+        with self._lock:
+            if not self.get_account(account_id):
+                raise NotFoundError("account.err.notFound", "Account not found")
+            if delta > 0:
+                self._conn.execute(
+                    "INSERT INTO usage_daily(account_id, day, used_seconds, bonus_seconds) VALUES (?, ?, 0, ?) "
+                    "ON CONFLICT(account_id, day) DO UPDATE SET "
+                    "bonus_seconds = usage_daily.bonus_seconds + excluded.bonus_seconds",
+                    (account_id, day, delta),
+                )
+            return self.get_daily_usage(account_id, day)
+
+    def reset_daily_usage(self, account_id: str, day: str) -> None:
+        """Loescht die Tagesnutzung eines Kontos."""
+        with self._lock:
+            self._conn.execute(
+                "DELETE FROM usage_daily WHERE account_id = ? AND day = ?",
+                (account_id, day),
+            )
+
     def append_audit(
         self,
         event: str,

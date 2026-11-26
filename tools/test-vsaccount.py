@@ -749,5 +749,452 @@ class VsAccountStage2BackendTests(unittest.TestCase):
         self.assertIn("read_api_token", vscommon_src)
 
 
+class VsAccountStage4ParentalTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.base = self.root / "voidstation"
+        self.runtime = self.root / "runtime"
+        self.base.mkdir(parents=True)
+        self.runtime.mkdir(parents=True)
+        # Mittags 12:00 lokale Zeit am Referenztag, leicht verschiebbar
+        self.clock = FakeClock(1_700_046_000.0)
+
+        self._orig_env = {
+            k: os.environ.get(k)
+            for k in ("VS_NO_DESKTOP_SYNC", "VS_SOUNDS", "XDG_RUNTIME_DIR", "VOIDSTATION_BASE")
+        }
+        os.environ["VS_NO_DESKTOP_SYNC"] = "1"
+        os.environ["VS_SOUNDS"] = "0"
+        os.environ["XDG_RUNTIME_DIR"] = str(self.runtime)
+        os.environ["VOIDSTATION_BASE"] = str(self.base)
+
+        self._orig_settings = launcher.SETTINGS
+        self._orig_config = launcher.CONFIG
+
+        self.tiles_path = self.base / "tiles.json"
+        self.settings_path = self.base / "settings.json"
+        self.tiles_path.write_text(
+            json.dumps(
+                {
+                    "title": "Start",
+                    "user": "Eltern",
+                    "groups": [
+                        {
+                            "name": "Unterhaltung",
+                            "tiles": [
+                                {"id": "tv", "label": "Fernsehen", "type": "tv"},
+                                {"id": "radio", "label": "Radio", "type": "radio"},
+                                {"id": "youtube", "label": "YouTube", "cmd": ["firefox", "--kiosk", "--no-remote", "--profile", "/tmp/p", "https://youtube.com"]},
+                            ],
+                        },
+                        {
+                            "name": "Spiele",
+                            "tiles": [
+                                {"id": "gba", "label": "GBA", "cmd": ["mgba-qt"]},
+                            ],
+                        },
+                        {
+                            "name": "System",
+                            "tiles": [
+                                {"id": "clock", "type": "clock"},
+                                {"id": "settings", "label": "Einstellungen", "type": "settings"},
+                                {"id": "appcenter", "label": "AppCenter", "type": "apps"},
+                                {"id": "firefox", "label": "Firefox", "cmd": ["firefox", "--no-remote", "--profile", "/tmp/ff", "about:home"]},
+                                {"id": "terminal", "label": "Terminal", "cmd": ["xterm"]},
+                            ],
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.settings_path.write_text(
+            json.dumps({"lang": "de", "theme": "default-dark", "padmouse": True, "sysupd_days": 90}),
+            encoding="utf-8",
+        )
+        launcher.CONFIG = self.tiles_path
+        launcher.SETTINGS = self.settings_path
+
+        self.token = launcher.init_api_token(runtime_dir=self.runtime)
+        self.svc = launcher.init_accounts(base_dir=self.base, runtime_dir=self.runtime, clock=self.clock)
+        self.admin = self.svc.list_accounts()[0]
+        self.svc.set_credential(self.admin.id, "pin", "2580")
+        self.svc.set_credential(self.admin.id, "password", "ElternGeheim99")
+        self.child = self.svc.create_account("Leo", role="child", parent_id=self.admin.id)
+
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), launcher.Handler)
+        self.port = self.httpd.server_port
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+
+    def tearDown(self) -> None:
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(timeout=2)
+        launcher.close_accounts()
+        launcher.CONFIG = self._orig_config
+        launcher.SETTINGS = self._orig_settings
+        with launcher._API_TOKEN_LOCK:
+            launcher._API_TOKEN = ""
+            launcher._RUNTIME_DIR_OVERRIDE = None
+        for k, v in self._orig_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        self.tmp.cleanup()
+
+    def _req(
+        self,
+        method: str,
+        path: str,
+        body: Any = None,
+        *,
+        xtv: bool = True,
+        token: str | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        headers: dict[str, str] = {}
+        if xtv:
+            headers["X-TV"] = "1"
+        tok = self.token if token is None else token
+        if tok:
+            headers[vsaccount.API_TOKEN_HEADER] = tok
+        data: bytes | None = None
+        if body is not None or method == "POST":
+            headers["Content-Type"] = "application/json"
+            data = json.dumps({} if body is None else body).encode("utf-8")
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}{path}",
+            data=data,
+            method=method,
+            headers=headers,
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                raw = resp.read().decode("utf-8", "replace")
+                return resp.status, json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as exc:
+            with exc:
+                raw = exc.read().decode("utf-8", "replace")
+                code = exc.code
+            try:
+                parsed = json.loads(raw) if raw else {}
+            except ValueError:
+                parsed = {"raw": raw}
+            return code, parsed
+
+    def test_policy_validation_bedtime_and_browser_detection(self) -> None:
+        from vsaccount import parental
+
+        with self.assertRaises(ValidationError):
+            parental.validate_policy_data(self.child.id, {"mode": "invalid"})
+        with self.assertRaises(ValidationError):
+            parental.validate_policy_data(self.child.id, {"max_age_rating": 21})
+        with self.assertRaises(ValidationError):
+            parental.validate_policy_data(self.child.id, {"bedtime_start": "20:00", "bedtime_end": ""})
+        with self.assertRaises(ValidationError):
+            parental.validate_policy_data(self.child.id, {"bedtime_start": "25:00", "bedtime_end": "07:00"})
+
+        import datetime
+        # Lokale Zeitpunkte deterministisch ueber datetime.timestamp() konstruieren
+        ts_2230 = datetime.datetime(2026, 11, 26, 22, 30).timestamp()
+        ts_0659 = datetime.datetime(2026, 11, 27, 6, 59).timestamp()
+        ts_0700 = datetime.datetime(2026, 11, 27, 7, 0).timestamp()
+        ts_1957 = datetime.datetime(2026, 11, 26, 19, 57).timestamp()
+        self.assertEqual(parental.in_bedtime("20:00", "07:00", ts_2230), (True, None))
+        self.assertEqual(parental.in_bedtime("20:00", "07:00", ts_0659), (True, None))
+        self.assertFalse(parental.in_bedtime("20:00", "07:00", ts_0700)[0])
+        self.assertEqual(parental.in_bedtime("20:00", "07:00", ts_1957), (False, 180))
+
+        ts_1400 = datetime.datetime(2026, 11, 26, 14, 0).timestamp()
+        ts_1256 = datetime.datetime(2026, 11, 26, 12, 56).timestamp()
+        self.assertEqual(parental.in_bedtime("13:00", "15:00", ts_1400), (True, None))
+        self.assertEqual(parental.in_bedtime("13:00", "15:00", ts_1256), (False, 240))
+
+        self.assertTrue(parental.is_browser_tile("firefox", "Browser"))
+        self.assertTrue(parental.is_browser_tile("braveorigin", "Browser"))
+        self.assertFalse(parental.is_browser_tile("youtube", "Streaming", ["firefox", "--kiosk", "https://youtube.com"]))
+        self.assertFalse(parental.is_browser_tile("ard", "Streaming", ["firefox", "--kiosk", "https://ardmediathek.de"]))
+
+    def test_usage_tracker_warnings_lock_and_extra_minutes(self) -> None:
+        import datetime
+
+        day_start = datetime.datetime(2026, 11, 26, 19, 40, 0).timestamp()
+        self.clock.now = day_start
+        self.svc.set_parental_policy(
+            self.child.id,
+            {
+                "mode": "allowlist",
+                "allowed_tiles": ["tv", "gba"],
+                "daily_limit_min": 10,
+                "bedtime_start": "20:00",
+                "bedtime_end": "07:00",
+            },
+        )
+        self.svc.switch_account(self.child.id)
+
+        # 9 x 30s = 270s genutzt, 330s uebrig -> noch keine Warnung
+        for _ in range(9):
+            self.clock.advance(30)
+            self.assertEqual(self.svc.parental.tick(30), [])
+
+        # 10. Tick -> 300s genutzt, 300s uebrig -> 5-Minuten-Warnung genau einmal
+        self.clock.advance(30)
+        evs_warn = self.svc.parental.tick(30)
+        self.assertEqual(len(evs_warn), 1)
+        self.assertEqual(evs_warn[0]["ev"], "account_warn")
+        self.assertEqual(evs_warn[0]["reason"], "daily_limit")
+        self.assertEqual(evs_warn[0]["minutes"], 5)
+
+        # Weitere Ticks bis 570s (19:49:30) wiederholen Warnung nicht
+        for _ in range(9):
+            self.clock.advance(30)
+            self.assertEqual(self.svc.parental.tick(30), [])
+
+        # 20. Tick -> 600s genutzt -> Sperre
+        self.clock.advance(30)
+        evs_lock = self.svc.parental.tick(30)
+        self.assertEqual(len(evs_lock), 1)
+        self.assertEqual(evs_lock[0]["ev"], "account_locked")
+        self.assertEqual(evs_lock[0]["reason"], "daily_limit")
+        self.assertEqual(self.svc.parental.tick(30), [])  # keine Doppel-Meldung
+
+        # Persistenz in usage_daily ueber Neustart
+        launcher.close_accounts()
+        self.svc = launcher.init_accounts(base_dir=self.base, runtime_dir=self.runtime, clock=self.clock)
+        self.svc.switch_account(self.child.id)
+        u = self.svc.parental.usage_summary(self.child.id)
+        self.assertGreaterEqual(u["used_seconds"], 600)
+        self.assertTrue(u["time_blocked"])
+
+        # +15 Bonus-Minuten heben Sperre auf; um 19:57 folgt Ruhezeit-Warnung, um 20:00 Ruhezeit-Sperre
+        self.svc.parental.grant_extra_minutes(self.child.id, 15)
+        self.assertFalse(self.svc.parental.usage_summary(self.child.id)["time_blocked"])
+        self.clock.now = datetime.datetime(2026, 11, 26, 19, 57, 0).timestamp()
+        bed_warn = self.svc.parental.tick(0)
+        self.assertEqual([e["reason"] for e in bed_warn], ["bedtime"])
+
+        self.clock.now = datetime.datetime(2026, 11, 26, 20, 1, 0).timestamp()
+        bed_lock = self.svc.parental.tick(0)
+        self.assertEqual(len(bed_lock), 1)
+        self.assertEqual(bed_lock[0]["ev"], "account_locked")
+        self.assertEqual(bed_lock[0]["reason"], "bedtime")
+
+        # +15 Minuten während Ruhezeit heben Ruhezeit temporär auf
+        self.svc.parental.grant_extra_minutes(self.child.id, 15)
+        self.assertFalse(self.svc.parental.usage_summary(self.child.id)["time_blocked"])
+
+    def test_http_enforcement_tiles_launch_roms_apps_settings_power_yt(self) -> None:
+        self.svc.set_parental_policy(
+            self.child.id,
+            {
+                "mode": "allowlist",
+                "allowed_tiles": ["tv", "gba"],
+                "blocked_tiles": ["terminal"],
+                "blocked_cats": ["Werkzeuge"],
+                "max_age_rating": 12,
+                "daily_limit_min": 60,
+                "allow_browser": False,
+                "allow_yt_search": False,
+                "allow_power_menu": False,
+            },
+        )
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": self.child.id})[0], 200)
+
+        c_tiles, tiles_data = self._req("GET", "/tiles.json", xtv=False, token="")
+        self.assertEqual(c_tiles, 200)
+        visible_ids = [t["id"] for g in tiles_data["groups"] for t in g["tiles"]]
+        self.assertEqual(set(visible_ids), {"tv", "gba", "clock", "settings"})
+
+        # Gesperrte Kacheln -> 403 account.blocked mit jeweiligem Grund
+        c_ff, d_ff = self._req("POST", "/api/launch/firefox")
+        self.assertEqual(c_ff, 403)
+        self.assertEqual(d_ff["error"], "account.blocked")
+        self.assertEqual(d_ff["reason"], "browser_blocked")
+        self.assertTrue(d_ff["override_allowed"])
+
+        c_term, d_term = self._req("POST", "/api/launch/terminal")
+        self.assertEqual(c_term, 403)
+        self.assertEqual(d_term["reason"], "tile_blocked")
+
+        c_rad, d_rad = self._req("POST", "/api/launch/radio")
+        self.assertEqual(c_rad, 403)
+        self.assertEqual(d_rad["reason"], "not_allowed")
+
+        c_ac, d_ac = self._req("POST", "/api/launch/appcenter")
+        self.assertEqual(c_ac, 403)
+        self.assertEqual(d_ac["reason"], "admin_only")
+        self.assertFalse(d_ac["override_allowed"])
+
+        # Nicht erlaubter Emulator via /api/roms/launch -> 403
+        c_rom, d_rom = self._req("POST", "/api/roms/launch", {"system": "psx", "file": "demo.chd"})
+        self.assertEqual(c_rom, 403)
+        self.assertEqual(d_rom["error"], "account.blocked")
+
+        # AppCenter- & System-Settings -> 403; Power -> 403; Theme -> 200
+        self.assertEqual(self._req("POST", "/api/apps/install", {"id": "gba"})[0], 403)
+        self.assertEqual(self._req("POST", "/api/settings/ssh", {"on": True})[0], 403)
+        self.assertEqual(self._req("POST", "/api/vpn/toggle", {})[0], 403)
+        c_pwr, d_pwr = self._req("POST", "/api/power/poweroff", {})
+        self.assertEqual(c_pwr, 403)
+        self.assertEqual(d_pwr["reason"], "power_blocked")
+        self.assertEqual(self._req("POST", "/api/settings/theme", {"theme": "nord"})[0], 200)
+
+        # YouTube Light Suche gesperrt
+        c_yt_st, d_yt_st = self._req("GET", "/api/yt/state", xtv=False, token="")
+        self.assertEqual(c_yt_st, 200)
+        self.assertFalse(d_yt_st["allow_search"])
+        c_yt_s, d_yt_s = self._req("GET", "/api/yt/search?q=mario", xtv=False, token="")
+        self.assertEqual(c_yt_s, 403)
+        self.assertEqual(d_yt_s["reason"], "yt_search_blocked")
+
+        # Gast-Modus mit guest_allowed_tiles filtert ebenfalls
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": self.admin.id, "pin": "2580"})[0], 200)
+        self.assertEqual(
+            self._req("POST", "/api/accounts/device-policy", {"guest_enabled": True, "guest_allowed_tiles": ["tv"]})[0],
+            200,
+        )
+        self.assertEqual(self._req("POST", "/api/session/guest", {"display_name": "Gast"})[0], 200)
+        _, g_tiles = self._req("GET", "/tiles.json", xtv=False, token="")
+        g_ids = {t["id"] for g in g_tiles["groups"] for t in g["tiles"]}
+        self.assertEqual(g_ids, {"tv", "clock", "settings"})
+        self.assertEqual(self._req("POST", "/api/launch/gba")[0], 403)
+
+    def test_parent_pin_override_throttling_and_rbac(self) -> None:
+        self.svc.set_parental_policy(
+            self.child.id,
+            {"mode": "allowlist", "allowed_tiles": ["tv"], "blocked_tiles": ["terminal"], "daily_limit_min": 1},
+        )
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": self.child.id})[0], 200)
+
+        # RBAC auf /api/accounts/parental
+        self.assertEqual(self._req("GET", "/api/accounts/parental", token="")[0], 403)
+        self.assertEqual(self._req("GET", f"/api/accounts/parental?account_id={self.admin.id}")[0], 403)
+        self.assertEqual(self._req("GET", "/api/accounts/parental")[0], 200)
+        self.assertEqual(self._req("POST", "/api/accounts/parental", {"account_id": self.child.id, "mode": "denylist"})[0], 403)
+
+        # Falsche Eltern-PIN -> 401 -> 429 Cooldown -> 423 Hard-Lock -> Entsperrung
+        for _ in range(3):
+            self.assertEqual(
+                self._req("POST", "/api/accounts/parental/override", {"action": "allow_once", "tile_id": "terminal", "pin": "0000"})[0],
+                401,
+            )
+        c_cd, d_cd = self._req(
+            "POST", "/api/accounts/parental/override", {"action": "allow_once", "tile_id": "terminal", "pin": "0000"}
+        )
+        self.assertEqual(c_cd, 429)
+        self.assertEqual(d_cd["error"], "account.cooldown")
+        self.clock.advance(d_cd["retry_after"] + 1)
+        for _ in range(4):
+            c_step, d_step = self._req(
+                "POST", "/api/accounts/parental/override", {"action": "allow_once", "tile_id": "terminal", "pin": "0000"}
+            )
+            if c_step == 423:
+                break
+            if d_step.get("retry_after"):
+                self.clock.advance(d_step["retry_after"] + 1)
+        self.assertEqual(c_step, 423)
+        self.svc.unlock_account(self.admin.id, "pin")
+
+        # Gueltige Eltern-PIN fuer "einmalig oeffnen" -> genau 1 Start erlaubt
+        orig_launch = launcher.APPS.launch
+        launched: list[str] = []
+        launcher.APPS.launch = lambda tile: (launched.append(tile["id"]), "started")[1]  # type: ignore[method-assign]
+        try:
+            c_ov, d_ov = self._req(
+                "POST",
+                "/api/accounts/parental/override",
+                {"action": "allow_once", "tile_id": "terminal", "pin": "2580"},
+            )
+            self.assertEqual(c_ov, 200)
+            self.assertTrue(d_ov["ok"])
+            self.assertEqual(self._req("POST", "/api/launch/terminal")[0], 200)
+            self.assertEqual(launched, ["terminal"])
+            self.assertEqual(self._req("POST", "/api/launch/terminal")[0], 403)
+
+            # Tageslimit erschoepft -> +15 Minuten per Eltern-PIN entsperrt wieder
+            from vsaccount import parental
+            self.svc.store.add_usage_seconds(self.child.id, parental.local_day_key(self.clock.now), 60)
+            self.assertEqual(self._req("POST", "/api/launch/tv")[0], 403)
+            c_add, d_add = self._req(
+                "POST",
+                "/api/accounts/parental/override",
+                {"action": "add_minutes", "minutes": 15, "pin": "2580"},
+            )
+            self.assertEqual(c_add, 200)
+            self.assertFalse(d_add["parental"]["locked"])
+            self.assertEqual(self._req("POST", "/api/launch/tv")[0], 200)
+        finally:
+            launcher.APPS.launch = orig_launch  # type: ignore[method-assign]
+
+    def test_push_events_and_gentle_pause(self) -> None:
+        orig_seq = launcher.OSK_FIELD.seq
+        orig_pause = launcher.APPS.pause_background
+        orig_close = launcher.APPS.close
+        orig_raise = launcher.raise_home
+        calls: list[str] = []
+        launcher.APPS.pause_background = lambda keep=None: calls.append("pause_bg")  # type: ignore[method-assign]
+        launcher.APPS.close = lambda tid: calls.append(f"close:{tid}")  # type: ignore[method-assign]
+        launcher.raise_home = lambda: (calls.append("raise_home"), True)[1]  # type: ignore[assignment]
+        try:
+            launcher._handle_parental_event({"ev": "account_warn", "reason": "daily_limit", "minutes": 4})
+            c1, d1 = self._req("GET", f"/api/osk/wait?seq={orig_seq}", xtv=False, token="")
+            self.assertEqual(c1, 200)
+            self.assertEqual(d1["ev"], "account_warn")
+            self.assertEqual(d1["minutes"], 4)
+
+            launcher._handle_parental_event({"ev": "account_locked", "reason": "daily_limit", "remaining_seconds": 0})
+            c2, d2 = self._req("GET", f"/api/osk/wait?seq={d1['seq']}", xtv=False, token="")
+            self.assertEqual(c2, 200)
+            self.assertEqual(d2["ev"], "account_locked")
+            self.assertIn("raise_home", calls)
+            self.assertFalse(any(c.startswith("close:") for c in calls))
+        finally:
+            launcher.APPS.pause_background = orig_pause  # type: ignore[method-assign]
+            launcher.APPS.close = orig_close  # type: ignore[method-assign]
+            launcher.raise_home = orig_raise  # type: ignore[assignment]
+
+    def test_browser_profile_isolation_and_i18n_sync(self) -> None:
+        # Admin nutzt unveraenderte Argumente
+        admin_args = launcher.prepare_browser_args(
+            "firefox",
+            ["firefox", "--kiosk", "--no-remote", "--profile", "/legacy/yt", "https://youtube.com"],
+            self.svc,
+        )
+        self.assertIn("/legacy/yt", admin_args)
+
+        # Kind bekommt isolierten Profilordner unter accounts/data/<child_id>/browser/<app>
+        self.svc.switch_account(self.child.id)
+        ff_args = launcher.prepare_browser_args(
+            "firefox",
+            ["firefox", "--no-remote", "--profile", "/legacy/ff", "about:home"],
+            self.svc,
+        )
+        expected_ff = str(self.base / "accounts" / "data" / self.child.id / "browser" / "firefox")
+        self.assertEqual(ff_args[ff_args.index("--profile") + 1], expected_ff)
+        self.assertTrue((Path(expected_ff) / "user.js").is_file())
+
+        cr_args = launcher.prepare_browser_args("chromium", ["chromium", "https://example.com"], self.svc)
+        expected_cr = str(self.base / "accounts" / "data" / self.child.id / "browser" / "chromium")
+        self.assertIn(f"--user-data-dir={expected_cr}", cr_args)
+
+        br_args = launcher.prepare_browser_args("braveorigin", ["/opt/braveorigin/AppRun"], self.svc)
+        expected_br = str(self.base / "accounts" / "data" / self.child.id / "browser" / "braveorigin")
+        self.assertIn(f"--user-data-dir={expected_br}", br_args)
+
+        # i18n-Sync fuer parental.* in de.json und en.json
+        import re as _re
+        de = json.loads((REPO / "launcher" / "web" / "i18n" / "de.json").read_text(encoding="utf-8"))
+        en = json.loads((REPO / "launcher" / "web" / "i18n" / "en.json").read_text(encoding="utf-8"))
+        pkeys_de = {k for k in de if k.startswith("parental.")}
+        pkeys_en = {k for k in en if k.startswith("parental.")}
+        self.assertEqual(pkeys_de, pkeys_en)
+        self.assertGreaterEqual(len(pkeys_de), 35)
+        ph = _re.compile(r"\{[A-Za-z0-9_]+\}")
+        for k in pkeys_de:
+            self.assertEqual(set(ph.findall(de[k])), set(ph.findall(en[k])), f"Placeholder mismatch in {k}")
+
+
 if __name__ == "__main__":
     unittest.main()
