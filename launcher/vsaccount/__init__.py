@@ -471,10 +471,10 @@ class AccountService:
                 if not res.ok:
                     raise AuthError(res.error, res.error, retry_after=res.retry_after)
             else:
-                if self._session.role == "child" and not self._session.is_guest and acc.role == "admin":
+                if self._session.role == "child" and not self._session.is_guest and acc.role != "child":
                     raise PolicyError(
                         "account.err.parentAuthRequired",
-                        "Admin account requires PIN or password",
+                        "Switching from a child session requires a PIN or password on the target account",
                     )
                 self.store.touch_login(acc.id)
 
@@ -504,6 +504,8 @@ class AccountService:
             policy = self.store.get_device_policy()
             if not policy.guest_enabled:
                 raise PolicyError("account.err.guestDisabled", "Guest mode is disabled")
+            if self._session.role == "child" and not self._session.is_guest:
+                raise PolicyError("account.err.blocked", "Guest mode is not available from a child session")
             prev_id = self._session.account_id
             self.storage.prepare_guest_dir()
             self._session = SessionState(

@@ -972,6 +972,8 @@ class H(S.H):
                     return self.j_status(401, {"error": "account.err.invalid"})
                 if err is not None:
                     return self.j_status(code, err)
+            elif ACC_STATE["session"]["role"] == "child" and not ACC_STATE["session"]["is_guest"] and acc["role"] != "child":
+                return self.j_status(403, {"error": "account.err.parentAuthRequired"})
             ACC_STATE["session"] = {
                 "account_id": acc["id"], "display_name": acc["display_name"], "role": acc["role"],
                 "avatar": acc["avatar"], "color": acc["color"], "is_guest": False,
@@ -994,6 +996,8 @@ class H(S.H):
         if p == "/api/session/guest":
             if not ACC_STATE["policy"]["guest_enabled"]:
                 return self.j_status(403, {"error": "account.err.guestDisabled"})
+            if ACC_STATE["session"]["role"] == "child" and not ACC_STATE["session"]["is_guest"]:
+                return self.j_status(403, {"error": "account.err.blocked"})
             ACC_STATE["session"] = {
                 "account_id": "guest", "display_name": str(body.get("display_name") or "Gast"), "role": "guest",
                 "avatar": "user", "color": "#3a3f46", "is_guest": True,

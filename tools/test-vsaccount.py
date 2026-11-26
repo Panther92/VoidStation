@@ -1802,28 +1802,74 @@ class VsAccountRegressionAndCatalogTests(unittest.TestCase):
             200,
         )
 
-        # 5. In Kinderkonto wechseln -> Rueckwechsel zum Admin ohne/mit falscher PIN blockiert, mit PIN klappt
+        # 5. Gastmodus aktivieren + zweites Kinderkonto anlegen
+        self.assertEqual(
+            self._req("POST", "/api/accounts/device-policy", {"guest_enabled": True})[0],
+            200,
+        )
+        c_child2, d_child2 = self._req(
+            "POST",
+            "/api/accounts/create",
+            {"display_name": "Kind2", "role": "child", "parent_id": admin.id},
+        )
+        self.assertEqual(c_child2, 200)
+        child2_id = d_child2["account"]["id"]
+
+        # 6. In Kinderkonto wechseln -> Rueckwechsel zum Admin ohne/mit falscher PIN blockiert
         self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": child_id})[0], 200)
         c_bypass, _ = self._req("POST", "/api/session/switch", {"account_id": admin.id})
         self.assertEqual(c_bypass, 401)
         c_wrong, _ = self._req("POST", "/api/session/switch", {"account_id": admin.id, "pin": "9999"})
         self.assertEqual(c_wrong, 401)
 
-        # Defense-in-Depth: Zweiter ungeschuetzter Admin darf aus Kindersitzung ebenfalls nicht ohne Schutz geoeffnet werden
+        # Defense-in-Depth: Zweiter ungeschuetzter Admin darf aus Kindersitzung ebenfalls nicht geoeffnet werden
         unprotected_admin = self.svc.create_account("ZweiterAdmin", role="admin")
         c_unprot, d_unprot = self._req("POST", "/api/session/switch", {"account_id": unprotected_admin.id})
         self.assertEqual(c_unprot, 403)
         self.assertEqual(d_unprot["error"], "account.err.parentAuthRequired")
+
+        # Ungeschuetztes Standardkonto und Gast-Modus sind aus Kindersitzung ebenfalls gesperrt
+        c_std_bypass, d_std_bypass = self._req("POST", "/api/session/switch", {"account_id": std_id})
+        self.assertEqual(c_std_bypass, 403)
+        self.assertEqual(d_std_bypass["error"], "account.err.parentAuthRequired")
+        c_guest_bypass, d_guest_bypass = self._req("POST", "/api/session/guest")
+        self.assertEqual(c_guest_bypass, 403)
+        self.assertEqual(d_guest_bypass["error"], "account.err.blocked")
+
+        # Auch nach Sperren der Kindersitzung bleibt der Umweg ueber Standardkonto ohne PIN und Gast gesperrt
+        self.assertEqual(self._req("POST", "/api/session/lock")[0], 200)
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": std_id})[0], 403)
+        self.assertEqual(self._req("POST", "/api/session/guest")[0], 403)
+
+        # Wechsel auf ein anderes Kinderkonto klappt ohne PIN
+        c_c2, d_c2 = self._req("POST", "/api/session/switch", {"account_id": child2_id})
+        self.assertEqual(c_c2, 200)
+        self.assertEqual(d_c2["session"]["account_id"], child2_id)
 
         # Richtige PIN wechselt sauber zurueck zum Admin
         c_ok, d_ok = self._req("POST", "/api/session/switch", {"account_id": admin.id, "pin": "2580"})
         self.assertEqual(c_ok, 200)
         self.assertEqual(d_ok["session"]["account_id"], admin.id)
 
-        # UI- und i18n-Check fuer die direkte Eltern-PIN-Fuehrung
+        # Standardkonto mit PIN schuetzen -> Wechsel aus Kindersitzung erfordert PIN, Gast bleibt ab Admin erlaubt
+        self.assertEqual(
+            self._req("POST", "/api/accounts/credentials", {"account_id": std_id, "action": "set", "factor": "pin", "pin": "1357"})[0],
+            200,
+        )
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": child_id})[0], 200)
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": std_id})[0], 401)
+        c_std_ok, d_std_ok = self._req("POST", "/api/session/switch", {"account_id": std_id, "pin": "1357"})
+        self.assertEqual(c_std_ok, 200)
+        self.assertEqual(d_std_ok["session"]["account_id"], std_id)
+        self.assertEqual(self._req("POST", "/api/session/guest")[0], 200)
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": admin.id, "pin": "2580"})[0], 200)
+
+        # UI- und i18n-Check fuer die direkte Eltern-PIN-Fuehrung und Picker-Filter
         edit_qml = (REPO / "launcher" / "qt" / "qml" / "AccountEditDialog.qml").read_text(encoding="utf-8")
         self.assertIn("childNeedsParentAuth", edit_qml)
         self.assertIn("startParentPinFlow", edit_qml)
+        picker_qml = (REPO / "launcher" / "qt" / "qml" / "AccountPickerLayer.qml").read_text(encoding="utf-8")
+        self.assertIn("fromChildSession", picker_qml)
         de = json.loads((REPO / "launcher" / "web" / "i18n" / "de.json").read_text(encoding="utf-8"))
         en = json.loads((REPO / "launcher" / "web" / "i18n" / "en.json").read_text(encoding="utf-8"))
         for k in ("account.childNeedsParentAuth", "account.setParentPin", "account.setParentPinTitle"):
