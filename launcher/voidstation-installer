@@ -1476,14 +1476,14 @@ def bootstrap_account(target: Path, login: str, user_cfg: dict[str, Any], runner
     boot_secret = target / "root" / ".voidstation-account-bootstrap.json"
     boot_secret.parent.mkdir(parents=True, exist_ok=True)
     boot_secret.unlink(missing_ok=True)
-    auto_login = bool(user_cfg.get("auto_login", True))
+    pin = str(user_cfg.get("pin") or "")
+    auto_login = False if pin else bool(user_cfg.get("auto_login", True))
     payload: dict[str, Any] = {
         "display_name": str(user_cfg["name"]),
         "password": str(user_cfg["password"]),
         "auto_login": auto_login,
         "ask_on_boot": not auto_login,
     }
-    pin = str(user_cfg.get("pin") or "")
     if pin:
         payload["pin"] = pin
     fd = os.open(boot_secret, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
@@ -1553,8 +1553,8 @@ def validate(cfg):
         pin = ""
     if not isinstance(pin, str) or (pin != "" and not re.fullmatch(r"\d{4,8}", pin)):
         return "bad_pin"
-    auto_login = u.get("auto_login", True)
-    if not isinstance(auto_login, bool):
+    auto_login = u.get("auto_login", not bool(pin))
+    if not isinstance(auto_login, bool) or (pin and auto_login):
         return "bad_config"
     if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]{0,13}[A-Za-z0-9])?", cfg.get("hostname", "")):
         return "bad_hostname"
@@ -1724,8 +1724,12 @@ def cmd_text(_args):
             pin = p1
             break
         print("PINs sind nicht gleich.")
-    auto_ans = input("Automatisch anmelden? [J/n]: ").strip().lower()
-    auto_login = auto_ans not in ("n", "no", "nein")
+    if pin:
+        auto_login = False
+        print("Hinweis: Mit TV-PIN ist automatisches Anmelden deaktiviert.")
+    else:
+        auto_ans = input("Automatisch anmelden? [J/n]: ").strip().lower()
+        auto_login = auto_ans not in ("n", "no", "nein")
     host = input("Rechnername [tv]: ").strip() or "tv"
     if input(f"ALLE Daten auf {disk} loeschen? JA eintippen: ") != "JA":
         print("Abgebrochen."); return 1

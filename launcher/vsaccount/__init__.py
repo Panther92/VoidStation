@@ -471,10 +471,10 @@ class AccountService:
                 if not res.ok:
                     raise AuthError(res.error, res.error, retry_after=res.retry_after)
             else:
-                if self._session.role == "child" and not self._session.is_guest and acc.role != "child":
+                if acc.role != "child" and self.store.has_active_child_accounts():
                     raise PolicyError(
                         "account.err.parentAuthRequired",
-                        "Switching from a child session requires a PIN or password on the target account",
+                        "Non-child account requires a PIN or password while child accounts exist",
                     )
                 self.store.touch_login(acc.id)
 

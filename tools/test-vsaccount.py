@@ -1349,7 +1349,7 @@ class VsAccountStage5Tests(unittest.TestCase):
         base_cfg: dict[str, Any] = {
             "mode": "whole",
             "disk": "/dev/sda",
-            "user": {"name": "Anna", "login": "vstestuser", "password": "StartPass!1", "pin": "2580", "auto_login": True},
+            "user": {"name": "Anna", "login": "vstestuser", "password": "StartPass!1", "pin": "2580", "auto_login": False},
             "hostname": "tv",
             "lang": "de",
             "keymap": "de",
@@ -1364,8 +1364,12 @@ class VsAccountStage5Tests(unittest.TestCase):
 
             cfg_no_pin = json.loads(json.dumps(base_cfg))
             cfg_no_pin["user"]["pin"] = ""
-            cfg_no_pin["user"]["auto_login"] = False
+            cfg_no_pin["user"]["auto_login"] = True
             self.assertIsNone(inst.validate(cfg_no_pin))
+
+            cfg_pin_auto = json.loads(json.dumps(base_cfg))
+            cfg_pin_auto["user"]["auto_login"] = True
+            self.assertEqual(inst.validate(cfg_pin_auto), "bad_config")
 
             cfg_bad_pin = json.loads(json.dumps(base_cfg))
             cfg_bad_pin["user"]["pin"] = "12"
@@ -1378,6 +1382,10 @@ class VsAccountStage5Tests(unittest.TestCase):
             cfg_bad_auto = json.loads(json.dumps(base_cfg))
             cfg_bad_auto["user"]["auto_login"] = "yes"
             self.assertEqual(inst.validate(cfg_bad_auto), "bad_config")
+
+        inst_qml = (REPO / "launcher" / "qt" / "qml" / "InstallLayer.qml").read_text(encoding="utf-8")
+        self.assertIn("inst.autoLoginPinDisabled", inst_qml)
+        self.assertIn("onPinChanged", inst_qml)
 
         # Secret-Scrubbing in log() und redact_state()
         log_dir = self.root / "inst-run"
@@ -1907,10 +1915,13 @@ class VsAccountRegressionAndCatalogTests(unittest.TestCase):
             self._req("POST", "/api/accounts/create", {"display_name": "Kind", "role": "child", "parent_id": admin.id})[0],
             200,
         )
-        self.assertEqual(
-            self._req("POST", "/api/accounts/create", {"display_name": "StandardAuto", "role": "standard", "auto_login": True})[0],
-            200,
+        c_std, d_std = self._req(
+            "POST",
+            "/api/accounts/create",
+            {"display_name": "StandardAuto", "role": "standard", "auto_login": True},
         )
+        self.assertEqual(c_std, 200)
+        std_id = d_std["account"]["id"]
 
         # Dienst neu starten -> muss gesperrt in der Kontoauswahl landen (nie "admin, entsperrt")
         self.svc = launcher.init_accounts(base_dir=self.base, runtime_dir=self.runtime, clock=self.clock)
@@ -1924,9 +1935,38 @@ class VsAccountRegressionAndCatalogTests(unittest.TestCase):
         self.assertTrue(d_sess["session"]["locked"])
         self.assertTrue(d_sess["session"]["picker_required"])
 
-        # Admin-Wechsel ohne PIN abgelehnt, mit PIN erfolgreich
+        # In der Kontoauswahl nach Neustart darf das ungeschuetzte Standardkonto nicht ohne PIN geoeffnet werden
+        c_std_boot, d_std_boot = self._req("POST", "/api/session/switch", {"account_id": std_id})
+        self.assertEqual(c_std_boot, 403)
+        self.assertEqual(d_std_boot["error"], "account.err.parentAuthRequired")
+
+        # Admin-Wechsel ohne PIN abgelehnt, mit PIN erfolgreich; auch aus entsperrtem Admin heraus bleibt ungeschuetztes Standardkonto gesperrt
         self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": admin.id})[0], 401)
         self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": admin.id, "pin": "2580"})[0], 200)
+        c_std_admin, d_std_admin = self._req("POST", "/api/session/switch", {"account_id": std_id})
+        self.assertEqual(c_std_admin, 403)
+        self.assertEqual(d_std_admin["error"], "account.err.parentAuthRequired")
+
+        # Nach Setzen einer PIN auf das Standardkonto klappt der Wechsel mit PIN; Entfernen der letzten PIN bleibt blockiert
+        self.assertEqual(
+            self._req("POST", "/api/accounts/credentials", {"account_id": std_id, "action": "set", "factor": "pin", "pin": "1357"})[0],
+            200,
+        )
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": std_id, "pin": "1357"})[0], 200)
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": admin.id, "pin": "2580"})[0], 200)
+        c_rm_std, d_rm_std = self._req(
+            "POST",
+            "/api/accounts/credentials",
+            {"account_id": std_id, "action": "remove", "factor": "pin"},
+        )
+        self.assertEqual(c_rm_std, 403)
+        self.assertEqual(d_rm_std["error"], "account.err.parentAuthRequired")
+
+        # UI-Checks fuer Liste ungeschuetzter Konten und Picker-Filter
+        edit_qml = (REPO / "launcher" / "qt" / "qml" / "AccountEditDialog.qml").read_text(encoding="utf-8")
+        self.assertIn("unprotectedNonChildAccounts", edit_qml)
+        picker_qml = (REPO / "launcher" / "qt" / "qml" / "AccountPickerLayer.qml").read_text(encoding="utf-8")
+        self.assertIn("hasActiveChild", picker_qml)
 
     def test_catalog_age_rating_and_audit_regressions(self) -> None:
         # 1. catalog.json optional age_rating (rueckwaertskompatibel) + bool-Schutz

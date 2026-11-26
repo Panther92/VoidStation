@@ -253,11 +253,15 @@ class AccountStore:
         ).fetchone()
         return int(row["n"]) if row else 0
 
+    def has_active_child_accounts(self) -> bool:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT 1 FROM accounts WHERE role = 'child' AND active = 1 LIMIT 1"
+            ).fetchone()
+            return row is not None
+
     def _has_active_child_accounts(self) -> bool:
-        row = self._conn.execute(
-            "SELECT 1 FROM accounts WHERE role = 'child' AND active = 1 LIMIT 1"
-        ).fetchone()
-        return row is not None
+        return self.has_active_child_accounts()
 
     def create_account(
         self,
@@ -461,14 +465,14 @@ class AccountStore:
             acc = self.get_account(account_id)
             if not acc:
                 raise NotFoundError("account.err.notFound", "Account not found")
-            if acc.role == "admin":
+            if acc.role != "child":
                 leaves_unprotected = (factor == "pin" and not acc.has_password) or (
                     factor == "password" and not acc.has_pin
                 )
                 if leaves_unprotected and self._has_active_child_accounts():
                     raise PolicyError(
                         "account.err.parentAuthRequired",
-                        "Cannot remove last admin credential while child accounts exist",
+                        "Cannot remove last non-child credential while child accounts exist",
                     )
             self._conn.execute("BEGIN")
             try:

@@ -972,7 +972,7 @@ class H(S.H):
                     return self.j_status(401, {"error": "account.err.invalid"})
                 if err is not None:
                     return self.j_status(code, err)
-            elif ACC_STATE["session"]["role"] == "child" and not ACC_STATE["session"]["is_guest"] and acc["role"] != "child":
+            elif acc["role"] != "child" and any(a["role"] == "child" and a.get("active", True) for a in ACC_STATE["accounts"]):
                 return self.j_status(403, {"error": "account.err.parentAuthRequired"})
             ACC_STATE["session"] = {
                 "account_id": acc["id"], "display_name": acc["display_name"], "role": acc["role"],
@@ -1108,7 +1108,7 @@ class H(S.H):
                         return self.j_status(code, err)
             sec = ACC_STATE["secrets"].setdefault(aid, {})
             if action == "remove":
-                if acc["role"] == "admin":
+                if acc["role"] != "child":
                     has_children = any(a["role"] == "child" and a.get("active", True) for a in ACC_STATE["accounts"])
                     rem_pin = bool(sec.get("pin")) and factor != "pin"
                     rem_pw = bool(sec.get("password")) and factor != "password"

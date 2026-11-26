@@ -27,6 +27,7 @@ Layer {
     property string pw2: ""
     property string pin: ""
     property bool autoLogin: true
+    onPinChanged: if (pin.length > 0 && autoLogin) autoLogin = false
     property string host: "tv"
     property string hostEdit: ""
     property int field: 0
@@ -410,7 +411,7 @@ Layer {
             { k: T("inst.sumDisk"), html: "<b>" + Ui.esc(diskName(d)) + " · " + Ui.esc(gb(d.size)) + "</b><br>" + Ui.esc(eff) },
             { k: T("inst.sumAccount"), html: "<b>" + Ui.esc(name) + "</b> · " + Ui.esc(T("inst.sumLogin", { login: loginOf(name) }))
                                            + " · " + Ui.esc(T(pin.length > 0 ? "inst.sumPinSet" : "inst.sumPinNone"))
-                                           + " · " + Ui.esc(T(autoLogin ? "inst.sumAutoLoginOn" : "inst.sumAutoLoginOff")) },
+                                           + " · " + Ui.esc(T((autoLogin && pin.length === 0) ? "inst.sumAutoLoginOn" : "inst.sumAutoLoginOff")) },
             { k: T("inst.sumDevice"), html: "<b>" + Ui.esc(host) + "</b> · " + Ui.esc(langName(lang)) + " · " + Ui.esc(tzLabel(tz).split(" · ")[0])
                                            + (probe.screen ? " · " + probe.screen.mode.replace("x", "\u00d7") : "") },
             { k: T("inst.sumUpdates"), v: T("inst.sumChannel") },
@@ -530,7 +531,7 @@ Layer {
         }
     }
     function config() {
-        var u = { name: name, login: loginOf(name), password: pw, auto_login: autoLogin }
+        var u = { name: name, login: loginOf(name), password: pw, auto_login: pin.length > 0 ? false : autoLogin }
         if (pin.length > 0) u.pin = pin
         var c = { mode: mode, disk: disk.path, user: u, hostname: host,
                   lang: lang, keymap: keymap, timezone: tz, wifi: wifi && !!(probe.wifi_saved || []).length,
@@ -961,7 +962,15 @@ Layer {
                         sound: "toggle"
                         width: parent.width
                         height: autoRow.implicitHeight + 14 * Ui.f + 4
-                        onTriggered: il.autoLogin = !il.autoLogin
+                        opacity: il.pin.length > 0 ? 0.6 : 1.0
+                        onTriggered: {
+                            if (il.pin.length > 0) {
+                                il.autoLogin = false
+                                app.toast(Ui.t("inst.autoLoginPinDisabled"))
+                            } else {
+                                il.autoLogin = !il.autoLogin
+                            }
+                        }
                         Rectangle {
                             anchors.fill: parent
                             color: Ui.c.surfaceRaised
@@ -977,15 +986,21 @@ Layer {
                                 width: parent.width - autoBadge.width - 10 * Ui.f
                                 anchors.verticalCenter: parent.verticalCenter
                                 Txt { width: parent.width; text: Ui.t("inst.autoLogin"); font.pixelSize: 12.5 * Ui.f; color: Ui.c.textDim }
-                                Txt { width: parent.width; text: Ui.t(il.autoLogin ? "inst.autoLoginOn" : "inst.autoLoginOff"); font.pixelSize: 15.5 * Ui.f }
+                                Txt {
+                                    width: parent.width
+                                    text: il.pin.length > 0 ? Ui.t("inst.autoLoginPinDisabled") : Ui.t(il.autoLogin ? "inst.autoLoginOn" : "inst.autoLoginOff")
+                                    font.pixelSize: 15.5 * Ui.f
+                                    wrapMode: Text.WordWrap
+                                    elide: Text.ElideNone
+                                }
                             }
                             Rectangle {
                                 id: autoBadge
                                 width: autoBadgeTxt.implicitWidth + 18 * Ui.f
                                 height: autoBadgeTxt.implicitHeight + 8 * Ui.f
                                 anchors.verticalCenter: parent.verticalCenter
-                                color: il.autoLogin ? Ui.c.statusOkBg : Ui.c.surfaceCard
-                                Txt { id: autoBadgeTxt; anchors.centerIn: parent; text: Ui.t(il.autoLogin ? "common.on" : "common.off"); font.pixelSize: 13.5 * Ui.f; elide: Text.ElideNone }
+                                color: (il.autoLogin && il.pin.length === 0) ? Ui.c.statusOkBg : Ui.c.surfaceCard
+                                Txt { id: autoBadgeTxt; anchors.centerIn: parent; text: Ui.t((il.autoLogin && il.pin.length === 0) ? "common.on" : "common.off"); font.pixelSize: 13.5 * Ui.f; elide: Text.ElideNone }
                             }
                         }
                     }

@@ -20,7 +20,7 @@ Rectangle {
     property bool editAutoLogin: false
     property string pendingPin: ""                // nur beim Erstellen vorgemerkt
     property string pendingPassword: ""           // nur beim Erstellen vorgemerkt
-    property bool pinForParent: false
+    property var pinTargetAccount: null
 
     readonly property bool isNew: !account
     readonly property bool isAdmin: !!(app.session && app.session.role === "admin" && !app.session.is_guest)
@@ -28,6 +28,10 @@ Rectangle {
     readonly property var colorChoices: ["#2d4a6b", "#2f6d4f", "#553a6e", "#74461f", "#6e2b3c", "#2b5b66"]
     readonly property var adminAccounts: (app.accountsList || []).filter(function (a) {
         return a.role === "admin" && a.active !== false && (!ed.account || a.id !== ed.account.id)
+    })
+    readonly property var unprotectedNonChildAccounts: (app.accountsList || []).filter(function (a) {
+        return a.active !== false && a.role !== "child" && !a.has_pin && !a.has_password
+            && (!ed.account || a.id !== ed.account.id)
     })
     readonly property var selectedParentAccount: {
         var admins = adminAccounts
@@ -55,7 +59,7 @@ Rectangle {
         onSavedCb = onSaved || null
         subView = "form"
         busy = false
-        pinForParent = false
+        pinTargetAccount = null
         pendingPin = ""
         pendingPassword = ""
         nameField.value = acc ? (acc.display_name || "") : ""
@@ -77,7 +81,7 @@ Rectangle {
         if (!open) return
         open = false
         busy = false
-        pinForParent = false
+        pinTargetAccount = null
         subView = "form"
         editPinPad.reset()
         app.updateLayer()
@@ -92,7 +96,7 @@ Rectangle {
     function handleBack() {
         if (busy) return true
         if (subView !== "form") {
-            pinForParent = false
+            pinTargetAccount = null
             subView = "form"
             focusView()
             return true
@@ -101,11 +105,16 @@ Rectangle {
         return true
     }
 
-    function startParentPinFlow() {
-        pinForParent = true
+    function startPinForAccount(acc) {
+        if (!acc) return
+        pinTargetAccount = acc
         editPinPad.reset()
         subView = "pin"
         focusView()
+    }
+
+    function startParentPinFlow() {
+        startPinForAccount(ed.selectedParentAccount)
     }
 
     function focusView() {
@@ -207,20 +216,14 @@ Rectangle {
     }
 
     function submitPin(pin) {
-        if (ed.pinForParent) {
-            var parentAcc = ed.selectedParentAccount
-            if (!parentAcc) {
-                pinForParent = false
-                subView = "form"
-                focusView()
-                return
-            }
+        if (ed.pinTargetAccount) {
+            var targetAcc = ed.pinTargetAccount
             busy = true
             editPinPad.busy = true
-            Api.post("/api/accounts/credentials", { account_id: parentAcc.id, action: "set", factor: "pin", pin: pin }, function (res) {
+            Api.post("/api/accounts/credentials", { account_id: targetAcc.id, action: "set", factor: "pin", pin: pin }, function (res) {
                 busy = false
                 editPinPad.busy = false
-                pinForParent = false
+                pinTargetAccount = null
                 if (res && res.account) {
                     var list = (app.accountsList || []).slice()
                     for (var i = 0; i < list.length; i++) {
@@ -498,12 +501,13 @@ Rectangle {
                     }
                 }
 
-                // Hinweis + Direkteinstieg zur Eltern-PIN, wenn Eltern-Konto noch keinen Schutz hat
+                // Hinweis + Direkteinstieg zur PIN, wenn Eltern- oder andere Nicht-Kinderkonten noch keinen Schutz haben
                 Column {
-                    visible: ed.childNeedsParentAuth
+                    visible: ed.isAdmin && ed.editRole === "child" && ed.unprotectedNonChildAccounts.length > 0
                     width: parent.width
                     spacing: 8 * Ui.f
                     Txt {
+                        visible: ed.childNeedsParentAuth
                         width: parent.width
                         wrapMode: Text.Wrap
                         elide: Text.ElideNone
@@ -513,10 +517,27 @@ Rectangle {
                             ? Ui.t("account.childNeedsParentAuth", { name: ed.selectedParentAccount.display_name })
                             : ""
                     }
-                    Pill {
-                        text: Ui.t("account.setParentPin")
-                        on: true
-                        onTriggered: ed.startParentPinFlow()
+                    Txt {
+                        width: parent.width
+                        wrapMode: Text.Wrap
+                        elide: Text.ElideNone
+                        font.pixelSize: 14 * Ui.f
+                        color: Ui.c.textDim
+                        text: Ui.t("account.childUnprotectedAccounts", {
+                            names: ed.unprotectedNonChildAccounts.map(function (a) { return a.display_name }).join(", ")
+                        })
+                    }
+                    Flow {
+                        width: parent.width
+                        spacing: 8 * Ui.f
+                        Repeater {
+                            model: ed.unprotectedNonChildAccounts
+                            Pill {
+                                text: Ui.t("account.setPinForAccount", { name: modelData.display_name })
+                                on: !!ed.selectedParentAccount && modelData.id === ed.selectedParentAccount.id
+                                onTriggered: ed.startPinForAccount(modelData)
+                            }
+                        }
                     }
                 }
 
@@ -710,8 +731,8 @@ Rectangle {
 
             Txt {
                 width: parent.width
-                text: (ed.pinForParent && ed.selectedParentAccount)
-                    ? Ui.t("account.setParentPinTitle", { name: ed.selectedParentAccount.display_name })
+                text: ed.pinTargetAccount
+                    ? Ui.t("account.setPinForAccount", { name: ed.pinTargetAccount.display_name })
                     : Ui.t((ed.account && ed.account.has_pin) || ed.pendingPin ? "account.changePin" : "account.setPin")
                 font.pixelSize: 24 * Ui.f
                 font.weight: Font.Light

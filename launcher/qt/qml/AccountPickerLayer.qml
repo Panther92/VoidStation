@@ -15,11 +15,12 @@ Layer {
     property bool busy: false
 
     readonly property bool fromChildSession: !!(app.session && app.session.role === "child" && !app.session.is_guest)
+    readonly property bool hasActiveChild: (accountsList || []).some(function (a) { return a.active !== false && a.role === "child" })
     readonly property var fit: Ui.fitRows(stage.height - 24 * Ui.f, Ui.u * 1.05, Ui.gap, 2)
     readonly property var tileItems: {
         var list = (accountsList || []).filter(function (a) {
             if (a.active === false) return false
-            if (fromChildSession && a.role !== "child" && !a.has_pin && !a.has_password) return false
+            if (hasActiveChild && a.role !== "child" && !a.has_pin && !a.has_password) return false
             return true
         }).map(function (a) { return Object.assign({ kind: "account" }, a) })
         if (policy && policy.guest_enabled && !fromChildSession) {
