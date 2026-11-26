@@ -13,8 +13,26 @@
 #                          Oberflaeche nicht (geht auch per SSH, wenn die Startseite haengt)
 # vsctl / vsctl help    -> diese Uebersicht
 # Tab-Vervollstaendigung (Befehle, Kachel-IDs): /etc/bash/bashrc.d/voidstation.sh
-URL=http://127.0.0.1:8765/api
+API_BASE="${VS_API:-http://127.0.0.1:8765}"
+API_BASE="${API_BASE%/}"
+URL="$API_BASE/api"
 TV="$(dirname "$(readlink -f "$0")")"
+RUNTIME_DIR="${XDG_RUNTIME_DIR:-/tmp/voidstation-runtime-$(id -u)}"
+TOKEN_FILE="$RUNTIME_DIR/voidstation-api.token"
+
+api_token() {
+  [ -r "$TOKEN_FILE" ] || return 0
+  tr -cd 'A-Za-z0-9_.-' < "$TOKEN_FILE" 2>/dev/null
+}
+
+api_curl() {
+  _tok="$(api_token)"
+  if [ -n "$_tok" ]; then
+    printf 'header = "X-VS-Token: %s"\n' "$_tok" | curl -fsS -K - "$@"
+  else
+    curl -fsS "$@"
+  fi
+}
 
 usage() {
   cat <<'EOF'
@@ -76,7 +94,7 @@ channel() {
     *)
       msg "Benutzung: vsctl channel [testing|stable]" "Usage: vsctl channel [testing|stable]"; return 2 ;;
   esac
-  curl -fsS -o /dev/null "$URL/updates?force=1" 2>/dev/null || true   # Hinweis auf der Startseite gleich anpassen
+  api_curl -o /dev/null "$URL/updates?force=1" 2>/dev/null || true   # Hinweis auf der Startseite gleich anpassen
 }
 
 version() {
@@ -96,7 +114,7 @@ PYEOF
 }
 
 update() {
-  if ! curl -fsS -o /dev/null "$URL/status" 2>/dev/null; then
+  if ! api_curl -o /dev/null "$URL/status" 2>/dev/null; then
     # Oberflaeche laeuft nicht (z. B. per SSH bei kaputter Sitzung): direkt ueber den Root-Helfer
     echo "Oberfläche nicht erreichbar – aktualisiere direkt (ohne Flatpak/AppImages/Proton-GE)."
     sudo -n /usr/local/sbin/voidstation-pkg update && sudo -n /usr/local/sbin/voidstation-pkg selfupdate
@@ -104,12 +122,23 @@ update() {
   fi
   # Wie das Vollbild am Fernseher: nur die Schritte, das ganze Protokoll steht in logs/update.log.
   # -v / --verbose: Protokoll wie frueher mitlaufen lassen.
-  python3 - "$URL" "$TV" "${1:-}" <<'PYEOF'
+  python3 - "$URL" "$TV" "$TOKEN_FILE" "${1:-}" <<'PYEOF'
 import json, sys, time, urllib.request
 from pathlib import Path
-url, tv, verbose = sys.argv[1], Path(sys.argv[2]), sys.argv[3] in ("-v", "--verbose")
+url, tv, token_file, verbose = sys.argv[1], Path(sys.argv[2]), Path(sys.argv[3]), sys.argv[4] in ("-v", "--verbose")
+def _token():
+    try:
+        if not token_file.is_symlink() and token_file.is_file():
+            return token_file.read_text(encoding="utf-8").strip()
+    except OSError:
+        pass
+    return ""
 def get(path, data=None):
-    req = urllib.request.Request(url + path, data=data, headers={"X-TV": "1"} if data is not None else {},
+    headers = {"X-TV": "1"} if data is not None else {}
+    tok = _token()
+    if tok:
+        headers["X-VS-Token"] = tok
+    req = urllib.request.Request(url + path, data=data, headers=headers,
                                  method="POST" if data is not None else "GET")
     with urllib.request.urlopen(req, timeout=10) as r:
         return json.load(r)
@@ -187,9 +216,9 @@ PYEOF
 }
 
 case "$1" in
-  home)   curl -fsS -X POST -H 'X-TV: 1' "$URL/home" ;;
-  launch) curl -fsS -X POST -H 'X-TV: 1' "$URL/launch/$2" ;;
-  status) curl -fsS "$URL/status" ;;
+  home)   api_curl -X POST -H 'X-TV: 1' "$URL/home" ;;
+  launch) api_curl -X POST -H 'X-TV: 1' "$URL/launch/$2" ;;
+  status) api_curl "$URL/status" ;;
   update) update "$2"; exit $? ;;
   version|--version|-V) version; exit $? ;;
   channel) shift; channel "$@"; exit $? ;;

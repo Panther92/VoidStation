@@ -1501,5 +1501,7 @@
   "account.err.guestDisabled": "Guest mode is disabled",
   "account.err.notFound": "Account not found",
   "account.err.blocked": "Blocked for this account",
+  "account.err.adminRequired": "Admin account required",
+  "account.err.locked": "Session is locked",
   "account.migratedNotice": "Existing data has been automatically migrated to your admin profile"
 }

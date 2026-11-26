@@ -26,10 +26,20 @@ from .models import (
     SessionState,
     ValidationError,
 )
-from .storage import ProfileStorage
+from .storage import (
+    API_TOKEN_FILENAME,
+    API_TOKEN_HEADER,
+    ProfileStorage,
+    api_token_path,
+    ensure_api_token,
+    read_api_token,
+    verify_api_token,
+)
 from .store import AccountStore
 
 __all__ = [
+    "API_TOKEN_FILENAME",
+    "API_TOKEN_HEADER",
     "Account",
     "AccountError",
     "AccountService",
@@ -43,9 +53,13 @@ __all__ = [
     "PolicyError",
     "SessionState",
     "ValidationError",
+    "api_token_path",
+    "ensure_api_token",
     "is_weak_pin",
+    "read_api_token",
     "validate_password",
     "validate_pin",
+    "verify_api_token",
 ]
 
 

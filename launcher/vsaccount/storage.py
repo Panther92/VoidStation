@@ -2,9 +2,11 @@
 """Strikter Profil- und Gast-Speicher unterhalb von ~/.local/share/voidstation/accounts/."""
 from __future__ import annotations
 
+import hmac
 import json
 import os
 import re
+import secrets
 import shutil
 from pathlib import Path
 from typing import Any
@@ -13,6 +15,9 @@ from .models import PROFILE_PREF_KEYS, ValidationError
 
 SAFE_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
 SAFE_FILE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+API_TOKEN_FILENAME = "voidstation-api.token"
+API_TOKEN_HEADER = "X-VS-Token"
+_API_TOKEN_RE = re.compile(r"^[A-Za-z0-9_.-]{32,}$")
 
 
 def default_runtime_dir() -> Path:
@@ -20,6 +25,69 @@ def default_runtime_dir() -> Path:
     if env:
         return Path(env)
     return Path(f"/tmp/voidstation-runtime-{os.getuid()}")
+
+
+def api_token_path(runtime_dir: Path | None = None) -> Path:
+    """Pfad zum Laufzeit-API-Token ($XDG_RUNTIME_DIR/voidstation-api.token)."""
+    base = Path(runtime_dir) if runtime_dir is not None else default_runtime_dir()
+    return base / API_TOKEN_FILENAME
+
+
+def read_api_token(runtime_dir: Path | None = None) -> str:
+    """Liest das Laufzeit-API-Token sicher ein (ignoriert Symlinks)."""
+    path = api_token_path(runtime_dir)
+    try:
+        if path.is_symlink() or not path.is_file():
+            return ""
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def ensure_api_token(runtime_dir: Path | None = None) -> str:
+    """Erzeugt oder laedt das Laufzeit-API-Token mit Rechten 0600."""
+    path = api_token_path(runtime_dir)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path.parent, 0o700)
+    except OSError:
+        pass
+
+    if path.exists() and not path.is_symlink() and path.is_file():
+        try:
+            st = path.stat()
+            if st.st_uid == os.getuid():
+                existing = path.read_text(encoding="utf-8").strip()
+                if _API_TOKEN_RE.fullmatch(existing):
+                    os.chmod(path, 0o600)
+                    return existing
+        except OSError:
+            pass
+
+    if path.is_symlink():
+        path.unlink(missing_ok=True)
+
+    token = secrets.token_urlsafe(32)
+    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(token + "\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
+    return token
+
+
+def verify_api_token(provided: str, expected: str) -> bool:
+    """Vergleicht bereitgestelltes und erwartetes Laufzeit-Token konstantzeitlich."""
+    if not provided or not expected:
+        return False
+    return hmac.compare_digest(provided.strip(), expected)
 
 
 def _ensure_private_dir(path: Path) -> Path:

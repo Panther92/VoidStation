@@ -1366,5 +1366,7 @@
   "account.err.guestDisabled": "Der Gast-Modus ist deaktiviert",
   "account.err.notFound": "Konto nicht gefunden",
   "account.err.blocked": "Für dieses Konto gesperrt",
+  "account.err.adminRequired": "Nur für Admin-Konten erlaubt",
+  "account.err.locked": "Sitzung ist gesperrt",
   "account.migratedNotice": "Bestehende Daten wurden automatisch in dein Admin-Profil übernommen"
 }

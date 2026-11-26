@@ -44,23 +44,120 @@ from pathlib import Path
 from typing import Any
 
 import tvindex
+import vsaccount
 import vsreport
 import vssound
 import vsx11
 from tvindex import TV_LETTERS, TV_PAGE, tv_fold, tv_letter  # noqa: F401
+from vsaccount.models import (
+    PROFILE_PREF_KEYS,
+    AccountError,
+    AuthError,
+    NotFoundError,
+    PolicyError,
+    ValidationError,
+)
 
 HOST = "127.0.0.1"
 PORT = int(os.environ.get("VOIDSTATION_PORT", "8765"))
 BASE = Path(__file__).resolve().parent
 WEB = BASE / "web"                                     # Texte (i18n/), Themes (themes/), Logo – kein HTML mehr
 CONFIG = Path(os.environ.get("VOIDSTATION_CONFIG", BASE / "tiles.json"))
-FAVS = BASE / "radio.json"
 MPV_SOCK = str(BASE / "mpv.sock")
 PLAYER_BIN = BASE / "qt" / "voidstation-player.py"    # eigener Player: Fernsehen, Videos & Musik
 HOME_TITLE = "VoidStation"                      # <title> der Startseite
 PAUSED_FILE = BASE / "paused.json"              # im Hintergrund angehaltene Prozesse (beim Launcher-Start fortsetzen)
 RADIO_SERVERS = ["de1.api.radio-browser.info", "de2.api.radio-browser.info",
                  "fi1.api.radio-browser.info", "at1.api.radio-browser.info"]
+
+_ACCOUNTS_LOCK = threading.RLock()
+_ACCOUNTS: vsaccount.AccountService | None = None
+_API_TOKEN_LOCK = threading.RLock()
+_API_TOKEN = ""
+_RUNTIME_DIR_OVERRIDE: Path | None = None
+
+
+def data_dir() -> Path:
+    env = os.environ.get("VOIDSTATION_BASE", "").strip()
+    return Path(env) if env else BASE
+
+
+def init_api_token(runtime_dir: Path | None = None) -> str:
+    global _API_TOKEN, _RUNTIME_DIR_OVERRIDE
+    with _API_TOKEN_LOCK:
+        if runtime_dir is not None:
+            _RUNTIME_DIR_OVERRIDE = Path(runtime_dir)
+        _API_TOKEN = vsaccount.ensure_api_token(_RUNTIME_DIR_OVERRIDE)
+        return _API_TOKEN
+
+
+def get_api_token() -> str:
+    with _API_TOKEN_LOCK:
+        if _API_TOKEN:
+            return _API_TOKEN
+    return init_api_token()
+
+
+def check_api_token(provided: str) -> bool:
+    return vsaccount.verify_api_token(provided, get_api_token())
+
+
+def init_accounts(
+    base_dir: Path | None = None,
+    runtime_dir: Path | None = None,
+    clock: Any = None,
+) -> vsaccount.AccountService:
+    global _ACCOUNTS, _RUNTIME_DIR_OVERRIDE
+    with _ACCOUNTS_LOCK:
+        if runtime_dir is not None:
+            with _API_TOKEN_LOCK:
+                _RUNTIME_DIR_OVERRIDE = Path(runtime_dir)
+        if _ACCOUNTS is not None:
+            _ACCOUNTS.close()
+            _ACCOUNTS = None
+        rt = runtime_dir if runtime_dir is not None else _RUNTIME_DIR_OVERRIDE
+        _ACCOUNTS = vsaccount.AccountService(base_dir or data_dir(), runtime_dir=rt, clock=clock)
+        return _ACCOUNTS
+
+
+def accounts() -> vsaccount.AccountService:
+    with _ACCOUNTS_LOCK:
+        if _ACCOUNTS is not None:
+            return _ACCOUNTS
+        return init_accounts()
+
+
+def close_accounts() -> None:
+    global _ACCOUNTS
+    with _ACCOUNTS_LOCK:
+        if _ACCOUNTS is not None:
+            _ACCOUNTS.close()
+            _ACCOUNTS = None
+
+
+def profile_file(filename: str) -> Path:
+    return accounts().profile_path(filename)
+
+
+def _atomic_write_json_private(path: Path, data: Any, indent: int = 2) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        os.chmod(path.parent, 0o700)
+    except OSError:
+        pass
+    tmp = path.with_name(f".{path.name}.tmp.{os.getpid()}")
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(data, fh, ensure_ascii=False, indent=indent)
+            fh.write("\n")
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except Exception:
+        tmp.unlink(missing_ok=True)
+        raise
 
 MIME = {
     ".html": "text/html; charset=utf-8", ".json": "application/json; charset=utf-8",
@@ -767,15 +864,13 @@ def radio_popular(cc, limit=24):
 
 def favs_load():
     try:
-        return json.loads(FAVS.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        return json.loads(profile_file("radio.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, AccountError):
         return []
 
 
 def favs_save(items):
-    tmp = FAVS.with_suffix(".tmp")
-    tmp.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(FAVS)
+    _atomic_write_json_private(profile_file("radio.json"), items, indent=2)
 
 
 # ---------------------------------------------------------------------------
@@ -890,13 +985,30 @@ def available_themes():
     return ["default-dark", "default-light", "high-contrast", "nord"]
 
 
+def _global_settings_raw() -> dict[str, Any]:
+    try:
+        raw = json.loads(SETTINGS.read_text(encoding="utf-8"))
+        return raw if isinstance(raw, dict) else {}
+    except (OSError, ValueError):
+        return {}
+
+
 def settings_load():
     s = dict(DEFAULTS)
+    s.update(_global_settings_raw())
     try:
-        s.update(json.loads(SETTINGS.read_text(encoding="utf-8")))
-    except (OSError, ValueError):
+        prefs = accounts().load_profile_prefs(global_defaults=s)
+        s.update(prefs)
+    except AccountError:
         pass
     return s
+
+
+def profile_prefs_save(updates: dict[str, Any]) -> dict[str, Any]:
+    clean = {k: v for k, v in updates.items() if k in PROFILE_PREF_KEYS}
+    if clean:
+        accounts().save_profile_prefs(clean)
+    return settings_load()
 
 
 def cmdline_value(name):
@@ -1511,9 +1623,40 @@ def dosbox_game_lines(game, root):
 
 
 def settings_save(s):
-    tmp = SETTINGS.with_suffix(".tmp")
-    tmp.write_text(json.dumps(s, indent=2), encoding="utf-8")
-    tmp.replace(SETTINGS)
+    raw_global = _global_settings_raw()
+    global_defaults = dict(DEFAULTS)
+    global_defaults.update(raw_global)
+
+    svc = accounts()
+    sess = svc.get_session()
+    if sess.account_id:
+        raw_prefs = svc.storage.load_raw_prefs(sess.account_id, is_guest=sess.is_guest)
+        pref_updates = {
+            k: s[k]
+            for k in PROFILE_PREF_KEYS
+            if k in s and (k in raw_prefs or s[k] != global_defaults.get(k))
+        }
+        if pref_updates:
+            svc.save_profile_prefs(pref_updates)
+
+    new_global = dict(raw_global)
+    changed = False
+    for k, v in s.items():
+        if k in PROFILE_PREF_KEYS:
+            continue
+        if (k in raw_global and raw_global[k] != v) or (k not in raw_global and v != global_defaults.get(k)):
+            new_global[k] = v
+            changed = True
+    for k in list(new_global):
+        if k not in PROFILE_PREF_KEYS and k not in s:
+            del new_global[k]
+            changed = True
+
+    if changed or (not SETTINGS.exists() and new_global):
+        SETTINGS.parent.mkdir(parents=True, exist_ok=True)
+        tmp = SETTINGS.with_suffix(".tmp")
+        tmp.write_text(json.dumps(new_global, indent=2), encoding="utf-8")
+        tmp.replace(SETTINGS)
 
 
 def cursor_themes():
@@ -1619,6 +1762,8 @@ def xterm_resources(dark):
 def apply_appearance(s):
     """Skalierung (Xft.dpi), Mauszeiger und Farbschema (hell/dunkel nach dem Theme) fuer neu gestartete
     Programme setzen."""
+    if os.environ.get("VS_NO_DESKTOP_SYNC"):
+        return
     home = Path.home()
     dpi = round(96 * float(s["scale"]))
     theme = s.get("cursor_theme") or DEFAULTS["cursor_theme"]
@@ -1807,6 +1952,8 @@ def openbox_rc_sync():
 
 def restart_home_later(delay=0.8):
     """Startseite neu starten, z. B. fuer den neuen Mauszeiger (home.sh startet sie neu)."""
+    if os.environ.get("VS_NO_DESKTOP_SYNC"):
+        return
     def _go():
         time.sleep(delay)
         run(["pkill", "-f", "voidstation-home.py"])
@@ -2630,8 +2777,6 @@ def share_info():
 IPTV_API = tvindex.IPTV_API
 CACHE = BASE / "cache"
 TV_DB = CACHE / tvindex.DB_NAME              # Senderverzeichnis, gebaut von tvindex.py (eigener, kurzlebiger Prozess)
-TVFAVS = BASE / "tvfavs.json"
-TVRECENT = BASE / "tvrecent.json"           # zuletzt gesehene Sender (Player: Reiter „Zuletzt“)
 UA = tvindex.UA
 
 
@@ -2650,10 +2795,24 @@ class IPTV:
         self.building = False
         self.now = None
         self.zap_keys = []          # Liste, in der der Player mit ▲▼ umschaltet (aus der heraus gestartet wurde)
-        self.recent = tvrecent_load()
+        self._recent: list[dict[str, Any]] | None = None
         self.broken = {}            # Sender -> Zeitpunkt, an dem er zuletzt nicht erreichbar war
         self.failed = None          # Rueckfall (nacktes mpv): zuletzt gescheiterter Sender, fuer die Meldung
         self.raw = False            # "tv" laeuft gerade als nacktes mpv (Stufe 3)
+
+    @property
+    def recent(self) -> list[dict[str, Any]]:
+        if self._recent is None:
+            self._recent = tvrecent_load()
+        return self._recent
+
+    @recent.setter
+    def recent(self, value: list[dict[str, Any]]) -> None:
+        self._recent = value
+
+    def reset_profile_cache(self) -> None:
+        with self.lock:
+            self._recent = None
 
     def _take(self, got):
         self.count, self.countries, self.loaded_at = got
@@ -2853,32 +3012,28 @@ class IPTV:
 
 def tvfavs_load():
     try:
-        return json.loads(TVFAVS.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        return json.loads(profile_file("tvfavs.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, AccountError):
         return []
 
 
 def tvrecent_load():
     try:
-        d = json.loads(TVRECENT.read_text(encoding="utf-8"))
+        d = json.loads(profile_file("tvrecent.json").read_text(encoding="utf-8"))
         return [x for x in d if isinstance(x, dict) and x.get("key") and x.get("url")]
-    except (OSError, ValueError):
+    except (OSError, ValueError, AccountError):
         return []
 
 
 def tvrecent_save(items):
     try:
-        tmp = TVRECENT.with_suffix(".tmp")
-        tmp.write_text(json.dumps(items, ensure_ascii=False, indent=1), encoding="utf-8")
-        tmp.replace(TVRECENT)
-    except OSError as e:
+        _atomic_write_json_private(profile_file("tvrecent.json"), items, indent=1)
+    except (OSError, AccountError) as e:
         log("tvrecent.json:", e)
 
 
 def tvfavs_save(items):
-    tmp = TVFAVS.with_suffix(".tmp")
-    tmp.write_text(json.dumps(items, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp.replace(TVFAVS)
+    _atomic_write_json_private(profile_file("tvfavs.json"), items, indent=2)
 
 
 TV = IPTV()
@@ -3109,9 +3264,6 @@ VIDEO_EXT = {".mp4", ".mkv", ".avi", ".mov", ".m4v", ".webm", ".ts", ".m2ts", ".
 EMBED_EXT = {".mp3", ".m4a", ".flac"}             # Cover/Tags in die Datei schreiben (ffmpeg, ohne Neukodierung)
 AUDIO_EXT = {".mp3", ".flac", ".ogg", ".oga", ".opus", ".m4a", ".aac", ".wav", ".wma", ".ape", ".mka", ".wv", ".aiff", ".alac"}
 COVER_NAMES = ("cover.jpg", "cover.png", "folder.jpg", "folder.png", "front.jpg", "front.png", "albumart.jpg", "album.jpg")
-RESUME = BASE / "resume.json"
-
-
 def natural_key(name):
     """„Folge 2“ vor „Folge 10“: Zahlen als Zahlen sortieren, ohne Gross-/Kleinschreibung."""
     return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", tv_fold(name))]
@@ -3782,9 +3934,9 @@ class MediaLib:
 
     def resume_load(self):
         try:
-            d = json.loads(RESUME.read_text(encoding="utf-8"))
+            d = json.loads(profile_file("resume.json").read_text(encoding="utf-8"))
             return d if isinstance(d, dict) else {}
-        except (OSError, ValueError):
+        except (OSError, ValueError, AccountError):
             return {}
 
     def resume_set(self, path, pos, dur):
@@ -3804,9 +3956,7 @@ class MediaLib:
             if len(d) > 300:
                 for k in sorted(d, key=lambda k: d[k].get("t", 0))[:len(d) - 300]:
                     del d[k]
-            tmp = RESUME.with_suffix(".tmp")
-            tmp.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding="utf-8")
-            tmp.replace(RESUME)
+            _atomic_write_json_private(profile_file("resume.json"), d, indent=1)
 
     def entry(self, p, res=None):
         try:
@@ -14384,9 +14534,6 @@ def yt_classify(text):
 
 
 class YtLight:
-    SUBS = BASE / "yt-subs.json"
-    HIST = BASE / "yt-history.json"
-    LATER = BASE / "yt-later.json"
     LOCAL = BASE / "bin" / "yt-dlp"                     # eigene, aktuelle yt-dlp-Kopie (Knopf "yt-dlp aktualisieren")
     CACHE = Path.home() / ".cache" / "voidstation" / "yt"
     RSS = "https://www.youtube.com/feeds/videos.xml?"
@@ -14399,6 +14546,18 @@ class YtLight:
     MAX_HIST = 500
     MAX_LATER = 500
 
+    @property
+    def SUBS(self) -> Path:
+        return profile_file("yt-subs.json")
+
+    @property
+    def HIST(self) -> Path:
+        return profile_file("yt-history.json")
+
+    @property
+    def LATER(self) -> Path:
+        return profile_file("yt-later.json")
+
     def __init__(self):
         self.lock = threading.Lock()
         self.cache = {}                                  # (art, schluessel) -> (zeit, daten)
@@ -14406,6 +14565,11 @@ class YtLight:
         self.upd: dict[str, Any] = {"state": "idle", "msg": "", "t": 0}
         self.ver = ("", 0.0)
         self.avatar_busy = False
+
+    def reset_profile_cache(self) -> None:
+        with self.lock:
+            self.cache.clear()
+            self.feed = {"items": [], "t": 0, "refreshing": False, "errors": 0}
 
     # ---- Dateien ----
     @staticmethod
@@ -14419,11 +14583,8 @@ class YtLight:
     @staticmethod
     def _save(path, data):
         try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            tmp = path.with_suffix(".tmp")
-            tmp.write_text(json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8")
-            tmp.replace(path)
-        except OSError as e:
+            _atomic_write_json_private(path, data, indent=1)
+        except (OSError, AccountError) as e:
             log("YouTube Light:", path.name, e)
 
     # ---- Einstellungen und Werkzeuge ----
@@ -15589,6 +15750,43 @@ VPN = Vpn()
 CRX_DIR = Path("/usr/local/share/voidstation/chromium")     # Tastatur-Erweiterung fuer Chromium/Brave, s. crxpack.py
 
 
+def account_status_summary() -> dict[str, Any]:
+    svc = accounts()
+    sess = svc.get_session()
+    policy = svc.get_device_policy()
+    return {
+        "id": sess.account_id,
+        "name": sess.display_name,
+        "role": sess.role,
+        "avatar": sess.avatar,
+        "color": sess.color,
+        "is_guest": sess.is_guest,
+        "locked": sess.locked,
+        "picker_required": sess.picker_required,
+        "guest_enabled": policy.guest_enabled,
+        "count": len(svc.list_accounts()),
+    }
+
+
+def _on_session_changed(prev_session: vsaccount.SessionState, new_session: vsaccount.SessionState) -> None:
+    switched = (
+        prev_session.account_id != new_session.account_id
+        or prev_session.is_guest != new_session.is_guest
+    )
+    if switched or new_session.locked:
+        YT.reset_profile_cache()
+        TV.reset_profile_cache()
+        RADIO.stop()
+    if not new_session.locked:
+        s = settings_load()
+        sound_sync(s)
+        if os.environ.get("DISPLAY") and not os.environ.get("VS_NO_DESKTOP_SYNC"):
+            try:
+                apply_appearance(s)
+            except OSError as e:
+                log("Erscheinungsbild nach Profilwechsel:", e)
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "voidstation"
 
@@ -15610,7 +15808,219 @@ class Handler(BaseHTTPRequestHandler):
         self._send(code, json.dumps(obj, ensure_ascii=False).encode())
 
     def _host_ok(self):
-        return self.headers.get("Host", "") in (f"{HOST}:{PORT}", f"localhost:{PORT}")
+        port = getattr(self.server, "server_port", PORT)
+        return self.headers.get("Host", "") in (f"{HOST}:{port}", f"localhost:{port}")
+
+    def _api_token_ok(self) -> bool:
+        return (
+            self._host_ok()
+            and self.headers.get("X-TV") == "1"
+            and check_api_token(self.headers.get(vsaccount.API_TOKEN_HEADER, ""))
+        )
+
+    def _account_error(self, exc: AccountError) -> None:
+        if isinstance(exc, AuthError):
+            if exc.code == "account.cooldown" or exc.retry_after > 0:
+                return self._json(429, {"error": exc.code, "msg": exc.message, "retry_after": exc.retry_after})
+            if exc.code == "account.err.pinLocked":
+                return self._json(423, {"error": exc.code, "msg": exc.message, "hard_locked": True})
+            return self._json(401, {"error": exc.code, "msg": exc.message})
+        if isinstance(exc, PolicyError):
+            return self._json(403, {"error": exc.code, "msg": exc.message})
+        if isinstance(exc, NotFoundError):
+            return self._json(404, {"error": exc.code, "msg": exc.message})
+        return self._json(400, {"error": exc.code, "msg": exc.message})
+
+    def _require_admin(self) -> vsaccount.SessionState | None:
+        sess = accounts().get_session()
+        if sess.locked:
+            self._json(403, {"error": "account.err.locked", "msg": "Session is locked"})
+            return None
+        if sess.is_guest or sess.role != "admin":
+            self._json(403, {"error": "account.err.adminRequired", "msg": "Admin account required"})
+            return None
+        return sess
+
+    def _account_post(self, parts: list[str], b: dict[str, Any]) -> None:
+        if not self._api_token_ok():
+            return self._json(403, {"error": "forbidden"})
+        svc = accounts()
+        try:
+            if parts == ["api", "session", "switch"]:
+                aid = str(b.get("account_id") or b.get("id") or "").strip()
+                if not aid:
+                    raise ValidationError("account.err.notFound", "Account id required")
+                pin = str(b["pin"]) if "pin" in b and b["pin"] is not None else None
+                password = str(b["password"]) if "password" in b and b["password"] is not None else None
+                prev = svc.get_session()
+                sess = svc.switch_account(aid, pin=pin, password=password)
+                _on_session_changed(prev, sess)
+                return self._json(200, {
+                    "ok": True,
+                    "session": sess.to_public_dict(),
+                    "prefs": svc.load_profile_prefs(DEFAULTS),
+                })
+
+            if parts == ["api", "session", "lock"]:
+                prev = svc.get_session()
+                sess = svc.lock_session()
+                _on_session_changed(prev, sess)
+                return self._json(200, {"ok": True, "session": sess.to_public_dict()})
+
+            if parts == ["api", "session", "guest"]:
+                name = str(b.get("display_name") or "").strip() or "Gast"
+                prev = svc.get_session()
+                sess = svc.start_guest_session(display_name=name)
+                _on_session_changed(prev, sess)
+                return self._json(200, {
+                    "ok": True,
+                    "session": sess.to_public_dict(),
+                    "prefs": svc.load_profile_prefs(DEFAULTS),
+                })
+
+            if parts == ["api", "accounts", "create"]:
+                if self._require_admin() is None:
+                    return
+                parent_raw = b.get("parent_id")
+                acc = svc.create_account(
+                    display_name=str(b.get("display_name") or ""),
+                    role=str(b.get("role") or "standard"),
+                    parent_id=(str(parent_raw).strip() or None) if parent_raw is not None else None,
+                    avatar=str(b["avatar"]) if b.get("avatar") is not None else None,
+                    color=str(b["color"]) if b.get("color") is not None else None,
+                    auto_login=bool(b.get("auto_login", False)),
+                    password=str(b["password"]) if "password" in b and b["password"] is not None else None,
+                    pin=str(b["pin"]) if "pin" in b and b["pin"] is not None else None,
+                )
+                return self._json(200, {
+                    "ok": True,
+                    "account": acc.to_public_dict(),
+                    "accounts": [a.to_public_dict() for a in svc.list_accounts()],
+                })
+
+            if parts == ["api", "accounts", "update"]:
+                sess = svc.get_session()
+                if sess.locked:
+                    return self._json(403, {"error": "account.err.locked", "msg": "Session is locked"})
+                if sess.is_guest or sess.role == "child":
+                    return self._json(403, {"error": "account.err.adminRequired", "msg": "Admin account required"})
+                aid = str(b.get("account_id") or b.get("id") or "").strip()
+                if not aid:
+                    raise ValidationError("account.err.notFound", "Account id required")
+                if sess.role != "admin":
+                    if aid != sess.account_id or any(k in b for k in ("role", "parent_id", "active", "auto_login")):
+                        return self._json(403, {"error": "account.err.adminRequired", "msg": "Admin account required"})
+                updated = svc.update_account(
+                    account_id=aid,
+                    display_name=str(b["display_name"]) if "display_name" in b and b["display_name"] is not None else None,
+                    role=str(b["role"]) if "role" in b and b["role"] is not None else None,
+                    parent_id=(str(b["parent_id"]).strip() or None) if "parent_id" in b and b["parent_id"] is not None else None,
+                    avatar=str(b["avatar"]) if "avatar" in b and b["avatar"] is not None else None,
+                    color=str(b["color"]) if "color" in b and b["color"] is not None else None,
+                    active=bool(b["active"]) if "active" in b and b["active"] is not None else None,
+                    auto_login=bool(b["auto_login"]) if "auto_login" in b and b["auto_login"] is not None else None,
+                )
+                return self._json(200, {
+                    "ok": True,
+                    "account": updated.to_public_dict(),
+                    "session": svc.get_session().to_public_dict(),
+                })
+
+            if parts == ["api", "accounts", "credentials"]:
+                sess = svc.get_session()
+                if sess.locked:
+                    return self._json(403, {"error": "account.err.locked", "msg": "Session is locked"})
+                if sess.is_guest or sess.role == "child":
+                    return self._json(403, {"error": "account.err.adminRequired", "msg": "Admin account required"})
+                aid = str(b.get("account_id") or b.get("id") or sess.account_id).strip()
+                if not aid:
+                    raise ValidationError("account.err.notFound", "Account id required")
+                action = str(b.get("action") or "set").strip().lower()
+                factor = str(b.get("factor") or "").strip().lower()
+                if action == "set" and not factor:
+                    if "pin" in b:
+                        factor = "pin"
+                    elif "password" in b:
+                        factor = "password"
+
+                if action == "unlock":
+                    if sess.role != "admin":
+                        return self._json(403, {"error": "account.err.adminRequired", "msg": "Admin account required"})
+                    svc.unlock_account(aid, factor=factor or None)
+                    acc = svc.get_account(aid)
+                    assert acc is not None
+                    return self._json(200, {"ok": True, "account": acc.to_public_dict()})
+
+                if sess.role != "admin":
+                    if aid != sess.account_id:
+                        return self._json(403, {"error": "account.err.adminRequired", "msg": "Admin account required"})
+                    cur = svc.get_account(aid)
+                    if cur and (cur.has_password or cur.has_pin):
+                        if "current_password" in b and b["current_password"] is not None:
+                            res = svc.authenticate(aid, "password", str(b["current_password"]))
+                        elif "current_pin" in b and b["current_pin"] is not None:
+                            res = svc.authenticate(aid, "pin", str(b["current_pin"]))
+                        else:
+                            raise AuthError("account.err.invalid", "Current credential required")
+                        if not res.ok:
+                            raise AuthError(res.error, res.error, retry_after=res.retry_after)
+
+                if action == "remove":
+                    acc = svc.remove_credential(aid, factor)
+                    return self._json(200, {"ok": True, "account": acc.to_public_dict()})
+                if action == "set":
+                    secret_val = b.get("secret") if "secret" in b else (
+                        b.get("pin") if factor == "pin" else b.get("password") if factor == "password" else None
+                    )
+                    secret = "" if secret_val is None else str(secret_val)
+                    acc = svc.set_credential(aid, factor, secret)
+                    resp: dict[str, Any] = {"ok": True, "account": acc.to_public_dict()}
+                    if factor == "pin":
+                        resp["weak_pin"] = vsaccount.is_weak_pin(secret)
+                    return self._json(200, resp)
+                raise ValidationError("account.err.invalid", "Invalid credential action")
+
+            if parts == ["api", "accounts", "delete"]:
+                if self._require_admin() is None:
+                    return
+                aid = str(b.get("account_id") or b.get("id") or "").strip()
+                if not aid:
+                    raise ValidationError("account.err.notFound", "Account id required")
+                prev = svc.get_session()
+                svc.delete_account(aid)
+                new_sess = svc.get_session()
+                if new_sess != prev:
+                    _on_session_changed(prev, new_sess)
+                return self._json(200, {
+                    "ok": True,
+                    "deleted": aid,
+                    "session": new_sess.to_public_dict(),
+                    "accounts": [a.to_public_dict() for a in svc.list_accounts()],
+                })
+
+            if parts == ["api", "accounts", "device-policy"]:
+                if self._require_admin() is None:
+                    return
+                if "guest_allowed_tiles" in b and b["guest_allowed_tiles"] is not None and not isinstance(b["guest_allowed_tiles"], list):
+                    raise ValidationError("account.err.invalid", "guest_allowed_tiles must be a list")
+                prev = svc.get_session()
+                policy = svc.set_device_policy(
+                    ask_on_boot=bool(b["ask_on_boot"]) if "ask_on_boot" in b and b["ask_on_boot"] is not None else None,
+                    guest_enabled=bool(b["guest_enabled"]) if "guest_enabled" in b and b["guest_enabled"] is not None else None,
+                    default_account_id=str(b["default_account_id"]) if "default_account_id" in b and b["default_account_id"] is not None else None,
+                    guest_allowed_tiles=b["guest_allowed_tiles"] if "guest_allowed_tiles" in b and b["guest_allowed_tiles"] is not None else None,
+                )
+                new_sess = svc.get_session()
+                if new_sess != prev:
+                    _on_session_changed(prev, new_sess)
+                return self._json(200, {
+                    "ok": True,
+                    "device_policy": policy.to_dict(),
+                    "session": new_sess.to_public_dict(),
+                })
+        except AccountError as exc:
+            return self._account_error(exc)
+        return self._send(404)
 
     def _body(self):
         n = int(self.headers.get("Content-Length") or 0)
@@ -15691,6 +16101,25 @@ class Handler(BaseHTTPRequestHandler):
             return self._json(200, OSK_FIELD.wait(seq))
         if path == "/api/nowplaying":              # heisse Ecke oben links
             return self._json(200, now_playing())
+        if path == "/api/session":
+            if not self._api_token_ok():
+                return self._json(403, {"error": "forbidden"})
+            svc = accounts()
+            return self._json(200, {
+                "session": svc.get_session().to_public_dict(),
+                "device_policy": svc.get_device_policy().to_dict(),
+                "accounts_count": len(svc.list_accounts()),
+                "migrated": svc.migration_report.migrated,
+            })
+        if path == "/api/accounts":
+            if not self._api_token_ok():
+                return self._json(403, {"error": "forbidden"})
+            svc = accounts()
+            return self._json(200, {
+                "accounts": [a.to_public_dict() for a in svc.list_accounts()],
+                "session": svc.get_session().to_public_dict(),
+                "device_policy": svc.get_device_policy().to_dict(),
+            })
         if path == "/api/status":
             running = APPS.running()
             return self._json(200, {"running": running, "starting": APPS.starting(), "radio": RADIO.status(),
@@ -15698,7 +16127,8 @@ class Handler(BaseHTTPRequestHandler):
                                     "tv": TV.now if "tv" in running else None, "tvFailed": TV.failed, "live": LIVE,
                                     "media": (MEDIA_NOW or None) if "media" in running else None,
                                     "install": INSTALL.state.get("state") if INSTALL.state else None,
-                                    "vpn": VPN.summary()})
+                                    "vpn": VPN.summary(),
+                                    "account": account_status_summary()})
         if path == "/api/tv/status":
             TV.ensure()
             return self._json(200, TV.status())
@@ -15876,6 +16306,9 @@ class Handler(BaseHTTPRequestHandler):
                 for t in g.get("tiles", []):
                     if t.get("id") in hints and not t.get("start_hint"):
                         t["start_hint"] = hints[t["id"]]
+            sess = accounts().get_session()
+            if sess.display_name:
+                c["user"] = sess.display_name
             return self._json(200, c)
         self._send(404)
 
@@ -15913,6 +16346,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200 if path else 500, {"path": str(path) if path else "", "error": err})
             if parts == ["api", "osk", "field"]:       # Firefox-Erweiterung: Eingabefeld an/ab
                 return self._json(200 if OSK_FIELD.post(self._body()) else 400, {"ok": True})
+            if parts[:2] in (["api", "session"], ["api", "accounts"]):
+                return self._account_post(parts, self._body())
             if parts[:2] == ["api", "vpn"] and len(parts) == 3:
                 b = self._body()
                 try:
@@ -16109,7 +16544,7 @@ class Handler(BaseHTTPRequestHandler):
                 lang = str(self._body().get("lang", ""))
                 if lang not in {l["id"] for l in LANGS}:
                     return self._json(400, {"error": "unbekannte Sprache"})
-                s = settings_load(); s["lang"] = lang; settings_save(s)
+                profile_prefs_save({"lang": lang})
                 log("Sprache:", lang)
                 threading.Thread(target=bios_sync, daemon=True).start()      # Hinweise in den bios-Ordnern
                 threading.Thread(target=ime_sync, daemon=True).start()       # Eingabemethode ja/ko/zh
@@ -16118,30 +16553,30 @@ class Handler(BaseHTTPRequestHandler):
                 val = float(self._body().get("scale", 1.75))
                 if val not in SCALES:
                     return self._json(400, {"error": "ungueltige Skalierung"})
-                s = settings_load(); s["scale"] = val; settings_save(s)
+                s = profile_prefs_save({"scale": val})
                 apply_appearance(s)
                 return self._json(200, settings_payload())
             if parts == ["api", "settings", "theme"]:
                 th = str(self._body().get("theme", "")).strip()
                 if th not in available_themes():
                     return self._json(400, {"error": "unbekanntes Theme"})
-                s = settings_load(); s["theme"] = th; settings_save(s)
+                s = profile_prefs_save({"theme": th})
                 apply_appearance(s)                    # Programme folgen hell/dunkel
                 return self._json(200, settings_payload())
             if parts == ["api", "settings", "osk"]:      # Bildschirmtastatur: {layout: "auto" | Kennung, mode}
                 b = self._body()
-                s = settings_load()
+                upd: dict[str, Any] = {}
                 if "layout" in b:
                     lay = str(b.get("layout") or "auto")
                     if lay != "auto" and lay not in OSK_LAYOUTS:
                         return self._json(400, {"error": "unbekannte Belegung"})
-                    s["osk_layout"] = None if lay == "auto" else lay
+                    upd["osk_layout"] = None if lay == "auto" else lay
                 if "mode" in b:
                     mode = str(b.get("mode"))
                     if mode not in OSK_MODES:
                         return self._json(400, {"error": "unbekannte Einstellung"})
-                    s["osk_mode"] = mode
-                settings_save(s)
+                    upd["osk_mode"] = mode
+                s = profile_prefs_save(upd) if upd else settings_load()
                 log("Bildschirmtastatur:", s.get("osk_layout") or "nach Sprache", s.get("osk_mode"))
                 return self._json(200, settings_payload())
             if parts == ["api", "settings", "padmouse"]:
@@ -16151,9 +16586,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, settings_payload())
             if parts == ["api", "settings", "sounds"]:
                 b = self._body()
-                s = settings_load()
+                upd_snd: dict[str, Any] = {}
                 if "on" in b:
-                    s["ui_sounds"] = bool(b["on"])
+                    upd_snd["ui_sounds"] = bool(b["on"])
                 if "volume" in b:
                     try:
                         vol = int(round(float(b["volume"])))
@@ -16161,25 +16596,25 @@ class Handler(BaseHTTPRequestHandler):
                         return self._json(400, {"error": "ungueltige Lautstaerke"})
                     if vol < 1 or vol > 100:
                         return self._json(400, {"error": "Lautstaerke 1..100"})
-                    s["ui_sounds_volume"] = vol
+                    upd_snd["ui_sounds_volume"] = vol
                 if "preset" in b:
                     pr = str(b.get("preset") or "").strip().lower()
                     if pr not in vssound.PRESETS:
                         return self._json(400, {"error": "unbekannter Klangstil"})
-                    s["ui_sounds_preset"] = pr
-                settings_save(s)
+                    upd_snd["ui_sounds_preset"] = pr
+                s = profile_prefs_save(upd_snd) if upd_snd else settings_load()
                 sound_sync(s)
                 log("Oberflaechentoene:", "an" if s.get("ui_sounds", True) else "aus",
                     s.get("ui_sounds_preset"), f"{s.get('ui_sounds_volume')}%")
                 return self._json(200, settings_payload())
             if parts == ["api", "settings", "cursor"]:
                 b = self._body()
-                s = settings_load()
+                upd_cur: dict[str, Any] = {}
                 if b.get("theme") in cursor_themes():
-                    s["cursor_theme"] = b["theme"]
+                    upd_cur["cursor_theme"] = b["theme"]
                 if int(b.get("size") or 0) in CURSOR_SIZES:
-                    s["cursor_size"] = int(b["size"])
-                settings_save(s)
+                    upd_cur["cursor_size"] = int(b["size"])
+                s = profile_prefs_save(upd_cur) if upd_cur else settings_load()
                 apply_appearance(s)
                 restart_home_later()
                 return self._json(200, settings_payload())
@@ -16353,6 +16788,7 @@ class Handler(BaseHTTPRequestHandler):
                     APPS.close_all()
                     sound_sync()
                     SOUND.play_sync("shutdown", timeout=1.4)
+                    close_accounts()
                     subprocess.Popen(POWER[act])
                 threading.Thread(target=_do_power, daemon=True).start()
                 return self._json(200, {"ok": True})
@@ -16629,6 +17065,7 @@ def on_term(sig, _frame):
     """SIGTERM: angehaltene Programme fortsetzen, sonst wie bisher sofort beenden (Radio & Co. laufen weiter)."""
     try:
         APPS.resume_all()
+        close_accounts()
     finally:
         signal.signal(sig, signal.SIG_DFL)
         os.kill(os.getpid(), sig)
@@ -16637,6 +17074,8 @@ def on_term(sig, _frame):
 def main():
     global BOOT_BUILD
     BOOT_BUILD = vs_version().get("build")
+    init_api_token()
+    init_accounts()
     resume_leftovers()
     signal.signal(signal.SIGTERM, on_term)
     app_prefs()
@@ -16664,6 +17103,7 @@ def main():
     finally:
         APPS.resume_all()
         RADIO.stop()
+        close_accounts()
 
 
 if __name__ == "__main__":
