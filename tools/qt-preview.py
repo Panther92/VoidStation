@@ -527,7 +527,9 @@ def inst_status():
         st["pct"] = min(100, t / sum(dur) * 100)
         if cur is None:
             st.update(state="done", pct=100, result={"user": st["cfg"]["user"]["name"], "login": st["cfg"]["user"]["login"],
-                                                    "hostname": st["cfg"]["hostname"], "seconds": int(t)})
+                                                    "hostname": st["cfg"]["hostname"],
+                                                    "auto_login": bool(st["cfg"].get("user", {}).get("auto_login", True)),
+                                                    "seconds": int(t)})
     return st
 
 
@@ -1072,7 +1074,11 @@ class H(S.H):
             if action == "unlock":
                 if sess["role"] != "admin":
                     return self.j_status(403, {"error": "account.err.adminRequired"})
-                ACC_STATE["throttle"].pop((aid, factor or "pin"), None)
+                if factor:
+                    ACC_STATE["throttle"].pop((aid, factor), None)
+                else:
+                    ACC_STATE["throttle"].pop((aid, "pin"), None)
+                    ACC_STATE["throttle"].pop((aid, "password"), None)
                 return self.j({"ok": True, "account": acc})
             if sess["role"] != "admin":
                 if aid != sess["account_id"]:
@@ -1339,8 +1345,15 @@ class H(S.H):
             return self.j(JOB)
         if p == "/api/install/start":
             INST.clear()
-            INST.update({"state": "running", "pct": 0, "phases": {}, "mode": body["config"]["mode"], "t0": time.time(), "cfg": body["config"]})
-            print("Installer-Konfiguration:", json.dumps(body["config"], ensure_ascii=False), flush=True)
+            cfg = body["config"]
+            INST.update({"state": "running", "pct": 0, "phases": {}, "mode": cfg["mode"], "t0": time.time(), "cfg": cfg})
+            safe_cfg = json.loads(json.dumps(cfg))
+            if isinstance(safe_cfg.get("user"), dict):
+                if safe_cfg["user"].get("password"):
+                    safe_cfg["user"]["password"] = "***"
+                if safe_cfg["user"].get("pin"):
+                    safe_cfg["user"]["pin"] = "***"
+            print("Installer-Konfiguration:", json.dumps(safe_cfg, ensure_ascii=False), flush=True)
             return self.j(inst_status())
         if p == "/api/install/retry":
             LIVE["fail"] = False

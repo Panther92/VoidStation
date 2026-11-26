@@ -7525,7 +7525,8 @@ class Installer:
             "error": None if state != "error" else dict(err or {"code": "internal", "msg": "abgebrochen", "phase": st.get("current")},
                                                         done=done, log=[], alt=(err or {}).get("phase") == "boot"),
             "result": {"user": cfg.get("user", {}).get("name"), "login": cfg.get("user", {}).get("login"),
-                       "hostname": cfg.get("hostname"), "seconds": int(st["finished"] - (st.get("started") or st["finished"]))}
+                       "hostname": cfg.get("hostname"), "auto_login": bool(cfg.get("user", {}).get("auto_login", True)),
+                       "seconds": int(st["finished"] - (st.get("started") or st["finished"]))}
             if st.get("finished") else None}
 
     def gparted(self):

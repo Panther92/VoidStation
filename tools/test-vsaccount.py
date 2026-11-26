@@ -1,12 +1,15 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Unit- & Integrations-Tests fuer das VoidStation-Account-System (Stufe 1 + Stufe 2)."""
+"""Unit- & Integrations-Tests fuer das VoidStation-Account-System (Stufe 1 bis 5)."""
 from __future__ import annotations
 
 import ast
+import importlib.machinery
+import importlib.util
 import io
 import json
 import os
+import re
 import stat
 import subprocess
 import sys
@@ -19,6 +22,7 @@ from contextlib import redirect_stdout
 from http.server import ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
+from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO / "launcher"))
@@ -1193,6 +1197,378 @@ class VsAccountStage4ParentalTests(unittest.TestCase):
         self.assertGreaterEqual(len(pkeys_de), 35)
         ph = _re.compile(r"\{[A-Za-z0-9_]+\}")
         for k in pkeys_de:
+            self.assertEqual(set(ph.findall(de[k])), set(ph.findall(en[k])), f"Placeholder mismatch in {k}")
+
+
+class VsAccountStage5Tests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.base = self.root / "voidstation"
+        self.runtime = self.root / "runtime"
+        self.share = self.root / "share"
+        self.base.mkdir(parents=True)
+        self.runtime.mkdir(parents=True)
+        self.share.mkdir(parents=True)
+        self.clock = FakeClock()
+
+        self._orig_env = {
+            k: os.environ.get(k)
+            for k in ("VS_NO_DESKTOP_SYNC", "VS_SOUNDS", "XDG_RUNTIME_DIR", "VOIDSTATION_BASE")
+        }
+        os.environ["VS_NO_DESKTOP_SYNC"] = "1"
+        os.environ["VS_SOUNDS"] = "0"
+        os.environ["XDG_RUNTIME_DIR"] = str(self.runtime)
+        os.environ["VOIDSTATION_BASE"] = str(self.base)
+
+        self._orig_settings = launcher.SETTINGS
+        self._orig_config = launcher.CONFIG
+        self._orig_share = launcher.MEDIA.share
+
+        self.tiles_path = self.base / "tiles.json"
+        self.settings_path = self.base / "settings.json"
+        self.tiles_path.write_text(
+            json.dumps(
+                {
+                    "title": "Start",
+                    "user": "LegacyUser",
+                    "groups": [{"name": "System", "tiles": [{"id": "settings", "label": "Settings"}]}],
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.settings_path.write_text(
+            json.dumps({"lang": "de", "theme": "default-dark", "padmouse": True, "sysupd_days": 90}),
+            encoding="utf-8",
+        )
+        launcher.CONFIG = self.tiles_path
+        launcher.SETTINGS = self.settings_path
+        launcher.MEDIA.share = lambda: self.share  # type: ignore[method-assign]
+
+        self.token = launcher.init_api_token(runtime_dir=self.runtime)
+        self.svc = launcher.init_accounts(base_dir=self.base, runtime_dir=self.runtime, clock=self.clock)
+        self.admin = self.svc.list_accounts()[0]
+        self.httpd: ThreadingHTTPServer | None = ThreadingHTTPServer(("127.0.0.1", 0), launcher.Handler)
+        self.port = self.httpd.server_port
+        self.thread: threading.Thread | None = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+
+    def tearDown(self) -> None:
+        if self.httpd is not None:
+            self.httpd.shutdown()
+            self.httpd.server_close()
+            self.httpd = None
+        if self.thread is not None:
+            self.thread.join(timeout=2)
+            self.thread = None
+        launcher.close_accounts()
+        launcher.CONFIG = self._orig_config
+        launcher.SETTINGS = self._orig_settings
+        launcher.MEDIA.share = self._orig_share  # type: ignore[method-assign]
+        with launcher._API_TOKEN_LOCK:
+            launcher._API_TOKEN = ""
+            launcher._RUNTIME_DIR_OVERRIDE = None
+        for k, v in self._orig_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        self.tmp.cleanup()
+
+    def _load_installer(self) -> Any:
+        path = REPO / "launcher" / "voidstation-installer"
+        loader = importlib.machinery.SourceFileLoader("voidstation_installer_test", str(path))
+        spec = importlib.util.spec_from_loader(loader.name, loader)
+        assert spec is not None and spec.loader is not None
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        return mod
+
+    def _run_vsctl(
+        self,
+        *args: str,
+        stdin_text: str | None = None,
+        api_url: str | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        env = dict(os.environ)
+        env["VS_API"] = api_url if api_url is not None else f"http://127.0.0.1:{self.port}"
+        env["XDG_RUNTIME_DIR"] = str(self.runtime)
+        env["VOIDSTATION_BASE"] = str(self.base)
+        env["HOME"] = str(self.root)
+        return subprocess.run(
+            [str(REPO / "launcher" / "vsctl"), "account", *args],
+            input=stdin_text,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=10,
+        )
+
+    def test_installer_validation_scrubbing_and_chroot_bootstrap(self) -> None:
+        inst = self._load_installer()
+        base_cfg: dict[str, Any] = {
+            "mode": "whole",
+            "disk": "/dev/sda",
+            "user": {"name": "Anna", "login": "vstestuser", "password": "StartPass!1", "pin": "2580", "auto_login": True},
+            "hostname": "tv",
+            "lang": "de",
+            "keymap": "de",
+        }
+
+        with (
+            mock.patch.object(inst, "dev_type", return_value="disk"),
+            mock.patch.object(inst, "live_disks", return_value=set()),
+            mock.patch.object(inst, "sh", return_value=subprocess.CompletedProcess([], 0, "sata 0\n", "")),
+        ):
+            self.assertIsNone(inst.validate(base_cfg))
+
+            cfg_no_pin = json.loads(json.dumps(base_cfg))
+            cfg_no_pin["user"]["pin"] = ""
+            cfg_no_pin["user"]["auto_login"] = False
+            self.assertIsNone(inst.validate(cfg_no_pin))
+
+            cfg_bad_pin = json.loads(json.dumps(base_cfg))
+            cfg_bad_pin["user"]["pin"] = "12"
+            self.assertEqual(inst.validate(cfg_bad_pin), "bad_pin")
+
+            cfg_bad_pin2 = json.loads(json.dumps(base_cfg))
+            cfg_bad_pin2["user"]["pin"] = "12ab"
+            self.assertEqual(inst.validate(cfg_bad_pin2), "bad_pin")
+
+            cfg_bad_auto = json.loads(json.dumps(base_cfg))
+            cfg_bad_auto["user"]["auto_login"] = "yes"
+            self.assertEqual(inst.validate(cfg_bad_auto), "bad_config")
+
+        # Secret-Scrubbing in log() und redact_state()
+        log_dir = self.root / "inst-run"
+        with (
+            mock.patch.object(inst, "RUNDIR", log_dir),
+            mock.patch.object(inst, "LOG", log_dir / "install.log"),
+            mock.patch.object(inst, "SECRETS", ["TopSecret!"]),
+        ):
+            inst.log('SMBPASS=TopSecret! {"password":"TopSecret!","pin":"5588"} pin=5588 password=abc')
+            logged = (log_dir / "install.log").read_text(encoding="utf-8")
+            self.assertNotIn("TopSecret!", logged)
+            self.assertNotIn("5588", logged)
+            self.assertNotIn("abc", logged)
+
+        raw_state = {"config": {"user": {"name": "Anna", "password": "pw", "pin": "5588"}}}
+        redacted = inst.redact_state(raw_state)
+        self.assertNotIn("password", redacted["config"]["user"])
+        self.assertNotIn("pin", redacted["config"]["user"])
+        self.assertEqual(raw_state["config"]["user"]["password"], "pw")
+
+        # Chroot-Bootstrap ueber 0600-Datei inkl. Migration & Cleanup
+        target = self.root / "target"
+        vs_dir = target / "home" / "anna" / ".local" / "share" / "voidstation"
+        vs_dir.mkdir(parents=True)
+        (vs_dir / "settings.json").write_text(
+            json.dumps({"lang": "en", "theme": "nord", "resolution": "1920x1080"}),
+            encoding="utf-8",
+        )
+        (vs_dir / "radio.json").write_text(json.dumps([{"name": "FM4"}]), encoding="utf-8")
+        secret_path = target / "root" / ".voidstation-account-bootstrap.json"
+        seen_cmds: list[list[str]] = []
+        seen_modes: list[int] = []
+
+        def fake_chroot(cmd: list[str], check: bool = True) -> subprocess.CompletedProcess[str]:
+            seen_cmds.append(list(cmd))
+            self.assertNotIn("StartPass!1", " ".join(cmd))
+            self.assertNotIn("5588", " ".join(cmd))
+            self.assertTrue(secret_path.is_file())
+            seen_modes.append(_mode(secret_path))
+            return subprocess.run(
+                [
+                    sys.executable,
+                    str(REPO / "launcher" / "vsaccount" / "cli.py"),
+                    "--base",
+                    str(vs_dir),
+                    "bootstrap",
+                    "--secret-file",
+                    str(secret_path),
+                ],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+        inst.bootstrap_account(
+            target,
+            "anna",
+            {"name": "Anna", "password": "StartPass!1", "pin": "5588", "auto_login": False},
+            runner=fake_chroot,
+        )
+        self.assertFalse(secret_path.exists())
+        self.assertEqual(seen_modes, [0o600])
+        self.assertIn("--secret-file", seen_cmds[0])
+
+        svc_boot = AccountService(vs_dir, runtime_dir=self.runtime / "boot-rt", clock=self.clock)
+        try:
+            accs = svc_boot.list_accounts()
+            self.assertEqual(len(accs), 1)
+            admin = accs[0]
+            self.assertEqual(admin.display_name, "Anna")
+            self.assertTrue(admin.has_password)
+            self.assertTrue(admin.has_pin)
+            self.assertFalse(admin.auto_login)
+            self.assertTrue(svc_boot.get_device_policy().ask_on_boot)
+            self.assertTrue(svc_boot.get_session().locked)
+            prefs = svc_boot.load_profile_prefs({})
+            self.assertEqual(prefs.get("lang"), "en")
+            self.assertEqual(prefs.get("theme"), "nord")
+            self.assertTrue((vs_dir / "accounts" / "data" / admin.id / "radio.json").is_file())
+        finally:
+            svc_boot.close()
+
+        # Secret-Datei wird auch bei fehlgeschlagenem Chroot aufgeraeumt
+        def fail_chroot(_cmd: list[str], check: bool = True) -> subprocess.CompletedProcess[str]:
+            self.assertTrue(secret_path.is_file())
+            return subprocess.CompletedProcess([], 1, "", "boom")
+
+        with self.assertRaises(inst.Fail):
+            inst.bootstrap_account(
+                target,
+                "anna",
+                {"name": "Anna", "password": "StartPass!1", "pin": "5588", "auto_login": True},
+                runner=fail_chroot,
+            )
+        self.assertFalse(secret_path.exists())
+
+    def test_vsctl_account_cli_and_emergency_fallback(self) -> None:
+        self.svc.set_credential(self.admin.id, "password", "AdminPass!1")
+        self.svc.set_credential(self.admin.id, "pin", "2580")
+        alex = self.svc.create_account("Alex", role="standard", pin="2468", password="AlexPass99")
+        self.svc.set_device_policy(guest_enabled=True)
+
+        # CLI-Argumente fuer Secrets werden strikt abgelehnt
+        r_bad = self._run_vsctl("switch", "Alex", "--pin=2468")
+        self.assertEqual(r_bad.returncode, 2)
+        self.assertIn("forbidden", r_bad.stderr)
+        r_bad_pw = self._run_vsctl("switch", "Alex", "--password=AlexPass99")
+        self.assertEqual(r_bad_pw.returncode, 2)
+
+        # status & list (human und --json)
+        r_st = self._run_vsctl("status", "--json")
+        self.assertEqual(r_st.returncode, 0, r_st.stderr)
+        st_json = json.loads(r_st.stdout)
+        self.assertEqual(st_json["session"]["account_id"], self.admin.id)
+
+        r_st_h = self._run_vsctl("status")
+        self.assertEqual(r_st_h.returncode, 0, r_st_h.stderr)
+        self.assertIn("LegacyUser", r_st_h.stdout)
+
+        r_ls = self._run_vsctl("list", "--json")
+        self.assertEqual(r_ls.returncode, 0, r_ls.stderr)
+        ls_json = json.loads(r_ls.stdout)
+        self.assertEqual(len(ls_json), 2)
+        self.assertNotIn("2468", r_ls.stdout)
+        self.assertNotIn("hash", r_ls.stdout)
+
+        # switch mit PIN via stdin
+        r_sw_pin = self._run_vsctl("switch", "Alex", "--json", stdin_text="2468\n")
+        self.assertEqual(r_sw_pin.returncode, 0, r_sw_pin.stderr)
+        self.assertEqual(json.loads(r_sw_pin.stdout)["session"]["account_id"], alex.id)
+
+        # switch mit Passwort via stdin (--password ohne Wert)
+        r_sw_pw = self._run_vsctl("switch", "LegacyUser", "--password", "--json", stdin_text="AdminPass!1\n")
+        self.assertEqual(r_sw_pw.returncode, 0, r_sw_pw.stderr)
+        self.assertEqual(json.loads(r_sw_pw.stdout)["session"]["account_id"], self.admin.id)
+
+        # switch --guest und lock
+        r_guest = self._run_vsctl("switch", "--guest", "--json")
+        self.assertEqual(r_guest.returncode, 0, r_guest.stderr)
+        self.assertTrue(json.loads(r_guest.stdout)["session"]["is_guest"])
+
+        r_lock = self._run_vsctl("lock", "--json")
+        self.assertEqual(r_lock.returncode, 0, r_lock.stderr)
+        self.assertTrue(json.loads(r_lock.stdout)["session"]["locked"])
+
+        # Hard-Lock auf Alex ausloesen und trotz gesperrter UI per Notfall-Fallback entsperren
+        for _ in range(8):
+            res = self.svc.authenticate(alex.id, "pin", "0000")
+            if res.retry_after > 0:
+                self.clock.advance(res.retry_after + 1)
+        self.assertTrue(self.svc.authenticate(alex.id, "pin", "2468").hard_locked)
+
+        r_ul = self._run_vsctl("unlock", "Alex", "--json")
+        self.assertEqual(r_ul.returncode, 0, r_ul.stderr)
+        self.assertTrue(json.loads(r_ul.stdout)["ok"])
+        self.assertTrue(self.svc.authenticate(alex.id, "pin", "2468").ok)
+
+        # reset-pin und reset-pin --remove ueber stdin (im Notfall-Fallback bei gesperrter UI)
+        r_rp = self._run_vsctl("reset-pin", "Alex", "--json", stdin_text="7391\n7391\n")
+        self.assertEqual(r_rp.returncode, 0, r_rp.stderr)
+        self.assertNotIn("7391", r_rp.stdout)
+        self.assertTrue(self.svc.authenticate(alex.id, "pin", "7391").ok)
+
+        r_rm = self._run_vsctl("reset-pin", "Alex", "--remove", "--json")
+        self.assertEqual(r_rm.returncode, 0, r_rm.stderr)
+        self.assertFalse(json.loads(r_rm.stdout)["has_pin"])
+        updated_alex = self.svc.get_account(alex.id)
+        assert updated_alex is not None
+        self.assertFalse(updated_alex.has_pin)
+
+        # Offline-Fallback bei gestopptem Launcher
+        assert self.httpd is not None
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.httpd = None
+        if self.thread is not None:
+            self.thread.join(timeout=2)
+            self.thread = None
+
+        r_off_st = self._run_vsctl("status", "--json", api_url=f"http://127.0.0.1:{self.port}")
+        self.assertEqual(r_off_st.returncode, 0, r_off_st.stderr)
+        self.assertTrue(json.loads(r_off_st.stdout).get("offline"))
+
+        r_off_ls = self._run_vsctl("list", "--json", api_url=f"http://127.0.0.1:{self.port}")
+        self.assertEqual(r_off_ls.returncode, 0, r_off_ls.stderr)
+        self.assertEqual(len(json.loads(r_off_ls.stdout)), 2)
+
+    def test_bash_completion_and_stage5_i18n_sync(self) -> None:
+        bashrc = REPO / "launcher" / "shell" / "bashrc.sh"
+        script = "\n".join(
+            [
+                f"source {json.dumps(str(bashrc))}",
+                'COMP_WORDS=(vsctl ""); COMP_CWORD=1; _vsctl; printf "L1:%s\\n" "${COMPREPLY[*]}"',
+                'COMP_WORDS=(vsctl account ""); COMP_CWORD=2; _vsctl; printf "L2:%s\\n" "${COMPREPLY[*]}"',
+                'COMP_WORDS=(vsctl account reset-pin Alex "-"); COMP_CWORD=4; _vsctl; printf "L3:%s\\n" "${COMPREPLY[*]}"',
+            ]
+        )
+        r = subprocess.run(
+            ["bash", "--norc", "--noprofile", "-ic", script],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "HOME": str(self.root)},
+            timeout=5,
+        )
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertIn("account", r.stdout)
+        for sub in ("status", "list", "switch", "lock", "unlock", "reset-pin", "help"):
+            self.assertIn(sub, r.stdout)
+        self.assertIn("--remove", r.stdout)
+
+        de = json.loads((REPO / "launcher" / "web" / "i18n" / "de.json").read_text(encoding="utf-8"))
+        en = json.loads((REPO / "launcher" / "web" / "i18n" / "en.json").read_text(encoding="utf-8"))
+        stage5_keys = (
+            "inst.pin",
+            "inst.pinOptional",
+            "inst.pinInfo",
+            "inst.autoLogin",
+            "inst.autoLoginOn",
+            "inst.autoLoginOff",
+            "inst.errPin",
+            "inst.err.bad_pin",
+            "inst.sumPinSet",
+            "inst.sumPinNone",
+            "inst.sumAutoLoginOn",
+            "inst.sumAutoLoginOff",
+            "inst.loginAskText",
+        )
+        ph = re.compile(r"\{[A-Za-z0-9_]+\}")
+        for k in stage5_keys:
+            self.assertIn(k, de)
+            self.assertIn(k, en)
             self.assertEqual(set(ph.findall(de[k])), set(ph.findall(en[k])), f"Placeholder mismatch in {k}")
 
 
