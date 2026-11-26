@@ -378,10 +378,12 @@ class AccountStore:
             new_avatar = cur.avatar if avatar is None else avatar
             new_color = cur.color if color is None else color
             new_auto = cur.auto_login if auto_login is None else bool(auto_login)
+            if new_auto and (cur.has_pin or cur.has_password):
+                new_auto = False
 
             self._conn.execute("BEGIN")
             try:
-                if auto_login is True:
+                if new_auto:
                     self._conn.execute("UPDATE accounts SET auto_login = 0")
                 self._conn.execute(
                     "UPDATE accounts SET display_name = ?, role = ?, parent_id = ?, avatar = ?, color = ?, active = ?, auto_login = ? WHERE id = ?",
@@ -438,6 +440,10 @@ class AccountStore:
                     "INSERT INTO credentials(account_id, factor, hash, updated_at) VALUES (?, ?, ?, ?) "
                     "ON CONFLICT(account_id, factor) DO UPDATE SET hash = excluded.hash, updated_at = excluded.updated_at",
                     (account_id, factor, digest, now),
+                )
+                self._conn.execute(
+                    "UPDATE accounts SET auto_login = 0 WHERE id = ?",
+                    (account_id,),
                 )
                 self._conn.execute(
                     "DELETE FROM auth_throttle WHERE account_id = ? AND factor = ?",

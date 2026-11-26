@@ -128,9 +128,10 @@ class AccountService:
     def _initial_session(self) -> SessionState:
         accounts = self.store.list_accounts()
         policy = self.store.get_device_policy()
+        has_active_child = any(a.role == "child" and a.active for a in accounts)
         target: Account | None = None
         for acc in accounts:
-            if acc.auto_login:
+            if acc.auto_login and not (acc.has_pin or acc.has_password):
                 target = acc
                 break
         if target is None and policy.default_account_id:
@@ -150,9 +151,8 @@ class AccountService:
                 picker_required=True,
             )
 
-        needs_auth = policy.ask_on_boot or (
-            not target.auto_login and (target.has_pin or target.has_password)
-        )
+        target_has_auth = target.has_pin or target.has_password
+        needs_auth = policy.ask_on_boot or has_active_child or target_has_auth
         return SessionState(
             account_id=target.id,
             display_name=target.display_name,

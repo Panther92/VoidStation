@@ -1876,6 +1876,58 @@ class VsAccountRegressionAndCatalogTests(unittest.TestCase):
             self.assertIn(k, de)
             self.assertIn(k, en)
 
+    def test_restart_requires_picker_with_child_or_protected_account(self) -> None:
+        # Nach Legacy-Migration: Admin ohne PIN/Passwort und ohne Kinder startet entsperrt
+        admin = self.svc.list_accounts()[0]
+        self.assertTrue(admin.auto_login)
+        self.assertFalse(self.svc.get_session().locked)
+
+        # Admin mit PIN schuetzen -> auto_login wird deaktiviert; selbst bei erzwungenem auto_login=1 greift kein Auto-Login
+        self.svc.set_credential(admin.id, "pin", "2580")
+        admin_after = self.svc.get_account(admin.id)
+        assert admin_after is not None
+        self.assertFalse(admin_after.auto_login)
+        self.svc.store._conn.execute("UPDATE accounts SET auto_login = 1 WHERE id = ?", (admin.id,))
+        self.svc.update_account(admin.id, auto_login=True)
+        admin_recheck = self.svc.get_account(admin.id)
+        assert admin_recheck is not None
+        self.assertFalse(admin_recheck.auto_login)
+
+        # Selbst wenn in der DB manuell auto_login=1 steht, darf ein geschuetztes Konto nicht entsperrt starten
+        self.svc.store._conn.execute("UPDATE accounts SET auto_login = 1 WHERE id = ?", (admin.id,))
+        self.svc = launcher.init_accounts(base_dir=self.base, runtime_dir=self.runtime, clock=self.clock)
+        sess_prot = self.svc.get_session()
+        self.assertTrue(sess_prot.locked)
+        self.assertTrue(sess_prot.picker_required)
+
+        # Als Admin anmelden, Kind anlegen + ungeschuetztes Standardkonto mit auto_login=True, ask_on_boot=False
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": admin.id, "pin": "2580"})[0], 200)
+        self.assertEqual(self._req("POST", "/api/accounts/device-policy", {"ask_on_boot": False})[0], 200)
+        self.assertEqual(
+            self._req("POST", "/api/accounts/create", {"display_name": "Kind", "role": "child", "parent_id": admin.id})[0],
+            200,
+        )
+        self.assertEqual(
+            self._req("POST", "/api/accounts/create", {"display_name": "StandardAuto", "role": "standard", "auto_login": True})[0],
+            200,
+        )
+
+        # Dienst neu starten -> muss gesperrt in der Kontoauswahl landen (nie "admin, entsperrt")
+        self.svc = launcher.init_accounts(base_dir=self.base, runtime_dir=self.runtime, clock=self.clock)
+        restarted = self.svc.get_session()
+        self.assertTrue(restarted.locked)
+        self.assertTrue(restarted.picker_required)
+        self.assertFalse(restarted.role == "admin" and not restarted.locked)
+
+        c_sess, d_sess = self._req("GET", "/api/session")
+        self.assertEqual(c_sess, 200)
+        self.assertTrue(d_sess["session"]["locked"])
+        self.assertTrue(d_sess["session"]["picker_required"])
+
+        # Admin-Wechsel ohne PIN abgelehnt, mit PIN erfolgreich
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": admin.id})[0], 401)
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": admin.id, "pin": "2580"})[0], 200)
+
     def test_catalog_age_rating_and_audit_regressions(self) -> None:
         # 1. catalog.json optional age_rating (rueckwaertskompatibel) + bool-Schutz
         cat_data = json.loads((REPO / "launcher" / "catalog.json").read_text(encoding="utf-8"))
