@@ -106,6 +106,7 @@ def init_accounts(
     base_dir: Path | None = None,
     runtime_dir: Path | None = None,
     clock: Any = None,
+    identity_registry: vsaccount.IdentityRegistry | None = None,
 ) -> vsaccount.AccountService:
     global _ACCOUNTS, _RUNTIME_DIR_OVERRIDE
     with _ACCOUNTS_LOCK:
@@ -116,7 +117,12 @@ def init_accounts(
             _ACCOUNTS.close()
             _ACCOUNTS = None
         rt = runtime_dir if runtime_dir is not None else _RUNTIME_DIR_OVERRIDE
-        _ACCOUNTS = vsaccount.AccountService(base_dir or data_dir(), runtime_dir=rt, clock=clock)
+        _ACCOUNTS = vsaccount.AccountService(
+            base_dir or data_dir(),
+            runtime_dir=rt,
+            clock=clock,
+            identity_registry=identity_registry,
+        )
         return _ACCOUNTS
 
 
@@ -7245,6 +7251,9 @@ def apps_payload():
         item["tile"] = a["id"] in tiles
         item["icon"] = a.get("tile", {}).get("icon", "globe")
         item["color"] = a.get("tile", {}).get("color", "#2f3238")
+        raw_age = a.get("age_rating")
+        exp_age = max(0, min(18, int(raw_age))) if isinstance(raw_age, (int, float)) and not isinstance(raw_age, bool) else None
+        item["age_rating"] = vsaccount.parental.effective_age_rating(a["id"], a["cat"], exp_age)
         apps.append(item)
     cats = list(cat["categories"])
     try:
@@ -10621,11 +10630,6 @@ def emu_mute_apply(tile):
 # einen Start in der Haupteinstellung) – ihre eigenen Spiel-Einstellungen braeuchten je Format das Lesen der Spielkennung.
 #
 # "game": auch je Spiel waehlbar. DOSBox: kommt in die Datei, die VoidStation vor jedem Start schreibt. PCSX2/DuckStation:
-# in deren eigene Spiel-Einstellungen (gamesettings/<Seriennummer>…ini, s. emu_game_ini; Seriennummer aus dem Abbild, discid.py).
-# Rueckfall, wo sich das Abbild nicht lesen laesst (.cso, .gz, .pbp, .chd ohne chdman, zweite CD bei DuckStation …): Der Wert gilt fuer diesen Start
-# in der Haupteinstellung, der alte kommt vor dem naechsten Start bzw. Oeffnen der Optionen zurueck (emu_opts_restore; nur, wo
-# der Nutzer in der Zwischenzeit nichts anderes eingestellt hat).
-#
 # Spielprofile (gameprofiles.py, gamedb/<system>.csv): Was VoidStation fuer ein bekanntes Spiel von selbst einstellt, z. B.
 # Texturen glaetten bei 3D-Spielen der PlayStation oder das CPU-Tempo eines DOS-Spiels. Ein Profil gilt nur, solange die Option
 # allgemein auf der Stufe aus EMU_AUTO steht ("Automatisch" bzw. "Standard") und der Nutzer fuer das Spiel nichts gewaehlt hat.
@@ -15761,7 +15765,11 @@ def _tile_meta(tile_id: str, tile: dict[str, Any] | None = None) -> tuple[str, i
     raw_age = (tile or {}).get("age_rating")
     if raw_age is None and app:
         raw_age = app.get("age_rating")
-    age_rating = int(raw_age) if isinstance(raw_age, (int, float)) else None
+    age_rating = (
+        max(0, min(18, int(raw_age)))
+        if isinstance(raw_age, (int, float)) and not isinstance(raw_age, bool)
+        else None
+    )
     raw_cmd = (tile or {}).get("cmd") if (tile or {}).get("cmd") is not None else (app or {}).get("cmd")
     cmd = [str(x) for x in raw_cmd] if isinstance(raw_cmd, list) else None
     is_browser = vsaccount.parental.is_browser_tile(tile_id, cat, cmd)
@@ -15957,6 +15965,8 @@ class Handler(BaseHTTPRequestHandler):
         )
 
     def _account_error(self, exc: AccountError) -> None:
+        if isinstance(exc, vsaccount.IdentityOfflineError):
+            return self._json(503, {"error": exc.code, "msg": exc.message, "offline": True})
         if isinstance(exc, AuthError):
             if exc.code == "account.cooldown" or exc.retry_after > 0:
                 return self._json(429, {"error": exc.code, "msg": exc.message, "retry_after": exc.retry_after})
@@ -16103,9 +16113,9 @@ class Handler(BaseHTTPRequestHandler):
                     if sess.role != "admin":
                         return self._json(403, {"error": "account.err.adminRequired", "msg": "Admin account required"})
                     svc.unlock_account(aid, factor=factor or None)
-                    acc = svc.get_account(aid)
-                    assert acc is not None
-                    return self._json(200, {"ok": True, "account": acc.to_public_dict()})
+                    unlocked_acc = svc.get_account(aid)
+                    assert unlocked_acc is not None
+                    return self._json(200, {"ok": True, "account": unlocked_acc.to_public_dict()})
 
                 if sess.role != "admin":
                     if aid != sess.account_id:
@@ -16212,7 +16222,7 @@ class Handler(BaseHTTPRequestHandler):
                     secret = str(b.get("password") or "")
                 else:
                     secret = ""
-                res = svc.verify_parent_override(
+                ov_res = svc.verify_parent_override(
                     factor=factor,
                     secret=secret,
                     action=action,
@@ -16221,7 +16231,122 @@ class Handler(BaseHTTPRequestHandler):
                     tile_id=tile_id,
                     minutes=minutes,
                 )
-                return self._json(200, res)
+                return self._json(200, ov_res)
+        except AccountError as exc:
+            return self._account_error(exc)
+        return self._send(404)
+
+    def _resolve_identity_target(self, req_id: str, *, write: bool) -> tuple[str | None, bool]:
+        svc = accounts()
+        sess = svc.get_session()
+        if sess.locked:
+            self._json(403, {"error": "account.err.locked", "msg": "Session is locked"})
+            return None, False
+        if sess.is_guest or sess.role == "child":
+            if write:
+                self._json(403, {"error": "identity.err.notAllowed", "msg": "Not allowed for this account"})
+            return None, False
+        aid = req_id.strip() or sess.account_id
+        if sess.role != "admin" and aid != sess.account_id:
+            self._json(403, {"error": "account.err.adminRequired", "msg": "Admin account required"})
+            return None, False
+        if write:
+            target = svc.get_account(aid)
+            if not target or not target.active:
+                self._json(404, {"error": "account.err.notFound", "msg": "Account not found"})
+                return None, False
+            if target.role == "child":
+                self._json(403, {"error": "identity.err.notAllowed", "msg": "Child accounts cannot link online identities"})
+                return None, False
+        return aid, True
+
+    def _identity_get(self, path: str, qs: dict[str, list[str]]) -> None:
+        if not self._api_token_ok():
+            return self._json(403, {"error": "forbidden"})
+        svc = accounts()
+        sess = svc.get_session()
+        if sess.locked:
+            return self._json(403, {"error": "account.err.locked", "msg": "Session is locked"})
+
+        if path == "/api/identity/providers":
+            return self._json(200, {
+                "available": svc.identity.has_providers(),
+                "providers": [p.to_public_dict() for p in svc.identity.list_providers()],
+            })
+
+        req_id = qs.get("account_id", [""])[0].strip()
+        if sess.is_guest or sess.role == "child":
+            if path == "/api/identity/entitlements":
+                return self._json(200, {"account_id": "", "entitlements": [], "offline_grace_active": False})
+            if path == "/api/identity/status":
+                return self._json(200, {
+                    "available": svc.identity.has_providers(),
+                    "offline_first": True,
+                    "can_manage": False,
+                    "account_id": "",
+                    "providers": [p.to_public_dict() for p in svc.identity.list_providers()],
+                    "links": [],
+                    "entitlements": [],
+                    "offline_grace_active": False,
+                    "pending": None,
+                })
+            return self._send(404)
+
+        aid, can_manage = self._resolve_identity_target(req_id, write=False)
+        if aid is None:
+            return
+        try:
+            if path == "/api/identity/status":
+                st = svc.identity.get_status(aid)
+                st["can_manage"] = can_manage
+                return self._json(200, st)
+            if path == "/api/identity/entitlements":
+                ents, grace = svc.identity.get_entitlements(aid)
+                return self._json(200, {
+                    "account_id": aid,
+                    "entitlements": ents,
+                    "offline_grace_active": grace,
+                })
+        except AccountError as exc:
+            return self._account_error(exc)
+        return self._send(404)
+
+    def _identity_post(self, parts: list[str], b: dict[str, Any]) -> None:
+        if not self._api_token_ok():
+            return self._json(403, {"error": "forbidden"})
+        req_id = str(b.get("account_id") or b.get("id") or "").strip()
+        aid, _ = self._resolve_identity_target(req_id, write=True)
+        if aid is None:
+            return
+        svc = accounts()
+        try:
+            if parts == ["api", "identity", "link"]:
+                pid = str(b.get("provider_id") or "").strip()
+                locale = str(b.get("locale") or settings_load().get("lang") or "de")
+                return self._json(200, svc.identity.begin_link(aid, pid, locale=locale))
+            if parts == ["api", "identity", "poll"]:
+                return self._json(200, svc.identity.poll_link(
+                    aid,
+                    challenge_id=str(b.get("challenge_id") or "").strip(),
+                    provider_id=str(b.get("provider_id") or "").strip(),
+                ))
+            if parts == ["api", "identity", "cancel"]:
+                cancelled = svc.identity.cancel_link(
+                    aid,
+                    challenge_id=str(b.get("challenge_id") or "").strip(),
+                    provider_id=str(b.get("provider_id") or "").strip(),
+                )
+                return self._json(200, {"ok": True, "cancelled": cancelled})
+            if parts == ["api", "identity", "sync"]:
+                pid_raw = str(b.get("provider_id") or "").strip()
+                return self._json(200, svc.identity.sync(aid, provider_id=pid_raw or None))
+            if parts == ["api", "identity", "unlink"]:
+                removed = svc.identity.unlink(
+                    aid,
+                    provider_id=str(b.get("provider_id") or "").strip(),
+                    link_id=str(b.get("link_id") or "").strip(),
+                )
+                return self._json(200, {"ok": removed, "unlinked": removed})
         except AccountError as exc:
             return self._account_error(exc)
         return self._send(404)
@@ -16366,6 +16491,8 @@ class Handler(BaseHTTPRequestHandler):
                     "tiles": tiles,
                 })
             return self._json(403, {"error": "account.err.adminRequired", "msg": "Admin account required"})
+        if path.startswith("/api/identity/"):
+            return self._identity_get(path, urllib.parse.parse_qs(url.query))
         if path == "/api/status":
             running = APPS.running()
             return self._json(200, {"running": running, "starting": APPS.starting(), "radio": RADIO.status(),
@@ -16634,6 +16761,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200 if OSK_FIELD.post(self._body()) else 400, {"ok": True})
             if parts[:2] in (["api", "session"], ["api", "accounts"]):
                 return self._account_post(parts, self._body())
+            if parts[:2] == ["api", "identity"]:
+                return self._identity_post(parts, self._body())
             if parts[:2] == ["api", "vpn"] and len(parts) == 3:
                 if not self._check_action("settings_system"):
                     return

@@ -159,7 +159,8 @@ class ProfileStorage:
     def browser_profile_dir(self, account_id: str, app_id: str, is_guest: bool = False) -> Path:
         safe_app = self._validate_id(app_id)
         pdir = self.profile_dir(account_id, is_guest=is_guest)
-        return _ensure_private_dir(pdir / "browser" / safe_app)
+        browser_root = _ensure_private_dir(pdir / "browser")
+        return _ensure_private_dir(browser_root / safe_app)
 
     def prefs_path(self, account_id: str, is_guest: bool = False) -> Path:
         return self.profile_file(account_id, "prefs.json", is_guest=is_guest)

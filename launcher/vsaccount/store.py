@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import threading
 import time
@@ -18,6 +19,7 @@ from .models import (
     PERSISTENT_ROLES,
     Account,
     DevicePolicy,
+    IdentityLink,
     NotFoundError,
     ParentalPolicy,
     PolicyError,
@@ -29,6 +31,7 @@ SCHEMA_VERSION = "1"
 AUDIT_LIMIT = 200
 BACKOFF_STEPS: tuple[int, ...] = (0, 0, 0, 15, 60, 300, 900)
 PIN_HARD_LOCK_THRESHOLD = 8
+_HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 
 _ACCOUNTS_SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -381,6 +384,10 @@ class AccountStore:
             else:
                 new_parent = None
 
+            if avatar is not None and avatar not in DEFAULT_AVATARS:
+                raise ValidationError("account.err.invalid", "Invalid avatar")
+            if color is not None and not _HEX_COLOR_RE.fullmatch(str(color)):
+                raise ValidationError("account.err.invalid", "Invalid color")
             new_avatar = cur.avatar if avatar is None else avatar
             new_color = cur.color if color is None else color
             new_auto = cur.auto_login if auto_login is None else bool(auto_login)
@@ -715,6 +722,164 @@ class AccountStore:
                 )
             return out
 
+    # --- Online-/Store-Identity-Verknuepfungen ---
+    @staticmethod
+    def _row_to_identity_link(row: sqlite3.Row) -> IdentityLink:
+        return IdentityLink(
+            id=str(row["id"]),
+            account_id=str(row["account_id"]),
+            provider_id=str(row["provider_id"]),
+            subject=str(row["subject"]),
+            display_handle=str(row["display_handle"]),
+            status=str(row["status"]),
+            linked_at=int(row["linked_at"]),
+            last_sync_at=int(row["last_sync_at"]),
+        )
+
+    def list_identity_links(self, account_id: str | None = None) -> list[IdentityLink]:
+        with self._lock:
+            if account_id is None:
+                rows = self._conn.execute(
+                    "SELECT * FROM identity_links ORDER BY linked_at ASC, id ASC"
+                ).fetchall()
+            else:
+                rows = self._conn.execute(
+                    "SELECT * FROM identity_links WHERE account_id = ? ORDER BY linked_at ASC, id ASC",
+                    (account_id,),
+                ).fetchall()
+            return [self._row_to_identity_link(r) for r in rows]
+
+    def get_identity_link(self, link_id: str) -> IdentityLink | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM identity_links WHERE id = ?",
+                (link_id,),
+            ).fetchone()
+            return self._row_to_identity_link(row) if row else None
+
+    def get_identity_link_for_provider(self, account_id: str, provider_id: str) -> IdentityLink | None:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT * FROM identity_links WHERE account_id = ? AND provider_id = ?",
+                (account_id, provider_id),
+            ).fetchone()
+            return self._row_to_identity_link(row) if row else None
+
+    def upsert_identity_link(
+        self,
+        link: IdentityLink,
+        entitlements: list[dict[str, Any]] | None = None,
+        entitlements_expires_at: int | None = None,
+    ) -> IdentityLink:
+        with self._lock:
+            if not self.get_account(link.account_id):
+                raise NotFoundError("account.err.notFound", "Account not found")
+            existing = self.get_identity_link_for_provider(link.account_id, link.provider_id)
+            target_id = existing.id if existing else (link.id or uuid.uuid4().hex[:16])
+            self._conn.execute("BEGIN")
+            try:
+                if existing and existing.id != link.id:
+                    self._tokens_conn.execute("DELETE FROM provider_tokens WHERE link_id = ?", (link.id,))
+                if entitlements is None:
+                    cur_ents, cur_exp = self.get_identity_entitlements(target_id)
+                    ent_json = json.dumps(cur_ents, ensure_ascii=False)
+                    exp_at = int(cur_exp if entitlements_expires_at is None else entitlements_expires_at)
+                else:
+                    ent_json = json.dumps(entitlements, ensure_ascii=False)
+                    exp_at = int(entitlements_expires_at or 0)
+                self._conn.execute(
+                    "INSERT INTO identity_links "
+                    "(id, account_id, provider_id, subject, display_handle, status, linked_at, last_sync_at, entitlements_json, entitlements_expires_at) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(id) DO UPDATE SET "
+                    "account_id = excluded.account_id, "
+                    "provider_id = excluded.provider_id, "
+                    "subject = excluded.subject, "
+                    "display_handle = excluded.display_handle, "
+                    "status = excluded.status, "
+                    "linked_at = excluded.linked_at, "
+                    "last_sync_at = excluded.last_sync_at, "
+                    "entitlements_json = excluded.entitlements_json, "
+                    "entitlements_expires_at = excluded.entitlements_expires_at",
+                    (
+                        target_id,
+                        link.account_id,
+                        link.provider_id,
+                        link.subject,
+                        link.display_handle,
+                        link.status,
+                        int(link.linked_at),
+                        int(link.last_sync_at),
+                        ent_json,
+                        exp_at,
+                    ),
+                )
+                self._conn.execute("COMMIT")
+            except Exception:
+                self._conn.execute("ROLLBACK")
+                raise
+            saved = self.get_identity_link(target_id)
+            assert saved is not None
+            return saved
+
+    def get_identity_entitlements(self, link_id: str) -> tuple[list[dict[str, Any]], int]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT entitlements_json, entitlements_expires_at FROM identity_links WHERE id = ?",
+                (link_id,),
+            ).fetchone()
+            if not row:
+                return [], 0
+            try:
+                raw = json.loads(row["entitlements_json"] or "[]")
+                ents = [x for x in raw if isinstance(x, dict)] if isinstance(raw, list) else []
+            except ValueError:
+                ents = []
+            return ents, int(row["entitlements_expires_at"] or 0)
+
+    def update_identity_entitlements(
+        self,
+        link_id: str,
+        entitlements: list[dict[str, Any]],
+        entitlements_expires_at: int,
+        *,
+        status: str | None = None,
+        last_sync_at: int | None = None,
+    ) -> IdentityLink:
+        with self._lock:
+            cur = self.get_identity_link(link_id)
+            if not cur:
+                raise NotFoundError("account.err.notFound", "Identity link not found")
+            new_status = cur.status if status is None else str(status)
+            new_sync = cur.last_sync_at if last_sync_at is None else int(last_sync_at)
+            self._conn.execute(
+                "UPDATE identity_links SET entitlements_json = ?, entitlements_expires_at = ?, status = ?, last_sync_at = ? "
+                "WHERE id = ?",
+                (json.dumps(entitlements, ensure_ascii=False), int(entitlements_expires_at), new_status, new_sync, link_id),
+            )
+            updated = self.get_identity_link(link_id)
+            assert updated is not None
+            return updated
+
+    def set_identity_link_status(self, link_id: str, status: str) -> IdentityLink:
+        with self._lock:
+            cur = self.get_identity_link(link_id)
+            if not cur:
+                raise NotFoundError("account.err.notFound", "Identity link not found")
+            self._conn.execute(
+                "UPDATE identity_links SET status = ? WHERE id = ?",
+                (str(status), link_id),
+            )
+            updated = self.get_identity_link(link_id)
+            assert updated is not None
+            return updated
+
+    def delete_identity_link(self, link_id: str) -> bool:
+        with self._lock:
+            cur = self._conn.execute("DELETE FROM identity_links WHERE id = ?", (link_id,))
+            self.delete_token_blob(link_id)
+            return cur.rowcount > 0
+
     # --- Geschuetzter Token-Speicher (tokens.db, getrennt von accounts.db) ---
     def save_token_blob(
         self,
@@ -737,6 +902,7 @@ class AccountStore:
                 "updated_at = excluded.updated_at",
                 (link_id, provider_id, account_id, bytes(payload_enc), int(key_version), int(expires_at), now),
             )
+            os.chmod(self.tokens_db_path, 0o600)
 
     def load_token_blob(self, link_id: str) -> bytes | None:
         with self._lock:
@@ -745,6 +911,10 @@ class AccountStore:
                 (link_id,),
             ).fetchone()
             return bytes(row["payload_enc"]) if row else None
+
+    def delete_token_blob(self, link_id: str) -> None:
+        with self._lock:
+            self._tokens_conn.execute("DELETE FROM provider_tokens WHERE link_id = ?", (link_id,))
 
     def delete_tokens_for_account(self, account_id: str) -> None:
         with self._lock:

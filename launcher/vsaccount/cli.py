@@ -53,10 +53,12 @@ def _read_secret_json(secret_file: str | None) -> dict[str, Any]:
 
 
 def _reject_secret_cli_args(argv: list[str]) -> str | None:
-    """Verhindert, dass Passwoerter oder PINs in Prozessliste/Shell-History landen."""
+    """Verhindert, dass Passwoerter, PINs oder Tokens in Prozessliste/Shell-History landen."""
     for arg in argv:
         low = arg.lower()
-        if low in ("--pin", "--secret") or low.startswith(("--pin=", "--password=", "--secret=")):
+        if low in ("--pin", "--secret", "--token", "--access-token", "--refresh-token") or low.startswith(
+            ("--pin=", "--password=", "--secret=", "--token=", "--access-token=", "--refresh-token=")
+        ):
             return arg.split("=", 1)[0]
     return None
 
@@ -449,8 +451,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"Error: {_format_api_error(c_acc, d_acc)}", file=sys.stderr)
             return 1
 
-    # Offline- & Notfall-Pfad (direkter SQLite-Zugriff auf base_dir/accounts/accounts.db)
-    svc = AccountService(base_dir)
+    # Offline- & Notfall-Pfad (direkter SQLite-Zugriff auf base_dir/accounts/accounts.db, ohne laufende Gast-Session zu loeschen)
+    svc = AccountService(base_dir, cleanup_guest=False)
     try:
         if args.cmd == "status":
             accounts = svc.list_accounts()

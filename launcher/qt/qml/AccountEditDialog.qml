@@ -25,7 +25,9 @@ Rectangle {
     readonly property bool isAdmin: !!(app.session && app.session.role === "admin" && !app.session.is_guest)
     readonly property var avatarChoices: ["user", "star", "gamepad", "music", "tv", "smile"]
     readonly property var colorChoices: ["#2d4a6b", "#2f6d4f", "#553a6e", "#74461f", "#6e2b3c", "#2b5b66"]
-    readonly property var adminAccounts: (app.accountsList || []).filter(function (a) { return a.role === "admin" && a.active !== false })
+    readonly property var adminAccounts: (app.accountsList || []).filter(function (a) {
+        return a.role === "admin" && a.active !== false && (!ed.account || a.id !== ed.account.id)
+    })
 
     z: 29
     color: Ui.c.surfaceOverlay

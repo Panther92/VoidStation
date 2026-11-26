@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Unit- & Integrations-Tests fuer das VoidStation-Account-System (Stufe 1 bis 5)."""
+"""Unit- & Integrations-Tests fuer das VoidStation-Account-System (Stufe 1 bis 6)."""
 from __future__ import annotations
 
 import ast
@@ -673,7 +673,8 @@ class VsAccountStage2BackendTests(unittest.TestCase):
 
         # Zurueck zu Admin: dessen Dateien & Praeferenzen sind intakt
         self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": admin_id})[0], 200)
-        _, admin_favs = self._req("GET", "/api/radio/favs")
+        _, raw_admin_favs = self._req("GET", "/api/radio/favs")
+        admin_favs: Any = raw_admin_favs
         self.assertEqual(len(admin_favs), 1)
         self.assertEqual(admin_favs[0]["name"], "AdminRadio")
         _, admin_sett = self._req("GET", "/api/settings")
@@ -1104,7 +1105,12 @@ class VsAccountStage4ParentalTests(unittest.TestCase):
         # Gueltige Eltern-PIN fuer "einmalig oeffnen" -> genau 1 Start erlaubt
         orig_launch = launcher.APPS.launch
         launched: list[str] = []
-        launcher.APPS.launch = lambda tile: (launched.append(tile["id"]), "started")[1]  # type: ignore[method-assign]
+
+        def _fake_launch(tile: dict[str, Any]) -> str:
+            launched.append(tile["id"])
+            return "started"
+
+        launcher.APPS.launch = _fake_launch  # type: ignore[method-assign]
         try:
             c_ov, d_ov = self._req(
                 "POST",
@@ -1138,9 +1144,20 @@ class VsAccountStage4ParentalTests(unittest.TestCase):
         orig_close = launcher.APPS.close
         orig_raise = launcher.raise_home
         calls: list[str] = []
-        launcher.APPS.pause_background = lambda keep=None: calls.append("pause_bg")  # type: ignore[method-assign]
-        launcher.APPS.close = lambda tid: calls.append(f"close:{tid}")  # type: ignore[method-assign]
-        launcher.raise_home = lambda: (calls.append("raise_home"), True)[1]  # type: ignore[assignment]
+
+        def _fake_pause_bg(keep: Any = None) -> None:
+            calls.append("pause_bg")
+
+        def _fake_close(tid: str) -> None:
+            calls.append(f"close:{tid}")
+
+        def _fake_raise_home() -> bool:
+            calls.append("raise_home")
+            return True
+
+        launcher.APPS.pause_background = _fake_pause_bg  # type: ignore[method-assign]
+        launcher.APPS.close = _fake_close  # type: ignore[method-assign]
+        launcher.raise_home = _fake_raise_home  # type: ignore[assignment]
         try:
             launcher._handle_parental_event({"ev": "account_warn", "reason": "daily_limit", "minutes": 4})
             c1, d1 = self._req("GET", f"/api/osk/wait?seq={orig_seq}", xtv=False, token="")
@@ -1570,6 +1587,483 @@ class VsAccountStage5Tests(unittest.TestCase):
             self.assertIn(k, de)
             self.assertIn(k, en)
             self.assertEqual(set(ph.findall(de[k])), set(ph.findall(en[k])), f"Placeholder mismatch in {k}")
+
+
+class _MockIdentityProvider(vsaccount.IdentityProvider):
+    """Test-Provider fuer Device-Code-, Entitlement-, Refresh- und Offline-Szenarien."""
+
+    def __init__(self, clock: FakeClock, *, grace_seconds: int = 7 * 86400) -> None:
+        self.clock = clock
+        self.grace_seconds = grace_seconds
+        self.offline = False
+        self.fail_auth = False
+        self.fail_refresh = False
+        self.poll_states: list[str] = ["pending", "slow_down", "authorized"]
+        self.poll_idx = 0
+        self.refresh_calls = 0
+        self.revoke_calls = 0
+        self.entitlements: list[vsaccount.Entitlement] = [
+            vsaccount.Entitlement(id="void-theme-pro", kind="theme", source="voidstore", granted_at=int(clock()), expires_at=0),
+            vsaccount.Entitlement(id="indie-pack", kind="app", source="voidstore", granted_at=int(clock()), expires_at=0),
+        ]
+
+    def info(self) -> vsaccount.ProviderInfo:
+        return vsaccount.ProviderInfo(
+            provider_id="voidstore",
+            display_name="VoidStation Store",
+            description="Mock Store Provider",
+            offline_grace_seconds=self.grace_seconds,
+        )
+
+    def begin_device_auth(self, account_id: str, device_id: str, locale: str = "de") -> vsaccount.DeviceCodeChallenge:
+        if self.offline:
+            raise ConnectionError("network unreachable")
+        now = int(self.clock())
+        return vsaccount.DeviceCodeChallenge(
+            provider_id="voidstore",
+            device_code="secret_device_code_xyz_999",
+            user_code="ABCD-1234",
+            verification_uri="https://store.example.invalid/device",
+            verification_uri_complete="https://store.example.invalid/device?code=ABCD-1234",
+            expires_at=now + 300,
+            interval=2,
+        )
+
+    def poll_device_auth(self, challenge: vsaccount.DeviceCodeChallenge, device_id: str) -> vsaccount.DevicePollResult:
+        if self.offline:
+            raise TimeoutError("timed out")
+        idx = min(self.poll_idx, len(self.poll_states) - 1)
+        st = self.poll_states[idx]
+        self.poll_idx += 1
+        if st in ("pending", "slow_down"):
+            return vsaccount.DevicePollResult(status=st, interval=4 if st == "slow_down" else 2)
+        if st != "authorized":
+            return vsaccount.DevicePollResult(status=st)
+        now = int(self.clock())
+        return vsaccount.DevicePollResult(
+            status="authorized",
+            subject="store-user-42",
+            display_handle="@paul",
+            tokens=vsaccount.ProviderAuthTokens(
+                access_token="access_tok_secret_value_111",
+                refresh_token="refresh_tok_secret_value_222",
+                expires_at=now + 3600,
+                scope="store.read",
+            ),
+            entitlements=list(self.entitlements),
+            entitlements_ttl=1800,
+        )
+
+    def refresh_tokens(
+        self,
+        link: vsaccount.IdentityLink,
+        tokens: vsaccount.ProviderAuthTokens,
+        device_id: str,
+    ) -> vsaccount.ProviderAuthTokens:
+        self.refresh_calls += 1
+        if self.offline:
+            raise ConnectionError("offline")
+        if self.fail_refresh:
+            raise vsaccount.AuthError("account.err.invalid", "Refresh token revoked")
+        return vsaccount.ProviderAuthTokens(
+            access_token=f"access_refreshed_{self.refresh_calls}",
+            refresh_token="refresh_tok_secret_value_333",
+            expires_at=int(self.clock()) + 3600,
+            scope=tokens.scope,
+        )
+
+    def fetch_entitlements(
+        self,
+        link: vsaccount.IdentityLink,
+        tokens: vsaccount.ProviderAuthTokens,
+        device_id: str,
+    ) -> tuple[list[vsaccount.Entitlement], int]:
+        if self.offline:
+            raise ConnectionError("offline")
+        if self.fail_auth:
+            self.fail_auth = False
+            raise vsaccount.AuthError("account.err.invalid", "Token expired")
+        return list(self.entitlements), 1800
+
+    def revoke(
+        self,
+        link: vsaccount.IdentityLink,
+        tokens: vsaccount.ProviderAuthTokens | None,
+        device_id: str,
+    ) -> None:
+        self.revoke_calls += 1
+        if self.offline:
+            raise ConnectionError("offline during revoke")
+
+
+class VsAccountStage6IdentityTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.base = self.root / "voidstation"
+        self.runtime = self.root / "runtime"
+        self.base.mkdir(parents=True)
+        self.runtime.mkdir(parents=True)
+        self.clock = FakeClock(1_700_046_000.0)
+
+        self._orig_env = {
+            k: os.environ.get(k)
+            for k in ("VS_NO_DESKTOP_SYNC", "VS_SOUNDS", "XDG_RUNTIME_DIR", "VOIDSTATION_BASE")
+        }
+        os.environ["VS_NO_DESKTOP_SYNC"] = "1"
+        os.environ["VS_SOUNDS"] = "0"
+        os.environ["XDG_RUNTIME_DIR"] = str(self.runtime)
+        os.environ["VOIDSTATION_BASE"] = str(self.base)
+
+        self._orig_settings = launcher.SETTINGS
+        self._orig_config = launcher.CONFIG
+        self._orig_catalog = launcher.CATALOG
+
+        self.tiles_path = self.base / "tiles.json"
+        self.settings_path = self.base / "settings.json"
+        self.tiles_path.write_text(
+            json.dumps(
+                {
+                    "title": "Start",
+                    "user": "Eltern",
+                    "groups": [
+                        {
+                            "name": "Spiele",
+                            "tiles": [
+                                {"id": "supertux", "label": "SuperTux", "cmd": ["supertux2"]},
+                                {"id": "steam", "label": "Steam", "cmd": ["steam"]},
+                                {"id": "custom16", "label": "Custom16", "cat": "Spiele", "age_rating": 16, "cmd": ["true"]},
+                            ],
+                        },
+                        {
+                            "name": "System",
+                            "tiles": [{"id": "settings", "label": "Einstellungen", "type": "settings"}],
+                        },
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.settings_path.write_text(json.dumps({"lang": "de", "theme": "default-dark"}), encoding="utf-8")
+        launcher.CONFIG = self.tiles_path
+        launcher.SETTINGS = self.settings_path
+
+        self.registry = vsaccount.IdentityRegistry()
+        self.token = launcher.init_api_token(runtime_dir=self.runtime)
+        self.svc = launcher.init_accounts(
+            base_dir=self.base,
+            runtime_dir=self.runtime,
+            clock=self.clock,
+            identity_registry=self.registry,
+        )
+        self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), launcher.Handler)
+        self.port = self.httpd.server_port
+        self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
+        self.thread.start()
+
+    def tearDown(self) -> None:
+        self.httpd.shutdown()
+        self.httpd.server_close()
+        self.thread.join(timeout=2)
+        launcher.close_accounts()
+        launcher.CONFIG = self._orig_config
+        launcher.SETTINGS = self._orig_settings
+        launcher.CATALOG = self._orig_catalog
+        with launcher._API_TOKEN_LOCK:
+            launcher._API_TOKEN = ""
+            launcher._RUNTIME_DIR_OVERRIDE = None
+        for k, v in self._orig_env.items():
+            if v is None:
+                os.environ.pop(k, None)
+            else:
+                os.environ[k] = v
+        self.tmp.cleanup()
+
+    def _req(
+        self,
+        method: str,
+        path: str,
+        body: Any = None,
+        *,
+        xtv: bool = True,
+        token: str | None = None,
+    ) -> tuple[int, dict[str, Any]]:
+        headers: dict[str, str] = {}
+        if xtv:
+            headers["X-TV"] = "1"
+        tok = self.token if token is None else token
+        if tok:
+            headers[vsaccount.API_TOKEN_HEADER] = tok
+        data: bytes | None = None
+        if body is not None or method == "POST":
+            headers["Content-Type"] = "application/json"
+            data = json.dumps({} if body is None else body).encode("utf-8")
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{self.port}{path}",
+            data=data,
+            method=method,
+            headers=headers,
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=5) as resp:
+                raw = resp.read().decode("utf-8", "replace")
+                return resp.status, json.loads(raw) if raw else {}
+        except urllib.error.HTTPError as exc:
+            with exc:
+                raw = exc.read().decode("utf-8", "replace")
+                code = exc.code
+            try:
+                parsed = json.loads(raw) if raw else {}
+            except ValueError:
+                parsed = {"raw": raw}
+            return code, parsed
+
+    def test_empty_registry_is_offline_first_and_unobtrusive(self) -> None:
+        c_st, st = self._req("GET", "/api/identity/status")
+        self.assertEqual(c_st, 200)
+        self.assertFalse(st["available"])
+        self.assertTrue(st["offline_first"])
+        self.assertEqual(st["providers"], [])
+        self.assertEqual(st["links"], [])
+        self.assertEqual(st["entitlements"], [])
+
+        c_pr, pr = self._req("GET", "/api/identity/providers")
+        self.assertEqual(c_pr, 200)
+        self.assertFalse(pr["available"])
+        self.assertEqual(pr["providers"], [])
+
+        # Fehlendes Provider-Backend blockiert lokale Nutzung nicht
+        c_ln, ln = self._req("POST", "/api/identity/link", {"provider_id": "voidstore"})
+        self.assertEqual(c_ln, 404)
+        self.assertEqual(ln["error"], "identity.err.providerNotFound")
+
+        c_tiles, tiles = self._req("GET", "/tiles.json", xtv=False, token="")
+        self.assertEqual(c_tiles, 200)
+        self.assertGreaterEqual(len(tiles["groups"]), 1)
+
+    def test_device_code_vault_grace_period_refresh_and_cascade_delete(self) -> None:
+        prov = _MockIdentityProvider(self.clock, grace_seconds=7 * 86400)
+        self.registry.register(prov)
+        with self.assertRaises(ValidationError):
+            self.registry.register(
+                type(prov)(self.clock) if False else type(
+                    "BadProv",
+                    (vsaccount.IdentityProvider,),
+                    {
+                        "info": lambda self: vsaccount.ProviderInfo(provider_id="../bad", display_name="Bad"),
+                        "begin_device_auth": lambda self, *a, **kw: None,
+                        "poll_device_auth": lambda self, *a, **kw: None,
+                        "refresh_tokens": lambda self, *a, **kw: None,
+                        "fetch_entitlements": lambda self, *a, **kw: ([], 60),
+                    },
+                )()
+            )
+
+        admin = self.svc.list_accounts()[0]
+        std = self.svc.create_account("Alex", role="standard")
+        child = self.svc.create_account("Leo", role="child", parent_id=admin.id)
+
+        # Token-Schutz auf /api/identity/*
+        self.assertEqual(self._req("GET", "/api/identity/status", token="")[0], 403)
+        self.assertEqual(self._req("POST", "/api/identity/link", {"provider_id": "voidstore"}, token="")[0], 403)
+        self.assertEqual(self._req("POST", "/api/identity/link", {"provider_id": "voidstore"}, xtv=False)[0], 403)
+
+        # Device-Code-Flow starten -> device_code darf NIE nach aussen gelangen
+        c_beg, d_beg = self._req("POST", "/api/identity/link", {"provider_id": "voidstore"})
+        self.assertEqual(c_beg, 200)
+        cid = d_beg["challenge_id"]
+        self.assertEqual(d_beg["challenge"]["user_code"], "ABCD-1234")
+        self.assertNotIn("device_code", json.dumps(d_beg))
+        self.assertNotIn("secret_device_code_xyz_999", json.dumps(d_beg))
+
+        # Pending -> Slow-Down -> Authorized
+        c_p1, d_p1 = self._req("POST", "/api/identity/poll", {"challenge_id": cid})
+        self.assertEqual(c_p1, 200)
+        self.assertEqual(d_p1["status"], "pending")
+
+        c_p2, d_p2 = self._req("POST", "/api/identity/poll", {"challenge_id": cid})
+        self.assertEqual(c_p2, 200)
+        self.assertEqual(d_p2["status"], "slow_down")
+        self.assertGreaterEqual(d_p2["interval"], 4)
+
+        c_p3, d_p3 = self._req("POST", "/api/identity/poll", {"challenge_id": cid})
+        self.assertEqual(c_p3, 200)
+        self.assertEqual(d_p3["status"], "authorized")
+        self.assertEqual(d_p3["link"]["display_handle"], "@paul")
+        self.assertNotIn("access_tok", json.dumps(d_p3))
+        self.assertNotIn("refresh_tok", json.dumps(d_p3))
+
+        # Verschluesselte Ablage in tokens.db + Schluessel in tokens.key (0600)
+        key_path = self.base / "accounts" / vsaccount.TOKEN_KEY_FILENAME
+        tokens_db = self.base / "accounts" / "tokens.db"
+        accounts_db = self.base / "accounts" / "accounts.db"
+        self.assertTrue(key_path.is_file())
+        self.assertEqual(_mode(key_path), 0o600)
+        self.assertEqual(_mode(tokens_db), 0o600)
+        self.assertNotIn(b"access_tok_secret_value_111", tokens_db.read_bytes())
+        self.assertNotIn(b"refresh_tok_secret_value_222", tokens_db.read_bytes())
+        self.assertNotIn(b"access_tok_secret_value_111", accounts_db.read_bytes())
+
+        # Manipulierter Token-Blob wird sauber erkannt
+        link_id = d_p3["link"]["id"]
+        orig_blob = self.svc.store.load_token_blob(link_id)
+        assert orig_blob is not None
+        tampered = orig_blob[:-1] + bytes([orig_blob[-1] ^ 0xFF])
+        self.svc.store.save_token_blob(link_id, "voidstore", admin.id, tampered)
+        with self.assertRaises(vsaccount.IdentityError) as ctx_corrupt:
+            self.svc.identity.vault.load_tokens(link_id, "voidstore", admin.id)
+        self.assertEqual(ctx_corrupt.exception.code, "identity.err.tokenCorrupt")
+        self.svc.store.save_token_blob(link_id, "voidstore", admin.id, orig_blob)
+
+        # Entitlements & Offline-Grace-Period
+        self.assertTrue(self.svc.identity.has_entitlement(admin.id, "void-theme-pro", kind="theme"))
+        self.clock.advance(2000)  # TTL 1800s abgelaufen -> aber innerhalb 7d Offline-Grace
+        prov.offline = True
+        c_sync_off, d_sync_off = self._req("POST", "/api/identity/sync", {"provider_id": "voidstore"})
+        self.assertEqual(c_sync_off, 200)
+        self.assertTrue(d_sync_off["offline"])
+        self.assertTrue(d_sync_off["from_cache"])
+        self.assertTrue(d_sync_off["results"][0]["grace_active"])
+        self.assertEqual(len(d_sync_off["results"][0]["entitlements"]), 2)
+
+        # Nach Ablauf der Grace-Period sind gecachte Entitlements abgelaufen
+        self.clock.advance(7 * 86400 + 100)
+        ents_exp, grace_exp = self.svc.identity.get_entitlements(admin.id)
+        self.assertEqual(ents_exp, [])
+        self.assertFalse(grace_exp)
+
+        # Wieder online -> automatischer Token-Refresh bei AuthError + frische Entitlements
+        prov.offline = False
+        prov.fail_auth = True
+        c_sync_on, d_sync_on = self._req("POST", "/api/identity/sync", {"provider_id": "voidstore"})
+        self.assertEqual(c_sync_on, 200)
+        self.assertFalse(d_sync_on["offline"])
+        self.assertGreaterEqual(prov.refresh_calls, 1)
+        self.assertEqual(len(d_sync_on["results"][0]["entitlements"]), 2)
+
+        # Offline-Begin liefert sauber 503 ohne Blockade, Offline-Unlink loescht lokal trotzdem
+        prov.offline = True
+        c_off_link, d_off_link = self._req("POST", "/api/identity/link", {"account_id": std.id, "provider_id": "voidstore"})
+        self.assertEqual(c_off_link, 503)
+        self.assertTrue(d_off_link["offline"])
+
+        c_un, d_un = self._req("POST", "/api/identity/unlink", {"provider_id": "voidstore"})
+        self.assertEqual(c_un, 200)
+        self.assertTrue(d_un["unlinked"])
+        self.assertEqual(prov.revoke_calls, 1)
+        self.assertIsNone(self.svc.store.load_token_blob(link_id))
+        self.assertEqual(self.svc.store.list_identity_links(admin.id), [])
+
+        # Verknuepfung auf Standard-Konto + RBAC-Pruefung + Delete-Cascade
+        prov.offline = False
+        prov.poll_idx = 2  # direkt authorized beim naechsten poll
+        self.assertEqual(self._req("POST", "/api/identity/link", {"account_id": std.id, "provider_id": "voidstore"})[0], 200)
+        _, p_std = self._req("POST", "/api/identity/poll", {"account_id": std.id, "provider_id": "voidstore"})
+        std_link_id = p_std["link"]["id"]
+        self.assertIsNotNone(self.svc.store.load_token_blob(std_link_id))
+
+        # Admin darf kein Kinderkonto verknuepfen
+        self.assertEqual(self._req("POST", "/api/identity/link", {"account_id": child.id, "provider_id": "voidstore"})[0], 403)
+
+        # Standard-Nutzer sieht eigenes, darf aber fremdes Konto nicht abfragen/aendern
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": std.id})[0], 200)
+        self.assertEqual(self._req("GET", "/api/identity/status")[0], 200)
+        self.assertEqual(self._req("GET", f"/api/identity/status?account_id={admin.id}")[0], 403)
+        self.assertEqual(self._req("POST", "/api/identity/sync", {"account_id": admin.id})[0], 403)
+
+        # Kind bekommt leeren read-only Status und 403 auf POST
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": child.id})[0], 200)
+        c_cs, d_cs = self._req("GET", "/api/identity/status")
+        self.assertEqual(c_cs, 200)
+        self.assertFalse(d_cs["can_manage"])
+        self.assertEqual(d_cs["links"], [])
+        self.assertEqual(self._req("POST", "/api/identity/link", {"provider_id": "voidstore"})[0], 403)
+
+        # Zurueck zum Admin und Standard-Konto loeschen -> Cascade loescht Link und Token-Blob
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": admin.id})[0], 200)
+        self.assertEqual(self._req("POST", "/api/accounts/delete", {"account_id": std.id})[0], 200)
+        self.assertIsNone(self.svc.store.load_token_blob(std_link_id))
+        self.assertEqual(self.svc.store.list_identity_links(std.id), [])
+
+    def test_catalog_age_rating_and_audit_regressions(self) -> None:
+        # 1. catalog.json optional age_rating (rueckwaertskompatibel) + bool-Schutz
+        cat_data = json.loads((REPO / "launcher" / "catalog.json").read_text(encoding="utf-8"))
+        steam_entry = next(a for a in cat_data["apps"] if a["id"] == "steam")
+        self.assertEqual(steam_entry.get("age_rating"), 16)
+        apps_with_age = [a for a in cat_data["apps"] if "age_rating" in a]
+        apps_without_age = [a for a in cat_data["apps"] if "age_rating" not in a]
+        self.assertTrue(apps_with_age and apps_without_age)
+
+        with mock.patch("launcher.installed_sets", return_value=(set(), set())), \
+             mock.patch("launcher.local_apps", return_value=[]):
+            ap = launcher.apps_payload()
+        steam_payload = next(a for a in ap["apps"] if a["id"] == "steam")
+        self.assertEqual(steam_payload["age_rating"], 16)
+
+        cat, age_bool, _, _ = launcher._tile_meta("supertux", {"id": "supertux", "age_rating": True})
+        self.assertIsNone(age_bool)
+
+        admin = self.svc.list_accounts()[0]
+        child = self.svc.create_account("Mira", role="child", parent_id=admin.id)
+        self.svc.set_parental_policy(
+            child.id,
+            {"mode": "denylist", "max_age_rating": 12, "allowed_tiles": [], "blocked_tiles": [], "blocked_cats": []},
+        )
+        self.svc.switch_account(child.id)
+        _, child_tiles = self._req("GET", "/tiles.json", xtv=False, token="")
+        shown_ids = {t["id"] for g in child_tiles["groups"] for t in g["tiles"]}
+        self.assertIn("supertux", shown_ids)
+        self.assertNotIn("custom16", shown_ids)
+        self.svc.switch_account(admin.id)
+
+        # 2. Audit-Fix: cleanup_guest=False zerstoert keine laufende Gast-Sitzung
+        self.svc.set_device_policy(guest_enabled=True)
+        self.svc.start_guest_session()
+        guest_dir = self.runtime / "voidstation-guest"
+        self.assertTrue(guest_dir.is_dir())
+        cli_svc = AccountService(self.base, runtime_dir=self.runtime, cleanup_guest=False)
+        cli_svc.close()
+        self.assertTrue(guest_dir.is_dir())
+
+        # 3. Audit-Fix: update_account validiert avatar & color, browser_profile_dir setzt 0700 auf browser/
+        with self.assertRaises(ValidationError):
+            self.svc.update_account(admin.id, avatar="invalid-avatar")
+        with self.assertRaises(ValidationError):
+            self.svc.update_account(admin.id, color="not-a-hex")
+        bdir = self.svc.storage.browser_profile_dir(admin.id, "firefox")
+        self.assertEqual(_mode(bdir.parent), 0o700)
+        self.assertEqual(_mode(bdir), 0o700)
+
+        # 4. Audit-Fix: vsreport Scrub + CLI secret-arg rejection
+        scrub = vsreport.Scrub()
+        cleaned = scrub("device_code=dc_123 authorization_code=ac_456 payload_enc=blob789")
+        self.assertNotIn("dc_123", cleaned)
+        self.assertNotIn("ac_456", cleaned)
+        self.assertNotIn("blob789", cleaned)
+        self.assertEqual(account_cli.main(["--base", str(self.base), "status", "--token=secret"]), 2)
+        self.assertEqual(account_cli.main(["--base", str(self.base), "status", "--access-token=secret"]), 2)
+
+        # 5. i18n-Vollstaendigkeit fuer identity.*, QML-Gating & Preview-Unterstuetzung
+        de = json.loads((REPO / "launcher" / "web" / "i18n" / "de.json").read_text(encoding="utf-8"))
+        en = json.loads((REPO / "launcher" / "web" / "i18n" / "en.json").read_text(encoding="utf-8"))
+        id_keys = [k for k in de if k.startswith("identity.")]
+        self.assertGreaterEqual(len(id_keys), 20)
+        ph = re.compile(r"\{[A-Za-z0-9_]+\}")
+        for k in id_keys:
+            self.assertIn(k, en)
+            self.assertEqual(set(ph.findall(de[k])), set(ph.findall(en[k])), f"Placeholder mismatch in {k}")
+
+        sett_qml = (REPO / "launcher" / "qt" / "qml" / "SettingsLayer.qml").read_text(encoding="utf-8")
+        self.assertIn("identityProviders.length > 0", sett_qml)
+        self.assertIn("isRestrictedAccount", sett_qml)
+        self.assertNotIn("Coming Soon", sett_qml)
+
+        edit_qml = (REPO / "launcher" / "qt" / "qml" / "AccountEditDialog.qml").read_text(encoding="utf-8")
+        self.assertIn("a.id !== ed.account.id", edit_qml)
+
+        preview_src = (REPO / "tools" / "qt-preview.py").read_text(encoding="utf-8")
+        self.assertIn("VS_IDENTITY_DEMO", preview_src)
+        self.assertIn("/api/identity/status", preview_src)
 
 
 if __name__ == "__main__":

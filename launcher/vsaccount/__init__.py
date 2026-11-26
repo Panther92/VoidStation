@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""VoidStation Account-System (Stufe 1: Kern, Krypto, Store, Profil-Trennung, Migration)."""
+"""VoidStation Account-System (Stufe 1–6: Kern, Krypto, Store, Profile, Kindersicherung, CLI, Identity)."""
 from __future__ import annotations
 
 import atexit
@@ -9,6 +9,23 @@ from pathlib import Path
 from typing import Any, Callable
 
 from .crypto import hash_secret, is_weak_pin, validate_password, validate_pin, verify_secret
+from .identity import (
+    DEFAULT_ENTITLEMENT_TTL_SECONDS,
+    DEFAULT_OFFLINE_GRACE_SECONDS,
+    TOKEN_KEY_FILENAME,
+    DeviceCodeChallenge,
+    DevicePollResult,
+    Entitlement,
+    IdentityError,
+    IdentityManager,
+    IdentityOfflineError,
+    IdentityProvider,
+    IdentityRegistry,
+    IdentitySyncResult,
+    ProviderAuthTokens,
+    ProviderInfo,
+    TokenVault,
+)
 from .migration import migrate_legacy_if_needed
 from .models import (
     FACTORS,
@@ -57,16 +74,31 @@ __all__ = [
     "AuthError",
     "AuthResult",
     "BROWSER_TILE_IDS",
+    "DEFAULT_ENTITLEMENT_TTL_SECONDS",
+    "DEFAULT_OFFLINE_GRACE_SECONDS",
+    "DeviceCodeChallenge",
     "DevicePolicy",
+    "DevicePollResult",
     "EXTRA_MINUTE_CHOICES",
+    "Entitlement",
+    "IdentityError",
     "IdentityLink",
+    "IdentityManager",
+    "IdentityOfflineError",
+    "IdentityProvider",
+    "IdentityRegistry",
+    "IdentitySyncResult",
     "MigrationReport",
     "NotFoundError",
     "ParentalController",
     "ParentalDecision",
     "ParentalPolicy",
     "PolicyError",
+    "ProviderAuthTokens",
+    "ProviderInfo",
     "SessionState",
+    "TOKEN_KEY_FILENAME",
+    "TokenVault",
     "USAGE_TICK_SECONDS",
     "ValidationError",
     "WARN_THRESHOLD_SECONDS",
@@ -82,23 +114,28 @@ __all__ = [
 
 
 class AccountService:
-    """Zentrale Backend-Fassade fuer Konten, Authentifizierung, Session und Profil-Pfade."""
+    """Zentrale Backend-Fassade fuer Konten, Authentifizierung, Session, Kindersicherung und Identity."""
 
     def __init__(
         self,
         base_dir: Path,
         runtime_dir: Path | None = None,
         clock: Callable[[], float] | None = None,
+        *,
+        cleanup_guest: bool = True,
+        identity_registry: IdentityRegistry | None = None,
     ) -> None:
         self.base_dir = Path(base_dir)
         self.accounts_dir = self.base_dir / "accounts"
         self._clock = clock or time.time
         self._lock = threading.RLock()
+        self._cleanup_guest = bool(cleanup_guest)
 
         self.storage = ProfileStorage(self.accounts_dir, runtime_dir=runtime_dir)
         self.storage.ensure_root()
-        # Altlasten einer abgestuerzten Gast-Sitzung beim Start sofort bereinigen
-        self.storage.cleanup_guest_dir()
+        # Altlasten einer abgestuerzten Gast-Sitzung beim Backend-Start bereinigen (nicht bei CLI-Hilfsaufrufen)
+        if self._cleanup_guest:
+            self.storage.cleanup_guest_dir()
 
         self.store = AccountStore(self.accounts_dir, clock=self._clock)
         self.migration_report = migrate_legacy_if_needed(self.base_dir, self.store, self.storage)
@@ -110,14 +147,24 @@ class AccountService:
             clock=self._clock,
             lock=self._lock,
         )
+        self.identity_registry = identity_registry if identity_registry is not None else IdentityRegistry()
+        self.identity = IdentityManager(
+            self.store,
+            self.identity_registry,
+            self.accounts_dir,
+            clock=self._clock,
+            lock=self._lock,
+        )
         self._closed = False
-        atexit.register(self._atexit_cleanup)
+        if self._cleanup_guest:
+            atexit.register(self._atexit_cleanup)
 
     def _now(self) -> int:
         return int(self._clock())
 
     def _atexit_cleanup(self) -> None:
-        self.storage.cleanup_guest_dir()
+        if self._cleanup_guest:
+            self.storage.cleanup_guest_dir()
 
     def _initial_session(self) -> SessionState:
         accounts = self.store.list_accounts()
@@ -168,7 +215,8 @@ class AccountService:
                 return
             self._closed = True
             self.parental.stop_tracker()
-            self.storage.cleanup_guest_dir()
+            if self._cleanup_guest:
+                self.storage.cleanup_guest_dir()
             self.store.close()
 
     # --- Konten ---
@@ -313,6 +361,7 @@ class AccountService:
         with self._lock:
             self._ensure_open()
             was_current = self._session.account_id == account_id and not self._session.is_guest
+            self.identity.cancel_link(account_id)
             self.store.delete_account(account_id)
             self.storage.delete_profile_dir(account_id)
             self.store.append_audit(
