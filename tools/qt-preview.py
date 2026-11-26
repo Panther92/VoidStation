@@ -705,95 +705,6 @@ def _parental_check_tile(tid: str, *, ignore_time: bool = False, consume_once: b
     return True, "", False
 
 
-_IDENTITY_DEMO_MODE = os.environ.get("VS_IDENTITY_DEMO", "").strip().lower()
-_IDENTITY_PROVIDERS: list[dict[str, Any]] = (
-    [
-        {
-            "provider_id": "voidstore",
-            "display_name": "VoidStation Store",
-            "description": "Optionale Store- & Cloud-Verknüpfung",
-            "supports_device_code": True,
-            "supports_entitlements": True,
-            "offline_grace_seconds": 14 * 86400,
-            "capabilities": ["device_code", "entitlements"],
-        }
-    ]
-    if _IDENTITY_DEMO_MODE in ("1", "true", "linked", "offline")
-    else []
-)
-_IDENTITY_STATE: dict[str, Any] = {
-    "links": (
-        {
-            "acc-paul": [
-                {
-                    "id": "lnk-demo-1",
-                    "account_id": "acc-paul",
-                    "provider_id": "voidstore",
-                    "subject": "usr-demo-paul",
-                    "display_handle": "@paul",
-                    "status": "linked",
-                    "linked_at": int(time.time()) - 86400,
-                    "last_sync_at": int(time.time()) - (15 * 86400 if _IDENTITY_DEMO_MODE == "offline" else 600),
-                    "cache_state": "grace" if _IDENTITY_DEMO_MODE == "offline" else "fresh",
-                    "grace_active": _IDENTITY_DEMO_MODE == "offline",
-                    "grace_until": int(time.time()) + 7 * 86400,
-                    "entitlements_count": 2,
-                    "entitlements_expires_at": int(time.time()) + (-3600 if _IDENTITY_DEMO_MODE == "offline" else 86400),
-                    "provider_available": True,
-                }
-            ]
-        }
-        if _IDENTITY_DEMO_MODE in ("linked", "offline")
-        else {}
-    ),
-    "entitlements": (
-        {
-            "acc-paul": [
-                {"id": "demo-pack-1", "kind": "app", "source": "voidstore", "granted_at": int(time.time()) - 86400, "expires_at": 0, "metadata": {}},
-                {"id": "demo-pack-2", "kind": "theme", "source": "voidstore", "granted_at": int(time.time()) - 86400, "expires_at": 0, "metadata": {}},
-            ]
-        }
-        if _IDENTITY_DEMO_MODE in ("linked", "offline")
-        else {}
-    ),
-    "pending": None,
-    "polls": 0,
-}
-
-
-def _identity_status_payload(aid: str | None = None) -> dict[str, Any]:
-    sess = ACC_STATE["session"]
-    if sess["is_guest"] or sess["role"] == "child":
-        return {
-            "available": bool(_IDENTITY_PROVIDERS),
-            "offline_first": True,
-            "can_manage": False,
-            "account_id": "",
-            "providers": _IDENTITY_PROVIDERS,
-            "links": [],
-            "entitlements": [],
-            "offline_grace_active": False,
-            "pending": None,
-        }
-    target = aid or sess["account_id"]
-    links = list(_IDENTITY_STATE["links"].get(target, []))
-    ents = list(_IDENTITY_STATE["entitlements"].get(target, []))
-    pend = _IDENTITY_STATE["pending"]
-    if pend and pend.get("account_id") != target:
-        pend = None
-    return {
-        "available": bool(_IDENTITY_PROVIDERS),
-        "offline_first": True,
-        "can_manage": True,
-        "account_id": target,
-        "providers": _IDENTITY_PROVIDERS,
-        "links": links,
-        "entitlements": ents,
-        "offline_grace_active": any(bool(l.get("grace_active")) for l in links),
-        "pending": {"challenge_id": pend["challenge_id"], "challenge": pend["challenge"]} if pend else None,
-    }
-
-
 def _acc_find(aid: str) -> dict[str, Any] | None:
     return next((a for a in ACC_STATE["accounts"] if a["id"] == aid), None)
 
@@ -911,11 +822,6 @@ class H(S.H):
             "/api/accounts": lambda: {"accounts": ACC_STATE["accounts"], "session": ACC_STATE["session"],
                                       "device_policy": ACC_STATE["policy"]},
             "/api/accounts/parental": _parental_payload,
-            "/api/identity/providers": lambda: {"available": bool(_IDENTITY_PROVIDERS), "providers": _IDENTITY_PROVIDERS},
-            "/api/identity/status": lambda: _identity_status_payload(q.get("account_id", [""])[0].strip() or None),
-            "/api/identity/entitlements": lambda: (
-                lambda st: {"account_id": st["account_id"], "entitlements": st["entitlements"], "offline_grace_active": st["offline_grace_active"]}
-            )(_identity_status_payload(q.get("account_id", [""])[0].strip() or None)),
             "/api/vpn": vpn_page,
             "/api/vpn/relays": lambda: {"countries": [{"cc": cc, "name": n, "cities": [
                 {"code": c[0], "name": c[1], "lat": c[2], "lon": c[3], "n": c[4]} for c in cities]} for cc, n, cities in VPN_RELAYS],
@@ -1102,6 +1008,13 @@ class H(S.H):
             if not name:
                 return self.j_status(400, {"error": "account.err.nameRequired"})
             role = str(body.get("role") or "standard")
+            parent_id = body.get("parent_id") if role == "child" else None
+            if role == "child":
+                parent = _acc_find(str(parent_id or ""))
+                if not parent or not parent.get("active", True) or parent.get("role") != "admin":
+                    return self.j_status(403, {"error": "account.err.parentRequired"})
+                if not (parent.get("has_pin") or parent.get("has_password")):
+                    return self.j_status(403, {"error": "account.err.parentAuthRequired"})
             pin = body.get("pin")
             pw = body.get("password")
             if pin is not None and not re.fullmatch(r"\d{4,8}", str(pin)):
@@ -1191,6 +1104,12 @@ class H(S.H):
                         return self.j_status(code, err)
             sec = ACC_STATE["secrets"].setdefault(aid, {})
             if action == "remove":
+                if acc["role"] == "admin":
+                    has_children = any(a["role"] == "child" and a.get("active", True) for a in ACC_STATE["accounts"])
+                    rem_pin = bool(sec.get("pin")) and factor != "pin"
+                    rem_pw = bool(sec.get("password")) and factor != "password"
+                    if has_children and not (rem_pin or rem_pw):
+                        return self.j_status(403, {"error": "account.err.parentAuthRequired"})
                 sec.pop(factor, None)
                 _acc_sync_flags(acc)
                 return self.j({"ok": True, "account": acc})
@@ -1272,67 +1191,6 @@ class H(S.H):
                 u = ACC_STATE["parental_usage"].setdefault(cid, {"used_seconds": 0, "bonus_seconds": 0})
                 u["bonus_seconds"] += int(body.get("minutes") or 15) * 60
             return self.j({"ok": True, "action": act, "parental": _parental_status(cid)})
-        if p.startswith("/api/identity/"):
-            sess = ACC_STATE["session"]
-            if sess["locked"] or sess["is_guest"] or sess["role"] == "child":
-                return self.j_status(403, {"error": "identity.err.notAllowed"})
-            aid = str(body.get("account_id") or sess["account_id"]).strip()
-            act = p[len("/api/identity/"):]
-            if act == "link":
-                pid = str(body.get("provider_id") or "").strip()
-                if not any(x["provider_id"] == pid for x in _IDENTITY_PROVIDERS):
-                    return self.j_status(404, {"error": "identity.err.providerNotFound"})
-                id_ch = {
-                    "provider_id": pid,
-                    "user_code": "VOID-4279",
-                    "verification_uri": "https://store.voidstation.invalid/activate",
-                    "verification_uri_complete": "https://store.voidstation.invalid/activate?code=VOID-4279",
-                    "expires_at": int(time.time()) + 300,
-                    "interval": 2,
-                }
-                _IDENTITY_STATE["pending"] = {"challenge_id": "demo-ch-1", "account_id": aid, "challenge": id_ch}
-                _IDENTITY_STATE["polls"] = 0
-                return self.j({"ok": True, "challenge_id": "demo-ch-1", "challenge": id_ch})
-            if act == "poll":
-                pend = _IDENTITY_STATE["pending"]
-                if not pend or pend["account_id"] != aid:
-                    return self.j_status(404, {"error": "identity.err.expired"})
-                _IDENTITY_STATE["polls"] += 1
-                if _IDENTITY_STATE["polls"] < 2:
-                    return self.j({"ok": True, "status": "pending", "challenge_id": pend["challenge_id"], "interval": 2})
-                pid = pend["challenge"]["provider_id"]
-                _IDENTITY_STATE["pending"] = None
-                ln = {
-                    "id": "lnk-demo-1", "account_id": aid, "provider_id": pid,
-                    "subject": f"usr-{aid}", "display_handle": f"@{sess['display_name'].lower()}",
-                    "status": "linked", "linked_at": int(time.time()), "last_sync_at": int(time.time()),
-                    "cache_state": "fresh", "grace_active": False, "grace_until": int(time.time()) + 14 * 86400,
-                    "entitlements_count": 2, "entitlements_expires_at": int(time.time()) + 86400,
-                    "provider_available": True,
-                }
-                _IDENTITY_STATE["links"][aid] = [ln]
-                _IDENTITY_STATE["entitlements"][aid] = [
-                    {"id": "demo-pack-1", "kind": "app", "source": pid, "granted_at": int(time.time()), "expires_at": 0, "metadata": {}},
-                ]
-                return self.j({"ok": True, "status": "authorized", "challenge_id": pend["challenge_id"], "link": ln, "entitlements": _IDENTITY_STATE["entitlements"][aid]})
-            if act == "cancel":
-                _IDENTITY_STATE["pending"] = None
-                return self.j({"ok": True, "cancelled": True})
-            if act == "sync":
-                links = _IDENTITY_STATE["links"].get(aid, [])
-                offline = _IDENTITY_DEMO_MODE == "offline"
-                for ln in links:
-                    if not offline:
-                        ln["last_sync_at"] = int(time.time())
-                        ln["cache_state"] = "fresh"
-                        ln["grace_active"] = False
-                return self.j({"ok": True, "account_id": aid, "offline": offline, "from_cache": offline, "results": []})
-            if act == "unlink":
-                pid = str(body.get("provider_id") or "").strip()
-                _IDENTITY_STATE["links"][aid] = [l for l in _IDENTITY_STATE["links"].get(aid, []) if l["provider_id"] != pid]
-                _IDENTITY_STATE["entitlements"][aid] = []
-                return self.j({"ok": True, "unlinked": True})
-            return self.j_status(404, {"error": "not_found"})
         if p == "/api/osk/field":
             with OSKF["cv"]:
                 OSKF["seq"] += 1

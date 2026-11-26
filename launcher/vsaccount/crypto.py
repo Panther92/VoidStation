@@ -10,14 +10,8 @@ import re
 import secrets
 import threading
 from pathlib import Path
-from typing import Any
 
 from .models import ValidationError
-
-try:
-    import argon2 as _argon2  # type: ignore[import-not-found]
-except ImportError:
-    _argon2: Any = None  # type: ignore[no-redef]
 
 PIN_RE = re.compile(r"^\d{4,8}$")
 TRIVIAL_PINS = frozenset(
@@ -39,10 +33,6 @@ TRIVIAL_PINS = frozenset(
         "654321",
     }
 )
-
-ARGON2_MEMORY_KIB = 32768
-ARGON2_TIME_COST = 3
-ARGON2_PARALLELISM = 1
 
 SCRYPT_R = 8
 SCRYPT_P = 1
@@ -107,23 +97,6 @@ def _pbkdf2_derive(secret: str, salt: bytes, iterations: int, dklen: int = PBKDF
         return hashlib.pbkdf2_hmac("sha256", secret.encode("utf-8"), salt, iterations, dklen=dklen)
 
 
-def _argon2_available() -> bool:
-    return _argon2 is not None and hasattr(_argon2, "low_level")
-
-
-def _argon2_derive(secret: str, salt: bytes, m_kib: int, t_cost: int, p_cost: int, dklen: int = 32) -> bytes:
-    with _KDF_SEMAPHORE:
-        return _argon2.low_level.hash_secret_raw(
-            secret=secret.encode("utf-8"),
-            salt=salt,
-            time_cost=t_cost,
-            memory_cost=m_kib,
-            parallelism=p_cost,
-            hash_len=dklen,
-            type=_argon2.low_level.Type.ID,
-        )
-
-
 def validate_pin(pin: str) -> str:
     """Prueft das PIN-Format (4-8 Ziffern) und liefert die bereinigte PIN."""
     if not isinstance(pin, str) or not PIN_RE.fullmatch(pin):
@@ -144,8 +117,6 @@ def is_weak_pin(pin: str) -> bool:
 
 
 def default_algorithm() -> str:
-    if _argon2_available():
-        return "vs-argon2id"
     if hasattr(hashlib, "scrypt"):
         return "vs-scrypt"
     return "vs-pbkdf2-sha256"
@@ -162,16 +133,6 @@ def hash_secret(secret: str, factor: str = "password", preferred_algo: str | Non
 
     algo = preferred_algo or default_algorithm()
     salt = secrets.token_bytes(16)
-
-    if algo == "vs-argon2id":
-        if not _argon2_available():
-            algo = "vs-scrypt" if hasattr(hashlib, "scrypt") else "vs-pbkdf2-sha256"
-        else:
-            digest = _argon2_derive(secret, salt, ARGON2_MEMORY_KIB, ARGON2_TIME_COST, ARGON2_PARALLELISM)
-            return (
-                f"$vs-argon2id$m={ARGON2_MEMORY_KIB},t={ARGON2_TIME_COST},p={ARGON2_PARALLELISM}"
-                f"${_b64_encode(salt)}${_b64_encode(digest)}"
-            )
 
     if algo == "vs-scrypt":
         if not hasattr(hashlib, "scrypt"):
@@ -220,24 +181,6 @@ def verify_secret(secret: str, stored_hash: str, factor: str = "password") -> tu
     if len(salt) < 8 or not expected:
         return False, False
 
-    if algo == "vs-argon2id":
-        if not _argon2_available():
-            return False, False
-        m_kib = params.get("m", 0)
-        t_cost = params.get("t", 0)
-        p_cost = params.get("p", 0)
-        if m_kib < 8192 or t_cost < 1 or p_cost < 1 or m_kib > 262144:
-            return False, False
-        actual = _argon2_derive(secret, salt, m_kib, t_cost, p_cost, dklen=len(expected))
-        ok = hmac.compare_digest(actual, expected)
-        needs_rehash = ok and (
-            default_algorithm() != "vs-argon2id"
-            or m_kib < ARGON2_MEMORY_KIB
-            or t_cost < ARGON2_TIME_COST
-            or p_cost < ARGON2_PARALLELISM
-        )
-        return ok, needs_rehash
-
     if algo == "vs-scrypt":
         if not hasattr(hashlib, "scrypt"):
             return False, False
@@ -249,9 +192,7 @@ def verify_secret(secret: str, stored_hash: str, factor: str = "password") -> tu
         actual = _scrypt_derive(secret, salt, n, r, p, dklen=len(expected))
         ok = hmac.compare_digest(actual, expected)
         target_n = _scrypt_n_for_factor(factor)
-        needs_rehash = ok and (
-            default_algorithm() == "vs-argon2id" or n < target_n or r < SCRYPT_R
-        )
+        needs_rehash = ok and (n < target_n or r < SCRYPT_R)
         return ok, needs_rehash
 
     if algo == "vs-pbkdf2-sha256":

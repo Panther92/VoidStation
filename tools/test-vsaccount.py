@@ -161,9 +161,14 @@ class VsAccountStage1Tests(unittest.TestCase):
         with self.assertRaises(PolicyError):
             svc.update_account(admin.id, active=False)
 
-        # Kind braucht aktiven Admin als parent_id
+        # Kind braucht aktiven Admin mit PIN/Passwort als parent_id
         with self.assertRaises(PolicyError):
             svc.create_account("Kind Ohne Eltern", role="child")
+        with self.assertRaises(PolicyError) as ctx_no_auth:
+            svc.create_account("Kind Ohne Eltern-PIN", role="child", parent_id=admin.id)
+        self.assertEqual(ctx_no_auth.exception.code, "account.err.parentAuthRequired")
+
+        svc.set_credential(admin.id, "pin", "2580")
 
         std = svc.create_account("Alex", role="standard", pin="1357")
         with self.assertRaises(PolicyError):
@@ -171,6 +176,11 @@ class VsAccountStage1Tests(unittest.TestCase):
 
         child = svc.create_account("Lina", role="child", parent_id=admin.id, pin="2468")
         self.assertEqual(child.parent_id, admin.id)
+
+        # Solange ein Kinderkonto existiert, darf der letzte Admin-Schutz nicht entfernt werden
+        with self.assertRaises(PolicyError) as ctx_rm:
+            svc.remove_credential(admin.id, "pin")
+        self.assertEqual(ctx_rm.exception.code, "account.err.parentAuthRequired")
 
         pub = std.to_public_dict()
         self.assertTrue(pub["has_pin"])
@@ -261,7 +271,6 @@ class VsAccountStage1Tests(unittest.TestCase):
         # Berechtigungen pruefen
         self.assertEqual(_mode(self.base / "accounts"), 0o700)
         self.assertEqual(_mode(self.base / "accounts" / "accounts.db"), 0o600)
-        self.assertEqual(_mode(self.base / "accounts" / "tokens.db"), 0o600)
         self.assertEqual(_mode(self.base / "accounts" / "data" / admin.id), 0o700)
 
         # Wechsel oder Lock loescht Gast-Verzeichnis restlos
@@ -284,7 +293,6 @@ class VsAccountStage1Tests(unittest.TestCase):
         sample = "\n".join(
             [
                 "hash=$vs-scrypt$n=32768,r=8,p=1$c2FsdA$aGFzaA",
-                "argon=$vs-argon2id$m=32768,t=3,p=1$c2FsdA$aGFzaA",
                 "pbkdf=$vs-pbkdf2-sha256$i=600000$c2FsdA$aGFzaA",
                 "pin=2580",
                 "X-VS-Token: super_secret_runtime_token_123456",
@@ -510,6 +518,20 @@ class VsAccountStage2BackendTests(unittest.TestCase):
         c_child_fail, _ = self._req("POST", "/api/accounts/create", {"display_name": "Kind", "role": "child"})
         self.assertEqual(c_child_fail, 403)
 
+        # Admin ohne PIN/Passwort darf kein Kinder-Konto anlegen
+        c_child_noauth, d_child_noauth = self._req(
+            "POST",
+            "/api/accounts/create",
+            {"display_name": "Lina", "role": "child", "parent_id": admin_id, "pin": "1357"},
+        )
+        self.assertEqual(c_child_noauth, 403)
+        self.assertEqual(d_child_noauth["error"], "account.err.parentAuthRequired")
+
+        # Nach Setzen einer Eltern-PIN klappt es
+        self.assertEqual(
+            self._req("POST", "/api/accounts/credentials", {"account_id": admin_id, "factor": "pin", "secret": "2580"})[0],
+            200,
+        )
         c_child, d_child = self._req(
             "POST",
             "/api/accounts/create",
@@ -577,8 +599,9 @@ class VsAccountStage2BackendTests(unittest.TestCase):
         self.assertTrue(d_lock["session"]["locked"])
         self.assertEqual(self._req("POST", "/api/accounts/create", {"display_name": "Locked"})[0], 403)
 
-        # Als Admin wieder anmelden, Policy setzen, Standard-Konto loeschen (letzter Admin bleibt geschuetzt)
-        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": admin_id})[0], 200)
+        # Als Admin wieder anmelden (mit PIN), Policy setzen, Standard-Konto loeschen (letzter Admin bleibt geschuetzt)
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": admin_id})[0], 401)
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": admin_id, "pin": "2580"})[0], 200)
         c_pol, d_pol = self._req(
             "POST",
             "/api/accounts/device-policy",
@@ -1589,114 +1612,7 @@ class VsAccountStage5Tests(unittest.TestCase):
             self.assertEqual(set(ph.findall(de[k])), set(ph.findall(en[k])), f"Placeholder mismatch in {k}")
 
 
-class _MockIdentityProvider(vsaccount.IdentityProvider):
-    """Test-Provider fuer Device-Code-, Entitlement-, Refresh- und Offline-Szenarien."""
-
-    def __init__(self, clock: FakeClock, *, grace_seconds: int = 7 * 86400) -> None:
-        self.clock = clock
-        self.grace_seconds = grace_seconds
-        self.offline = False
-        self.fail_auth = False
-        self.fail_refresh = False
-        self.poll_states: list[str] = ["pending", "slow_down", "authorized"]
-        self.poll_idx = 0
-        self.refresh_calls = 0
-        self.revoke_calls = 0
-        self.entitlements: list[vsaccount.Entitlement] = [
-            vsaccount.Entitlement(id="void-theme-pro", kind="theme", source="voidstore", granted_at=int(clock()), expires_at=0),
-            vsaccount.Entitlement(id="indie-pack", kind="app", source="voidstore", granted_at=int(clock()), expires_at=0),
-        ]
-
-    def info(self) -> vsaccount.ProviderInfo:
-        return vsaccount.ProviderInfo(
-            provider_id="voidstore",
-            display_name="VoidStation Store",
-            description="Mock Store Provider",
-            offline_grace_seconds=self.grace_seconds,
-        )
-
-    def begin_device_auth(self, account_id: str, device_id: str, locale: str = "de") -> vsaccount.DeviceCodeChallenge:
-        if self.offline:
-            raise ConnectionError("network unreachable")
-        now = int(self.clock())
-        return vsaccount.DeviceCodeChallenge(
-            provider_id="voidstore",
-            device_code="secret_device_code_xyz_999",
-            user_code="ABCD-1234",
-            verification_uri="https://store.example.invalid/device",
-            verification_uri_complete="https://store.example.invalid/device?code=ABCD-1234",
-            expires_at=now + 300,
-            interval=2,
-        )
-
-    def poll_device_auth(self, challenge: vsaccount.DeviceCodeChallenge, device_id: str) -> vsaccount.DevicePollResult:
-        if self.offline:
-            raise TimeoutError("timed out")
-        idx = min(self.poll_idx, len(self.poll_states) - 1)
-        st = self.poll_states[idx]
-        self.poll_idx += 1
-        if st in ("pending", "slow_down"):
-            return vsaccount.DevicePollResult(status=st, interval=4 if st == "slow_down" else 2)
-        if st != "authorized":
-            return vsaccount.DevicePollResult(status=st)
-        now = int(self.clock())
-        return vsaccount.DevicePollResult(
-            status="authorized",
-            subject="store-user-42",
-            display_handle="@paul",
-            tokens=vsaccount.ProviderAuthTokens(
-                access_token="access_tok_secret_value_111",
-                refresh_token="refresh_tok_secret_value_222",
-                expires_at=now + 3600,
-                scope="store.read",
-            ),
-            entitlements=list(self.entitlements),
-            entitlements_ttl=1800,
-        )
-
-    def refresh_tokens(
-        self,
-        link: vsaccount.IdentityLink,
-        tokens: vsaccount.ProviderAuthTokens,
-        device_id: str,
-    ) -> vsaccount.ProviderAuthTokens:
-        self.refresh_calls += 1
-        if self.offline:
-            raise ConnectionError("offline")
-        if self.fail_refresh:
-            raise vsaccount.AuthError("account.err.invalid", "Refresh token revoked")
-        return vsaccount.ProviderAuthTokens(
-            access_token=f"access_refreshed_{self.refresh_calls}",
-            refresh_token="refresh_tok_secret_value_333",
-            expires_at=int(self.clock()) + 3600,
-            scope=tokens.scope,
-        )
-
-    def fetch_entitlements(
-        self,
-        link: vsaccount.IdentityLink,
-        tokens: vsaccount.ProviderAuthTokens,
-        device_id: str,
-    ) -> tuple[list[vsaccount.Entitlement], int]:
-        if self.offline:
-            raise ConnectionError("offline")
-        if self.fail_auth:
-            self.fail_auth = False
-            raise vsaccount.AuthError("account.err.invalid", "Token expired")
-        return list(self.entitlements), 1800
-
-    def revoke(
-        self,
-        link: vsaccount.IdentityLink,
-        tokens: vsaccount.ProviderAuthTokens | None,
-        device_id: str,
-    ) -> None:
-        self.revoke_calls += 1
-        if self.offline:
-            raise ConnectionError("offline during revoke")
-
-
-class VsAccountStage6IdentityTests(unittest.TestCase):
+class VsAccountRegressionAndCatalogTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name)
@@ -1748,13 +1664,11 @@ class VsAccountStage6IdentityTests(unittest.TestCase):
         launcher.CONFIG = self.tiles_path
         launcher.SETTINGS = self.settings_path
 
-        self.registry = vsaccount.IdentityRegistry()
         self.token = launcher.init_api_token(runtime_dir=self.runtime)
         self.svc = launcher.init_accounts(
             base_dir=self.base,
             runtime_dir=self.runtime,
             clock=self.clock,
-            identity_registry=self.registry,
         )
         self.httpd = ThreadingHTTPServer(("127.0.0.1", 0), launcher.Handler)
         self.port = self.httpd.server_port
@@ -1818,172 +1732,103 @@ class VsAccountStage6IdentityTests(unittest.TestCase):
                 parsed = {"raw": raw}
             return code, parsed
 
-    def test_empty_registry_is_offline_first_and_unobtrusive(self) -> None:
-        c_st, st = self._req("GET", "/api/identity/status")
-        self.assertEqual(c_st, 200)
-        self.assertFalse(st["available"])
-        self.assertTrue(st["offline_first"])
-        self.assertEqual(st["providers"], [])
-        self.assertEqual(st["links"], [])
-        self.assertEqual(st["entitlements"], [])
-
-        c_pr, pr = self._req("GET", "/api/identity/providers")
-        self.assertEqual(c_pr, 200)
-        self.assertFalse(pr["available"])
-        self.assertEqual(pr["providers"], [])
-
-        # Fehlendes Provider-Backend blockiert lokale Nutzung nicht
-        c_ln, ln = self._req("POST", "/api/identity/link", {"provider_id": "voidstore"})
-        self.assertEqual(c_ln, 404)
-        self.assertEqual(ln["error"], "identity.err.providerNotFound")
-
-        c_tiles, tiles = self._req("GET", "/tiles.json", xtv=False, token="")
-        self.assertEqual(c_tiles, 200)
-        self.assertGreaterEqual(len(tiles["groups"]), 1)
-
-    def test_device_code_vault_grace_period_refresh_and_cascade_delete(self) -> None:
-        prov = _MockIdentityProvider(self.clock, grace_seconds=7 * 86400)
-        self.registry.register(prov)
-        with self.assertRaises(ValidationError):
-            self.registry.register(
-                type(prov)(self.clock) if False else type(
-                    "BadProv",
-                    (vsaccount.IdentityProvider,),
-                    {
-                        "info": lambda self: vsaccount.ProviderInfo(provider_id="../bad", display_name="Bad"),
-                        "begin_device_auth": lambda self, *a, **kw: None,
-                        "poll_device_auth": lambda self, *a, **kw: None,
-                        "refresh_tokens": lambda self, *a, **kw: None,
-                        "fetch_entitlements": lambda self, *a, **kw: ([], 60),
-                    },
-                )()
-            )
-
+    def test_child_account_requires_admin_auth_and_blocks_bypass(self) -> None:
+        # Nach Legacy-Migration hat Admin weder PIN noch Passwort
         admin = self.svc.list_accounts()[0]
-        std = self.svc.create_account("Alex", role="standard")
-        child = self.svc.create_account("Leo", role="child", parent_id=admin.id)
+        self.assertFalse(admin.has_pin)
+        self.assertFalse(admin.has_password)
 
-        # Token-Schutz auf /api/identity/*
-        self.assertEqual(self._req("GET", "/api/identity/status", token="")[0], 403)
-        self.assertEqual(self._req("POST", "/api/identity/link", {"provider_id": "voidstore"}, token="")[0], 403)
-        self.assertEqual(self._req("POST", "/api/identity/link", {"provider_id": "voidstore"}, xtv=False)[0], 403)
+        # 1. Kinder-Konto anlegen ohne Eltern-PIN/Passwort -> 403 account.err.parentAuthRequired
+        c_create, d_create = self._req(
+            "POST",
+            "/api/accounts/create",
+            {"display_name": "Kind", "role": "child", "parent_id": admin.id},
+        )
+        self.assertEqual(c_create, 403)
+        self.assertEqual(d_create["error"], "account.err.parentAuthRequired")
 
-        # Device-Code-Flow starten -> device_code darf NIE nach aussen gelangen
-        c_beg, d_beg = self._req("POST", "/api/identity/link", {"provider_id": "voidstore"})
-        self.assertEqual(c_beg, 200)
-        cid = d_beg["challenge_id"]
-        self.assertEqual(d_beg["challenge"]["user_code"], "ABCD-1234")
-        self.assertNotIn("device_code", json.dumps(d_beg))
-        self.assertNotIn("secret_device_code_xyz_999", json.dumps(d_beg))
+        # 2. Standard-Konto nachtraeglich zum Kind machen ohne Eltern-PIN -> 403
+        c_std, d_std = self._req("POST", "/api/accounts/create", {"display_name": "Tim", "role": "standard"})
+        self.assertEqual(c_std, 200)
+        std_id = d_std["account"]["id"]
+        c_prom, d_prom = self._req(
+            "POST",
+            "/api/accounts/update",
+            {"account_id": std_id, "role": "child", "parent_id": admin.id},
+        )
+        self.assertEqual(c_prom, 403)
+        self.assertEqual(d_prom["error"], "account.err.parentAuthRequired")
 
-        # Pending -> Slow-Down -> Authorized
-        c_p1, d_p1 = self._req("POST", "/api/identity/poll", {"challenge_id": cid})
-        self.assertEqual(c_p1, 200)
-        self.assertEqual(d_p1["status"], "pending")
+        # 3. Eltern-PIN setzen -> Kinder-Konto anlegen klappt jetzt
+        c_pin, _ = self._req(
+            "POST",
+            "/api/accounts/credentials",
+            {"account_id": admin.id, "action": "set", "factor": "pin", "pin": "2580"},
+        )
+        self.assertEqual(c_pin, 200)
+        c_child, d_child = self._req(
+            "POST",
+            "/api/accounts/create",
+            {"display_name": "Kind", "role": "child", "parent_id": admin.id},
+        )
+        self.assertEqual(c_child, 200)
+        child_id = d_child["account"]["id"]
 
-        c_p2, d_p2 = self._req("POST", "/api/identity/poll", {"challenge_id": cid})
-        self.assertEqual(c_p2, 200)
-        self.assertEqual(d_p2["status"], "slow_down")
-        self.assertGreaterEqual(d_p2["interval"], 4)
+        # 4. Letztes Credential des Admins darf nicht entfernt werden, solange Kinder-Konto existiert
+        c_rm_fail, d_rm_fail = self._req(
+            "POST",
+            "/api/accounts/credentials",
+            {"account_id": admin.id, "action": "remove", "factor": "pin"},
+        )
+        self.assertEqual(c_rm_fail, 403)
+        self.assertEqual(d_rm_fail["error"], "account.err.parentAuthRequired")
 
-        c_p3, d_p3 = self._req("POST", "/api/identity/poll", {"challenge_id": cid})
-        self.assertEqual(c_p3, 200)
-        self.assertEqual(d_p3["status"], "authorized")
-        self.assertEqual(d_p3["link"]["display_handle"], "@paul")
-        self.assertNotIn("access_tok", json.dumps(d_p3))
-        self.assertNotIn("refresh_tok", json.dumps(d_p3))
+        # Mit zusaetzlichem Passwort darf die PIN entfernt werden, letztes Passwort bleibt geschuetzt
+        self.assertEqual(
+            self._req("POST", "/api/accounts/credentials", {"account_id": admin.id, "action": "set", "factor": "password", "password": "ElternPass!1"})[0],
+            200,
+        )
+        self.assertEqual(
+            self._req("POST", "/api/accounts/credentials", {"account_id": admin.id, "action": "remove", "factor": "pin"})[0],
+            200,
+        )
+        self.assertEqual(
+            self._req("POST", "/api/accounts/credentials", {"account_id": admin.id, "action": "remove", "factor": "password"})[0],
+            403,
+        )
+        # PIN wieder setzen fuer den Wechsel-Test
+        self.assertEqual(
+            self._req("POST", "/api/accounts/credentials", {"account_id": admin.id, "action": "set", "factor": "pin", "pin": "2580"})[0],
+            200,
+        )
 
-        # Verschluesselte Ablage in tokens.db + Schluessel in tokens.key (0600)
-        key_path = self.base / "accounts" / vsaccount.TOKEN_KEY_FILENAME
-        tokens_db = self.base / "accounts" / "tokens.db"
-        accounts_db = self.base / "accounts" / "accounts.db"
-        self.assertTrue(key_path.is_file())
-        self.assertEqual(_mode(key_path), 0o600)
-        self.assertEqual(_mode(tokens_db), 0o600)
-        self.assertNotIn(b"access_tok_secret_value_111", tokens_db.read_bytes())
-        self.assertNotIn(b"refresh_tok_secret_value_222", tokens_db.read_bytes())
-        self.assertNotIn(b"access_tok_secret_value_111", accounts_db.read_bytes())
+        # 5. In Kinderkonto wechseln -> Rueckwechsel zum Admin ohne/mit falscher PIN blockiert, mit PIN klappt
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": child_id})[0], 200)
+        c_bypass, _ = self._req("POST", "/api/session/switch", {"account_id": admin.id})
+        self.assertEqual(c_bypass, 401)
+        c_wrong, _ = self._req("POST", "/api/session/switch", {"account_id": admin.id, "pin": "9999"})
+        self.assertEqual(c_wrong, 401)
 
-        # Manipulierter Token-Blob wird sauber erkannt
-        link_id = d_p3["link"]["id"]
-        orig_blob = self.svc.store.load_token_blob(link_id)
-        assert orig_blob is not None
-        tampered = orig_blob[:-1] + bytes([orig_blob[-1] ^ 0xFF])
-        self.svc.store.save_token_blob(link_id, "voidstore", admin.id, tampered)
-        with self.assertRaises(vsaccount.IdentityError) as ctx_corrupt:
-            self.svc.identity.vault.load_tokens(link_id, "voidstore", admin.id)
-        self.assertEqual(ctx_corrupt.exception.code, "identity.err.tokenCorrupt")
-        self.svc.store.save_token_blob(link_id, "voidstore", admin.id, orig_blob)
+        # Defense-in-Depth: Zweiter ungeschuetzter Admin darf aus Kindersitzung ebenfalls nicht ohne Schutz geoeffnet werden
+        unprotected_admin = self.svc.create_account("ZweiterAdmin", role="admin")
+        c_unprot, d_unprot = self._req("POST", "/api/session/switch", {"account_id": unprotected_admin.id})
+        self.assertEqual(c_unprot, 403)
+        self.assertEqual(d_unprot["error"], "account.err.parentAuthRequired")
 
-        # Entitlements & Offline-Grace-Period
-        self.assertTrue(self.svc.identity.has_entitlement(admin.id, "void-theme-pro", kind="theme"))
-        self.clock.advance(2000)  # TTL 1800s abgelaufen -> aber innerhalb 7d Offline-Grace
-        prov.offline = True
-        c_sync_off, d_sync_off = self._req("POST", "/api/identity/sync", {"provider_id": "voidstore"})
-        self.assertEqual(c_sync_off, 200)
-        self.assertTrue(d_sync_off["offline"])
-        self.assertTrue(d_sync_off["from_cache"])
-        self.assertTrue(d_sync_off["results"][0]["grace_active"])
-        self.assertEqual(len(d_sync_off["results"][0]["entitlements"]), 2)
+        # Richtige PIN wechselt sauber zurueck zum Admin
+        c_ok, d_ok = self._req("POST", "/api/session/switch", {"account_id": admin.id, "pin": "2580"})
+        self.assertEqual(c_ok, 200)
+        self.assertEqual(d_ok["session"]["account_id"], admin.id)
 
-        # Nach Ablauf der Grace-Period sind gecachte Entitlements abgelaufen
-        self.clock.advance(7 * 86400 + 100)
-        ents_exp, grace_exp = self.svc.identity.get_entitlements(admin.id)
-        self.assertEqual(ents_exp, [])
-        self.assertFalse(grace_exp)
-
-        # Wieder online -> automatischer Token-Refresh bei AuthError + frische Entitlements
-        prov.offline = False
-        prov.fail_auth = True
-        c_sync_on, d_sync_on = self._req("POST", "/api/identity/sync", {"provider_id": "voidstore"})
-        self.assertEqual(c_sync_on, 200)
-        self.assertFalse(d_sync_on["offline"])
-        self.assertGreaterEqual(prov.refresh_calls, 1)
-        self.assertEqual(len(d_sync_on["results"][0]["entitlements"]), 2)
-
-        # Offline-Begin liefert sauber 503 ohne Blockade, Offline-Unlink loescht lokal trotzdem
-        prov.offline = True
-        c_off_link, d_off_link = self._req("POST", "/api/identity/link", {"account_id": std.id, "provider_id": "voidstore"})
-        self.assertEqual(c_off_link, 503)
-        self.assertTrue(d_off_link["offline"])
-
-        c_un, d_un = self._req("POST", "/api/identity/unlink", {"provider_id": "voidstore"})
-        self.assertEqual(c_un, 200)
-        self.assertTrue(d_un["unlinked"])
-        self.assertEqual(prov.revoke_calls, 1)
-        self.assertIsNone(self.svc.store.load_token_blob(link_id))
-        self.assertEqual(self.svc.store.list_identity_links(admin.id), [])
-
-        # Verknuepfung auf Standard-Konto + RBAC-Pruefung + Delete-Cascade
-        prov.offline = False
-        prov.poll_idx = 2  # direkt authorized beim naechsten poll
-        self.assertEqual(self._req("POST", "/api/identity/link", {"account_id": std.id, "provider_id": "voidstore"})[0], 200)
-        _, p_std = self._req("POST", "/api/identity/poll", {"account_id": std.id, "provider_id": "voidstore"})
-        std_link_id = p_std["link"]["id"]
-        self.assertIsNotNone(self.svc.store.load_token_blob(std_link_id))
-
-        # Admin darf kein Kinderkonto verknuepfen
-        self.assertEqual(self._req("POST", "/api/identity/link", {"account_id": child.id, "provider_id": "voidstore"})[0], 403)
-
-        # Standard-Nutzer sieht eigenes, darf aber fremdes Konto nicht abfragen/aendern
-        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": std.id})[0], 200)
-        self.assertEqual(self._req("GET", "/api/identity/status")[0], 200)
-        self.assertEqual(self._req("GET", f"/api/identity/status?account_id={admin.id}")[0], 403)
-        self.assertEqual(self._req("POST", "/api/identity/sync", {"account_id": admin.id})[0], 403)
-
-        # Kind bekommt leeren read-only Status und 403 auf POST
-        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": child.id})[0], 200)
-        c_cs, d_cs = self._req("GET", "/api/identity/status")
-        self.assertEqual(c_cs, 200)
-        self.assertFalse(d_cs["can_manage"])
-        self.assertEqual(d_cs["links"], [])
-        self.assertEqual(self._req("POST", "/api/identity/link", {"provider_id": "voidstore"})[0], 403)
-
-        # Zurueck zum Admin und Standard-Konto loeschen -> Cascade loescht Link und Token-Blob
-        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": admin.id})[0], 200)
-        self.assertEqual(self._req("POST", "/api/accounts/delete", {"account_id": std.id})[0], 200)
-        self.assertIsNone(self.svc.store.load_token_blob(std_link_id))
-        self.assertEqual(self.svc.store.list_identity_links(std.id), [])
+        # UI- und i18n-Check fuer die direkte Eltern-PIN-Fuehrung
+        edit_qml = (REPO / "launcher" / "qt" / "qml" / "AccountEditDialog.qml").read_text(encoding="utf-8")
+        self.assertIn("childNeedsParentAuth", edit_qml)
+        self.assertIn("startParentPinFlow", edit_qml)
+        de = json.loads((REPO / "launcher" / "web" / "i18n" / "de.json").read_text(encoding="utf-8"))
+        en = json.loads((REPO / "launcher" / "web" / "i18n" / "en.json").read_text(encoding="utf-8"))
+        for k in ("account.childNeedsParentAuth", "account.setParentPin", "account.setParentPinTitle"):
+            self.assertIn(k, de)
+            self.assertIn(k, en)
 
     def test_catalog_age_rating_and_audit_regressions(self) -> None:
         # 1. catalog.json optional age_rating (rueckwaertskompatibel) + bool-Schutz
@@ -2004,6 +1849,7 @@ class VsAccountStage6IdentityTests(unittest.TestCase):
         self.assertIsNone(age_bool)
 
         admin = self.svc.list_accounts()[0]
+        self.svc.set_credential(admin.id, "pin", "2580")
         child = self.svc.create_account("Mira", role="child", parent_id=admin.id)
         self.svc.set_parental_policy(
             child.id,
@@ -2014,7 +1860,7 @@ class VsAccountStage6IdentityTests(unittest.TestCase):
         shown_ids = {t["id"] for g in child_tiles["groups"] for t in g["tiles"]}
         self.assertIn("supertux", shown_ids)
         self.assertNotIn("custom16", shown_ids)
-        self.svc.switch_account(admin.id)
+        self.svc.switch_account(admin.id, pin="2580")
 
         # 2. Audit-Fix: cleanup_guest=False zerstoert keine laufende Gast-Sitzung
         self.svc.set_device_policy(guest_enabled=True)
@@ -2034,36 +1880,13 @@ class VsAccountStage6IdentityTests(unittest.TestCase):
         self.assertEqual(_mode(bdir.parent), 0o700)
         self.assertEqual(_mode(bdir), 0o700)
 
-        # 4. Audit-Fix: vsreport Scrub + CLI secret-arg rejection
-        scrub = vsreport.Scrub()
-        cleaned = scrub("device_code=dc_123 authorization_code=ac_456 payload_enc=blob789")
-        self.assertNotIn("dc_123", cleaned)
-        self.assertNotIn("ac_456", cleaned)
-        self.assertNotIn("blob789", cleaned)
-        self.assertEqual(account_cli.main(["--base", str(self.base), "status", "--token=secret"]), 2)
-        self.assertEqual(account_cli.main(["--base", str(self.base), "status", "--access-token=secret"]), 2)
-
-        # 5. i18n-Vollstaendigkeit fuer identity.*, QML-Gating & Preview-Unterstuetzung
-        de = json.loads((REPO / "launcher" / "web" / "i18n" / "de.json").read_text(encoding="utf-8"))
-        en = json.loads((REPO / "launcher" / "web" / "i18n" / "en.json").read_text(encoding="utf-8"))
-        id_keys = [k for k in de if k.startswith("identity.")]
-        self.assertGreaterEqual(len(id_keys), 20)
-        ph = re.compile(r"\{[A-Za-z0-9_]+\}")
-        for k in id_keys:
-            self.assertIn(k, en)
-            self.assertEqual(set(ph.findall(de[k])), set(ph.findall(en[k])), f"Placeholder mismatch in {k}")
-
+        # 4. QML-Gating
         sett_qml = (REPO / "launcher" / "qt" / "qml" / "SettingsLayer.qml").read_text(encoding="utf-8")
-        self.assertIn("identityProviders.length > 0", sett_qml)
         self.assertIn("isRestrictedAccount", sett_qml)
         self.assertNotIn("Coming Soon", sett_qml)
 
         edit_qml = (REPO / "launcher" / "qt" / "qml" / "AccountEditDialog.qml").read_text(encoding="utf-8")
         self.assertIn("a.id !== ed.account.id", edit_qml)
-
-        preview_src = (REPO / "tools" / "qt-preview.py").read_text(encoding="utf-8")
-        self.assertIn("VS_IDENTITY_DEMO", preview_src)
-        self.assertIn("/api/identity/status", preview_src)
 
 
 if __name__ == "__main__":

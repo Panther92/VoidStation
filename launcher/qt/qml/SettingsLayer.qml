@@ -21,9 +21,6 @@ Layer {
     property var acctList: []
     property var acctSession: null
     property var acctPolicy: null
-    property var identityState: null
-    property var identityChallenge: null
-    property bool identityBusy: false
     property string parentalChildId: ""
     property var parentalPolicies: ({})
     property var parentalStatuses: ({})
@@ -57,8 +54,7 @@ Layer {
     readonly property var fit: Ui.fitRows(stage.height - 12 * Ui.f - Ui.u * 0.03 - (12 * Ui.f + 0.03 * Ui.u), Ui.u * 0.74, Ui.gap, 3)
     readonly property string ip: sett && sett.net && sett.net.addresses.length ? sett.net.addresses[0].ip : ""
 
-    onOpened: { cat = ""; wifiPick = null; btRename = null; identityChallenge = null; identityBusy = false; load(); refreshVs(false); loadAccounts() }
-    onOpenChanged: if (!open) { identityChallenge = null; identityBusy = false }
+    onOpened: { cat = ""; wifiPick = null; btRename = null; load(); refreshVs(false); loadAccounts() }
     function firstFocus() { return Nav.collect(trk)[0] || null }
     function load() {
         Api.get("/api/settings", function (j) {
@@ -100,7 +96,6 @@ Layer {
         cat = id
         wifiPick = null
         btRename = null
-        if (id !== "accounts") { identityChallenge = null; identityBusy = false }
         if (id === "accounts") loadAccounts()
         trk.reset()
         wantFocus = id ? (id === "updates" ? "selfupd" : "") : "cat" + prev
@@ -583,10 +578,6 @@ Layer {
 
     // ---- Konten & Profile
     readonly property bool isAdminAccount: !!(acctSession && acctSession.role === "admin" && !acctSession.is_guest)
-    readonly property var identityProviders: identityState && identityState.providers ? identityState.providers : []
-    readonly property bool identityVisible: s.cat === "accounts" && !!s.identityState && !!s.identityState.available
-                                         && s.identityProviders.length > 0 && !!s.acctSession
-                                         && !s.acctSession.is_guest && s.acctSession.role !== "child"
     readonly property var childAccounts: (acctList || []).filter(function (a) { return a.role === "child" && a.active !== false })
     readonly property var curParentalPolicy: parentalChildId && parentalPolicies[parentalChildId] ? parentalPolicies[parentalChildId] : null
     readonly property var curParentalStatus: parentalChildId && parentalStatuses[parentalChildId] ? parentalStatuses[parentalChildId] : null
@@ -616,120 +607,7 @@ Layer {
                 app.accountsCount = acctList.length
             })
             if (r.session && r.session.role === "admin" && !r.session.is_guest) loadParental()
-            if (r.session && !r.session.is_guest && r.session.role !== "child") loadIdentity()
-            else update(function () { identityState = null; identityChallenge = null })
         }, function () {})
-    }
-    function loadIdentity() {
-        if (sett && sett.live) return
-        Api.get("/api/identity/status", function (r) {
-            update(function () {
-                identityState = r || null
-                if (!r || !r.pending) {
-                    if (identityChallenge && r && r.links && r.links.some(function (l) { return l.provider_id === identityChallenge.provider_id }))
-                        identityChallenge = null
-                } else {
-                    identityChallenge = Object.assign({ challenge_id: r.pending.challenge_id }, r.pending.challenge || {})
-                }
-            })
-        }, function () {
-            update(function () { identityState = null })
-        })
-    }
-    function identityLinkFor(pid) {
-        var links = identityState && identityState.links ? identityState.links : []
-        for (var i = 0; i < links.length; i++)
-            if (links[i].provider_id === pid) return links[i]
-        return null
-    }
-    function identityStatusText(provider) {
-        var ln = identityLinkFor(provider.provider_id)
-        if (!ln) return Ui.t("identity.status.unlinked")
-        var parts = []
-        if (ln.status === "reauth_required") parts.push(Ui.t("identity.status.reauth"))
-        else parts.push(Ui.t("identity.status.linked", { handle: ln.display_handle || ln.subject }))
-        if (ln.grace_active && ln.grace_until) {
-            var dt = Ui.loc.toString(new Date(ln.grace_until * 1000), Ui.t("fmt.dateYear", null, "d. MMMM yyyy"))
-            parts.push(Ui.t("identity.status.offline", { date: dt }))
-        } else if (ln.entitlements_count > 0) {
-            parts.push(Ui.t("identity.entitlementsCount", { count: ln.entitlements_count }))
-        }
-        return parts.join(" · ")
-    }
-    function identityStartLink(provider) {
-        if (identityBusy || !provider) return
-        identityBusy = true
-        Api.post("/api/identity/link", { provider_id: provider.provider_id }, function (r) {
-            identityBusy = false
-            update(function () {
-                identityChallenge = Object.assign({ challenge_id: r.challenge_id }, r.challenge || {})
-            })
-        }, function (err) {
-            identityBusy = false
-            app.toast(Ui.t(err, null, Ui.t("common.failed")), true)
-        })
-    }
-    function identityPollOnce() {
-        if (!identityChallenge || !s.open || s.cat !== "accounts") return
-        Api.post("/api/identity/poll", {
-            challenge_id: identityChallenge.challenge_id,
-            provider_id: identityChallenge.provider_id
-        }, function (r) {
-            if (r && r.status === "authorized") {
-                var handle = (r.link && (r.link.display_handle || r.link.subject)) || ""
-                update(function () { identityChallenge = null })
-                app.toast(Ui.t("identity.linkedToast", { handle: handle }))
-                loadIdentity()
-            } else if (r && (r.status === "expired" || r.status === "denied")) {
-                update(function () { identityChallenge = null })
-                app.toast(Ui.t(r.error || ("identity.err." + r.status), null, Ui.t("common.failed")), true)
-            }
-        }, function (err) {
-            if (err === "identity.err.expired" || err === "identity.err.denied") {
-                update(function () { identityChallenge = null })
-                app.toast(Ui.t(err), true)
-            }
-        })
-    }
-    function identityCancelLink() {
-        if (!identityChallenge) return
-        var ch = identityChallenge
-        identityChallenge = null
-        Api.post("/api/identity/cancel", { challenge_id: ch.challenge_id, provider_id: ch.provider_id }, function () {
-            loadIdentity()
-        }, function () {})
-    }
-    function identitySync(provider) {
-        if (identityBusy || !provider) return
-        identityBusy = true
-        Api.post("/api/identity/sync", { provider_id: provider.provider_id }, function (r) {
-            identityBusy = false
-            loadIdentity()
-            app.toast(Ui.t(r && r.offline ? "identity.offlineToast" : "identity.syncedToast"))
-        }, function (err) {
-            identityBusy = false
-            app.toast(Ui.t(err, null, Ui.t("common.failed")), true)
-        })
-    }
-    function identityConfirmUnlink(provider) {
-        if (!provider) return
-        app.dialog(
-            Ui.t("identity.unlink"),
-            Ui.t("identity.unlinkConfirm", { name: provider.display_name }),
-            [[Ui.t("identity.unlink"), function () {
-                Api.post("/api/identity/unlink", { provider_id: provider.provider_id }, function () {
-                    app.toast(Ui.t("identity.unlinkedToast"))
-                    loadIdentity()
-                }, fail)
-            }, "danger"], [Ui.t("common.cancel")]]
-        )
-    }
-    Timer {
-        id: identityPollTimer
-        interval: Math.max(1500, ((s.identityChallenge && s.identityChallenge.interval) || 3) * 1000)
-        repeat: true
-        running: s.open && s.cat === "accounts" && !!s.identityChallenge
-        onTriggered: s.identityPollOnce()
     }
     function loadParental() {
         Api.get("/api/accounts/parental", function (r) {
@@ -944,52 +822,6 @@ Layer {
                         onTriggered: s.setDevicePolicy({ default_account_id: modelData.id })
                     }
                 }
-            }
-        }
-        SetGroup {
-            visible: s.identityVisible; availH: s.colH; title: Ui.t("identity.title")
-            Info {
-                visible: !!s.identityState && !!s.identityState.offline_grace_active
-                html: Ui.esc(Ui.t("identity.graceHint"))
-            }
-            Info {
-                visible: !!s.identityChallenge
-                html: s.identityChallenge
-                    ? "<b>" + Ui.esc(Ui.t("identity.deviceCodePrompt", { code: s.identityChallenge.user_code || "", uri: s.identityChallenge.verification_uri || "" })) + "</b><br>" + Ui.esc(Ui.t("identity.waiting"))
-                    : ""
-            }
-            SetRow {
-                visible: !!s.identityChallenge
-                Pill {
-                    property string key: "idcancel"
-                    text: Ui.t("common.cancel")
-                    sound: "back"
-                    onTriggered: s.identityCancelLink()
-                }
-            }
-            Repeater {
-                model: s.identityProviders
-                SetRow {
-                    property var prov: modelData
-                    property var linkObj: s.identityLinkFor(prov.provider_id)
-                    label: prov.display_name
-                    Pill {
-                        property string key: "idact_" + prov.provider_id
-                        text: linkObj ? Ui.t("identity.sync") : Ui.t("identity.link")
-                        on: !!linkObj
-                        onTriggered: linkObj ? s.identitySync(prov) : s.identityStartLink(prov)
-                    }
-                    Pill {
-                        visible: !!linkObj
-                        property string key: "idun_" + prov.provider_id
-                        text: Ui.t("identity.unlink")
-                        onTriggered: s.identityConfirmUnlink(prov)
-                    }
-                }
-            }
-            Repeater {
-                model: s.identityProviders
-                Info { html: Ui.esc(modelData.display_name + ": " + s.identityStatusText(modelData)) }
             }
         }
         SetGroup {

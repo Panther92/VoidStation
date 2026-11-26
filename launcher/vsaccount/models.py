@@ -62,7 +62,7 @@ class PolicyError(AccountError):
 
 
 class NotFoundError(AccountError):
-    """Konto oder Verknuepfung nicht gefunden."""
+    """Konto nicht gefunden."""
 
 
 @dataclass(slots=True)
@@ -197,32 +197,6 @@ class ParentalPolicy:
             allow_power_menu=bool(data.get("allow_power_menu", False)),
             updated_at=int(data.get("updated_at") or 0),
         )
-
-
-@dataclass(slots=True)
-class IdentityLink:
-    """Oeffentliche Metadaten einer optionalen Online-/Store-Verknuepfung."""
-
-    id: str
-    account_id: str
-    provider_id: str
-    subject: str
-    display_handle: str
-    status: str
-    linked_at: int
-    last_sync_at: int
-
-    def to_public_dict(self) -> dict[str, Any]:
-        return {
-            "id": self.id,
-            "account_id": self.account_id,
-            "provider_id": self.provider_id,
-            "subject": self.subject,
-            "display_handle": self.display_handle,
-            "status": self.status,
-            "linked_at": self.linked_at,
-            "last_sync_at": self.last_sync_at,
-        }
 
 
 @dataclass(slots=True)

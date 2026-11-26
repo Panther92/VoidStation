@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""SQLite-Persistenz fuer Konten, Credentials, Throttling, Policies und Tokens."""
+"""SQLite-Persistenz fuer Konten, Credentials, Throttling und Policies."""
 from __future__ import annotations
 
 import json
@@ -19,7 +19,6 @@ from .models import (
     PERSISTENT_ROLES,
     Account,
     DevicePolicy,
-    IdentityLink,
     NotFoundError,
     ParentalPolicy,
     PolicyError,
@@ -92,19 +91,6 @@ CREATE TABLE IF NOT EXISTS usage_daily (
     PRIMARY KEY(account_id, day),
     FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
 );
-CREATE TABLE IF NOT EXISTS identity_links (
-    id TEXT PRIMARY KEY,
-    account_id TEXT NOT NULL,
-    provider_id TEXT NOT NULL,
-    subject TEXT NOT NULL,
-    display_handle TEXT NOT NULL,
-    status TEXT NOT NULL,
-    linked_at INTEGER NOT NULL,
-    last_sync_at INTEGER NOT NULL,
-    entitlements_json TEXT NOT NULL DEFAULT '[]',
-    entitlements_expires_at INTEGER NOT NULL DEFAULT 0,
-    FOREIGN KEY(account_id) REFERENCES accounts(id) ON DELETE CASCADE
-);
 CREATE TABLE IF NOT EXISTS audit_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     ts INTEGER NOT NULL,
@@ -112,18 +98,6 @@ CREATE TABLE IF NOT EXISTS audit_log (
     actor_id TEXT,
     event TEXT NOT NULL,
     detail_json TEXT NOT NULL DEFAULT '{}'
-);
-"""
-
-_TOKENS_SCHEMA = """
-CREATE TABLE IF NOT EXISTS provider_tokens (
-    link_id TEXT PRIMARY KEY,
-    provider_id TEXT NOT NULL,
-    account_id TEXT NOT NULL,
-    payload_enc BLOB NOT NULL,
-    key_version INTEGER NOT NULL DEFAULT 1,
-    expires_at INTEGER NOT NULL DEFAULT 0,
-    updated_at INTEGER NOT NULL
 );
 """
 
@@ -147,16 +121,14 @@ def _open_db(path: Path, schema: str) -> sqlite3.Connection:
 
 
 class AccountStore:
-    """Thread-sicherer SQLite-Store fuer accounts.db und tokens.db."""
+    """Thread-sicherer SQLite-Store fuer accounts.db."""
 
     def __init__(self, accounts_dir: Path, clock: Callable[[], float] | None = None) -> None:
         self.accounts_dir = Path(accounts_dir)
         self.db_path = self.accounts_dir / "accounts.db"
-        self.tokens_db_path = self.accounts_dir / "tokens.db"
         self._clock = clock or time.time
         self._lock = threading.RLock()
         self._conn = _open_db(self.db_path, _ACCOUNTS_SCHEMA)
-        self._tokens_conn = _open_db(self.tokens_db_path, _TOKENS_SCHEMA)
         self._ensure_meta()
 
     def _now(self) -> int:
@@ -182,7 +154,6 @@ class AccountStore:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
-            self._tokens_conn.close()
 
     def get_meta(self, key: str, default: str = "") -> str:
         with self._lock:
@@ -282,6 +253,12 @@ class AccountStore:
         ).fetchone()
         return int(row["n"]) if row else 0
 
+    def _has_active_child_accounts(self) -> bool:
+        row = self._conn.execute(
+            "SELECT 1 FROM accounts WHERE role = 'child' AND active = 1 LIMIT 1"
+        ).fetchone()
+        return row is not None
+
     def create_account(
         self,
         display_name: str,
@@ -305,6 +282,11 @@ class AccountStore:
                 parent = self.get_account(parent_id)
                 if not parent or not parent.active or parent.role != "admin":
                     raise PolicyError("account.err.parentRequired", "Parent must be an active admin")
+                if not (parent.has_pin or parent.has_password):
+                    raise PolicyError(
+                        "account.err.parentAuthRequired",
+                        "Parent PIN or password required before creating a child account",
+                    )
             else:
                 parent_id = None
 
@@ -381,6 +363,11 @@ class AccountStore:
                 parent = self.get_account(new_parent)
                 if not parent or not parent.active or parent.role != "admin" or parent.id == account_id:
                     raise PolicyError("account.err.parentRequired", "Parent must be another active admin")
+                if not (parent.has_pin or parent.has_password):
+                    raise PolicyError(
+                        "account.err.parentAuthRequired",
+                        "Parent PIN or password required for child account",
+                    )
             else:
                 new_parent = None
 
@@ -437,7 +424,6 @@ class AccountStore:
             except Exception:
                 self._conn.execute("ROLLBACK")
                 raise
-            self.delete_tokens_for_account(account_id)
 
     def set_credential_hash(self, account_id: str, factor: str, digest: str) -> None:
         if factor not in FACTORS:
@@ -466,8 +452,18 @@ class AccountStore:
         if factor not in FACTORS:
             raise ValidationError("account.err.invalid", "Invalid factor")
         with self._lock:
-            if not self.get_account(account_id):
+            acc = self.get_account(account_id)
+            if not acc:
                 raise NotFoundError("account.err.notFound", "Account not found")
+            if acc.role == "admin":
+                leaves_unprotected = (factor == "pin" and not acc.has_password) or (
+                    factor == "password" and not acc.has_pin
+                )
+                if leaves_unprotected and self._has_active_child_accounts():
+                    raise PolicyError(
+                        "account.err.parentAuthRequired",
+                        "Cannot remove last admin credential while child accounts exist",
+                    )
             self._conn.execute("BEGIN")
             try:
                 self._conn.execute(
@@ -721,201 +717,3 @@ class AccountStore:
                     }
                 )
             return out
-
-    # --- Online-/Store-Identity-Verknuepfungen ---
-    @staticmethod
-    def _row_to_identity_link(row: sqlite3.Row) -> IdentityLink:
-        return IdentityLink(
-            id=str(row["id"]),
-            account_id=str(row["account_id"]),
-            provider_id=str(row["provider_id"]),
-            subject=str(row["subject"]),
-            display_handle=str(row["display_handle"]),
-            status=str(row["status"]),
-            linked_at=int(row["linked_at"]),
-            last_sync_at=int(row["last_sync_at"]),
-        )
-
-    def list_identity_links(self, account_id: str | None = None) -> list[IdentityLink]:
-        with self._lock:
-            if account_id is None:
-                rows = self._conn.execute(
-                    "SELECT * FROM identity_links ORDER BY linked_at ASC, id ASC"
-                ).fetchall()
-            else:
-                rows = self._conn.execute(
-                    "SELECT * FROM identity_links WHERE account_id = ? ORDER BY linked_at ASC, id ASC",
-                    (account_id,),
-                ).fetchall()
-            return [self._row_to_identity_link(r) for r in rows]
-
-    def get_identity_link(self, link_id: str) -> IdentityLink | None:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM identity_links WHERE id = ?",
-                (link_id,),
-            ).fetchone()
-            return self._row_to_identity_link(row) if row else None
-
-    def get_identity_link_for_provider(self, account_id: str, provider_id: str) -> IdentityLink | None:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT * FROM identity_links WHERE account_id = ? AND provider_id = ?",
-                (account_id, provider_id),
-            ).fetchone()
-            return self._row_to_identity_link(row) if row else None
-
-    def upsert_identity_link(
-        self,
-        link: IdentityLink,
-        entitlements: list[dict[str, Any]] | None = None,
-        entitlements_expires_at: int | None = None,
-    ) -> IdentityLink:
-        with self._lock:
-            if not self.get_account(link.account_id):
-                raise NotFoundError("account.err.notFound", "Account not found")
-            existing = self.get_identity_link_for_provider(link.account_id, link.provider_id)
-            target_id = existing.id if existing else (link.id or uuid.uuid4().hex[:16])
-            self._conn.execute("BEGIN")
-            try:
-                if existing and existing.id != link.id:
-                    self._tokens_conn.execute("DELETE FROM provider_tokens WHERE link_id = ?", (link.id,))
-                if entitlements is None:
-                    cur_ents, cur_exp = self.get_identity_entitlements(target_id)
-                    ent_json = json.dumps(cur_ents, ensure_ascii=False)
-                    exp_at = int(cur_exp if entitlements_expires_at is None else entitlements_expires_at)
-                else:
-                    ent_json = json.dumps(entitlements, ensure_ascii=False)
-                    exp_at = int(entitlements_expires_at or 0)
-                self._conn.execute(
-                    "INSERT INTO identity_links "
-                    "(id, account_id, provider_id, subject, display_handle, status, linked_at, last_sync_at, entitlements_json, entitlements_expires_at) "
-                    "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) "
-                    "ON CONFLICT(id) DO UPDATE SET "
-                    "account_id = excluded.account_id, "
-                    "provider_id = excluded.provider_id, "
-                    "subject = excluded.subject, "
-                    "display_handle = excluded.display_handle, "
-                    "status = excluded.status, "
-                    "linked_at = excluded.linked_at, "
-                    "last_sync_at = excluded.last_sync_at, "
-                    "entitlements_json = excluded.entitlements_json, "
-                    "entitlements_expires_at = excluded.entitlements_expires_at",
-                    (
-                        target_id,
-                        link.account_id,
-                        link.provider_id,
-                        link.subject,
-                        link.display_handle,
-                        link.status,
-                        int(link.linked_at),
-                        int(link.last_sync_at),
-                        ent_json,
-                        exp_at,
-                    ),
-                )
-                self._conn.execute("COMMIT")
-            except Exception:
-                self._conn.execute("ROLLBACK")
-                raise
-            saved = self.get_identity_link(target_id)
-            assert saved is not None
-            return saved
-
-    def get_identity_entitlements(self, link_id: str) -> tuple[list[dict[str, Any]], int]:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT entitlements_json, entitlements_expires_at FROM identity_links WHERE id = ?",
-                (link_id,),
-            ).fetchone()
-            if not row:
-                return [], 0
-            try:
-                raw = json.loads(row["entitlements_json"] or "[]")
-                ents = [x for x in raw if isinstance(x, dict)] if isinstance(raw, list) else []
-            except ValueError:
-                ents = []
-            return ents, int(row["entitlements_expires_at"] or 0)
-
-    def update_identity_entitlements(
-        self,
-        link_id: str,
-        entitlements: list[dict[str, Any]],
-        entitlements_expires_at: int,
-        *,
-        status: str | None = None,
-        last_sync_at: int | None = None,
-    ) -> IdentityLink:
-        with self._lock:
-            cur = self.get_identity_link(link_id)
-            if not cur:
-                raise NotFoundError("account.err.notFound", "Identity link not found")
-            new_status = cur.status if status is None else str(status)
-            new_sync = cur.last_sync_at if last_sync_at is None else int(last_sync_at)
-            self._conn.execute(
-                "UPDATE identity_links SET entitlements_json = ?, entitlements_expires_at = ?, status = ?, last_sync_at = ? "
-                "WHERE id = ?",
-                (json.dumps(entitlements, ensure_ascii=False), int(entitlements_expires_at), new_status, new_sync, link_id),
-            )
-            updated = self.get_identity_link(link_id)
-            assert updated is not None
-            return updated
-
-    def set_identity_link_status(self, link_id: str, status: str) -> IdentityLink:
-        with self._lock:
-            cur = self.get_identity_link(link_id)
-            if not cur:
-                raise NotFoundError("account.err.notFound", "Identity link not found")
-            self._conn.execute(
-                "UPDATE identity_links SET status = ? WHERE id = ?",
-                (str(status), link_id),
-            )
-            updated = self.get_identity_link(link_id)
-            assert updated is not None
-            return updated
-
-    def delete_identity_link(self, link_id: str) -> bool:
-        with self._lock:
-            cur = self._conn.execute("DELETE FROM identity_links WHERE id = ?", (link_id,))
-            self.delete_token_blob(link_id)
-            return cur.rowcount > 0
-
-    # --- Geschuetzter Token-Speicher (tokens.db, getrennt von accounts.db) ---
-    def save_token_blob(
-        self,
-        link_id: str,
-        provider_id: str,
-        account_id: str,
-        payload_enc: bytes,
-        expires_at: int = 0,
-        key_version: int = 1,
-    ) -> None:
-        with self._lock:
-            now = self._now()
-            self._tokens_conn.execute(
-                "INSERT INTO provider_tokens(link_id, provider_id, account_id, payload_enc, key_version, expires_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?) "
-                "ON CONFLICT(link_id) DO UPDATE SET "
-                "payload_enc = excluded.payload_enc, "
-                "key_version = excluded.key_version, "
-                "expires_at = excluded.expires_at, "
-                "updated_at = excluded.updated_at",
-                (link_id, provider_id, account_id, bytes(payload_enc), int(key_version), int(expires_at), now),
-            )
-            os.chmod(self.tokens_db_path, 0o600)
-
-    def load_token_blob(self, link_id: str) -> bytes | None:
-        with self._lock:
-            row = self._tokens_conn.execute(
-                "SELECT payload_enc FROM provider_tokens WHERE link_id = ?",
-                (link_id,),
-            ).fetchone()
-            return bytes(row["payload_enc"]) if row else None
-
-    def delete_token_blob(self, link_id: str) -> None:
-        with self._lock:
-            self._tokens_conn.execute("DELETE FROM provider_tokens WHERE link_id = ?", (link_id,))
-
-    def delete_tokens_for_account(self, account_id: str) -> None:
-        with self._lock:
-            self._tokens_conn.execute("DELETE FROM provider_tokens WHERE account_id = ?", (account_id,))

@@ -12,7 +12,7 @@ Der Launcher ruft create() fuer Einstellungen → System → Fehlerbericht auf.
 Entfernt wird, bevor etwas in die Datei kommt (Scrub, Platzhalter wie [removed], [Wi-Fi]): Passwoerter und Schluessel (key=wert, Tokens, Mullvad-
 Kontonummern), WLAN-Namen (alle bekannten und sichtbaren Netze, ssid=…), die hintere Haelfte jeder MAC-Adresse,
 oeffentliche IP-Adressen, E-Mail-Adressen und der Benutzerordner (-> ~). Gelesen werden nur die Dateien unten –
-nie NetworkManager-Profile, wpa_supplicant, ~/.ssh, accounts/accounts.db, accounts/tokens.db, accounts/tokens.key oder Zugangsdaten. Seriennummern (DMI) bleiben draussen.
+nie NetworkManager-Profile, wpa_supplicant, ~/.ssh, accounts/accounts.db oder Zugangsdaten. Seriennummern (DMI) bleiben draussen.
 """
 from __future__ import annotations
 
@@ -49,10 +49,9 @@ PKGS = ("linux", "linux-firmware", "mesa", "mesa-dri", "xlibre-xserver", "xorg-s
 # ---------------------------------------------------------------------------
 _KEY = r"\w*(?:pass(?:word|wd|phrase)?|password[-_]?hash|passwort|kennwort|pin(?:[-_]?hash)?|psk|secret|token|" \
        r"(?:refresh|access|session|elevation)[-_]?token|x[-_]vs[-_]token|api[-_]?key|private[-_]?key|" \
-       r"device[-_]?code|user[-_]?code|auth(?:orization)?[-_]?code|payload[-_]?enc|" \
        r"account(?:[-_ ]?(?:number|nr|id))?|kontonummer|wep[-_]?key\d?)\w*"
 SECRET_KV = re.compile(r"(?i)(\b" + _KEY + r"[\"']?)(\s*[=:]\s*)(?!\[)(\"[^\"]*\"|'[^']*'|[^\s,;}\]]+)")
-PHC_HASH = re.compile(r"\$vs-(?:argon2id|scrypt|pbkdf2-sha256)\$[A-Za-z0-9$,=._+/-]+(?<![,.])")
+PHC_HASH = re.compile(r"\$vs-(?:scrypt|pbkdf2-sha256)\$[A-Za-z0-9$,=._+/-]+(?<![,.])")
 BEARER = re.compile(r"(?i)\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}")
 TOKENS = re.compile(r"\b(?:github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|glpat-[A-Za-z0-9_-]{20,})")
 URL_CRED = re.compile(r"(\b[a-z][a-z0-9+.-]*://)[^/\s:@]+:[^/\s@]+@")          # https://user:pass@host
