@@ -570,6 +570,90 @@ def osk_wait(seq):
         return dict(OSKF["state"], seq=OSKF["seq"])
 
 
+# Account-System (Vorschau; VS_ACCOUNT_LOCKED=1 startet mit gesperrter Profilauswahl)
+ACC_STATE: dict[str, Any] = {
+    "accounts": json.loads(json.dumps(S.ACCOUNTS)),
+    "policy": dict(S.ACCOUNT_POLICY),
+    "session": dict(
+        S.ACCOUNT_SESSION,
+        locked=os.environ.get("VS_ACCOUNT_LOCKED") == "1",
+        picker_required=os.environ.get("VS_ACCOUNT_LOCKED") == "1",
+    ),
+    "secrets": {"acc-paul": {"pin": "1234", "password": "voidstation"}, "acc-anna": {"pin": "2580"}, "acc-leo": {}},
+    "throttle": {},
+    "prefs": {},
+    "seq": 1,
+}
+
+
+def _acc_find(aid: str) -> dict[str, Any] | None:
+    return next((a for a in ACC_STATE["accounts"] if a["id"] == aid), None)
+
+
+def _acc_sync_flags(acc: dict[str, Any]) -> None:
+    sec = ACC_STATE["secrets"].setdefault(acc["id"], {})
+    acc["has_pin"] = bool(sec.get("pin"))
+    acc["has_password"] = bool(sec.get("password"))
+    acc["auth_configured"] = acc["has_pin"] or acc["has_password"]
+
+
+def _acc_prefs_for(aid: str) -> dict[str, Any]:
+    return ACC_STATE["prefs"].setdefault(aid, {
+        "lang": S.SETTINGS.get("lang", "de"),
+        "theme": S.SETTINGS.get("theme", "default-dark"),
+        "scale": S.SETTINGS.get("scale", 1.25),
+        "ui_sounds": True,
+        "ui_sounds_volume": 70,
+        "ui_sounds_preset": "void",
+    })
+
+
+def _acc_apply_prefs(aid: str) -> dict[str, Any]:
+    prefs = _acc_prefs_for(aid)
+    S.SETTINGS["lang"] = prefs["lang"]
+    S.SETTINGS["theme"] = prefs["theme"]
+    S.SETTINGS["scale"] = prefs["scale"]
+    S.SETTINGS["sounds"].update({
+        "on": prefs["ui_sounds"],
+        "volume": prefs["ui_sounds_volume"],
+        "preset": prefs["ui_sounds_preset"],
+    })
+    return dict(prefs)
+
+
+def _acc_verify(aid: str, factor: str, secret: str) -> tuple[int, dict[str, Any] | None]:
+    now = time.time()
+    key = (aid, factor)
+    th = ACC_STATE["throttle"].setdefault(key, {"count": 0, "until": 0.0, "hard": False})
+    if th["hard"]:
+        return 423, {"error": "account.err.pinLocked", "msg": "PIN locked", "hard_locked": True}
+    if th["until"] > now:
+        return 429, {"error": "account.cooldown", "msg": "Cooldown", "retry_after": int(th["until"] - now) + 1}
+    expected = ACC_STATE["secrets"].get(aid, {}).get(factor)
+    if expected and secret == expected:
+        ACC_STATE["throttle"].pop(key, None)
+        if factor == "password":
+            ACC_STATE["throttle"].pop((aid, "pin"), None)
+        return 200, None
+    th["count"] += 1
+    if factor == "pin" and th["count"] >= 5:
+        th["hard"] = True
+        return 423, {"error": "account.err.pinLocked", "msg": "PIN locked", "hard_locked": True}
+    if th["count"] >= 3:
+        wait = 5 if th["count"] == 3 else 15
+        th["until"] = now + wait
+        return 429, {"error": "account.cooldown", "msg": "Cooldown", "retry_after": wait}
+    return 401, {"error": "account.err.invalid", "msg": "Invalid credentials"}
+
+
+def _tiles_payload() -> dict[str, Any]:
+    if LIVE["on"]:
+        return TILES
+    out = dict(TILES)
+    out["user"] = ACC_STATE["session"]["display_name"]
+    return out
+
+
 class H(S.H):
     def do_GET(self):
         u = urlparse(self.path)
@@ -589,10 +673,15 @@ class H(S.H):
             except (BrokenPipeError, ConnectionResetError):        # Startseite beendet, waehrend sie wartete
                 return None
         routes = {
-            "/tiles.json": lambda: TILES,
+            "/tiles.json": _tiles_payload,
             "/api/status": lambda: {"running": st["running"], "starting": [], "radio": st["radio"], "tv": st["tv"],
                                     "update": st["update"] if not LIVE["on"] else {"available": False}, "live": LIVE["on"],
-                                    "vpn": vpn_summary()},
+                                    "vpn": vpn_summary(),
+                                    "account": S.account_summary(ACC_STATE["session"], ACC_STATE["policy"], ACC_STATE["accounts"])},
+            "/api/session": lambda: {"session": ACC_STATE["session"], "device_policy": ACC_STATE["policy"],
+                                     "accounts_count": len(ACC_STATE["accounts"]), "migrated": False},
+            "/api/accounts": lambda: {"accounts": ACC_STATE["accounts"], "session": ACC_STATE["session"],
+                                      "device_policy": ACC_STATE["policy"]},
             "/api/vpn": vpn_page,
             "/api/vpn/relays": lambda: {"countries": [{"cc": cc, "name": n, "cities": [
                 {"code": c[0], "name": c[1], "lat": c[2], "lon": c[3], "n": c[4]} for c in cities]} for cc, n, cities in VPN_RELAYS],
@@ -677,6 +766,9 @@ class H(S.H):
         self.end_headers()
         self.wfile.write(data)
 
+    def j_status(self, code: int, obj: Any) -> None:
+        self.raw(code, json.dumps(obj, ensure_ascii=False).encode(), "application/json; charset=utf-8")
+
     def yt_get(self, p, q):
         g = lambda k: q.get(k, [""])[0]
         Y = yt()
@@ -720,6 +812,194 @@ class H(S.H):
         n = int(self.headers.get("Content-Length") or 0)
         body = json.loads(self.rfile.read(n) or b"{}") if n else {}
         st = STATE
+        if p == "/api/session/switch":
+            aid = str(body.get("account_id") or body.get("id") or "").strip()
+            acc = _acc_find(aid)
+            if not acc or not acc.get("active", True):
+                return self.j_status(404, {"error": "account.err.notFound"})
+            if acc["has_pin"] or acc["has_password"]:
+                if "password" in body and body["password"] is not None:
+                    code, err = _acc_verify(aid, "password", str(body["password"]))
+                elif "pin" in body and body["pin"] is not None:
+                    code, err = _acc_verify(aid, "pin", str(body["pin"]))
+                else:
+                    return self.j_status(401, {"error": "account.err.invalid"})
+                if err is not None:
+                    return self.j_status(code, err)
+            ACC_STATE["session"] = {
+                "account_id": acc["id"], "display_name": acc["display_name"], "role": acc["role"],
+                "avatar": acc["avatar"], "color": acc["color"], "is_guest": False,
+                "locked": False, "picker_required": False, "elevated_until": 0,
+            }
+            return self.j({"ok": True, "session": ACC_STATE["session"], "prefs": _acc_apply_prefs(acc["id"])})
+        if p == "/api/session/lock":
+            sess = ACC_STATE["session"]
+            if sess["is_guest"]:
+                fallback = ACC_STATE["accounts"][0]
+                ACC_STATE["session"] = {
+                    "account_id": fallback["id"], "display_name": fallback["display_name"], "role": fallback["role"],
+                    "avatar": fallback["avatar"], "color": fallback["color"], "is_guest": False,
+                    "locked": True, "picker_required": True, "elevated_until": 0,
+                }
+            else:
+                sess["locked"] = True
+                sess["picker_required"] = True
+            return self.j({"ok": True, "session": ACC_STATE["session"]})
+        if p == "/api/session/guest":
+            if not ACC_STATE["policy"]["guest_enabled"]:
+                return self.j_status(403, {"error": "account.err.guestDisabled"})
+            ACC_STATE["session"] = {
+                "account_id": "guest", "display_name": str(body.get("display_name") or "Gast"), "role": "guest",
+                "avatar": "user", "color": "#3a3f46", "is_guest": True,
+                "locked": False, "picker_required": False, "elevated_until": 0,
+            }
+            return self.j({"ok": True, "session": ACC_STATE["session"], "prefs": _acc_apply_prefs("guest")})
+        if p == "/api/accounts/create":
+            sess = ACC_STATE["session"]
+            if sess["locked"] or sess["is_guest"] or sess["role"] != "admin":
+                return self.j_status(403, {"error": "account.err.adminRequired"})
+            name = str(body.get("display_name") or "").strip()
+            if not name:
+                return self.j_status(400, {"error": "account.err.nameRequired"})
+            role = str(body.get("role") or "standard")
+            pin = body.get("pin")
+            pw = body.get("password")
+            if pin is not None and not re.fullmatch(r"\d{4,8}", str(pin)):
+                return self.j_status(400, {"error": "account.err.pinFormat"})
+            if pw is not None and not (1 <= len(str(pw)) <= 200):
+                return self.j_status(400, {"error": "account.err.pwFormat"})
+            aid = f"acc-demo-{ACC_STATE['seq']}"
+            ACC_STATE["seq"] += 1
+            if body.get("auto_login"):
+                for a in ACC_STATE["accounts"]:
+                    a["auto_login"] = False
+            acc = {
+                "id": aid, "display_name": name, "role": role,
+                "parent_id": body.get("parent_id") if role == "child" else None,
+                "avatar": str(body.get("avatar") or "user"), "color": str(body.get("color") or "#2d4a6b"),
+                "active": True, "auto_login": bool(body.get("auto_login", False)),
+                "created_at": int(time.time()), "last_login_at": 0,
+                "has_password": bool(pw), "has_pin": bool(pin), "auth_configured": bool(pw or pin),
+            }
+            ACC_STATE["secrets"][aid] = {k: str(v) for k, v in (("pin", pin), ("password", pw)) if v}
+            ACC_STATE["accounts"].append(acc)
+            return self.j({"ok": True, "account": acc, "accounts": ACC_STATE["accounts"]})
+        if p == "/api/accounts/update":
+            sess = ACC_STATE["session"]
+            if sess["locked"] or sess["is_guest"] or sess["role"] == "child":
+                return self.j_status(403, {"error": "account.err.adminRequired"})
+            aid = str(body.get("account_id") or body.get("id") or "").strip()
+            acc = _acc_find(aid)
+            if not acc:
+                return self.j_status(404, {"error": "account.err.notFound"})
+            if sess["role"] != "admin" and (aid != sess["account_id"] or any(k in body for k in ("role", "parent_id", "active", "auto_login"))):
+                return self.j_status(403, {"error": "account.err.adminRequired"})
+            if "display_name" in body:
+                nm = str(body["display_name"] or "").strip()
+                if not nm:
+                    return self.j_status(400, {"error": "account.err.nameRequired"})
+                acc["display_name"] = nm
+            if "role" in body and body["role"] in ("admin", "standard", "child"):
+                admins = [a for a in ACC_STATE["accounts"] if a["role"] == "admin" and a["active"]]
+                if acc["role"] == "admin" and body["role"] != "admin" and len(admins) <= 1:
+                    return self.j_status(403, {"error": "account.err.lastAdmin"})
+                acc["role"] = body["role"]
+            if "parent_id" in body:
+                acc["parent_id"] = body["parent_id"] or None
+            if "avatar" in body and body["avatar"]:
+                acc["avatar"] = str(body["avatar"])
+            if "color" in body and body["color"]:
+                acc["color"] = str(body["color"])
+            if body.get("auto_login") is True:
+                for a in ACC_STATE["accounts"]:
+                    a["auto_login"] = (a["id"] == aid)
+            elif "auto_login" in body:
+                acc["auto_login"] = bool(body["auto_login"])
+            if sess["account_id"] == aid and not sess["is_guest"]:
+                sess.update(display_name=acc["display_name"], role=acc["role"], avatar=acc["avatar"], color=acc["color"])
+            return self.j({"ok": True, "account": acc, "session": sess})
+        if p == "/api/accounts/credentials":
+            sess = ACC_STATE["session"]
+            if sess["locked"] or sess["is_guest"] or sess["role"] == "child":
+                return self.j_status(403, {"error": "account.err.adminRequired"})
+            aid = str(body.get("account_id") or body.get("id") or sess["account_id"]).strip()
+            acc = _acc_find(aid)
+            if not acc:
+                return self.j_status(404, {"error": "account.err.notFound"})
+            action = str(body.get("action") or "set").strip().lower()
+            factor = str(body.get("factor") or ("pin" if "pin" in body else "password" if "password" in body else "")).strip().lower()
+            if action == "unlock":
+                if sess["role"] != "admin":
+                    return self.j_status(403, {"error": "account.err.adminRequired"})
+                ACC_STATE["throttle"].pop((aid, factor or "pin"), None)
+                return self.j({"ok": True, "account": acc})
+            if sess["role"] != "admin":
+                if aid != sess["account_id"]:
+                    return self.j_status(403, {"error": "account.err.adminRequired"})
+                if acc["has_pin"] or acc["has_password"]:
+                    if body.get("current_password") is not None:
+                        code, err = _acc_verify(aid, "password", str(body["current_password"]))
+                    elif body.get("current_pin") is not None:
+                        code, err = _acc_verify(aid, "pin", str(body["current_pin"]))
+                    else:
+                        return self.j_status(401, {"error": "account.err.invalid"})
+                    if err is not None:
+                        return self.j_status(code, err)
+            sec = ACC_STATE["secrets"].setdefault(aid, {})
+            if action == "remove":
+                sec.pop(factor, None)
+                _acc_sync_flags(acc)
+                return self.j({"ok": True, "account": acc})
+            val = str(body.get("secret") if "secret" in body else body.get(factor, ""))
+            if factor == "pin" and not re.fullmatch(r"\d{4,8}", val):
+                return self.j_status(400, {"error": "account.err.pinFormat"})
+            if factor == "password" and not (1 <= len(val) <= 200):
+                return self.j_status(400, {"error": "account.err.pwFormat"})
+            sec[factor] = val
+            _acc_sync_flags(acc)
+            resp: dict[str, Any] = {"ok": True, "account": acc}
+            if factor == "pin":
+                resp["weak_pin"] = val in ("0000", "1234", "1111", "2222", "123456") or len(set(val)) == 1
+            return self.j(resp)
+        if p == "/api/accounts/delete":
+            sess = ACC_STATE["session"]
+            if sess["locked"] or sess["is_guest"] or sess["role"] != "admin":
+                return self.j_status(403, {"error": "account.err.adminRequired"})
+            aid = str(body.get("account_id") or body.get("id") or "").strip()
+            acc = _acc_find(aid)
+            if not acc:
+                return self.j_status(404, {"error": "account.err.notFound"})
+            admins = [a for a in ACC_STATE["accounts"] if a["role"] == "admin" and a["active"]]
+            if acc["role"] == "admin" and len(admins) <= 1:
+                return self.j_status(403, {"error": "account.err.lastAdmin"})
+            ACC_STATE["accounts"] = [a for a in ACC_STATE["accounts"] if a["id"] != aid]
+            ACC_STATE["secrets"].pop(aid, None)
+            if sess["account_id"] == aid and not sess["is_guest"]:
+                nxt = ACC_STATE["accounts"][0]
+                ACC_STATE["session"] = {
+                    "account_id": nxt["id"], "display_name": nxt["display_name"], "role": nxt["role"],
+                    "avatar": nxt["avatar"], "color": nxt["color"], "is_guest": False,
+                    "locked": True, "picker_required": True, "elevated_until": 0,
+                }
+            return self.j({"ok": True, "deleted": aid, "session": ACC_STATE["session"], "accounts": ACC_STATE["accounts"]})
+        if p == "/api/accounts/device-policy":
+            sess = ACC_STATE["session"]
+            if sess["locked"] or sess["is_guest"] or sess["role"] != "admin":
+                return self.j_status(403, {"error": "account.err.adminRequired"})
+            pol = ACC_STATE["policy"]
+            for k in ("ask_on_boot", "guest_enabled"):
+                if k in body and body[k] is not None:
+                    pol[k] = bool(body[k])
+            if "default_account_id" in body and body["default_account_id"] is not None:
+                pol["default_account_id"] = str(body["default_account_id"])
+            if not pol["guest_enabled"] and sess["is_guest"]:
+                fallback = ACC_STATE["accounts"][0]
+                ACC_STATE["session"] = {
+                    "account_id": fallback["id"], "display_name": fallback["display_name"], "role": fallback["role"],
+                    "avatar": fallback["avatar"], "color": fallback["color"], "is_guest": False,
+                    "locked": True, "picker_required": True, "elevated_until": 0,
+                }
+            return self.j({"ok": True, "device_policy": pol, "session": ACC_STATE["session"]})
         if p == "/api/osk/field":
             with OSKF["cv"]:
                 OSKF["seq"] += 1
@@ -974,12 +1254,17 @@ class H(S.H):
                 {"dev": "wlp2s0", "type": "wifi", "connected": True, "name": body.get("ssid", ""), "ip": "172.20.10.3",
                  "internet": n.get("mode") == "wifi"}]
         if p.startswith("/api/settings/") or p == "/api/wifi/connect":
+            aid = ACC_STATE["session"]["account_id"] or "acc-paul"
+            aprefs = _acc_prefs_for(aid)
             if p.endswith("/theme"):
                 S.SETTINGS["theme"] = body.get("theme")
+                aprefs["theme"] = S.SETTINGS["theme"]
             if p.endswith("/scale"):
                 S.SETTINGS["scale"] = body.get("scale")
+                aprefs["scale"] = S.SETTINGS["scale"]
             if p.endswith("/lang"):
                 S.SETTINGS["lang"] = body.get("lang")
+                aprefs["lang"] = S.SETTINGS["lang"]
                 return self.j({"lang": body.get("lang")})
             if p.endswith("/padmouse"):
                 STATE["padmouse"] = bool(body.get("on"))
@@ -988,10 +1273,13 @@ class H(S.H):
                                                       "presets": ["void", "retro", "minimal"], "custom": 0})
                 if "on" in body:
                     snd["on"] = bool(body["on"])
+                    aprefs["ui_sounds"] = snd["on"]
                 if "volume" in body:
                     snd["volume"] = max(1, min(100, int(round(float(body["volume"])))))
+                    aprefs["ui_sounds_volume"] = snd["volume"]
                 if body.get("preset") in ("void", "retro", "minimal"):
                     snd["preset"] = body["preset"]
+                    aprefs["ui_sounds_preset"] = snd["preset"]
             if p.endswith("/osk"):
                 o = S.SETTINGS.setdefault("osk", {"choice": "auto", "mode": "auto"})
                 if "layout" in body:

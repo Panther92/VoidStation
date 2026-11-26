@@ -18,10 +18,14 @@ Layer {
     property var vsState: null
     property var wifiList: null
     property var wifiPick: null
+    property var acctList: []
+    property var acctSession: null
+    property var acctPolicy: null
     // Ton: Geraete (Fernseher, USB-/Bluetooth-Kopfhoerer …) statt PipeWire-Profilen; aktives Geraet zeigt Format + Mikro
     readonly property var audioDevs: sett && sett.audio && sett.audio.ok ? (sett.audio.devices || []) : []
     readonly property var audioDev: { for (var i = 0; i < audioDevs.length; i++) if (audioDevs[i].active) return audioDevs[i]; return null }
     readonly property var catDefs: [
+        { id: "accounts", icon: "user", color: "#2d526b", title: "settings.accounts" },
         { id: "lang", icon: "speech", color: "#2d4a6b", title: "settings.language" },
         { id: "display", icon: "monitor", color: "#2b5b66", title: "settings.catDisplay" },
         { id: "design", icon: "palette", color: "#553a6e", title: "settings.catDesign" },
@@ -31,14 +35,18 @@ Layer {
         { id: "share", icon: "folder", color: "#284843", title: "settings.share" },
         { id: "updates", icon: "update", color: "#6e2b3c", title: "settings.catUpdates" },
         { id: "system", icon: "power", color: "#3a3f46", title: "settings.system" }]
-    readonly property var cats: catDefs.filter(function (c) { return c.id !== "share" || (sett && sett.share) })
+    readonly property var cats: catDefs.filter(function (c) {
+        if (c.id === "share") return !!(sett && sett.share)
+        if (c.id === "accounts") return !(sett && sett.live)
+        return true
+    })
     readonly property var catNow: { for (var i = 0; i < cats.length; i++) if (cats[i].id === cat) return cats[i]; return null }
     title: catNow ? Ui.t(catNow.title) : Ui.t("settings.title")
     readonly property real colH: stage.height
     readonly property var fit: Ui.fitRows(stage.height - 12 * Ui.f - Ui.u * 0.03 - (12 * Ui.f + 0.03 * Ui.u), Ui.u * 0.74, Ui.gap, 3)
     readonly property string ip: sett && sett.net && sett.net.addresses.length ? sett.net.addresses[0].ip : ""
 
-    onOpened: { cat = ""; wifiPick = null; btRename = null; load(); refreshVs(false) }
+    onOpened: { cat = ""; wifiPick = null; btRename = null; load(); refreshVs(false); loadAccounts() }
     function firstFocus() { return Nav.collect(trk)[0] || null }
     function load() {
         Api.get("/api/settings", function (j) {
@@ -80,6 +88,7 @@ Layer {
         cat = id
         wifiPick = null
         btRename = null
+        if (id === "accounts") loadAccounts()
         trk.reset()
         wantFocus = id ? (id === "updates" ? "selfupd" : "") : "cat" + prev
         Qt.callLater(settle)
@@ -96,6 +105,9 @@ Layer {
     function catSub(id) {
         if (!sett) return ""
         switch (id) {
+        case "accounts":
+            var sess = acctSession || app.session
+            return sess ? (sess.display_name + " · " + Ui.t("account.role." + sess.role)) : Ui.t("account.title")
         case "lang":
             var l = (sett.langs || []).filter(function (x) { return x.id === Ui.lang })[0]
             return l ? l.label : (Ui.lang === "de" ? "Deutsch" : "English")
@@ -556,6 +568,45 @@ Layer {
         app.dialog(Ui.t("report.contentTitle"), r.overview + (logs ? "\n\n" + Ui.t("report.logs") + "\n" + logs : ""), [[Ui.t("common.close")]])
     }
 
+    // ---- Konten & Profile
+    readonly property bool isAdminAccount: !!(acctSession && acctSession.role === "admin" && !acctSession.is_guest)
+    readonly property var activeAccountObj: {
+        if (!acctSession || acctSession.is_guest) return null
+        for (var i = 0; i < (acctList || []).length; i++)
+            if (acctList[i].id === acctSession.account_id) return acctList[i]
+        return null
+    }
+    function loadAccounts() {
+        if (sett && sett.live) return
+        Api.get("/api/accounts", function (r) {
+            update(function () {
+                acctList = r.accounts || []
+                acctSession = r.session || null
+                acctPolicy = r.device_policy || null
+                if (r.session) app.session = r.session
+                if (r.device_policy) app.devicePolicy = r.device_policy
+                app.accountsList = acctList
+                app.accountsCount = acctList.length
+            })
+        }, function () {})
+    }
+    function acctAuthText(a) {
+        if (!a) return Ui.t("account.noAuth")
+        var p = []
+        if (a.has_pin) p.push(Ui.t("account.pin"))
+        if (a.has_password) p.push(Ui.t("account.password"))
+        return p.length ? p.join(" + ") : Ui.t("account.noAuth")
+    }
+    function setDevicePolicy(patch) {
+        Api.post("/api/accounts/device-policy", patch, function (r) {
+            update(function () {
+                if (r.device_policy) { acctPolicy = r.device_policy; app.devicePolicy = r.device_policy }
+                if (r.session) { acctSession = r.session; app.session = r.session }
+            })
+            app.toast(Ui.t("account.policySaved"))
+        }, fail)
+    }
+
     headRight: NowLine {
         main: s.sett ? (s.ip || Ui.t("settings.offline")) : ""
         sub: s.sett && s.ip ? s.sett.net.hostname : ""
@@ -593,12 +644,104 @@ Layer {
                             Glyph { visible: sub.warn; name: "updwarn"; width: uu * 0.09; height: width; anchors.verticalCenter: parent.verticalCenter }
                             Txt {
                                 width: parent.width - (sub.warn ? uu * 0.12 : 0)
-                                text: { app.volText; app.updInfo; s.vsState; s.bt; Ui.lang; vs.themeName; return s.catSub(modelData.id) }
+                                text: { app.volText; app.updInfo; s.vsState; s.bt; Ui.lang; vs.themeName; s.acctSession; app.session; return s.catSub(modelData.id) }
                                 font.pixelSize: uu * 0.085
                                 font.weight: sub.warn ? Font.DemiBold : Font.Normal
                                 color: sub.warn ? Ui.c.tileText : Ui.c.tileSub
                             }
                         }
+                    }
+                }
+            }
+        }
+        // Konten & Profile
+        SetGroup {
+            visible: s.cat === "accounts"; availH: s.colH; title: Ui.t("account.currentProfile")
+            Info {
+                html: !s.acctSession ? ""
+                    : "<b>" + Ui.esc(s.acctSession.display_name) + "</b> · " + Ui.esc(Ui.t("account.role." + s.acctSession.role))
+                      + (s.acctSession.is_guest ? "" : "<br>" + Ui.esc(s.acctAuthText(s.activeAccountObj)))
+            }
+            SetRow {
+                Pill { property string key: "accsw"; iconName: "user"; text: Ui.t("account.switch"); onTriggered: app.openAccountPicker() }
+                Pill { property string key: "acclk"; iconName: "lock"; text: Ui.t("account.lock"); onTriggered: app.lockProfile() }
+                Pill {
+                    property string key: "acced"
+                    visible: !!s.activeAccountObj && !!s.acctSession && !s.acctSession.is_guest && s.acctSession.role !== "child"
+                    text: Ui.t("account.editOwn")
+                    onTriggered: app.openAccountEdit(s.activeAccountObj, function () { s.loadAccounts() })
+                }
+            }
+            Info { visible: !!s.acctSession && !s.isAdminAccount; html: Ui.esc(Ui.t("account.adminOnlyHint")) }
+        }
+        SetGroup {
+            visible: s.cat === "accounts" && s.isAdminAccount; availH: s.colH; title: Ui.t("account.manageList")
+            SetRow {
+                Pill {
+                    property string key: "accnew"
+                    iconName: "plus"
+                    text: Ui.t("account.add")
+                    onTriggered: app.openAccountEdit(null, function () { s.loadAccounts() })
+                }
+            }
+            SetRow {
+                Repeater {
+                    model: s.acctList || []
+                    Pill {
+                        property string key: "acc_" + modelData.id
+                        iconName: modelData.avatar || "user"
+                        rich: true
+                        maxWidth: Ui.screenW * 0.4
+                        on: !!s.acctSession && !s.acctSession.is_guest && s.acctSession.account_id === modelData.id
+                        text: Ui.esc(modelData.display_name) + " <font color='" + Ui.c.textFaint + "'>· "
+                            + Ui.esc(Ui.t("account.role." + modelData.role)) + " · "
+                            + Ui.esc(s.acctAuthText(modelData)) + "</font>"
+                        onTriggered: app.openAccountEdit(modelData, function () { s.loadAccounts() })
+                    }
+                }
+            }
+        }
+        SetGroup {
+            visible: s.cat === "accounts" && s.isAdminAccount && !!s.acctPolicy; availH: s.colH; title: Ui.t("account.deviceSettings")
+            SetRow {
+                label: Ui.t("account.askOnBoot")
+                Repeater {
+                    model: [true, false]
+                    Pill {
+                        property string key: "accboot" + modelData
+                        text: Ui.t(modelData ? "common.on" : "common.off")
+                        on: !!s.acctPolicy && !!s.acctPolicy.ask_on_boot === modelData
+                        sound: "toggle"
+                        onTriggered: s.setDevicePolicy({ ask_on_boot: modelData })
+                    }
+                }
+            }
+            Info { html: Ui.esc(Ui.t("account.askOnBootHint")) }
+            SetRow {
+                label: Ui.t("account.guestMode")
+                Repeater {
+                    model: [true, false]
+                    Pill {
+                        property string key: "accguest" + modelData
+                        text: Ui.t(modelData ? "common.on" : "common.off")
+                        on: !!s.acctPolicy && !!s.acctPolicy.guest_enabled === modelData
+                        sound: "toggle"
+                        onTriggered: s.setDevicePolicy({ guest_enabled: modelData })
+                    }
+                }
+            }
+            Info { html: Ui.esc(Ui.t("account.guestModeHint")) }
+            SetRow {
+                visible: (s.acctList || []).length > 1
+                label: Ui.t("account.defaultAccount")
+                Repeater {
+                    model: s.acctList || []
+                    Pill {
+                        property string key: "accdef_" + modelData.id
+                        text: modelData.display_name
+                        on: !!s.acctPolicy && s.acctPolicy.default_account_id === modelData.id
+                        sound: "toggle"
+                        onTriggered: s.setDevicePolicy({ default_account_id: modelData.id })
                     }
                 }
             }
