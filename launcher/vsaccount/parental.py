@@ -23,6 +23,8 @@ BROWSER_BINARIES: frozenset[str] = frozenset(
 )
 ALWAYS_VISIBLE_TILES: frozenset[str] = frozenset({"clock", "settings"})
 ADMIN_ONLY_TILES: frozenset[str] = frozenset({"appcenter"})
+GUEST_BLOCKED_TILES: frozenset[str] = frozenset({"terminal", "files"})
+GUEST_BLOCKED_CATS: frozenset[str] = frozenset({"Werkzeuge"})
 
 DEFAULT_CAT_AGE_RATINGS: dict[str, int] = {
     "Gaming": 12,
@@ -328,14 +330,13 @@ class ParentalController:
                 sess_locked = sess.locked
 
             if is_guest:
-                dev = self._get_device_policy()
                 return {
-                    "restricted": bool(dev.guest_allowed_tiles),
+                    "restricted": True,
                     "locked": sess_locked,
                     "reason": "session_locked" if sess_locked else "",
                     "remaining_seconds": None,
                     "allow_yt_search": True,
-                    "allow_browser": True,
+                    "allow_browser": False,
                     "allow_power_menu": True,
                 }
 
@@ -388,8 +389,17 @@ class ParentalController:
                 return ParentalDecision(False, "session_locked", "account.err.locked", False, None, tile_id)
 
             if sess.is_guest:
+                if tile_id in ALWAYS_VISIBLE_TILES:
+                    return ParentalDecision(True, tile_id=tile_id)
+                if tile_id in ADMIN_ONLY_TILES:
+                    return ParentalDecision(False, "admin_only", "account.blocked", False, None, tile_id)
+                browser = is_browser_tile(tile_id, cat, cmd) if is_browser is None else bool(is_browser)
+                if browser:
+                    return ParentalDecision(False, "browser_blocked", "account.blocked", False, None, tile_id)
+                if tile_id in GUEST_BLOCKED_TILES or (cat and cat in GUEST_BLOCKED_CATS):
+                    return ParentalDecision(False, "guest_restricted", "account.blocked", False, None, tile_id)
                 dev = self._get_device_policy()
-                if dev.guest_allowed_tiles and tile_id not in ALWAYS_VISIBLE_TILES and tile_id not in dev.guest_allowed_tiles:
+                if dev.guest_allowed_tiles and tile_id not in dev.guest_allowed_tiles:
                     return ParentalDecision(False, "guest_restricted", "account.blocked", False, None, tile_id)
                 return ParentalDecision(True, tile_id=tile_id)
 

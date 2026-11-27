@@ -261,6 +261,24 @@ class VsAccountStage1Tests(unittest.TestCase):
         guest = svc.start_guest_session()
         self.assertTrue(guest.is_guest)
 
+        # Gast erbt auch ohne guest_allowed_tiles immer Terminal-, Dateimanager-, Browser-, Werkzeug- & AppCenter-Sperren
+        self.assertFalse(svc.parental.check_tile("terminal").allowed)
+        self.assertFalse(svc.parental.check_tile("files").allowed)
+        self.assertFalse(svc.parental.check_tile("firefox").allowed)
+        self.assertFalse(svc.parental.check_tile("custom_br", cmd=["chromium"]).allowed)
+        self.assertFalse(svc.parental.check_tile("appcenter").allowed)
+        self.assertFalse(svc.parental.check_tile("htop", cat="Werkzeuge").allowed)
+        self.assertTrue(svc.parental.check_tile("tv").allowed)
+        self.assertTrue(svc.parental.check_tile("youtube", cmd=["firefox", "--kiosk", "https://www.youtube.com"]).allowed)
+
+        # Selbst wenn guest_allowed_tiles gesperrte Kacheln enthaelt, bleiben sie fuer den Gast gesperrt
+        svc.set_device_policy(guest_allowed_tiles=["terminal", "files", "firefox", "tv"])
+        self.assertFalse(svc.parental.check_tile("terminal").allowed)
+        self.assertFalse(svc.parental.check_tile("files").allowed)
+        self.assertFalse(svc.parental.check_tile("firefox").allowed)
+        self.assertTrue(svc.parental.check_tile("tv").allowed)
+        svc.set_device_policy(guest_allowed_tiles=[])
+
         guest_radio = svc.profile_path("radio.json")
         guest_radio.write_text("[]", encoding="utf-8")
         svc.save_profile_prefs({"lang": "en"})
@@ -1076,6 +1094,22 @@ class VsAccountStage4ParentalTests(unittest.TestCase):
         c_yt_s, d_yt_s = self._req("GET", "/api/yt/search?q=mario", xtv=False, token="")
         self.assertEqual(c_yt_s, 403)
         self.assertEqual(d_yt_s["reason"], "yt_search_blocked")
+
+        # Gast-Modus ohne guest_allowed_tiles sperrt trotzdem Standardsperren (terminal, firefox, appcenter)
+        self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": self.admin.id, "pin": "2580"})[0], 200)
+        self.assertEqual(
+            self._req("POST", "/api/accounts/device-policy", {"guest_enabled": True, "guest_allowed_tiles": []})[0],
+            200,
+        )
+        self.assertEqual(self._req("POST", "/api/session/guest", {"display_name": "Gast"})[0], 200)
+        _, g_default_tiles = self._req("GET", "/tiles.json", xtv=False, token="")
+        g_def_ids = {t["id"] for g in g_default_tiles["groups"] for t in g["tiles"]}
+        self.assertIn("tv", g_def_ids)
+        self.assertNotIn("terminal", g_def_ids)
+        self.assertNotIn("firefox", g_def_ids)
+        self.assertNotIn("appcenter", g_def_ids)
+        self.assertEqual(self._req("POST", "/api/launch/terminal")[0], 403)
+        self.assertEqual(self._req("POST", "/api/launch/firefox")[0], 403)
 
         # Gast-Modus mit guest_allowed_tiles filtert ebenfalls
         self.assertEqual(self._req("POST", "/api/session/switch", {"account_id": self.admin.id, "pin": "2580"})[0], 200)

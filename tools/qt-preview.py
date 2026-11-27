@@ -607,6 +607,8 @@ _CAT_APPS = {a["id"]: a for a in S.CAT["apps"]}
 _BROWSER_IDS = {"firefox", "chromium", "brave", "braveorigin", "librewolf"}
 _ALWAYS_VISIBLE = {"clock", "settings"}
 _ADMIN_ONLY = {"appcenter"}
+_GUEST_BLOCKED_TILES = {"terminal", "files"}
+_GUEST_BLOCKED_CATS = {"Werkzeuge"}
 
 
 def _parental_policy_for(aid: str) -> dict[str, Any]:
@@ -622,6 +624,12 @@ def _parental_status(aid: str | None = None) -> dict[str, Any]:
     sess = ACC_STATE["session"]
     target = aid or (sess["account_id"] if not sess["is_guest"] else "")
     acc = _acc_find(target) if target else None
+    if aid is None and sess["is_guest"]:
+        return {
+            "restricted": True, "locked": bool(sess["locked"]),
+            "reason": "", "remaining_seconds": None,
+            "allow_yt_search": True, "allow_browser": False, "allow_power_menu": True,
+        }
     if not acc or acc["role"] != "child":
         return {
             "restricted": False, "locked": bool(sess["locked"]) if aid is None else False,
@@ -672,8 +680,18 @@ def _parental_tile_choices() -> tuple[list[str], list[dict[str, Any]]]:
 def _parental_check_tile(tid: str, *, ignore_time: bool = False, consume_once: bool = False) -> tuple[bool, str, bool]:
     sess = ACC_STATE["session"]
     if sess["is_guest"]:
+        if tid in _ALWAYS_VISIBLE:
+            return True, "", False
+        if tid in _ADMIN_ONLY:
+            return False, "admin_only", False
+        app = _CAT_APPS.get(tid, {})
+        cat = app.get("cat") or ""
+        if tid in _BROWSER_IDS or cat == "Browser":
+            return False, "browser_blocked", False
+        if tid in _GUEST_BLOCKED_TILES or (cat and cat in _GUEST_BLOCKED_CATS):
+            return False, "guest_restricted", False
         allowed = ACC_STATE["policy"].get("guest_allowed_tiles") or []
-        if allowed and tid not in _ALWAYS_VISIBLE and tid not in allowed:
+        if allowed and tid not in allowed:
             return False, "guest_restricted", False
         return True, "", False
     if sess["role"] != "child" or tid in _ALWAYS_VISIBLE:
@@ -780,7 +798,7 @@ def _tiles_payload() -> dict[str, Any]:
         return TILES
     out = json.loads(json.dumps(TILES))
     sess = ACC_STATE["session"]
-    if sess["role"] == "child" or (sess["is_guest"] and ACC_STATE["policy"].get("guest_allowed_tiles")):
+    if sess["role"] == "child" or sess["is_guest"]:
         groups = []
         for g in out.get("groups", []):
             kept = [t for t in g.get("tiles", []) if _parental_check_tile(str(t.get("id") or ""), ignore_time=True)[0]]
